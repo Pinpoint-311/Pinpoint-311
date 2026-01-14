@@ -604,7 +604,7 @@ export default function StaffDashboardMap({
                                             style={{ backgroundColor: STATUS_COLORS[status as keyof typeof STATUS_COLORS] }}
                                         />
                                         <span className="text-sm text-white/80 capitalize group-hover:text-white transition-colors">
-                                            {status.replace('_', ' ')}
+                                            {t(status === 'in_progress' ? 'In Progress' : status === 'open' ? 'Open' : 'Closed')}
                                         </span>
                                     </label>
                                 ))}
