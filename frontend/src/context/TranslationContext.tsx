@@ -211,6 +211,42 @@ const UI_STRINGS = [
     'Search services...',
     'Unassigned',
     'View Full Details',
+
+    // Form labels and fields
+    'Description',
+    'Location / Address',
+    'Photos (optional, max 3)',
+    'Add Photos',
+    'Contact Information',
+    'First Name',
+    'Last Name',
+    'Email',
+    'Phone (optional)',
+    'Submit Request',
+    'Back to categories',
+
+    // Third-party routing
+    'Third-Party Service',
+    'Please contact:',
+    'Visit Website',
+
+    // Asset selection
+    'Select This Street Light',
+    'Select This Sign',
+    'Select This Asset',
+    'Asset Id',
+    'Asset Type',
+    'Street Light',
+    'Sign',
+    'Luminaire Type',
+    'Wattage W',
+    'Pole Height M',
+    'Install Date',
+
+    // Error messages
+    'Failed to submit request. Please try again.',
+    'Please fill in all required fields',
+    'Description must be at least 10 characters',
 ];
 
 interface TranslationProviderProps {
