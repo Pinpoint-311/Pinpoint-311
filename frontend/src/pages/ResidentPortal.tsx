@@ -28,7 +28,7 @@ import TrackRequests from '../components/TrackRequests';
 import LanguageSelector from '../components/LanguageSelector';
 import StaffDashboardMap from '../components/StaffDashboardMap';
 import { useSettings } from '../context/SettingsContext';
-import { useTranslation, TranslatedContent } from '../context/TranslationContext';
+import { useTranslation } from '../context/TranslationContext';
 import { api, MapLayer } from '../services/api';
 import { ServiceDefinition, ServiceRequestCreate, ServiceRequest, Department, User } from '../types';
 import { usePageNavigation } from '../hooks/usePageNavigation';
@@ -945,7 +945,7 @@ export default function ResidentPortal() {
                                                         {selectedService.routing_config.custom_questions.map((q) => (
                                                             <div key={q.id} className="space-y-2">
                                                                 <label className="block text-sm font-medium text-white/70">
-                                                                    <TranslatedContent text={q.label} /> {q.required && <span className="text-red-400">*</span>}
+                                                                    {t(q.label)} {q.required && <span className="text-red-400">*</span>}
                                                                 </label>
 
                                                                 {/* Text Input */}
