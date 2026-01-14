@@ -28,7 +28,7 @@ import TrackRequests from '../components/TrackRequests';
 import LanguageSelector from '../components/LanguageSelector';
 import StaffDashboardMap from '../components/StaffDashboardMap';
 import { useSettings } from '../context/SettingsContext';
-import { useTranslation } from '../context/TranslationContext';
+import { useTranslation, TranslatedContent } from '../context/TranslationContext';
 import { api, MapLayer } from '../services/api';
 import { ServiceDefinition, ServiceRequestCreate, ServiceRequest, Department, User } from '../types';
 import { usePageNavigation } from '../hooks/usePageNavigation';
@@ -357,7 +357,7 @@ export default function ResidentPortal() {
             scrollToTop('instant');
         } catch (err) {
             console.error('Failed to submit request:', err);
-            setFormErrors({ submit: 'Failed to submit request. Please try again.' });
+            setFormErrors({ submit: t('Failed to submit request. Please try again.') });
         } finally {
             setIsSubmitting(false);
         }
@@ -691,7 +691,7 @@ export default function ResidentPortal() {
                                     className="flex items-center gap-2 text-white/60 hover:text-white transition-colors"
                                 >
                                     <ArrowLeft className="w-5 h-5" />
-                                    <span>Back to categories</span>
+                                    <span>{t('Back to categories')}</span>
                                 </button>
 
                                 {/* Selected service indicator */}
@@ -720,7 +720,7 @@ export default function ResidentPortal() {
                                             </div>
                                             <div className="flex-1">
                                                 <h3 className="text-lg font-semibold text-amber-300 mb-2">
-                                                    Third-Party Service
+                                                    {t('Third-Party Service')}
                                                 </h3>
                                                 <p className="text-white/70 mb-4">
                                                     {blockMessage}
@@ -728,7 +728,7 @@ export default function ResidentPortal() {
 
                                                 {blockContacts.length > 0 && (
                                                     <div className="space-y-3 p-4 rounded-xl bg-white/5">
-                                                        <p className="text-sm text-white/50 font-medium">Please contact:</p>
+                                                        <p className="text-sm text-white/50 font-medium">{t('Please contact:')}</p>
                                                         {blockContacts.map((contact, idx) => (
                                                             <div key={idx} className="flex flex-wrap gap-4 text-sm">
                                                                 {contact.name && (
@@ -766,7 +766,7 @@ export default function ResidentPortal() {
                                         <Card>
                                             <div className="space-y-5">
                                                 <Textarea
-                                                    label="Description"
+                                                    label={t('Description')}
                                                     placeholder="Please describe the issue in detail..."
                                                     value={formData.description}
                                                     onChange={(e) =>
@@ -780,7 +780,7 @@ export default function ResidentPortal() {
                                                 {mapsApiKey ? (
                                                     <div>
                                                         <label className="block text-sm font-medium text-white/70 mb-2">
-                                                            Location / Address
+                                                            {t('Location / Address')}
                                                         </label>
                                                         <GoogleMapsLocationPicker
                                                             apiKey={mapsApiKey}
@@ -820,7 +820,7 @@ export default function ResidentPortal() {
                                                 ) : (
                                                     <>
                                                         <Input
-                                                            label="Location / Address"
+                                                            label={t('Location / Address')}
                                                             placeholder="Street address or intersection"
                                                             leftIcon={<MapPin className="w-5 h-5" />}
                                                             value={formData.address}
@@ -879,7 +879,7 @@ export default function ResidentPortal() {
                                                                                         rel="noopener noreferrer"
                                                                                         className="text-white hover:text-primary-200 underline"
                                                                                     >
-                                                                                        🔗 Visit Website
+                                                                                        🔗 {t('Visit Website')}
                                                                                     </a>
                                                                                 )}
                                                                             </div>
@@ -894,7 +894,7 @@ export default function ResidentPortal() {
                                                 {/* Photo Upload */}
                                                 <div className="space-y-3">
                                                     <label className="block text-sm font-medium text-white/70">
-                                                        Photos (optional, max 3)
+                                                        {t('Photos (optional, max 3)')}
                                                     </label>
 
                                                     <div className="flex gap-3 flex-wrap">
@@ -919,7 +919,7 @@ export default function ResidentPortal() {
                                                         {photos.length < 3 && (
                                                             <label className="w-24 h-24 flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-white/20 hover:border-white/40 cursor-pointer transition-colors">
                                                                 <Camera className="w-6 h-6 text-white/40" />
-                                                                <span className="text-xs text-white/40 mt-1">Add Photo</span>
+                                                                <span className="text-xs text-white/40 mt-1">{t('Add Photos')}</span>
                                                                 <input
                                                                     type="file"
                                                                     accept="image/*"
@@ -945,7 +945,7 @@ export default function ResidentPortal() {
                                                         {selectedService.routing_config.custom_questions.map((q) => (
                                                             <div key={q.id} className="space-y-2">
                                                                 <label className="block text-sm font-medium text-white/70">
-                                                                    {q.label} {q.required && <span className="text-red-400">*</span>}
+                                                                    <TranslatedContent text={q.label} /> {q.required && <span className="text-red-400">*</span>}
                                                                 </label>
 
                                                                 {/* Text Input */}
@@ -1080,12 +1080,12 @@ export default function ResidentPortal() {
 
                                         <Card>
                                             <h3 className="text-lg font-semibold text-white mb-4">
-                                                Contact Information
+                                                {t('Contact Information')}
                                             </h3>
                                             <div className="space-y-4">
                                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                                     <Input
-                                                        label="First Name"
+                                                        label={t('First Name')}
                                                         placeholder="John"
                                                         value={formData.first_name}
                                                         onChange={(e) =>
@@ -1093,7 +1093,7 @@ export default function ResidentPortal() {
                                                         }
                                                     />
                                                     <Input
-                                                        label="Last Name"
+                                                        label={t('Last Name')}
                                                         placeholder="Doe"
                                                         value={formData.last_name}
                                                         onChange={(e) =>
@@ -1103,7 +1103,7 @@ export default function ResidentPortal() {
                                                 </div>
 
                                                 <Input
-                                                    label="Email"
+                                                    label={t('Email')}
                                                     type="email"
                                                     placeholder="you@example.com"
                                                     value={formData.email}
@@ -1115,7 +1115,7 @@ export default function ResidentPortal() {
                                                 />
 
                                                 <Input
-                                                    label="Phone (optional)"
+                                                    label={t('Phone (optional)')}
                                                     type="tel"
                                                     placeholder="(555) 123-4567"
                                                     value={formData.phone}
@@ -1140,7 +1140,7 @@ export default function ResidentPortal() {
                                                 isLoading={isSubmitting}
                                                 rightIcon={<Send className="w-5 h-5" />}
                                             >
-                                                Submit Request
+                                                {t('Submit Request')}
                                             </Button>
                                         ) : isLocationOutOfBounds ? (
                                             <div className="p-4 rounded-xl bg-red-500/20 border border-red-500/30 text-red-300 text-center">
