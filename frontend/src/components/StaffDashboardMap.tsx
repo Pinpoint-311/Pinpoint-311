@@ -43,7 +43,7 @@ export default function StaffDashboardMap({
     defaultZoom = 14,
     onRequestSelect,
 }: StaffDashboardMapProps) {
-    const { t } = useTranslation();
+    const { t, language } = useTranslation();
     const mapRef = useRef<HTMLDivElement>(null);
     const mapInstanceRef = useRef<google.maps.Map | null>(null);
     const markersRef = useRef<google.maps.Marker[]>([]);
@@ -309,19 +309,50 @@ export default function StaffDashboardMap({
                 title: request.service_name,
             });
 
-            marker.addListener('click', () => {
+            marker.addListener('click', async () => {
                 if (infoWindowRef.current) {
+                    // Pre-translate all text content for the popup
                     const viewDetailsText = t('View Full Details');
+                    const statusText = t(request.status === 'in_progress' ? 'In Progress' : request.status === 'open' ? 'Open' : 'Closed');
+
+                    // Translate service name and description using the translation API
+                    let translatedServiceName = request.service_name;
+                    let translatedDescription = request.description.substring(0, 120);
+
+                    // For non-English, try to get translations
+                    if (language !== 'en') {
+                        try {
+                            const response = await fetch('/api/system/translate/batch', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    texts: [request.service_name, request.description.substring(0, 120)],
+                                    target_lang: language
+                                })
+                            });
+
+                            if (response.ok) {
+                                const data = await response.json();
+                                if (data.translations && data.translations.length >= 2) {
+                                    translatedServiceName = data.translations[0] || request.service_name;
+                                    translatedDescription = data.translations[1] || request.description.substring(0, 120);
+                                }
+                            }
+                        } catch (error) {
+                            console.error('Translation error in popup:', error);
+                        }
+                    }
+
                     infoWindowRef.current.setContent(`
                         <div style="padding: 16px; max-width: 300px; font-family: system-ui, -apple-system, sans-serif;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                                 <span style="font-size: 12px; color: #6366f1; font-family: monospace; font-weight: 600;">${request.service_request_id}</span>
                                 <span style="font-size: 11px; padding: 4px 10px; border-radius: 9999px; background: ${STATUS_COLORS[request.status as keyof typeof STATUS_COLORS]}; color: white; font-weight: 600; text-transform: uppercase;">
-                                    ${request.status.replace('_', ' ')}
+                                    ${statusText}
                                 </span>
                             </div>
-                            <h3 style="margin: 0 0 8px 0; font-size: 16px; font-weight: 700; color: #1f2937;">${request.service_name}</h3>
-                            <p style="margin: 0 0 12px 0; font-size: 13px; color: #4b5563; line-height: 1.5;">${request.description.substring(0, 120)}${request.description.length > 120 ? '...' : ''}</p>
+                            <h3 style="margin: 0 0 8px 0; font-size: 16px; font-weight: 700; color: #1f2937;">${translatedServiceName}</h3>
+                            <p style="margin: 0 0 12px 0; font-size: 13px; color: #4b5563; line-height: 1.5;">${translatedDescription}${request.description.length > 120 ? '...' : ''}</p>
                             ${request.address ? `<p style="margin: 0 0 16px 0; font-size: 12px; color: #6b7280; display: flex; align-items: center; gap: 6px;">📍 ${request.address}</p>` : ''}
                             <button 
                                 onclick="window.staffDashboardSelectRequest('${request.service_request_id}')"
