@@ -146,6 +146,9 @@ class ServiceRequest(Base):
     email = Column(String(255), nullable=False)
     phone = Column(String(50))
     
+    # Resident's preferred language (captured from UI at submission)
+    preferred_language = Column(String(10), default="en")  # ISO 639-1 code (en, es, hi, etc.)
+    
     # Metadata
     source = Column(String(50), default="resident_portal")  # resident_portal, phone, walk_in, email
     media_urls = Column(JSON, default=[])  # Array of up to 3 photo URLs/base64
