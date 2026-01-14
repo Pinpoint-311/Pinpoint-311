@@ -195,6 +195,7 @@ export interface ServiceRequestCreate {
     last_name?: string;
     email: string;
     phone?: string;
+    preferred_language?: string;  // ISO 639-1 language code (e.g. 'en', 'es', 'hi')
     media_urls?: string[];  // Up to 3 photo URLs/base64
     matched_asset?: {
         layer_name: string;

@@ -346,6 +346,7 @@ export default function ResidentPortal() {
 
             const result = await api.createRequest({
                 ...formData,
+                preferred_language: language,  // Capture user's selected language for notifications
                 media_urls: photoPreviewUrls.slice(0, 3),  // Include photos (max 3)
                 matched_asset: matchedAsset,
                 custom_fields: customAnswers,

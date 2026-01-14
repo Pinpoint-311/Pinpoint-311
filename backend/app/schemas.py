@@ -170,6 +170,7 @@ class ServiceRequestCreate(BaseModel):
     last_name: Optional[str] = None
     email: EmailStr
     phone: Optional[str] = None
+    preferred_language: Optional[str] = Field(default="en", max_length=10)  # ISO 639-1 code
     media_urls: Optional[List[str]] = []  # Up to 3 photo URLs/base64
     matched_asset: Optional[Dict[str, Any]] = None  # Nearby asset from map layers
     custom_fields: Optional[Dict[str, Any]] = {} # Standard custom question responses

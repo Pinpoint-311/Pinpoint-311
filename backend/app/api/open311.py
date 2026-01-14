@@ -321,6 +321,7 @@ async def create_request(
         last_name=request_data.last_name,
         email=request_data.email,
         phone=request_data.phone,
+        preferred_language=request_data.preferred_language or "en",  # Capture user's UI language
         media_urls=request_data.media_urls[:3] if request_data.media_urls else [],  # Limit to 3 photos
         matched_asset=request_data.matched_asset,
         custom_fields=request_data.custom_fields,

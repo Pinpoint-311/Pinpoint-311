@@ -22,7 +22,7 @@ Beyond the UI, it features a sophisticated **AI & Geospatial Engine** that autom
 ### 🎨 User Experience First
 - **Premium Glassmorphism Design**: A modern, translucent UI that builds trust and engagement.
 - **Mobile-First Architecture**: Fully responsive web app that behaves natively on iOS/Android.
-- **130+ Language Support**: Powered by Google Translate API with intelligent caching. **Complete translation coverage in the resident portal**: UI strings, service categories, status labels, filter buttons, priority levels, search placeholders, and user-submitted content (descriptions/comments) are automatically translated for resident view. Translation disclaimer appears only after translations load, always in the target language.
+- **130+ Language Support**: Powered by Google Translate API with intelligent caching. **Complete translation coverage**: UI strings, service categories, status labels, filter buttons, priority levels, search placeholders, and user-submitted content are automatically translated. **Automatic notification translation**: All confirmation emails and SMS messages are sent in the resident's selected language—no additional configuration needed.
 - **No-Login Submission**: Removes friction for residents while maintaining security via email magic links.
 
 ### 🧠 Advanced Intelligence
