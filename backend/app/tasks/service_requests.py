@@ -342,13 +342,34 @@ def send_branded_notification(request_id: int, notification_type: str, old_statu
             
             logger.info(f"[Notification] Sending {notification_type} for request {request.service_request_id} (email={email_enabled}, sms={sms_enabled})")
             
+            # Get user's preferred language for translation
+            preferred_lang = request.preferred_language or "en"
+            logger.info(f"[Notification] User language: {preferred_lang}")
+            
+            # Translate content if needed (not English)
+            async def translate_if_needed(text: str) -> str:
+                """Translate text to user's preferred language if not English"""
+                if not text or preferred_lang == "en":
+                    return text
+                
+                try:
+                    from app.services.translate import translate_text
+                    return await translate_text(text, preferred_lang, "en")
+                except Exception as e:
+                    logger.warning(f"[Notification] Translation failed: {e}, using original text")
+                    return text
+            
             if notification_type == "confirmation":
+                # Translate service name and description for confirmation
+                service_name_translated = await translate_if_needed(request.service_name)
+                description_translated = await translate_if_needed(request.description or "")
+                
                 # Send branded confirmation email if enabled
                 if email_enabled and request.email:
                     notification_service.send_request_confirmation_branded(
                         request_id=str(request.service_request_id),
-                        service_name=request.service_name,
-                        description=request.description or "",
+                        service_name=service_name_translated,
+                        description=description_translated,
                         address=request.address,
                         email=request.email,
                         phone=request.phone,
@@ -365,20 +386,26 @@ def send_branded_notification(request_id: int, notification_type: str, old_statu
                         request.service_request_id, 
                         township_name, 
                         portal_url,
-                        service_name=request.service_name,
-                        description=request.description or "",
+                        service_name=service_name_translated,
+                        description=description_translated,
                         address=request.address or ""
                     )
-                    await notification_service.send_sms(request.phone, sms_message)
+                    # Translate SMS message as well
+                    sms_translated = await translate_if_needed(sms_message)
+                    await notification_service.send_sms(request.phone, sms_translated)
                     
             elif notification_type == "status_update":
+                # Translate service name and completion message
+                service_name_translated = await translate_if_needed(request.service_name)
+                completion_msg_translated = await translate_if_needed(completion_message or request.completion_message or "")
+                
                 # Send branded status update (checks internally for email/phone)
                 await notification_service.send_status_update_branded(
                     request_id=str(request.service_request_id),
-                    service_name=request.service_name,
+                    service_name=service_name_translated,
                     old_status=old_status or "open",
                     new_status=request.status,
-                    completion_message=completion_message or request.completion_message,
+                    completion_message=completion_msg_translated if completion_msg_translated else None,
                     completion_photo_url=request.completion_photo_url,
                     email=request.email if email_enabled else None,
                     phone=request.phone if sms_enabled else None,
@@ -388,7 +415,13 @@ def send_branded_notification(request_id: int, notification_type: str, old_statu
                     portal_url=portal_url
                 )
             
-            return {"status": "sent", "type": notification_type, "email": email_enabled, "sms": sms_enabled}
+            return {
+                "status": "sent", 
+                "type": notification_type, 
+                "email": email_enabled, 
+                "sms": sms_enabled,
+                "language": preferred_lang
+            }
     
     try:
         return run_async(_notify())
@@ -430,12 +463,32 @@ def send_comment_notification_task(request_id: int, comment_author: str, comment
             
             logger.info(f"[Notification] Sending comment notification for request {request.service_request_id} to {request.email}")
             
+            # Get user's preferred language for translation
+            preferred_lang = request.preferred_language or "en"
+            
+            # Translate content if needed
+            async def translate_if_needed(text: str) -> str:
+                """Translate text to user's preferred language if not English"""
+                if not text or preferred_lang == "en":
+                    return text
+                
+                try:
+                    from app.services.translate import translate_text
+                    return await translate_text(text, preferred_lang, "en")
+                except Exception as e:
+                    logger.warning(f"[Notification] Translation failed: {e}, using original text")
+                    return text
+            
+            # Translate service name and comment content
+            service_name_translated = await translate_if_needed(request.service_name)
+            comment_content_translated = await translate_if_needed(comment_content)
+            
             # Send comment notification
             notification_service.send_comment_notification(
                 request_id=str(request.service_request_id),
-                service_name=request.service_name,
+                service_name=service_name_translated,
                 comment_author=comment_author,
-                comment_content=comment_content,
+                comment_content=comment_content_translated,
                 email=request.email,
                 township_name=township_name,
                 logo_url=logo_url,
@@ -443,7 +496,7 @@ def send_comment_notification_task(request_id: int, comment_author: str, comment
                 portal_url=portal_url
             )
             
-            return {"status": "sent", "type": "comment"}
+            return {"status": "sent", "type": "comment", "language": preferred_lang}
     
     try:
         return run_async(_notify())
