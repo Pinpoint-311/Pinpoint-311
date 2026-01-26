@@ -474,16 +474,16 @@ export default function ResidentPortal() {
                             initialRequestId={urlRequestId}
                             selectedRequestId={
                                 currentHash === 'track' ? null :
-                                    currentHash.startsWith('track/') ? currentHash.spli"/"[1] :
-                        urlRequestId || null
+                                    currentHash.startsWith('track/') ? currentHash.split('/')[1] :
+                                        urlRequestId || null
                             }
-                        onRequestSelect={(requestId) => {
-                            if (requestId) {
-                                updateHash(`track/${requestId}`);
-                            } else {
-                                updateHash('track');
-                            }
-                        }}
+                            onRequestSelect={(requestId) => {
+                                if (requestId) {
+                                    updateHash(`track/${requestId}`);
+                                } else {
+                                    updateHash('track');
+                                }
+                            }}
                         />
                     </div>
                 ) : (
