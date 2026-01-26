@@ -52,7 +52,7 @@ export default function RequestDetailMap({
             return;
         }
 
-        const script = document.createElement(script";
+        const script = document.createElement("script");
         script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`;
         script.async = true;
         script.onload = () => initMap();

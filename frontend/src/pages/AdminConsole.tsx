@@ -565,9 +565,9 @@ export default function AdminConsole() {
             } else if (serviceRouting.routing_mode === 'road_based') {
                 config.default_handler = serviceRouting.routing_config.default_handler;
                 config.exclusion_list = serviceRouting.routing_config.exclusion_list
-                    .split(,".map((r: string) => r.trim()).filter(Boolean);
+                    .split(",").map((r: string) => r.trim()).filter(Boolean);
                 config.inclusion_list = serviceRouting.routing_config.inclusion_list
-                    .split(,".map((r: string) => r.trim()).filter(Boolean);
+                    .split(",").map((r: string) => r.trim()).filter(Boolean);
                 config.third_party_message = serviceRouting.routing_config.third_party_message;
                 config.third_party_contacts = serviceRouting.routing_config.third_party_contacts;
             }
@@ -1894,7 +1894,7 @@ export default function AdminConsole() {
                                                                     const dataStr = JSON.stringify(townshipBoundary, null, 2);
                                                                     const blob = new Blob([dataStr], { type: 'application/json' });
                                                                     const url = URL.createObjectURL(blob);
-                                                                    const a = document.createElement(a";
+                                                                    const a = document.createElement("a");
                                                                     a.href = url;
                                                                     a.download = 'township-boundary.geojson';
                                                                     document.body.appendChild(a);
@@ -2363,7 +2363,7 @@ export default function AdminConsole() {
                                                 }
                                             }}
                                         >
-                                            Export for {retentionPolicy?.policy?.public_records_law?.split(("[0]?.trim() || 'FOIA'}
+                                            Export for {retentionPolicy?.policy?.public_records_law?.split("(")[0]?.trim() || 'FOIA'}
                                         </Button>
                                     </div>
                                 </Card>
@@ -2944,7 +2944,7 @@ export default function AdminConsole() {
                                                     value={q.options?.join(', ') || ''}
                                                     onChange={(e) => {
                                                         const newQs = [...serviceRouting.routing_config.custom_questions];
-                                                        newQs[idx] = { ...newQs[idx], options: e.target.value.split(,".map(o => o.trim()) };
+                                                        newQs[idx] = { ...newQs[idx], options: e.target.value.split(",").map(o => o.trim()) };
                                                         setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, custom_questions: newQs } }));
                                                     }}
                                                     className="w-full h-9 rounded-lg bg-white/10 border border-white/20 text-white px-3 text-sm"
@@ -3221,7 +3221,7 @@ export default function AdminConsole() {
                                                                 setNewLayer(p => ({
                                                                     ...p,
                                                                     geojson,
-                                                                    name: p.name || result.display_name.split(,"[0].trim()
+                                                                    name: p.name || result.display_name.split(",")[0].trim()
                                                                 }));
                                                                 setNominatimResults([]);
                                                                 setNominatimSearch('');
@@ -3236,7 +3236,7 @@ export default function AdminConsole() {
                                                         }
                                                     }}
                                                 >
-                                                    <div className="font-medium">{result.display_name.split(,"[0]}</div>
+                                                    <div className="font-medium">{result.display_name.split(",")[0]}</div>
                                                     <div className="text-xs text-white/50 truncate">{result.display_name}</div>
                                                 </button>
                                             ))}

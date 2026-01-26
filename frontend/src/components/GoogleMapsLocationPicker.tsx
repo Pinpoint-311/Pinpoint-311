@@ -128,7 +128,7 @@ const loadGoogleMapsScript = (apiKey: string): Promise<void> => {
     }
 
     googleMapsLoadingPromise = new Promise((resolve, reject) => {
-        const script = document.createElement(script";
+        const script = document.createElement("script");
         script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&callback=initGoogleMaps`;
         script.async = true;
         script.defer = true;

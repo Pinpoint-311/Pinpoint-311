@@ -267,7 +267,7 @@ export const ResearchLab: React.FC = () => {
                 privacy_mode: privacyMode,
             });
             const url = window.URL.createObjectURL(blob);
-            const link = document.createElement(a";
+            const link = document.createElement("a");
             link.href = url;
             link.download = `research_export_${new Date().toISOString().slice(0, 10)}.csv`;
             link.click();
@@ -286,7 +286,7 @@ export const ResearchLab: React.FC = () => {
                 privacy_mode: privacyMode,
             });
             const url = window.URL.createObjectURL(blob);
-            const link = document.createElement(a";
+            const link = document.createElement("a");
             link.href = url;
             link.download = `research_export_${new Date().toISOString().slice(0, 10)}.geojson`;
             link.click();
@@ -300,7 +300,7 @@ export const ResearchLab: React.FC = () => {
         try {
             const blob = await api.exportDataDictionary();
             const url = window.URL.createObjectURL(blob);
-            const link = document.createElement(a";
+            const link = document.createElement("a");
             link.href = url;
             link.download = `data_dictionary_${new Date().toISOString().slice(0, 10)}.csv`;
             link.click();
@@ -776,7 +776,7 @@ export const ResearchLab: React.FC = () => {
                         </h2>
                         <div className="flex gap-2 mb-4">
                             <button
-                                onClick={() => setActiveSnippe"python"}
+                                onClick={() => setActiveSnippet("python")}
                                 className={`px-3 py-1 rounded-lg text-sm ${activeSnippet === 'python'
                                     ? 'bg-primary-500/20 text-primary-400'
                                     : 'bg-white/10 text-white/60'
@@ -785,7 +785,7 @@ export const ResearchLab: React.FC = () => {
                                 Python
                             </button>
                             <button
-                                onClick={() => setActiveSnippe"r"}
+                                onClick={() => setActiveSnippet("r")}
                                 className={`px-3 py-1 rounded-lg text-sm ${activeSnippet === 'r'
                                     ? 'bg-primary-500/20 text-primary-400'
                                     : 'bg-white/10 text-white/60'
