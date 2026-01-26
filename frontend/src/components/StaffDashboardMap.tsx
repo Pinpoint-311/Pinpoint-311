@@ -43,7 +43,7 @@ export default function StaffDashboardMap({
     defaultZoom = 14,
     onRequestSelect,
 }: StaffDashboardMapProps) {
-    const { t, language } = useTranslation();
+    const { language } = useTranslation();
     const mapRef = useRef<HTMLDivElement>(null);
     const mapInstanceRef = useRef<google.maps.Map | null>(null);
     const markersRef = useRef<google.maps.Marker[]>([]);
@@ -313,7 +313,7 @@ export default function StaffDashboardMap({
                 if (infoWindowRef.current) {
                     // Pre-translate all text content for the popup
                     const viewDetailsText = "View Full Details";
-                    const statusText = t(request.status === 'in_progress' ? 'In Progress' : request.status === 'open' ? 'Open' : 'Closed');
+                    const statusText = request.status === 'in_progress' ? 'In Progress' : request.status === 'open' ? 'Open' : 'Closed';
 
                     // Translate service name and description using the translation API
                     let translatedServiceName = request.service_name;
@@ -635,7 +635,7 @@ export default function StaffDashboardMap({
                                             style={{ backgroundColor: STATUS_COLORS[status as keyof typeof STATUS_COLORS] }}
                                         />
                                         <span className="text-sm text-white/80 capitalize group-hover:text-white transition-colors">
-                                            {t(status === 'in_progress' ? 'In Progress' : status === 'open' ? 'Open' : 'Closed')}
+                                            {status === 'in_progress' ? 'In Progress' : status === 'open' ? 'Open' : 'Closed'}
                                         </span>
                                     </label>
                                 ))}
