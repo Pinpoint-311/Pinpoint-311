@@ -62,7 +62,7 @@ export default function StaffDashboard() {
     // Handle browser back/forward navigation
     const handleHashChange = useCallback((hash: string) => {
         // Parse hash: could be 'dashboard', 'statistics', 'active', 'active/request/SR-123', 'detail/SR-123', etc.
-        const parts = hash.spli"/";
+        const parts = hash.split(/";
         const view = parts[0] as View;
         const validViews: View[] = ['dashboard', 'active', 'in_progress', 'resolved', 'statistics'];
 
@@ -1862,7 +1862,7 @@ export default function StaffDashboard() {
                                                             {/* Summary Preview - visible when collapsed */}
                                                             {!isAIExpanded && qualitativeText && !hasError && (
                                                                 <p className="text-sm text-white/60 mt-2 line-clamp-2">
-                                                                    {qualitativeText.spli". ".slice(0, 2).join('. ')}{qualitativeText.spli". ".length > 2 ? '...' : ''}
+                                                                    {qualitativeText.split(. ".slice(0, 2).join('. ')}{qualitativeText.split(. ".length > 2 ? '...' : ''}
                                                                 </p>
                                                             )}
 
@@ -2641,7 +2641,7 @@ export default function StaffDashboard() {
                                                 setCompletionPhotoUrl(result.url);
                                             } catch (err) {
                                                 console.error('Upload failed:', err);
-                                                aler"Failed to upload image";
+                                                alert("Failed to upload image";
                                             }
                                         }
                                     }}

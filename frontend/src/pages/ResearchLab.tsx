@@ -267,7 +267,7 @@ export const ResearchLab: React.FC = () => {
                 privacy_mode: privacyMode,
             });
             const url = window.URL.createObjectURL(blob);
-            const link = document.createElemen"a";
+            const link = document.createElement(a";
             link.href = url;
             link.download = `research_export_${new Date().toISOString().slice(0, 10)}.csv`;
             link.click();
@@ -286,7 +286,7 @@ export const ResearchLab: React.FC = () => {
                 privacy_mode: privacyMode,
             });
             const url = window.URL.createObjectURL(blob);
-            const link = document.createElemen"a";
+            const link = document.createElement(a";
             link.href = url;
             link.download = `research_export_${new Date().toISOString().slice(0, 10)}.geojson`;
             link.click();
@@ -300,7 +300,7 @@ export const ResearchLab: React.FC = () => {
         try {
             const blob = await api.exportDataDictionary();
             const url = window.URL.createObjectURL(blob);
-            const link = document.createElemen"a";
+            const link = document.createElement(a";
             link.href = url;
             link.download = `data_dictionary_${new Date().toISOString().slice(0, 10)}.csv`;
             link.click();

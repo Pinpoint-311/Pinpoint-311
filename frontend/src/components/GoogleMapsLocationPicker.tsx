@@ -128,7 +128,7 @@ const loadGoogleMapsScript = (apiKey: string): Promise<void> => {
     }
 
     googleMapsLoadingPromise = new Promise((resolve, reject) => {
-        const script = document.createElemen"script";
+        const script = document.createElement(script";
         script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&callback=initGoogleMaps`;
         script.async = true;
         script.defer = true;
@@ -678,7 +678,7 @@ export default function GoogleMapsLocationPicker({
     // Handle "Use my location" button
     const handleUseMyLocation = () => {
         if (!navigator.geolocation) {
-            aler"Geolocation is not supported by your browser";
+            alert("Geolocation is not supported by your browser";
             return;
         }
 
@@ -704,7 +704,7 @@ export default function GoogleMapsLocationPicker({
             },
             (error) => {
                 console.error('Geolocation error:', error);
-                aler"Unable to get your location. Please enter an address manually.";
+                alert("Unable to get your location. Please enter an address manually.";
                 setIsLocating(false);
             },
             { enableHighAccuracy: true, timeout: 10000 }
