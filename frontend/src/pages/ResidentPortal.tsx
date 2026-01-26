@@ -516,7 +516,7 @@ export default function ResidentPortal() {
                                         transition={{ delay: 0.2 }}
                                         className="text-4xl md:text-5xl lg:text-6xl font-bold text-gradient"
                                     >
-                                        {t(settings?.hero_text || 'How can we help?')}
+                                        {settings?.hero_text || 'How can we help?'}
                                     </motion.h1>
 
                                     <motion.p
@@ -945,7 +945,7 @@ export default function ResidentPortal() {
                                                         {selectedService.routing_config.custom_questions.map((q) => (
                                                             <div key={q.id} className="space-y-2">
                                                                 <label className="block text-sm font-medium text-white/70">
-                                                                    {t(q.label)} {q.required && <span className="text-red-400">*</span>}
+                                                                    {q.label} {q.required && <span className="text-red-400">*</span>}
                                                                 </label>
 
                                                                 {/* Text Input */}
