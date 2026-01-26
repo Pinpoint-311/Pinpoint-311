@@ -38,21 +38,21 @@ const getStatusColors = (t: (text: string) => string): Record<string, { bg: stri
         bg: 'bg-gradient-to-r from-amber-500/20 to-yellow-500/20',
         text: 'text-amber-200',  // Was 300, now 200 for better contrast
         border: 'border-amber-500/30',
-        label: t('Open'),
+        label: "Open",
         icon: <AlertCircle className="w-4 h-4" />
     },
     in_progress: {
         bg: 'bg-gradient-to-r from-blue-500/20 to-cyan-500/20',
         text: 'text-blue-200',  // Was 300, now 200 for better contrast
         border: 'border-blue-500/30',
-        label: t('In Progress'),
+        label: "In Progress",
         icon: <Clock className="w-4 h-4" />
     },
     closed: {
         bg: 'bg-gradient-to-r from-emerald-500/20 to-green-500/20',
         text: 'text-emerald-200',  // Was 300, now 200 for better contrast
         border: 'border-emerald-500/30',
-        label: t('Resolved'),
+        label: "Resolved",
         icon: <CheckCircle className="w-4 h-4" />
     },
 });
@@ -254,7 +254,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                         className="flex items-center gap-2 text-white/60 hover:text-white transition-colors group"
                     >
                         <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
-                        <span className="font-medium">{t('Back to all requests')}</span>
+                        <span className="font-medium">{"Back to all requests"}</span>
                     </button>
 
                     <button
@@ -339,7 +339,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                     <div className="p-2 rounded-lg bg-primary-500/20">
                                         <MapPin className="w-5 h-5 text-primary-400" />
                                     </div>
-                                    {t('Location')}
+                                    {"Location"}
                                 </h3>
                                 <p className="text-white/70">{selectedRequest.address}</p>
                             </div>
@@ -363,9 +363,9 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                     <Card className="p-5">
                         <h3 className="font-semibold text-white mb-4 flex items-center gap-2">
                             <Clock className="w-5 h-5 text-white/50" />
-                            {t('Timeline & Status')}
+                            {"Timeline & Status"}
                             {auditLog.length > 0 && (
-                                <span className="ml-auto px-2 py-0.5 rounded-full text-xs bg-white/10 text-white/60">{auditLog.length} {t('events')}</span>
+                                <span className="ml-auto px-2 py-0.5 rounded-full text-xs bg-white/10 text-white/60">{auditLog.length} {"events"}</span>
                             )}
                         </h3>
 
@@ -395,7 +395,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                             let actionConfig: { color: string; text: string };
 
                                             if (entry.action === 'submitted') {
-                                                actionConfig = { color: 'bg-emerald-500', text: t('Request submitted') };
+                                                actionConfig = { color: 'bg-emerald-500', text: "Request submitted" };
                                             } else if (entry.action === 'status_change') {
                                                 const newStatus = entry.new_value || 'unknown';
                                                 const oldStatus = entry.old_value || 'unknown';
@@ -417,11 +417,11 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                                     text: statusText
                                                 };
                                             } else if (entry.action === 'department_assigned') {
-                                                actionConfig = { color: 'bg-purple-500', text: `${t('Assigned to')} ${entry.new_value}` };
+                                                actionConfig = { color: 'bg-purple-500', text: `${"Assigned to"} ${entry.new_value}` };
                                             } else if (entry.action === 'staff_assigned') {
-                                                actionConfig = { color: 'bg-indigo-500', text: t('Assigned to staff') };
+                                                actionConfig = { color: 'bg-indigo-500', text: "Assigned to staff" };
                                             } else if (entry.action === 'comment_added') {
-                                                actionConfig = { color: 'bg-teal-500', text: t('Comment added') };
+                                                actionConfig = { color: 'bg-teal-500', text: "Comment added" };
                                             } else {
                                                 actionConfig = { color: 'bg-gray-500', text: entry.action };
                                             }
@@ -450,7 +450,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                             <div className="w-3 h-3 rounded-full bg-emerald-500 shadow-sm ring-2 ring-white/30" />
                                             <div className="flex-1 min-w-0 -mt-0.5">
                                                 <div className="flex items-center gap-2 flex-wrap">
-                                                    <span className="text-white/90 text-sm font-medium">{t('Request submitted')}</span>
+                                                    <span className="text-white/90 text-sm font-medium">{"Request submitted"}</span>
                                                     <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/20 text-blue-300">Resident</span>
                                                 </div>
                                                 <div className="text-white/40 text-xs mt-0.5">{new Date(selectedRequest.requested_datetime).toLocaleString()}</div>
@@ -493,7 +493,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                         <Card className="p-4">
                             <h3 className="font-semibold text-white flex items-center gap-2 mb-4">
                                 <Image className="w-5 h-5 text-primary-400" />
-                                {t('Submitted Photos')} ({selectedRequest.media_urls.length})
+                                {"Submitted Photos"} ({selectedRequest.media_urls.length})
                             </h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                 {selectedRequest.media_urls.map((url, index) => (
@@ -521,7 +521,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                 <div className="p-4 border-b border-white/10">
                                     <h3 className="font-semibold text-white flex items-center gap-2">
                                         <CheckCircle className="w-5 h-5 text-emerald-400" />
-                                        {t('Completion Photo')}
+                                        {"Completion Photo"}
                                     </h3>
                                 </div>
                                 <a
@@ -549,7 +549,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                         <div className="p-2 rounded-lg bg-white/10">
                             <ExternalLink className="w-5 h-5 text-white/70" />
                         </div>
-                        {t('Description')}
+                        {"Description"}
                     </h3>
                     <p className="text-white/80 text-lg leading-relaxed whitespace-pre-wrap">
                         <TranslatedContent
@@ -565,16 +565,16 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                         <div className="p-2 rounded-lg bg-primary-500/20">
                             <MessageSquare className="w-5 h-5 text-primary-400" />
                         </div>
-                        {t('Community Discussion')}
+                        {"Community Discussion"}
                         <span className="ml-auto text-sm font-normal text-white/40">
-                            {comments.length} {comments.length !== 1 ? t('comments') : t('comment')}
+                            {comments.length} {comments.length !== 1 ? "comments" : "comment"}
                         </span>
                     </h3>
 
                     {/* Add Comment */}
                     <div className="mb-6 p-4 rounded-xl bg-white/5 border border-white/10">
                         <Textarea
-                            placeholder={t('Share your thoughts or updates...')}
+                            placeholder={"Share your thoughts or updates..."}
                             value={newComment}
                             onChange={(e) => setNewComment(e.target.value)}
                             rows={3}
@@ -587,7 +587,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                 size="sm"
                             >
                                 <Send className="w-4 h-4 mr-2" />
-                                {isSubmittingComment ? t('Posting...') : t('Post Comment')}
+                                {isSubmittingComment ? "Posting..." : "Post Comment"}
                             </Button>
                         </div>
                     </div>
@@ -601,8 +601,8 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                         ) : comments.length === 0 ? (
                             <div className="text-center py-8">
                                 <MessageSquare className="w-12 h-12 mx-auto mb-3 text-white/60" />
-                                <p className="text-white/70">{t('No comments yet')}</p>
-                                <p className="text-white/60 text-sm">{t('Be the first to share an update!')}</p>
+                                <p className="text-white/70">{"No comments yet"}</p>
+                                <p className="text-white/60 text-sm">{"Be the first to share an update!"}</p>
                             </div>
                         ) : (
                             comments.map((comment, index) => {
@@ -698,8 +698,8 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
         <div className="min-h-screen">
             {/* Header */}
             <div className="mb-8">
-                <h2 className="text-3xl font-bold text-white mb-2">{t('Track Requests')}</h2>
-                <p className="text-white/60 text-lg">{t('View the status of community-reported issues')}</p>
+                <h2 className="text-3xl font-bold text-white mb-2">{"Track Requests"}</h2>
+                <p className="text-white/60 text-lg">{"View the status of community-reported issues"}</p>
             </div>
 
             {/* Filters */}
@@ -708,7 +708,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                     <div className="relative">
                         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
                         <Input
-                            placeholder={t('Search by ID, category, or address...')}
+                            placeholder={"Search by ID, category, or address..."}
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             className="pl-12 h-12 text-base"
@@ -730,7 +730,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                     : 'bg-white/5 text-white/60 hover:bg-white/10 border border-transparent'
                                     }`}
                             >
-                                {filterStatus === 'all' ? t('All Requests') : colors?.label || filterStatus}
+                                {filterStatus === 'all' ? "All Requests" : colors?.label || filterStatus}
                             </button>
                         );
                     })}
@@ -740,9 +740,9 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
             {/* Stats Summary - Moved above list */}
             <div className="grid grid-cols-3 gap-4 mb-8">
                 {[
-                    { status: 'open', color: 'amber', label: t('Open') },
-                    { status: 'in_progress', color: 'blue', label: t('In Progress') },
-                    { status: 'closed', color: 'emerald', label: t('Resolved') },
+                    { status: 'open', color: 'amber', label: "Open" },
+                    { status: 'in_progress', color: 'blue', label: "In Progress" },
+                    { status: 'closed', color: 'emerald', label: "Resolved" },
                 ].map(({ status, color, label }) => (
                     <button
                         key={status}
@@ -789,7 +789,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                         {(request.photo_count || 0) > 0 && (
                                             <div className="w-20 h-20 flex-shrink-0 rounded-xl overflow-hidden bg-primary-500/20 flex flex-col items-center justify-center">
                                                 <Image className="w-8 h-8 text-primary-400" />
-                                                <span className="text-primary-300 text-xs mt-1">{request.photo_count} {request.photo_count !== 1 ? t('photos') : t('photo')}</span>
+                                                <span className="text-primary-300 text-xs mt-1">{request.photo_count} {request.photo_count !== 1 ? "photos" : "photo"}</span>
                                             </div>
                                         )}
 

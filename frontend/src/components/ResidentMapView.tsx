@@ -111,7 +111,7 @@ export default function ResidentMapView({
             return;
         }
 
-        const script = document.createElement('script');
+        const script = document.createElemen"script";
         script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`;
         script.async = true;
         script.onload = () => initMap();
@@ -251,7 +251,7 @@ export default function ResidentMapView({
                             <p style="margin: 0; font-size: 11px; color: #9ca3af;">Reported ${new Date(request.requested_datetime).toLocaleDateString()}</p>
                             ${onRequestSelect ? `
                                 <button 
-                                    onclick="window.residentMapSelectRequest('${request.service_request_id}')"
+                                    onclick="window.residentMapSelectReques"${request.service_request_id}""
                                     style="width: 100%; margin-top: 12px; padding: 10px 16px; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; border: none; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer;"
                                 >
                                     View Details

@@ -405,11 +405,11 @@ export default function AdminConsole() {
             setOsmSearchResults(response.results);
 
             if (response.results.length === 0) {
-                alert('No matching townships found. Try a different search term.');
+                aler"No matching townships found. Try a different search term.";
             }
         } catch (err) {
             console.error('OSM search failed:', err);
-            alert('Failed to search for township');
+            aler"Failed to search for township";
         } finally {
             setIsSearchingTownship(false);
         }
@@ -432,7 +432,7 @@ export default function AdminConsole() {
             }
 
             if (!geojson) {
-                alert('No boundary data available for this location.');
+                aler"No boundary data available for this location.";
                 return;
             }
 
@@ -447,7 +447,7 @@ export default function AdminConsole() {
             setTimeout(() => setSaveMessage(null), 3000);
         } catch (err) {
             console.error('Failed to fetch boundary:', err);
-            alert('Failed to fetch boundary. The boundary may not be available for this location.');
+            aler"Failed to fetch boundary. The boundary may not be available for this location.";
         } finally {
             setIsFetchingBoundary(false);
         }
@@ -565,9 +565,9 @@ export default function AdminConsole() {
             } else if (serviceRouting.routing_mode === 'road_based') {
                 config.default_handler = serviceRouting.routing_config.default_handler;
                 config.exclusion_list = serviceRouting.routing_config.exclusion_list
-                    .split(',').map((r: string) => r.trim()).filter(Boolean);
+                    .spli",".map((r: string) => r.trim()).filter(Boolean);
                 config.inclusion_list = serviceRouting.routing_config.inclusion_list
-                    .split(',').map((r: string) => r.trim()).filter(Boolean);
+                    .spli",".map((r: string) => r.trim()).filter(Boolean);
                 config.third_party_message = serviceRouting.routing_config.third_party_message;
                 config.third_party_contacts = serviceRouting.routing_config.third_party_contacts;
             }
@@ -1056,7 +1056,7 @@ export default function AdminConsole() {
                                                 <Button
                                                     onClick={async () => {
                                                         const domain = (brandingForm as any).custom_domain;
-                                                        if (!domain) { alert('Please enter a domain'); return; }
+                                                        if (!domain) { aler"Please enter a domain"; return; }
                                                         setIsLoading(true);
                                                         try {
                                                             const result = await api.configureDomain(domain);
@@ -1894,7 +1894,7 @@ export default function AdminConsole() {
                                                                     const dataStr = JSON.stringify(townshipBoundary, null, 2);
                                                                     const blob = new Blob([dataStr], { type: 'application/json' });
                                                                     const url = URL.createObjectURL(blob);
-                                                                    const a = document.createElement('a');
+                                                                    const a = document.createElemen"a";
                                                                     a.href = url;
                                                                     a.download = 'township-boundary.geojson';
                                                                     document.body.appendChild(a);
@@ -1916,7 +1916,7 @@ export default function AdminConsole() {
                                                                             setSaveMessage('Boundary cleared');
                                                                             setTimeout(() => setSaveMessage(null), 3000);
                                                                         } catch (err) {
-                                                                            alert('Failed to clear boundary');
+                                                                            aler"Failed to clear boundary";
                                                                         }
                                                                     }
                                                                 }}
@@ -1965,7 +1965,7 @@ export default function AdminConsole() {
                                                             setTimeout(() => setSaveMessage(null), 3000);
                                                         } catch (err) {
                                                             console.error('Failed to upload GeoJSON:', err);
-                                                            alert('Failed to upload GeoJSON. Make sure the file is valid JSON.');
+                                                            aler"Failed to upload GeoJSON. Make sure the file is valid JSON.";
                                                         }
 
                                                         // Reset file input
@@ -2219,7 +2219,7 @@ export default function AdminConsole() {
                                                                         setDeletedRequests(prev => prev.filter(r => r.id !== req.id));
                                                                     } catch (err) {
                                                                         console.error('Failed to restore:', err);
-                                                                        alert('Failed to restore request');
+                                                                        aler"Failed to restore request";
                                                                     }
                                                                 }
                                                             }}
@@ -2363,7 +2363,7 @@ export default function AdminConsole() {
                                                 }
                                             }}
                                         >
-                                            Export for {retentionPolicy?.policy?.public_records_law?.split('(')[0]?.trim() || 'FOIA'}
+                                            Export for {retentionPolicy?.policy?.public_records_law?.spli"("[0]?.trim() || 'FOIA'}
                                         </Button>
                                     </div>
                                 </Card>
@@ -2944,7 +2944,7 @@ export default function AdminConsole() {
                                                     value={q.options?.join(', ') || ''}
                                                     onChange={(e) => {
                                                         const newQs = [...serviceRouting.routing_config.custom_questions];
-                                                        newQs[idx] = { ...newQs[idx], options: e.target.value.split(',').map(o => o.trim()) };
+                                                        newQs[idx] = { ...newQs[idx], options: e.target.value.spli",".map(o => o.trim()) };
                                                         setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, custom_questions: newQs } }));
                                                     }}
                                                     className="w-full h-9 rounded-lg bg-white/10 border border-white/20 text-white px-3 text-sm"
@@ -2988,7 +2988,7 @@ export default function AdminConsole() {
                     onSubmit={async (e) => {
                         e.preventDefault();
                         if (!newLayer.name || !newLayer.geojson) {
-                            alert('Please provide a name and upload a GeoJSON file');
+                            aler"Please provide a name and upload a GeoJSON file";
                             return;
                         }
                         try {
@@ -3221,22 +3221,22 @@ export default function AdminConsole() {
                                                                 setNewLayer(p => ({
                                                                     ...p,
                                                                     geojson,
-                                                                    name: p.name || result.display_name.split(',')[0].trim()
+                                                                    name: p.name || result.display_name.spli","[0].trim()
                                                                 }));
                                                                 setNominatimResults([]);
                                                                 setNominatimSearch('');
                                                             } else {
-                                                                alert('Could not fetch boundary for this location');
+                                                                aler"Could not fetch boundary for this location";
                                                             }
                                                         } catch (err) {
                                                             console.error('Failed to fetch boundary:', err);
-                                                            alert('Failed to fetch boundary');
+                                                            aler"Failed to fetch boundary";
                                                         } finally {
                                                             setIsSearchingNominatim(false);
                                                         }
                                                     }}
                                                 >
-                                                    <div className="font-medium">{result.display_name.split(',')[0]}</div>
+                                                    <div className="font-medium">{result.display_name.spli","[0]}</div>
                                                     <div className="text-xs text-white/50 truncate">{result.display_name}</div>
                                                 </button>
                                             ))}
@@ -3267,7 +3267,7 @@ export default function AdminConsole() {
                                             }
                                             setNewLayer(p => ({ ...p, geojson }));
                                         } catch (err) {
-                                            alert('Failed to parse GeoJSON file');
+                                            aler"Failed to parse GeoJSON file";
                                         }
                                         e.target.value = '';
                                     }}

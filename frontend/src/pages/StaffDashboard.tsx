@@ -62,7 +62,7 @@ export default function StaffDashboard() {
     // Handle browser back/forward navigation
     const handleHashChange = useCallback((hash: string) => {
         // Parse hash: could be 'dashboard', 'statistics', 'active', 'active/request/SR-123', 'detail/SR-123', etc.
-        const parts = hash.split('/');
+        const parts = hash.spli"/";
         const view = parts[0] as View;
         const validViews: View[] = ['dashboard', 'active', 'in_progress', 'resolved', 'statistics'];
 
@@ -309,7 +309,7 @@ export default function StaffDashboard() {
         setSearchQuery('');
         setFilterDepartment(null);
         setFilterService(null);
-        setFilterAssignment('all');
+        setFilterAssignmen"all";
         setMapPriorityFilter('all');
     };
 
@@ -1310,7 +1310,7 @@ export default function StaffDashboard() {
                                 {/* Assignment Filter Buttons - Premium Styling */}
                                 <div className="flex gap-2">
                                     <button
-                                        onClick={() => setFilterAssignment('me')}
+                                        onClick={() => setFilterAssignmen"me"}
                                         className={`flex-1 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${filterAssignment === 'me'
                                             ? 'bg-gradient-to-r from-primary-500 to-primary-600 text-white shadow-lg shadow-primary-500/40 ring-2 ring-primary-400/60'
                                             : 'bg-white/5 border border-white/15 text-white/80 hover:bg-white/10 hover:text-white hover:border-white/25'
@@ -1319,7 +1319,7 @@ export default function StaffDashboard() {
                                         My Requests ({quickStats.assignedToMe})
                                     </button>
                                     <button
-                                        onClick={() => setFilterAssignment('department')}
+                                        onClick={() => setFilterAssignmen"department"}
                                         className={`flex-1 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${filterAssignment === 'department'
                                             ? 'bg-gradient-to-r from-purple-500 to-purple-600 text-white shadow-lg shadow-purple-500/40 ring-2 ring-purple-400/60'
                                             : 'bg-white/5 border border-white/15 text-white/80 hover:bg-white/10 hover:text-white hover:border-white/25'
@@ -1328,7 +1328,7 @@ export default function StaffDashboard() {
                                         My Department ({quickStats.inMyDepartment})
                                     </button>
                                     <button
-                                        onClick={() => setFilterAssignment('all')}
+                                        onClick={() => setFilterAssignmen"all"}
                                         className={`flex-1 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${filterAssignment === 'all'
                                             ? 'bg-gradient-to-r from-slate-500 to-slate-600 text-white shadow-lg shadow-slate-500/40 ring-2 ring-slate-400/60'
                                             : 'bg-white/5 border border-white/15 text-white/80 hover:bg-white/10 hover:text-white hover:border-white/25'
@@ -1862,7 +1862,7 @@ export default function StaffDashboard() {
                                                             {/* Summary Preview - visible when collapsed */}
                                                             {!isAIExpanded && qualitativeText && !hasError && (
                                                                 <p className="text-sm text-white/60 mt-2 line-clamp-2">
-                                                                    {qualitativeText.split('. ').slice(0, 2).join('. ')}{qualitativeText.split('. ').length > 2 ? '...' : ''}
+                                                                    {qualitativeText.spli". ".slice(0, 2).join('. ')}{qualitativeText.spli". ".length > 2 ? '...' : ''}
                                                                 </p>
                                                             )}
 
@@ -2641,7 +2641,7 @@ export default function StaffDashboard() {
                                                 setCompletionPhotoUrl(result.url);
                                             } catch (err) {
                                                 console.error('Upload failed:', err);
-                                                alert('Failed to upload image');
+                                                aler"Failed to upload image";
                                             }
                                         }
                                     }}
