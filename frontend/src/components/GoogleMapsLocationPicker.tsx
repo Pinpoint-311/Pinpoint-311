@@ -678,7 +678,7 @@ export default function GoogleMapsLocationPicker({
     // Handle "Use my location" button
     const handleUseMyLocation = () => {
         if (!navigator.geolocation) {
-            alert("Geolocation is not supported by your browser";
+            alert("Geolocation is not supported by your browser");
             return;
         }
 
@@ -704,7 +704,7 @@ export default function GoogleMapsLocationPicker({
             },
             (error) => {
                 console.error('Geolocation error:', error);
-                alert("Unable to get your location. Please enter an address manually.";
+                alert("Unable to get your location. Please enter an address manually.");
                 setIsLocating(false);
             },
             { enableHighAccuracy: true, timeout: 10000 }

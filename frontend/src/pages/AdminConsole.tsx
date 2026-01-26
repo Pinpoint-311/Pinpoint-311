@@ -409,7 +409,7 @@ export default function AdminConsole() {
             }
         } catch (err) {
             console.error('OSM search failed:', err);
-            alert("Failed to search for township";
+            alert("Failed to search for township");
         } finally {
             setIsSearchingTownship(false);
         }
@@ -432,7 +432,7 @@ export default function AdminConsole() {
             }
 
             if (!geojson) {
-                alert("No boundary data available for this location.";
+                alert("No boundary data available for this location.");
                 return;
             }
 
@@ -447,7 +447,7 @@ export default function AdminConsole() {
             setTimeout(() => setSaveMessage(null), 3000);
         } catch (err) {
             console.error('Failed to fetch boundary:', err);
-            alert("Failed to fetch boundary. The boundary may not be available for this location.";
+            alert("Failed to fetch boundary. The boundary may not be available for this location.");
         } finally {
             setIsFetchingBoundary(false);
         }
@@ -1056,7 +1056,7 @@ export default function AdminConsole() {
                                                 <Button
                                                     onClick={async () => {
                                                         const domain = (brandingForm as any).custom_domain;
-                                                        if (!domain) { alert("Please enter a domain"; return; }
+                                                        if (!domain) { alert("Please enter a domain"); return; }
                                                         setIsLoading(true);
                                                         try {
                                                             const result = await api.configureDomain(domain);
@@ -1916,7 +1916,7 @@ export default function AdminConsole() {
                                                                             setSaveMessage('Boundary cleared');
                                                                             setTimeout(() => setSaveMessage(null), 3000);
                                                                         } catch (err) {
-                                                                            alert("Failed to clear boundary";
+                                                                            alert("Failed to clear boundary");
                                                                         }
                                                                     }
                                                                 }}
@@ -1965,7 +1965,7 @@ export default function AdminConsole() {
                                                             setTimeout(() => setSaveMessage(null), 3000);
                                                         } catch (err) {
                                                             console.error('Failed to upload GeoJSON:', err);
-                                                            alert("Failed to upload GeoJSON. Make sure the file is valid JSON.";
+                                                            alert("Failed to upload GeoJSON. Make sure the file is valid JSON.");
                                                         }
 
                                                         // Reset file input
@@ -2219,7 +2219,7 @@ export default function AdminConsole() {
                                                                         setDeletedRequests(prev => prev.filter(r => r.id !== req.id));
                                                                     } catch (err) {
                                                                         console.error('Failed to restore:', err);
-                                                                        alert("Failed to restore request";
+                                                                        alert("Failed to restore request");
                                                                     }
                                                                 }
                                                             }}
@@ -2988,7 +2988,7 @@ export default function AdminConsole() {
                     onSubmit={async (e) => {
                         e.preventDefault();
                         if (!newLayer.name || !newLayer.geojson) {
-                            alert("Please provide a name and upload a GeoJSON file";
+                            alert("Please provide a name and upload a GeoJSON file");
                             return;
                         }
                         try {
@@ -3226,11 +3226,11 @@ export default function AdminConsole() {
                                                                 setNominatimResults([]);
                                                                 setNominatimSearch('');
                                                             } else {
-                                                                alert("Could not fetch boundary for this location";
+                                                                alert("Could not fetch boundary for this location");
                                                             }
                                                         } catch (err) {
                                                             console.error('Failed to fetch boundary:', err);
-                                                            alert("Failed to fetch boundary";
+                                                            alert("Failed to fetch boundary");
                                                         } finally {
                                                             setIsSearchingNominatim(false);
                                                         }
@@ -3267,7 +3267,7 @@ export default function AdminConsole() {
                                             }
                                             setNewLayer(p => ({ ...p, geojson }));
                                         } catch (err) {
-                                            alert("Failed to parse GeoJSON file";
+                                            alert("Failed to parse GeoJSON file");
                                         }
                                         e.target.value = '';
                                     }}

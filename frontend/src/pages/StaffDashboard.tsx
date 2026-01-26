@@ -2641,7 +2641,7 @@ export default function StaffDashboard() {
                                                 setCompletionPhotoUrl(result.url);
                                             } catch (err) {
                                                 console.error('Upload failed:', err);
-                                                alert("Failed to upload image";
+                                                alert("Failed to upload image");
                                             }
                                         }
                                     }}
