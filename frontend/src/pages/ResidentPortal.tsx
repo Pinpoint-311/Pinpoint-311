@@ -115,7 +115,7 @@ export default function ResidentPortal() {
     // Handle initial hash on page load (after services are loaded)
     useEffect(() => {
         if (services.length > 0 && currentHash.startsWith('report/')) {
-            const serviceCode = currentHash.split('/')[1];
+            const serviceCode = currentHash.spli"/"[1];
             const service = services.find(s => s.service_code === serviceCode);
             if (service && !selectedService) {
                 setSelectedService(service);
@@ -201,7 +201,7 @@ export default function ResidentPortal() {
     // Reload services when language changes
     useEffect(() => {
         loadServices();
-    }, [language, refreshKey]);
+    }, [language]);
 
     const loadServices = async () => {
         try {
@@ -474,7 +474,7 @@ export default function ResidentPortal() {
                             initialRequestId={urlRequestId}
                             selectedRequestId={
                                 currentHash === 'track' ? null :
-                                    currentHash.startsWith('track/') ? currentHash.split('/')[1] :
+                                    currentHash.startsWith('track/') ? currentHash.spli"/"[1] :
                                         urlRequestId || null
                             }
                             onRequestSelect={(requestId) => {
@@ -525,7 +525,7 @@ export default function ResidentPortal() {
                                         transition={{ delay: 0.3 }}
                                         className="text-lg text-white/60 max-w-xl mx-auto"
                                     >
-                                        {t('Report issues, request services, and help make our community better. Select a category below to get started.')}
+                                        {"Report issues, request services, and help make our community better. Select a category below to get started."}
                                     </motion.p>
 
                                     {/* Search */}
@@ -536,12 +536,12 @@ export default function ResidentPortal() {
                                         className="max-w-md mx-auto"
                                     >
                                         <div className="relative">
-                                            <label htmlFor="service-search" className="sr-only">{t('Search services...')}</label>
+                                            <label htmlFor="service-search" className="sr-only">{"Search services..."}</label>
                                             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" aria-hidden="true" />
                                             <input
                                                 id="service-search"
                                                 type="text"
-                                                placeholder={t('Search services...')}
+                                                placeholder={"Search services..."}
                                                 value={searchQuery}
                                                 onChange={(e) => setSearchQuery(e.target.value)}
                                                 className="glass-input pl-12"
@@ -631,10 +631,10 @@ export default function ResidentPortal() {
                                     className="space-y-4"
                                 >
                                     <h2 className="text-2xl font-bold text-white text-center">
-                                        {t('Community Requests Map')}
+                                        {"Community Requests Map"}
                                     </h2>
                                     <p className="text-white/60 text-center mb-6">
-                                        {t('View all reported issues and service requests in our community')}
+                                        {"View all reported issues and service requests in our community"}
                                     </p>
                                     <div className="h-[500px] rounded-2xl overflow-hidden">
                                         <StaffDashboardMap
@@ -668,7 +668,7 @@ export default function ResidentPortal() {
                                         className="px-8 py-4"
                                     >
                                         <ClipboardList className="w-5 h-5 mr-2" />
-                                        {t('Track My Requests')}
+                                        {"Track My Requests"}
                                     </Button>
                                 </motion.div>
                             </motion.div>
@@ -691,7 +691,7 @@ export default function ResidentPortal() {
                                     className="flex items-center gap-2 text-white/60 hover:text-white transition-colors"
                                 >
                                     <ArrowLeft className="w-5 h-5" />
-                                    <span>{t('Back to categories')}</span>
+                                    <span>{"Back to categories"}</span>
                                 </button>
 
                                 {/* Selected service indicator */}
@@ -720,7 +720,7 @@ export default function ResidentPortal() {
                                             </div>
                                             <div className="flex-1">
                                                 <h3 className="text-lg font-semibold text-amber-300 mb-2">
-                                                    {t('Third-Party Service')}
+                                                    {"Third-Party Service"}
                                                 </h3>
                                                 <p className="text-white/70 mb-4">
                                                     {blockMessage}
@@ -728,7 +728,7 @@ export default function ResidentPortal() {
 
                                                 {blockContacts.length > 0 && (
                                                     <div className="space-y-3 p-4 rounded-xl bg-white/5">
-                                                        <p className="text-sm text-white/50 font-medium">{t('Please contact:')}</p>
+                                                        <p className="text-sm text-white/50 font-medium">{"Please contact:"}</p>
                                                         {blockContacts.map((contact, idx) => (
                                                             <div key={idx} className="flex flex-wrap gap-4 text-sm">
                                                                 {contact.name && (
@@ -766,7 +766,7 @@ export default function ResidentPortal() {
                                         <Card>
                                             <div className="space-y-5">
                                                 <Textarea
-                                                    label={t('Description')}
+                                                    label={"Description"}
                                                     placeholder="Please describe the issue in detail..."
                                                     value={formData.description}
                                                     onChange={(e) =>
@@ -780,7 +780,7 @@ export default function ResidentPortal() {
                                                 {mapsApiKey ? (
                                                     <div>
                                                         <label className="block text-sm font-medium text-white/70 mb-2">
-                                                            {t('Location / Address')}
+                                                            {"Location / Address"}
                                                         </label>
                                                         <GoogleMapsLocationPicker
                                                             apiKey={mapsApiKey}
@@ -820,7 +820,7 @@ export default function ResidentPortal() {
                                                 ) : (
                                                     <>
                                                         <Input
-                                                            label={t('Location / Address')}
+                                                            label={"Location / Address"}
                                                             placeholder="Street address or intersection"
                                                             leftIcon={<MapPin className="w-5 h-5" />}
                                                             value={formData.address}
@@ -879,7 +879,7 @@ export default function ResidentPortal() {
                                                                                         rel="noopener noreferrer"
                                                                                         className="text-white hover:text-primary-200 underline"
                                                                                     >
-                                                                                        🔗 {t('Visit Website')}
+                                                                                        🔗 {"Visit Website"}
                                                                                     </a>
                                                                                 )}
                                                                             </div>
@@ -894,7 +894,7 @@ export default function ResidentPortal() {
                                                 {/* Photo Upload */}
                                                 <div className="space-y-3">
                                                     <label className="block text-sm font-medium text-white/70">
-                                                        {t('Photos (optional, max 3)')}
+                                                        {"Photos (optional, max 3)"}
                                                     </label>
 
                                                     <div className="flex gap-3 flex-wrap">
@@ -919,7 +919,7 @@ export default function ResidentPortal() {
                                                         {photos.length < 3 && (
                                                             <label className="w-24 h-24 flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-white/20 hover:border-white/40 cursor-pointer transition-colors">
                                                                 <Camera className="w-6 h-6 text-white/40" />
-                                                                <span className="text-xs text-white/40 mt-1">{t('Add Photos')}</span>
+                                                                <span className="text-xs text-white/40 mt-1">{"Add Photos"}</span>
                                                                 <input
                                                                     type="file"
                                                                     accept="image/*"
@@ -1080,12 +1080,12 @@ export default function ResidentPortal() {
 
                                         <Card>
                                             <h3 className="text-lg font-semibold text-white mb-4">
-                                                {t('Contact Information')}
+                                                {"Contact Information"}
                                             </h3>
                                             <div className="space-y-4">
                                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                                     <Input
-                                                        label={t('First Name')}
+                                                        label={"First Name"}
                                                         placeholder="John"
                                                         value={formData.first_name}
                                                         onChange={(e) =>
@@ -1093,7 +1093,7 @@ export default function ResidentPortal() {
                                                         }
                                                     />
                                                     <Input
-                                                        label={t('Last Name')}
+                                                        label={"Last Name"}
                                                         placeholder="Doe"
                                                         value={formData.last_name}
                                                         onChange={(e) =>
@@ -1103,7 +1103,7 @@ export default function ResidentPortal() {
                                                 </div>
 
                                                 <Input
-                                                    label={t('Email')}
+                                                    label={"Email"}
                                                     type="email"
                                                     placeholder="you@example.com"
                                                     value={formData.email}
@@ -1115,7 +1115,7 @@ export default function ResidentPortal() {
                                                 />
 
                                                 <Input
-                                                    label={t('Phone (optional)')}
+                                                    label={"Phone (optional)"}
                                                     type="tel"
                                                     placeholder="(555) 123-4567"
                                                     value={formData.phone}
@@ -1140,7 +1140,7 @@ export default function ResidentPortal() {
                                                 isLoading={isSubmitting}
                                                 rightIcon={<Send className="w-5 h-5" />}
                                             >
-                                                {t('Submit Request')}
+                                                {"Submit Request"}
                                             </Button>
                                         ) : isLocationOutOfBounds ? (
                                             <div className="p-4 rounded-xl bg-red-500/20 border border-red-500/30 text-red-300 text-center">
@@ -1201,24 +1201,24 @@ export default function ResidentPortal() {
             <footer className="glass-sidebar py-6 px-4 mt-auto">
                 <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
                     <p className="text-white/40 text-sm">
-                        © {new Date().getFullYear()} {settings?.township_name || 'Township 311'}. {t('All rights reserved')}
+                        © {new Date().getFullYear()} {settings?.township_name || 'Township 311'}. {"All rights reserved"}
                     </p>
                     <div className="flex items-center gap-6 text-sm">
                         <a href="#" className="text-white/40 hover:text-white/80 transition-colors">
-                            {t('Privacy Policy')}
+                            {"Privacy Policy"}
                         </a>
                         <a href="#" className="text-white/40 hover:text-white/80 transition-colors">
-                            {t('Accessibility')}
+                            {"Accessibility"}
                         </a>
                         <a href="#" className="text-white/40 hover:text-white/80 transition-colors">
-                            {t('Terms of Service')}
+                            {"Terms of Service"}
                         </a>
                     </div>
                 </div>
                 {/* Powered by Pinpoint 311 */}
                 <div className="max-w-6xl mx-auto mt-4 pt-4 border-t border-white/10 text-center">
                     <p className="text-white/30 text-xs">
-                        {t('Powered by')}{' '}
+                        {"Powered by"}{' '}
                         <a
                             href="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template"
                             target="_blank"
@@ -1227,7 +1227,7 @@ export default function ResidentPortal() {
                         >
                             Pinpoint 311
                         </a>
-                        {' '}— {t('Free & Open Source Municipal Platform')}
+                        {' '}— {"Free & Open Source Municipal Platform"}
                     </p>
                 </div>
             </footer>
