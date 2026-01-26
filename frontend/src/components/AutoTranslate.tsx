@@ -5,6 +5,16 @@ interface AutoTranslateProps {
     children: React.ReactNode;
 }
 
+// Attributes that should be translated
+const TRANSLATABLE_ATTRIBUTES = [
+    'placeholder',
+    'aria-label',
+    'title',
+    'alt',
+    'data-tooltip',
+    'data-title',
+];
+
 // Cache for translations to avoid re-translating the same text
 const translationCache = new Map<string, Map<string, string>>();
 
@@ -54,12 +64,20 @@ const setCachedTranslation = (text: string, translation: string, sourceLang: str
     translationCache.get(key)!.set(text, translation);
 };
 
+// Store original attribute values
+interface AttributeOriginal {
+    element: HTMLElement;
+    attribute: string;
+    originalValue: string;
+}
+
 export function AutoTranslate({ children }: AutoTranslateProps) {
     const { language } = useTranslation();
     const containerRef = useRef<HTMLDivElement>(null);
     const observerRef = useRef<MutationObserver | null>(null);
     const translationTimeoutRef = useRef<number | null>(null);
     const originalTextsRef = useRef(new Map<Node, string>());
+    const originalAttributesRef = useRef<AttributeOriginal[]>([]);
 
     // Load cache on mount
     useEffect(() => {
@@ -104,6 +122,39 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
         return textNodes;
     }, []);
 
+    // Get all elements with translatable attributes
+    const getTranslatableAttributes = useCallback((element: HTMLElement): { element: HTMLElement; attribute: string; value: string }[] => {
+        const results: { element: HTMLElement; attribute: string; value: string }[] = [];
+
+        // Walk through all elements
+        const allElements = element.querySelectorAll('*');
+        allElements.forEach(el => {
+            if (!(el instanceof HTMLElement)) return;
+
+            // Skip if element has data-no-translate
+            if (el.closest('[data-no-translate]')) return;
+
+            TRANSLATABLE_ATTRIBUTES.forEach(attr => {
+                const value = el.getAttribute(attr);
+                if (value && value.trim()) {
+                    results.push({ element: el, attribute: attr, value: value.trim() });
+                }
+            });
+
+            // Also handle button values
+            if (el instanceof HTMLButtonElement && el.value && el.value.trim()) {
+                results.push({ element: el, attribute: 'value', value: el.value.trim() });
+            }
+
+            // Handle input buttons
+            if (el instanceof HTMLInputElement && (el.type === 'button' || el.type === 'submit') && el.value && el.value.trim()) {
+                results.push({ element: el, attribute: 'value', value: el.value.trim() });
+            }
+        });
+
+        return results;
+    }, []);
+
     // Translate text using the API
     const translateTexts = useCallback(async (texts: string[], targetLang: string): Promise<Map<string, string>> => {
         if (targetLang === 'en' || texts.length === 0) {
@@ -140,26 +191,37 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
         return new Map(texts.map(t => [t, t]));
     }, []);
 
-    // Process and translate all text nodes
+    // Process and translate all text nodes AND attributes
     const processTranslation = useCallback(async () => {
-        if (!containerRef.current || language === 'en') {
-            // If English, restore original texts
-            if (language === 'en') {
-                originalTextsRef.current.forEach((originalText, node) => {
-                    if (node.textContent !== originalText) {
-                        node.textContent = originalText;
-                    }
-                });
-            }
+        if (!containerRef.current) return;
+
+        // If English, restore original texts and attributes
+        if (language === 'en') {
+            originalTextsRef.current.forEach((originalText, node) => {
+                if (node.textContent !== originalText) {
+                    node.textContent = originalText;
+                }
+            });
+            originalAttributesRef.current.forEach(({ element, attribute, originalValue }) => {
+                if (element.getAttribute(attribute) !== originalValue) {
+                    element.setAttribute(attribute, originalValue);
+                }
+            });
             return;
         }
 
+        // Get all text nodes
         const textNodes = getTextNodes(containerRef.current);
 
-        // Collect unique texts to translate
+        // Get all translatable attributes
+        const attributeItems = getTranslatableAttributes(containerRef.current);
+
+        // Collect unique texts to translate (both from nodes and attributes)
         const textsToTranslate: string[] = [];
         const nodeTextMap = new Map<string, Text[]>();
+        const attributeTextMap = new Map<string, { element: HTMLElement; attribute: string }[]>();
 
+        // Process text nodes
         textNodes.forEach(node => {
             const text = node.textContent?.trim();
             if (!text) return;
@@ -179,9 +241,38 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
             // Group nodes by text for batch translation
             if (!nodeTextMap.has(text)) {
                 nodeTextMap.set(text, []);
-                textsToTranslate.push(text);
+                if (!attributeTextMap.has(text)) {
+                    textsToTranslate.push(text);
+                }
             }
             nodeTextMap.get(text)!.push(node);
+        });
+
+        // Process attributes
+        attributeItems.forEach(({ element, attribute, value }) => {
+            // Store original attribute if not already stored
+            const existingOriginal = originalAttributesRef.current.find(
+                o => o.element === element && o.attribute === attribute
+            );
+            if (!existingOriginal) {
+                originalAttributesRef.current.push({ element, attribute, originalValue: value });
+            }
+
+            // Check if already translated
+            const cached = getCachedTranslation(value, 'en', language);
+            if (cached) {
+                element.setAttribute(attribute, cached);
+                return;
+            }
+
+            // Group attributes by text for batch translation
+            if (!attributeTextMap.has(value)) {
+                attributeTextMap.set(value, []);
+                if (!nodeTextMap.has(value)) {
+                    textsToTranslate.push(value);
+                }
+            }
+            attributeTextMap.get(value)!.push({ element, attribute });
         });
 
         // Translate in batches of 100
@@ -190,16 +281,22 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
                 const batch = textsToTranslate.slice(i, i + 100);
                 const translations = await translateTexts(batch, language);
 
-                // Apply translations
+                // Apply translations to text nodes
                 translations.forEach((translation, originalText) => {
                     const nodes = nodeTextMap.get(originalText) || [];
                     nodes.forEach(node => {
                         node.textContent = translation;
                     });
+
+                    // Apply translations to attributes
+                    const attrs = attributeTextMap.get(originalText) || [];
+                    attrs.forEach(({ element, attribute }) => {
+                        element.setAttribute(attribute, translation);
+                    });
                 });
             }
         }
-    }, [language, getTextNodes, translateTexts]);
+    }, [language, getTextNodes, getTranslatableAttributes, translateTexts]);
 
     // Debounced translation
     const scheduleTranslation = useCallback(() => {
@@ -222,7 +319,9 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
         observerRef.current.observe(containerRef.current, {
             childList: true,
             subtree: true,
-            characterData: true
+            characterData: true,
+            attributes: true, // Also watch for attribute changes
+            attributeFilter: TRANSLATABLE_ATTRIBUTES
         });
 
         return () => {
