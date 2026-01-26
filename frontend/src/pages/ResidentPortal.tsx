@@ -115,7 +115,7 @@ export default function ResidentPortal() {
     // Handle initial hash on page load (after services are loaded)
     useEffect(() => {
         if (services.length > 0 && currentHash.startsWith('report/')) {
-            const serviceCode = currentHash.spli"/"[1];
+            const serviceCode = currentHash.split('/')[1];
             const service = services.find(s => s.service_code === serviceCode);
             if (service && !selectedService) {
                 setSelectedService(service);
@@ -475,15 +475,15 @@ export default function ResidentPortal() {
                             selectedRequestId={
                                 currentHash === 'track' ? null :
                                     currentHash.startsWith('track/') ? currentHash.spli"/"[1] :
-                                        urlRequestId || null
+                        urlRequestId || null
                             }
-                            onRequestSelect={(requestId) => {
-                                if (requestId) {
-                                    updateHash(`track/${requestId}`);
-                                } else {
-                                    updateHash('track');
-                                }
-                            }}
+                        onRequestSelect={(requestId) => {
+                            if (requestId) {
+                                updateHash(`track/${requestId}`);
+                            } else {
+                                updateHash('track');
+                            }
+                        }}
                         />
                     </div>
                 ) : (
