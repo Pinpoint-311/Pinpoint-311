@@ -405,7 +405,7 @@ export default function AdminConsole() {
             setOsmSearchResults(response.results);
 
             if (response.results.length === 0) {
-                aler"No matching townships found. Try a different search term.";
+                alert("No matching townships found. Try a different search term.");
             }
         } catch (err) {
             console.error('OSM search failed:', err);
