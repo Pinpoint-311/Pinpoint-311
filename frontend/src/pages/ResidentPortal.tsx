@@ -53,7 +53,7 @@ type Step = 'categories' | 'form' | 'success';
 
 export default function ResidentPortal() {
     const { settings } = useSettings();
-    const { t, language, refreshKey } = useTranslation();
+    const { language } = useTranslation();
     const { requestId: urlRequestId } = useParams<{ requestId?: string }>();
 
     // Initialize state based on URL hash (not pathname)
@@ -357,7 +357,7 @@ export default function ResidentPortal() {
             scrollToTop('instant');
         } catch (err) {
             console.error('Failed to submit request:', err);
-            setFormErrors({ submit: t('Failed to submit request. Please try again.') });
+            setFormErrors({ submit: 'Failed to submit request. Please try again.' });
         } finally {
             setIsSubmitting(false);
         }
@@ -449,7 +449,7 @@ export default function ResidentPortal() {
                         to="/login"
                         className="text-white/60 hover:text-white text-sm font-medium transition-colors"
                     >
-                        {t('Staff Login')}
+                        Staff Login
                     </Link>
                 </div>
             </nav>
@@ -468,7 +468,7 @@ export default function ResidentPortal() {
                             aria-label="Go back to home page"
                         >
                             <ArrowLeft className="w-5 h-5" />
-                            <span>{t('Back to Home')}</span>
+                            <span>Back to Home</span>
                         </button>
                         <TrackRequests
                             initialRequestId={urlRequestId}
