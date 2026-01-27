@@ -339,89 +339,34 @@ For local development without GCP, Fernet encryption provides fallback:
 - **Key Derivation**: PBKDF2 from `SECRET_KEY` environment variable
 - **Automatic migration**: Plain text values encrypted on first update
 
-#### API Security
-- **Rate Limiting**: slowapi middleware (500 requests/minute per IP)
-- **Security Headers**:
-  - `X-Frame-Options: DENY` - Prevents clickjacking
-  - `X-Content-Type-Options: nosniff` - Prevents MIME sniffing
-  - `X-XSS-Protection: 1; mode=block` - Legacy XSS protection
-  - `Referrer-Policy: strict-origin-when-cross-origin` - Controls referrer info
-  - `Content-Security-Policy: frame-ancestors 'none'` - Prevents framing
-  - `Cache-Control: no-store` - Prevents caching of API responses
-
-#### Access Control
-- **PII Protection**: Personally Identifiable Information redacted from public API feeds
-- **RBAC**: Role-Based Access Control with three tiers:
-  - `Staff`: View requests, add comments, update status
-  - `Researcher`: Read-only access to sanitized, anonymized data exports
-  - `Admin`: Full system configuration, user management, exact location access
-- **JWT Authentication**: Stateless tokens with configurable expiration (default 8 hours)
-- **Password Hashing**: bcrypt with automatic salting
-
-#### Infrastructure Security
-- **SQL Injection Proof**: SQLAlchemy ORM prevents injection vulnerabilities
-- **CORS**: Configurable Cross-Origin Resource Sharing
-- **Input Validation**: Pydantic schema validation on all API inputs
+#### API & Infrastructure Security
+- **Rate Limiting**: 500 requests/minute per IP (slowapi)
+- **Security Headers**: X-Frame-Options, CSP, nosniff, XSS protection
+- **RBAC**: Staff, Researcher, Admin roles with JWT authentication
+- **Input Validation**: Pydantic schemas, SQLAlchemy ORM (SQL injection proof)
 - **Audit Logging**: Immutable trail of all request lifecycle events
 
-#### Vertex AI Security
-All AI analysis is powered by **Google Cloud Vertex AI**, which provides enterprise-grade security:
+For full security details, see [COMPLIANCE.md](./COMPLIANCE.md).
 
+#### Vertex AI Security
 | Feature | Protection |
 |---------|------------|
-| **Data Residency** | Processing within configured Google Cloud region |
-| **Encryption in Transit** | TLS 1.3+ for all API calls |
-| **Encryption at Rest** | AES-256 encryption for stored data |
-| **Access Control** | Service Account with principle of least privilege |
-| **No Data Training** | Customer data is NOT used to train Google's models |
-| **SOC Compliance** | SOC 1, SOC 2, SOC 3 certified |
-| **HIPAA Ready** | Supports HIPAA-compliant workloads |
-| **Human-in-the-Loop** | AI suggestions require explicit staff approval before becoming official priorities |
-
-For more details, see [Vertex AI Security](https://cloud.google.com/vertex-ai/docs/general/security).
+| Data Residency | Stays within configured GCP region |
+| Encryption | TLS 1.3+ in transit, AES-256 at rest |
+| No Data Training | Customer data NOT used for training |
+| Certifications | SOC 1/2/3, ISO 27001, FedRAMP, HIPAA |
+| Human-in-the-Loop | AI suggestions require staff approval |
 
 ### 📋 Document Retention Engine
 
-The platform includes an automated **Document Retention Engine** that enforces state-specific record retention policies:
-
-#### State Retention Policies (Built-in)
-| State | Retention Period | Source |
-|-------|------------------|--------|
-| Texas | 10 years | TX State Library & Archives |
-| NJ, PA, WI | 7 years | State public records laws |
-| NY, MI, WA, CT | 6 years | State archives |
-| CA, FL, NC, VA, OH, IL, AZ, NM, OR, CO, IN, MO, MA, GA | 3-5 years | State schedules |
-
-#### Features
-- **Admin-configurable**: Select state or set custom retention period (Admin Console → Retention)
-- **Legal hold protection**: Flagged records are NEVER archived regardless of age
-- **Anonymize or delete**: Choose between PII anonymization or permanent deletion
+State-specific record retention with legal hold protection:
+- **Built-in policies**: TX (10yr), NJ/PA/WI (7yr), NY/MI/WA (6yr), CA/FL/others (3-5yr)
+- **Admin-configurable**: Select state or custom period
 - **Automatic enforcement**: Daily Celery task archives expired records
-- **Audit compliant**: Full logging of all archival actions
 
-#### API Endpoints
-- `GET /api/system/retention/states` - List all supported states
-- `GET /api/system/retention/policy` - Get current configuration
-- `POST /api/system/retention/policy` - Update retention settings
-- `POST /api/system/retention/run` - Manually trigger retention enforcement
+### ♿ Accessibility (WCAG 2.2 AA)
 
-### ♿ Accessibility Compliance (WCAG 2.2 AA)
-The platform is designed to meet **WCAG 2.2 Level AA** accessibility standards:
-
-| Requirement | Implementation |
-|-------------|----------------|
-| **4.1.2 Name, Role, Value** | All interactive elements (buttons, inputs, toggles) have `aria-label`, `role`, and `aria-checked` attributes |
-| **1.4.3 Contrast Ratio** | All text meets minimum 4.5:1 contrast ratio on light/dark backgrounds |
-| **2.1.1 Keyboard Access** | All interactive elements are keyboard-navigable; scrollable regions have `tabindex` |
-| **1.1.1 Non-text Content** | Icons use `aria-hidden="true"` when paired with text; icon-only buttons have aria-labels |
-| **4.1.1 Parsing** | Valid HTML with proper ARIA attribute values and matching id references |
-
-**Verified Components:**
-- All toggle switches (role="switch", aria-checked, aria-label)
-- All form inputs (aria-label or associated label elements)
-- All icon-only buttons (aria-label + aria-hidden on icons)
-- Scrollable code regions (tabindex=0 for keyboard access)
-- Color contrast verified with WCAG checker tools
+Full keyboard navigation, 4.5:1 contrast ratio, proper aria-labels on all interactive elements. See [COMPLIANCE.md](./COMPLIANCE.md) for details.
 
 ---
 
