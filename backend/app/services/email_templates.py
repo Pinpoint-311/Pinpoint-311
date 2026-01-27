@@ -299,6 +299,8 @@ async def get_i18n_async(lang: str) -> Dict[str, str]:
     1. First checks static dictionary for pre-translated common languages
     2. Falls back to Google Translate API with caching for all other 130+ languages
     """
+    import re
+    
     # If we have static translations for this language, use them
     if lang in EMAIL_I18N:
         return EMAIL_I18N[lang]
@@ -309,6 +311,26 @@ async def get_i18n_async(lang: str) -> Dict[str, str]:
     
     # For other languages, translate using Google Translate API with caching
     from app.services.translation import translate_text
+    
+    # Helper function to protect placeholders from translation
+    def protect_placeholders(text: str) -> tuple:
+        """Replace {placeholder} with numbered tokens to protect from translation."""
+        placeholders = re.findall(r'\{[a-zA-Z_]+\}', text)
+        protected = text
+        for i, ph in enumerate(placeholders):
+            protected = protected.replace(ph, f'[[PH{i}]]', 1)
+        return protected, placeholders
+    
+    def restore_placeholders(text: str, placeholders: list) -> str:
+        """Restore placeholders after translation."""
+        restored = text
+        for i, ph in enumerate(placeholders):
+            restored = restored.replace(f'[[PH{i}]]', ph)
+            # Also handle cases where Google adds spaces: [[ PH0 ]]
+            restored = restored.replace(f'[[ PH{i} ]]', ph)
+            restored = restored.replace(f'[[PH{i} ]]', ph)
+            restored = restored.replace(f'[[ PH{i}]]', ph)
+        return restored
     
     english_strings = EMAIL_I18N["en"]
     translated = {}
@@ -323,10 +345,15 @@ async def get_i18n_async(lang: str) -> Dict[str, str]:
         
         # Translate via Google Translate API
         try:
-            result = await translate_text(english_value, "en", lang)
+            # Protect placeholders before translation
+            protected_text, placeholders = protect_placeholders(english_value)
+            
+            result = await translate_text(protected_text, "en", lang)
             if result:
-                translated[key] = result
-                _email_translation_cache[cache_key] = result
+                # Restore placeholders after translation
+                final_result = restore_placeholders(result, placeholders)
+                translated[key] = final_result
+                _email_translation_cache[cache_key] = final_result
             else:
                 # Fallback to English if translation fails
                 translated[key] = english_value
