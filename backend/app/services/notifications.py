@@ -133,6 +133,8 @@ class EmailProvider:
         body_text: Optional[str] = None
     ) -> bool:
         try:
+            logger.info(f"[Email] Sending email to {to} with subject: {subject[:50]}...")
+            
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
             msg["From"] = f"{self.from_name} <{self.from_email}>"
@@ -152,9 +154,10 @@ class EmailProvider:
                     server.login(self.smtp_user, self.smtp_password)
                     server.send_message(msg)
             
+            logger.info(f"[Email] Successfully sent email to {to}")
             return True
         except Exception as e:
-            logger.error(f"Email error: {e}")
+            logger.error(f"[Email] Error sending to {to}: {e}")
             return False
 
 
