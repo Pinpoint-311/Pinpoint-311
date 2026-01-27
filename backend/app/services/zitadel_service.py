@@ -7,13 +7,19 @@ Includes built-in MFA support.
 
 Configuration is stored in Google Secret Manager (production)
 or encrypted database (local development).
+
+Supports both JWT (private key) and client secret authentication.
 """
 
 import httpx
 import logging
+import time
+import json
 from typing import Optional, Dict, Any
 from jose import jwt, JWTError
 from urllib.parse import urlencode
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
 
 logger = logging.getLogger(__name__)
 
@@ -35,13 +41,55 @@ async def get_zitadel_config() -> Optional[Dict[str, str]]:
         config_key = key.replace("ZITADEL_", "").lower()
         config[config_key] = value
     
-    # Check required keys
-    required = ["domain", "client_id", "client_secret"]
-    if not all(k in config for k in required):
-        logger.warning(f"Zitadel missing required secrets: {[k for k in required if k not in config]}")
+    # Check required keys - either JWT or client secret
+    has_jwt = "jwt_private_key" in config
+    has_secret = "client_secret" in config
+    
+    if not (has_jwt or has_secret):
+        logger.warning("Zitadel missing authentication: need either JWT_PRIVATE_KEY or CLIENT_SECRET")
+        return None
+    
+    if "domain" not in config or "client_id" not in config:
+        logger.warning("Zitadel missing required config: domain and client_id")
         return None
     
     return config
+
+
+def create_jwt_assertion(config: Dict[str, str]) -> str:
+    """Create a JWT assertion for client authentication using private key."""
+    domain = config["domain"]
+    if domain.startswith("http"):
+        base_url = domain
+    else:
+        base_url = f"https://{domain}"
+    
+    # Parse the private key
+    private_key_pem = config["jwt_private_key"]
+    private_key = serialization.load_pem_private_key(
+        private_key_pem.encode(),
+        password=None,
+        backend=default_backend()
+    )
+    
+    # Create JWT payload
+    now = int(time.time())
+    payload = {
+        "iss": config["client_id"],
+        "sub": config["client_id"],
+        "aud": f"{base_url}/oauth/v2/token",
+        "iat": now,
+        "exp": now + 300,  # 5 minutes
+    }
+    
+    # Sign the JWT with RS256
+    token = jwt.encode(
+        payload,
+        private_key,
+        algorithm="RS256"
+    )
+    
+    return token
 
 
 async def get_zitadel_status() -> Dict[str, Any]:
@@ -83,6 +131,7 @@ async def exchange_zitadel_code(code: str, redirect_uri: str) -> Optional[Dict[s
     Exchange Zitadel authorization code for tokens and user info.
     
     Returns user profile with email, name, and Zitadel user ID.
+    Supports both JWT (private key) and client secret authentication.
     """
     config = await get_zitadel_config()
     if not config:
@@ -96,16 +145,34 @@ async def exchange_zitadel_code(code: str, redirect_uri: str) -> Optional[Dict[s
     
     try:
         async with httpx.AsyncClient() as client:
+            # Prepare token request data
+            token_data = {
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": redirect_uri,
+            }
+            
+            # Use JWT assertion if private key is configured
+            if "jwt_private_key" in config:
+                logger.info("Using JWT assertion for Zitadel authentication")
+                jwt_assertion = create_jwt_assertion(config)
+                token_data.update({
+                    "client_id": config["client_id"],
+                    "client_assertion_type": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+                    "client_assertion": jwt_assertion,
+                })
+            else:
+                # Fall back to client secret
+                logger.info("Using client secret for Zitadel authentication")
+                token_data.update({
+                    "client_id": config["client_id"],
+                    "client_secret": config["client_secret"],
+                })
+            
             # Exchange code for tokens
             token_response = await client.post(
                 f"{base_url}/oauth/v2/token",
-                data={
-                    "client_id": config["client_id"],
-                    "client_secret": config["client_secret"],
-                    "code": code,
-                    "grant_type": "authorization_code",
-                    "redirect_uri": redirect_uri,
-                },
+                data=token_data,
                 headers={"Content-Type": "application/x-www-form-urlencoded"}
             )
             
