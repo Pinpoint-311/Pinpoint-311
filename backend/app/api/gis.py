@@ -11,6 +11,7 @@ import httpx
 from app.db.session import get_db
 from app.models import User, SystemSecret, SystemSettings
 from app.core.auth import get_current_admin, get_current_staff
+from app.core.encryption import decrypt_safe
 from app.services.geocoding import (
     GeocodingService, BoundaryService,
     get_geocoding_service, get_boundary_service
@@ -20,12 +21,15 @@ router = APIRouter()
 
 
 async def get_google_api_key(db: AsyncSession) -> Optional[str]:
-    """Get Google Maps API key from secrets"""
+    """Get Google Maps API key from secrets (decrypted)"""
     result = await db.execute(
         select(SystemSecret).where(SystemSecret.key_name == "GOOGLE_MAPS_API_KEY")
     )
     secret = result.scalar_one_or_none()
-    return secret.key_value if secret and secret.is_configured else None
+    if secret and secret.is_configured and secret.key_value:
+        # Decrypt the key if it's encrypted
+        return decrypt_safe(secret.key_value)
+    return None
 
 
 @router.get("/geocode")
