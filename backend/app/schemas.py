@@ -58,7 +58,6 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str = Field(..., min_length=6)
     department_ids: Optional[List[int]] = []
 
 

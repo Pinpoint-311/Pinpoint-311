@@ -71,6 +71,12 @@ DEFAULT_DEPARTMENTS = [
 
 # Default secrets (keys only, not values)
 DEFAULT_SECRETS = [
+    # Auth0 SSO (Required for authentication)
+    {"key_name": "AUTH0_DOMAIN", "description": "Auth0 tenant domain (e.g., yourtown.us.auth0.com)"},
+    {"key_name": "AUTH0_CLIENT_ID", "description": "Auth0 application client ID"},
+    {"key_name": "AUTH0_CLIENT_SECRET", "description": "Auth0 application client secret"},
+    {"key_name": "AUTH0_AUDIENCE", "description": "Auth0 API audience (optional, for API tokens)"},
+    
     # Google Maps / GIS
     {"key_name": "GOOGLE_MAPS_API_KEY", "description": "Google Maps API key for geocoding, maps, and translation"},
     {"key_name": "GOOGLE_MAPS_MAP_ID", "description": "Google Maps Map ID (from Cloud Console, with Feature Layers enabled)"},
@@ -100,6 +106,14 @@ DEFAULT_SECRETS = [
     {"key_name": "SMTP_FROM_EMAIL", "description": "From email address"},
     {"key_name": "SMTP_FROM_NAME", "description": "From name (e.g., Township 311)"},
     {"key_name": "SMTP_USE_TLS", "description": "Use TLS: true (port 587) or false (SSL on 465)"},
+    
+    # Database Backups
+    {"key_name": "BACKUP_S3_BUCKET", "description": "S3 bucket name for database backups"},
+    {"key_name": "BACKUP_S3_ACCESS_KEY", "description": "S3 access key ID"},
+    {"key_name": "BACKUP_S3_SECRET_KEY", "description": "S3 secret access key"},
+    {"key_name": "BACKUP_ENCRYPTION_KEY", "description": "Passphrase for backup encryption (AES-256)"},
+    {"key_name": "BACKUP_S3_ENDPOINT", "description": "S3 endpoint URL (for Oracle/non-AWS, optional)"},
+    {"key_name": "BACKUP_S3_REGION", "description": "S3 region (optional)"},
 ]
 
 

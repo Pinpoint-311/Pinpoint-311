@@ -30,9 +30,13 @@ class User(Base):
     username = Column(String(100), unique=True, index=True, nullable=False)
     email = Column(String(255), unique=True, index=True, nullable=False)
     full_name = Column(String(255))
-    hashed_password = Column(String(255), nullable=False)
-    role = Column(String(20), default="staff")  # admin, staff
+    hashed_password = Column(String(255), nullable=True)  # Nullable for SSO users
+    role = Column(String(20), default="staff")  # admin, staff, researcher
     is_active = Column(Boolean, default=True)
+    
+    # Auth0 SSO
+    auth0_id = Column(String(255), unique=True, index=True)  # Auth0 user ID (sub claim)
+    
     notification_preferences = Column(JSON, default={
         "email_new_requests": True,
         "email_status_changes": True,

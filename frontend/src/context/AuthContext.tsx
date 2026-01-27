@@ -1,9 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { User, AuthState } from '../types';
+import { AuthState } from '../types';
 import { api } from '../services/api';
 
 interface AuthContextType extends AuthState {
-    login: (username: string, password: string) => Promise<void>;
+    setToken: (token: string) => Promise<void>;
     logout: () => void;
 }
 
@@ -49,21 +49,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         fetchUser();
     }, [fetchUser]);
 
-    const login = async (username: string, password: string) => {
-        const { access_token } = await api.login(username, password);
-        localStorage.setItem('token', access_token);
-        api.setToken(access_token);
+    // Set token from SSO callback
+    const setToken = async (token: string) => {
+        localStorage.setItem('token', token);
+        api.setToken(token);
 
-        const user = await api.getMe();
-        setState({
-            user,
-            token: access_token,
-            isAuthenticated: true,
-            isLoading: false,
-        });
+        try {
+            const user = await api.getMe();
+            setState({
+                user,
+                token,
+                isAuthenticated: true,
+                isLoading: false,
+            });
+        } catch {
+            localStorage.removeItem('token');
+            api.setToken(null);
+            setState({
+                user: null,
+                token: null,
+                isAuthenticated: false,
+                isLoading: false,
+            });
+        }
     };
 
-    const logout = () => {
+    const logout = async () => {
         localStorage.removeItem('token');
         api.setToken(null);
         setState({
@@ -72,10 +83,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isAuthenticated: false,
             isLoading: false,
         });
+
+        // Get Auth0 logout URL and redirect
+        try {
+            const response = await fetch(`/api/auth/logout?return_to=${encodeURIComponent(window.location.origin)}`);
+            const data = await response.json();
+            if (data.logout_url) {
+                window.location.href = data.logout_url;
+            }
+        } catch (err) {
+            console.error('Failed to get logout URL:', err);
+        }
     };
 
     return (
-        <AuthContext.Provider value={{ ...state, login, logout }}>
+        <AuthContext.Provider value={{ ...state, setToken, logout }}>
             {children}
         </AuthContext.Provider>
     );
@@ -88,3 +110,4 @@ export const useAuth = (): AuthContextType => {
     }
     return context;
 };
+

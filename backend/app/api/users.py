@@ -89,7 +89,13 @@ async def create_user(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
-    """Create a new user (admin only)"""
+    """
+    Create a new user (admin only).
+    
+    Users are created with email as their identifier. They will log in via 
+    Auth0 SSO using their email address. No password is required as 
+    authentication is handled by Auth0.
+    """
     from app.models import Department
     
     # Check for existing username
@@ -108,11 +114,12 @@ async def create_user(
             detail="Email already exists"
         )
     
+    # Create user without password - they'll authenticate via SSO
     user = User(
         username=user_data.username,
         email=user_data.email,
         full_name=user_data.full_name,
-        hashed_password=get_password_hash(user_data.password),
+        hashed_password=None,  # No password for SSO users
         role=user_data.role.value,
         is_active=True
     )

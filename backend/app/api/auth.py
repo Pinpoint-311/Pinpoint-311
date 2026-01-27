@@ -1,51 +1,154 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+import secrets
+import logging
 
 from app.db.session import get_db
 from app.models import User
-from app.schemas import Token, LoginRequest
-from app.core.auth import verify_password, create_access_token, get_current_user
+from app.schemas import Token
+from app.core.auth import create_access_token, get_current_user
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+# Store state tokens temporarily (in production, use Redis)
+_pending_states: dict = {}
 
 
-@router.post("/login", response_model=Token)
-async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
+@router.get("/login")
+async def initiate_login(
+    redirect_uri: str = Query(..., description="Frontend callback URL"),
     db: AsyncSession = Depends(get_db)
 ):
-    """OAuth2 password flow login - accepts username or email"""
-    from sqlalchemy import or_
+    """
+    Initiate Auth0 login flow.
     
-    # Allow login with either username OR email
-    result = await db.execute(
-        select(User).where(
-            or_(
-                User.username == form_data.username,
-                User.email == form_data.username
-            )
+    Returns the Auth0 authorization URL to redirect the user to.
+    """
+    from app.services.auth0_service import get_auth0_login_url, get_auth0_status
+    
+    # Check if Auth0 is configured
+    status_info = await get_auth0_status()
+    if not status_info["configured"]:
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication not configured. Please configure Auth0 in Admin Console."
         )
-    )
+    
+    # Generate state token for CSRF protection
+    state = secrets.token_urlsafe(32)
+    _pending_states[state] = redirect_uri
+    
+    # Build callback URL (backend receives the code)
+    callback_url = redirect_uri.rsplit("/", 1)[0] + "/api/auth/callback"
+    
+    auth_url = get_auth0_login_url(callback_url, state)
+    if not auth_url:
+        raise HTTPException(status_code=503, detail="Failed to generate Auth0 login URL")
+    
+    return {"auth_url": auth_url, "state": state}
+
+
+@router.get("/callback")
+async def auth0_callback(
+    code: str = Query(...),
+    state: str = Query(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Auth0 callback endpoint.
+    
+    Receives the authorization code from Auth0, exchanges it for tokens,
+    creates/updates the user in our database, and returns a JWT.
+    """
+    from app.services.auth0_service import exchange_auth0_code
+    
+    # Verify state token
+    redirect_uri = _pending_states.pop(state, None)
+    if not redirect_uri:
+        raise HTTPException(status_code=400, detail="Invalid or expired state token")
+    
+    # Build callback URL (must match what we sent to Auth0)
+    callback_url = redirect_uri.rsplit("/", 1)[0] + "/api/auth/callback"
+    
+    # Exchange code for tokens and user info
+    user_info = await exchange_auth0_code(code, callback_url)
+    if not user_info:
+        raise HTTPException(status_code=401, detail="Authentication failed")
+    
+    if not user_info.get("email"):
+        raise HTTPException(status_code=400, detail="Email not provided by identity provider")
+    
+    email = user_info["email"].lower()
+    
+    # Find or create user
+    result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
     
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    if user:
+        # Update user info from provider
+        if user_info.get("name") and not user.full_name:
+            user.full_name = user_info["name"]
+        user.auth0_id = user_info.get("provider_id")
+        await db.commit()
+    else:
+        # Check if this email is pre-authorized (invited)
+        # For now, only allow users who already exist in the system
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=403,
+            detail="Account not found. Please contact an administrator to be added to the system."
         )
     
     if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is disabled",
-        )
+        raise HTTPException(status_code=403, detail="Account is disabled")
     
+    # Create our own JWT token
     access_token = create_access_token(data={"sub": user.username, "role": user.role})
-    return Token(access_token=access_token)
+    
+    # Redirect back to frontend with token
+    return RedirectResponse(
+        url=f"{redirect_uri}?token={access_token}",
+        status_code=302
+    )
+
+
+@router.get("/logout")
+async def logout(
+    return_to: str = Query(..., description="URL to return to after logout")
+):
+    """
+    Get Auth0 logout URL.
+    
+    Frontend should redirect to this URL to log out of Auth0.
+    """
+    from app.services.auth0_service import get_auth0_logout_url
+    
+    logout_url = get_auth0_logout_url(return_to)
+    if not logout_url:
+        # If Auth0 not configured, just return the return_to URL
+        return {"logout_url": return_to}
+    
+    return {"logout_url": logout_url}
+
+
+@router.get("/status")
+async def auth_status():
+    """
+    Get authentication configuration status.
+    
+    Returns whether Auth0 is configured and available.
+    """
+    from app.services.auth0_service import get_auth0_status
+    
+    status_info = await get_auth0_status()
+    return {
+        "auth0_configured": status_info["configured"],
+        "provider": "auth0" if status_info["configured"] else None,
+        "message": "Ready" if status_info["configured"] else "Auth0 not configured"
+    }
 
 
 @router.get("/me")
@@ -70,3 +173,4 @@ async def get_me(
         "role": user.role,
         "departments": [{"id": d.id, "name": d.name} for d in user.departments] if user.departments else []
     }
+

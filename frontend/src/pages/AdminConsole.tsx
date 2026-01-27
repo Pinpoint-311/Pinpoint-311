@@ -141,7 +141,6 @@ export default function AdminConsole() {
         username: '',
         email: '',
         full_name: '',
-        password: '',
         role: 'staff' as 'staff' | 'admin',
         department_ids: [] as number[],
     });
@@ -248,10 +247,7 @@ export default function AdminConsole() {
     const [isSearchingNominatim, setIsSearchingNominatim] = useState(false);
 
 
-    // Password reset state
-    const [showPasswordModal, setShowPasswordModal] = useState(false);
-    const [passwordResetUser, setPasswordResetUser] = useState<User | null>(null);
-    const [newPassword, setNewPassword] = useState('');
+    // SSO users don't have passwords - authentication handled by Auth0
 
     // Update in progress
     const [isUpdating, setIsUpdating] = useState(false);
@@ -492,18 +488,17 @@ export default function AdminConsole() {
 
         e.preventDefault();
         try {
-            // Clean up data - remove empty strings and send proper format
+            // Clean up data - send proper format for SSO users (no password needed)
             const userData = {
                 username: newUser.username,
                 email: newUser.email,
-                password: newUser.password,
                 role: newUser.role,
                 full_name: newUser.full_name || undefined,
                 department_ids: newUser.department_ids.length > 0 ? newUser.department_ids : undefined,
             };
             await api.createUser(userData as any);
             setShowUserModal(false);
-            setNewUser({ username: '', email: '', full_name: '', password: '', role: 'staff', department_ids: [] });
+            setNewUser({ username: '', email: '', full_name: '', role: 'staff', department_ids: [] });
             loadTabData();
         } catch (err: any) {
             console.error('Failed to create user:', err);
@@ -718,26 +713,7 @@ export default function AdminConsole() {
         navigate('/login');
     };
 
-    const handleResetPassword = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!passwordResetUser || !newPassword) return;
-        try {
-            await api.resetUserPassword(passwordResetUser.id, newPassword);
-            setShowPasswordModal(false);
-            setPasswordResetUser(null);
-            setNewPassword('');
-            setSaveMessage(`Password reset for ${passwordResetUser.username}`);
-            setTimeout(() => setSaveMessage(null), 3000);
-        } catch (err) {
-            console.error('Failed to reset password:', err);
-        }
-    };
-
-    const openPasswordReset = (u: User) => {
-        setPasswordResetUser(u);
-        setNewPassword('');
-        setShowPasswordModal(true);
-    };
+    // Note: Password reset functionality removed - using Auth0 SSO (users reset passwords in Auth0)
 
     const tabs = [
         { id: 'branding', icon: Palette, label: 'Branding' },
@@ -1218,15 +1194,6 @@ export default function AdminConsole() {
                                                     </td>
                                                     <td className="p-4 text-right">
                                                         <div className="flex items-center justify-end gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
-                                                            <Button
-                                                                variant="ghost"
-                                                                size="sm"
-                                                                onClick={() => openPasswordReset(u)}
-                                                                title="Reset password"
-                                                                className="hover:bg-white/10"
-                                                            >
-                                                                <RotateCcw className="w-4 h-4" />
-                                                            </Button>
                                                             <Button
                                                                 variant="ghost"
                                                                 size="sm"
@@ -2734,13 +2701,15 @@ export default function AdminConsole() {
                         onChange={(e) => setNewUser((p) => ({ ...p, email: e.target.value }))}
                         required
                     />
-                    <Input
-                        label="Password"
-                        type="password"
-                        value={newUser.password}
-                        onChange={(e) => setNewUser((p) => ({ ...p, password: e.target.value }))}
-                        required
-                    />
+
+                    {/* SSO Info */}
+                    <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-sm text-blue-200">
+                        <p className="font-medium">🔐 SSO Authentication</p>
+                        <p className="text-blue-200/70 mt-1">
+                            Users log in via Auth0 SSO using their email address. No password is required.
+                        </p>
+                    </div>
+
                     <Select
                         label="Role"
                         options={[
@@ -3695,27 +3664,7 @@ export default function AdminConsole() {
                 </form>
             </Modal>
 
-            {/* Password Reset Modal */}
-            <Modal isOpen={showPasswordModal} onClose={() => setShowPasswordModal(false)} title={`Reset Password for ${passwordResetUser?.username}`}>
-                <form onSubmit={handleResetPassword} className="space-y-4">
-                    <p className="text-white/70">
-                        Enter a new password for {passwordResetUser?.full_name || passwordResetUser?.username}. They will need to use this password to log in.
-                    </p>
-                    <Input
-                        label="New Password"
-                        type="password"
-                        value={newPassword}
-                        onChange={(e) => setNewPassword(e.target.value)}
-                        required
-                        minLength={6}
-                        placeholder="Minimum 6 characters"
-                    />
-                    <div className="flex justify-end gap-3 pt-4">
-                        <Button variant="ghost" onClick={() => setShowPasswordModal(false)}>Cancel</Button>
-                        <Button type="submit">Reset Password</Button>
-                    </div>
-                </form>
-            </Modal>
+            {/* Password management handled by Auth0 SSO */}
         </div>
     );
 }
