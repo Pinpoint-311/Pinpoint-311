@@ -603,3 +603,201 @@ span a,
     transform: translateX(-50%);
     font-size: 0.75rem;
 }
+
+/* ========================================
+   RTL (Right-to-Left) Language Support
+   Arabic, Hebrew, Persian, Urdu, etc.
+   ======================================== */
+
+/* Base RTL styles when dir="rtl" is set on html */
+html[dir="rtl"] {
+    direction: rtl;
+}
+
+/* Sidebar adjustments for RTL */
+html.rtl .glass-sidebar {
+    border-right: none;
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Flex direction fixes for RTL */
+html.rtl .flex-row {
+    flex-direction: row-reverse;
+}
+
+/* Icon margins - swap left/right */
+html.rtl .ml-2 {
+    margin-left: 0;
+    margin-right: 0.5rem;
+}
+
+html.rtl .ml-3 {
+    margin-left: 0;
+    margin-right: 0.75rem;
+}
+
+html.rtl .ml-4 {
+    margin-left: 0;
+    margin-right: 1rem;
+}
+
+html.rtl .mr-2 {
+    margin-right: 0;
+    margin-left: 0.5rem;
+}
+
+html.rtl .mr-3 {
+    margin-right: 0;
+    margin-left: 0.75rem;
+}
+
+html.rtl .mr-4 {
+    margin-right: 0;
+    margin-left: 1rem;
+}
+
+/* Padding adjustments */
+html.rtl .pl-4 {
+    padding-left: 0;
+    padding-right: 1rem;
+}
+
+html.rtl .pr-4 {
+    padding-right: 0;
+    padding-left: 1rem;
+}
+
+html.rtl .pl-6 {
+    padding-left: 0;
+    padding-right: 1.5rem;
+}
+
+html.rtl .pr-6 {
+    padding-right: 0;
+    padding-left: 1.5rem;
+}
+
+/* Text alignment */
+html.rtl .text-left {
+    text-align: right;
+}
+
+html.rtl .text-right {
+    text-align: left;
+}
+
+/* Border adjustments */
+html.rtl .border-l {
+    border-left: none;
+    border-right: 1px solid;
+}
+
+html.rtl .border-r {
+    border-right: none;
+    border-left: 1px solid;
+}
+
+html.rtl .border-l-2 {
+    border-left: none;
+    border-right: 2px solid;
+}
+
+html.rtl .border-r-2 {
+    border-right: none;
+    border-left: 2px solid;
+}
+
+html.rtl .border-l-4 {
+    border-left: none;
+    border-right: 4px solid;
+}
+
+html.rtl .border-r-4 {
+    border-right: none;
+    border-left: 4px solid;
+}
+
+/* Rounded corners for RTL */
+html.rtl .rounded-l {
+    border-radius: 0 0.25rem 0.25rem 0;
+}
+
+html.rtl .rounded-r {
+    border-radius: 0.25rem 0 0 0.25rem;
+}
+
+html.rtl .rounded-l-lg {
+    border-radius: 0 0.5rem 0.5rem 0;
+}
+
+html.rtl .rounded-r-lg {
+    border-radius: 0.5rem 0 0 0.5rem;
+}
+
+html.rtl .rounded-l-xl {
+    border-radius: 0 0.75rem 0.75rem 0;
+}
+
+html.rtl .rounded-r-xl {
+    border-radius: 0.75rem 0 0 0.75rem;
+}
+
+/* Position adjustments */
+html.rtl .left-0 {
+    left: auto;
+    right: 0;
+}
+
+html.rtl .right-0 {
+    right: auto;
+    left: 0;
+}
+
+html.rtl .left-4 {
+    left: auto;
+    right: 1rem;
+}
+
+html.rtl .right-4 {
+    right: auto;
+    left: 1rem;
+}
+
+/* Transform adjustments for icons/arrows */
+html.rtl .rotate-180 {
+    transform: rotate(0deg);
+}
+
+html.rtl .-rotate-90 {
+    transform: rotate(90deg);
+}
+
+html.rtl .rotate-90 {
+    transform: rotate(-90deg);
+}
+
+/* Scrollbar position for RTL (Webkit browsers) */
+html.rtl ::-webkit-scrollbar {
+    direction: rtl;
+}
+
+/* Input text alignment */
+html.rtl input,
+html.rtl textarea,
+html.rtl select {
+    text-align: right;
+}
+
+/* Exclude specific elements that should stay LTR (like numbers, code) */
+html.rtl [data-ltr],
+html.rtl code,
+html.rtl pre,
+html.rtl .font-mono {
+    direction: ltr;
+    text-align: left;
+}
+
+/* RTL banner message alignment */
+html.rtl [data-no-translate] {
+    direction: rtl;
+}
