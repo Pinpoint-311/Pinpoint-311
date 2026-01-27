@@ -339,9 +339,53 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
         processTranslation();
     }, [language, processTranslation]);
 
+    // Get language display name
+    const getLanguageName = (code: string) => {
+        const names: Record<string, string> = {
+            en: 'English',
+            es: 'Español',
+            zh: '中文',
+            hi: 'हिन्दी',
+            gu: 'ગુજરાતી',
+            ko: '한국어',
+            sq: 'Shqip',
+            ar: 'العربية',
+            pt: 'Português',
+            fr: 'Français',
+            de: 'Deutsch',
+            it: 'Italiano',
+            ja: '日本語',
+            ru: 'Русский',
+            vi: 'Tiếng Việt',
+            tl: 'Tagalog',
+        };
+        return names[code] || code.toUpperCase();
+    };
+
     return (
-        <div ref={containerRef} style={{ display: 'contents' }}>
-            {children}
-        </div>
+        <>
+            {/* Translation accuracy banner */}
+            {language !== 'en' && (
+                <div
+                    className="fixed top-0 left-0 right-0 z-[9999] bg-gradient-to-r from-amber-500/95 to-orange-500/95 text-white py-2 px-4 text-center text-sm font-medium shadow-lg backdrop-blur-sm"
+                    data-no-translate
+                >
+                    <div className="flex items-center justify-center gap-2">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
+                        </svg>
+                        <span>
+                            This page has been automatically translated to <strong>{getLanguageName(language)}</strong>.
+                            Translations may not be 100% accurate.
+                        </span>
+                    </div>
+                </div>
+            )}
+            {/* Add top padding when banner is shown */}
+            <div ref={containerRef} style={{ display: 'contents', paddingTop: language !== 'en' ? '40px' : 0 }}>
+                {language !== 'en' && <div style={{ height: '40px' }} />}
+                {children}
+            </div>
+        </>
     );
 }
