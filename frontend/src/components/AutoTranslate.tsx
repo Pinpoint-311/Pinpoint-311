@@ -82,6 +82,7 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
     // Translation progress state
     const [translationProgress, setTranslationProgress] = useState(100);
     const [isTranslating, setIsTranslating] = useState(false);
+    const isTranslatingRef = useRef(false); // Ref to prevent re-triggering
 
     // Load cache on mount
     useEffect(() => {
@@ -282,6 +283,7 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
         // Translate in batches of 100
         if (textsToTranslate.length > 0) {
             setIsTranslating(true);
+            isTranslatingRef.current = true;
             setTranslationProgress(0);
             const totalTexts = textsToTranslate.length;
             let translatedCount = 0;
@@ -309,18 +311,22 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
             }
 
             setIsTranslating(false);
+            isTranslatingRef.current = false;
             setTranslationProgress(100);
         }
     }, [language, getTextNodes, getTranslatableAttributes, translateTexts]);
 
     // Debounced translation
     const scheduleTranslation = useCallback(() => {
+        // Skip if already translating
+        if (isTranslatingRef.current) return;
+
         if (translationTimeoutRef.current) {
             clearTimeout(translationTimeoutRef.current);
         }
         translationTimeoutRef.current = setTimeout(() => {
             processTranslation();
-        }, 100);
+        }, 150);
     }, [processTranslation]);
 
     // Set up MutationObserver to watch for DOM changes
