@@ -53,6 +53,9 @@ import {
     Layers,
     Upload,
     BarChart3,
+    Terminal,
+    Copy,
+    ExternalLink,
     type LucideIcon,
 } from 'lucide-react';
 import { Button, Card, Modal, Input, Select, Badge } from '../components/ui';
@@ -95,7 +98,7 @@ const ICON_LIBRARY: { name: string; icon: LucideIcon }[] = [
     { name: 'Users', icon: Users },
 ];
 
-type Tab = 'branding' | 'users' | 'departments' | 'services' | 'secrets' | 'modules' | 'maps' | 'retention';
+type Tab = 'branding' | 'users' | 'departments' | 'services' | 'secrets' | 'modules' | 'maps' | 'retention' | 'setup';
 
 export default function AdminConsole() {
     const navigate = useNavigate();
@@ -125,7 +128,8 @@ export default function AdminConsole() {
             secrets: 'API Keys',
             modules: 'Modules',
             maps: 'Maps Configuration',
-            retention: 'Document Retention'
+            retention: 'Document Retention',
+            setup: 'Setup Guide'
         };
         updateTitle(tabTitles[currentTab]);
         scrollToTop('instant');
@@ -724,6 +728,7 @@ export default function AdminConsole() {
         { id: 'modules', icon: Puzzle, label: 'Modules' },
         { id: 'maps', icon: MapPin, label: 'Maps' },
         { id: 'retention', icon: Clock, label: 'Retention' },
+        { id: 'setup', icon: Terminal, label: 'Setup Guide' },
     ];
 
     return (
@@ -2716,6 +2721,136 @@ export default function AdminConsole() {
                                                 ))}
                                             </tbody>
                                         </table>
+                                    </div>
+                                </Card>
+                            </div>
+                        )}
+
+                        {/* Setup Guide Tab */}
+                        {currentTab === 'setup' && (
+                            <div className="space-y-6">
+                                <div>
+                                    <h1 className="text-2xl font-bold text-white">Setup Guide</h1>
+                                    <p className="text-white/60 mt-2">Cloud infrastructure setup commands for your server terminal.</p>
+                                </div>
+
+                                {/* GCP Setup */}
+                                <Card className="p-6">
+                                    <div className="flex items-center gap-3 mb-4">
+                                        <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
+                                            <Sparkles className="w-5 h-5 text-blue-400" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-lg font-semibold text-white">Google Cloud Platform</h3>
+                                            <p className="text-white/60 text-sm">KMS encryption, Translation API, Vertex AI, Secret Manager</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-slate-900/50 rounded-lg p-4 border border-white/10">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <span className="text-white/60 text-sm font-medium">Run on your server:</span>
+                                            <button
+                                                onClick={() => {
+                                                    navigator.clipboard.writeText('./scripts/setup_gcp.sh YOUR_PROJECT_ID');
+                                                    setSaveMessage('Copied to clipboard!');
+                                                    setTimeout(() => setSaveMessage(null), 2000);
+                                                }}
+                                                className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-sm text-white/80 transition-colors"
+                                            >
+                                                <Copy className="w-4 h-4" />
+                                                Copy
+                                            </button>
+                                        </div>
+                                        <code className="text-green-400 font-mono text-sm block bg-black/30 rounded p-3">
+                                            ./scripts/setup_gcp.sh YOUR_PROJECT_ID
+                                        </code>
+                                    </div>
+
+                                    <div className="mt-4 text-white/50 text-sm">
+                                        <p className="flex items-center gap-2"><Check className="w-4 h-4 text-green-400" /> Requires <code className="bg-white/10 px-1 rounded">gcloud</code> CLI installed and authenticated</p>
+                                        <p className="flex items-center gap-2 mt-1"><Check className="w-4 h-4 text-green-400" /> Creates KMS key ring and encryption key</p>
+                                        <p className="flex items-center gap-2 mt-1"><Check className="w-4 h-4 text-green-400" /> Enables Translation, Vertex AI, and Secret Manager APIs</p>
+                                    </div>
+                                </Card>
+
+                                {/* Zitadel Setup */}
+                                <Card className="p-6">
+                                    <div className="flex items-center gap-3 mb-4">
+                                        <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center">
+                                            <Shield className="w-5 h-5 text-amber-400" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-lg font-semibold text-white">Zitadel Cloud SSO</h3>
+                                            <p className="text-white/60 text-sm">Single Sign-On with MFA and Passkeys</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-slate-900/50 rounded-lg p-4 border border-white/10">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <span className="text-white/60 text-sm font-medium">Run on your server:</span>
+                                            <button
+                                                onClick={() => {
+                                                    navigator.clipboard.writeText('./scripts/setup_zitadel.sh');
+                                                    setSaveMessage('Copied to clipboard!');
+                                                    setTimeout(() => setSaveMessage(null), 2000);
+                                                }}
+                                                className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-sm text-white/80 transition-colors"
+                                            >
+                                                <Copy className="w-4 h-4" />
+                                                Copy
+                                            </button>
+                                        </div>
+                                        <code className="text-green-400 font-mono text-sm block bg-black/30 rounded p-3">
+                                            ./scripts/setup_zitadel.sh
+                                        </code>
+                                    </div>
+
+                                    <div className="mt-4 text-white/50 text-sm">
+                                        <p className="flex items-center gap-2"><Check className="w-4 h-4 text-green-400" /> Shows manual setup instructions</p>
+                                        <p className="flex items-center gap-2 mt-1"><Check className="w-4 h-4 text-green-400" /> Or automate with: <code className="bg-white/10 px-1 rounded">./scripts/setup_zitadel.sh DOMAIN TOKEN APP_DOMAIN</code></p>
+                                    </div>
+
+                                    <a
+                                        href="https://zitadel.cloud"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-2 mt-4 text-amber-400 hover:text-amber-300 text-sm transition-colors"
+                                    >
+                                        <ExternalLink className="w-4 h-4" />
+                                        Create free Zitadel Cloud account →
+                                    </a>
+                                </Card>
+
+                                {/* Quick Links */}
+                                <Card className="p-6">
+                                    <h3 className="text-lg font-semibold text-white mb-4">Documentation</h3>
+                                    <div className="grid gap-3">
+                                        <a
+                                            href="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template#-security-standards"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="flex items-center gap-3 p-3 bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
+                                        >
+                                            <Shield className="w-5 h-5 text-green-400" />
+                                            <div>
+                                                <p className="text-white font-medium">Security Standards</p>
+                                                <p className="text-white/50 text-sm">Enterprise security stack documentation</p>
+                                            </div>
+                                            <ExternalLink className="w-4 h-4 text-white/40 ml-auto" />
+                                        </a>
+                                        <a
+                                            href="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/blob/main/COMPLIANCE.md"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="flex items-center gap-3 p-3 bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
+                                        >
+                                            <FileText className="w-5 h-5 text-blue-400" />
+                                            <div>
+                                                <p className="text-white font-medium">Compliance Guide</p>
+                                                <p className="text-white/50 text-sm">Government compliance and security posture</p>
+                                            </div>
+                                            <ExternalLink className="w-4 h-4 text-white/40 ml-auto" />
+                                        </a>
                                     </div>
                                 </Card>
                             </div>
