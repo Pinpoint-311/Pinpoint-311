@@ -753,7 +753,7 @@ export default function AdminConsole() {
                                 <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-orange-600 flex items-center justify-center">
                                     <Sparkles className="w-5 h-5 text-white" aria-hidden="true" />
                                 </div>
-                                <div className="text-left">
+                                <div className="text-left" data-no-translate>
                                     <h2 className="font-semibold text-white">Admin Console</h2>
                                     <p className="text-xs text-white/50">{settings?.township_name}</p>
                                 </div>

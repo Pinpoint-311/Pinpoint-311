@@ -381,7 +381,7 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
             {/* Translation accuracy banner - in the user's selected language */}
             {language !== 'en' && (
                 <div
-                    className="fixed top-0 left-0 right-0 z-[9999] bg-gradient-to-r from-amber-500/95 to-orange-500/95 text-white shadow-lg backdrop-blur-sm"
+                    className="fixed top-0 left-0 right-0 z-[100] bg-gradient-to-r from-slate-700/95 to-slate-800/95 text-white/90 shadow-lg backdrop-blur-sm border-b border-white/10"
                     data-no-translate
                 >
                     <div className="py-2 px-4 text-center text-sm font-medium">

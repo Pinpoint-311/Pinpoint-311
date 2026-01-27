@@ -691,7 +691,7 @@ export default function StaffDashboard() {
                                         <Sparkles className="w-5 h-5 text-white" />
                                     </div>
                                 )}
-                                <div className="text-left">
+                                <div className="text-left" data-no-translate>
                                     <h2 className="font-semibold text-white">Staff Command</h2>
                                     <p className="text-xs text-white/50">{settings?.township_name}</p>
                                 </div>

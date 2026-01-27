@@ -438,7 +438,7 @@ export default function ResidentPortal() {
                             <Sparkles className="w-6 h-6 text-white" />
                         </div>
                     )}
-                    <h1 className="text-xl font-semibold text-white hidden sm:block">
+                    <h1 className="text-xl font-semibold text-white hidden sm:block" data-no-translate>
                         {settings?.township_name || 'Township 311'}
                     </h1>
                 </button>
@@ -1224,6 +1224,7 @@ export default function ResidentPortal() {
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-primary-400/70 hover:text-primary-300 transition-colors"
+                            data-no-translate
                         >
                             Pinpoint 311
                         </a>

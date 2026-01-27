@@ -72,7 +72,7 @@ export default function Login() {
                                     <Sparkles className="w-8 h-8 text-white" />
                                 </div>
                             )}
-                            <h1 className="text-2xl font-bold text-white">
+                            <h1 className="text-2xl font-bold text-white" data-no-translate>
                                 {settings?.township_name || 'Township 311'}
                             </h1>
                             <p className="text-white/50 mt-2">Staff Access Portal</p>
@@ -144,6 +144,7 @@ export default function Login() {
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="text-primary-400/50 hover:text-primary-300 transition-colors"
+                                    data-no-translate
                                 >
                                     Pinpoint 311
                                 </a>
