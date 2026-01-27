@@ -326,14 +326,36 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
         }
         translationTimeoutRef.current = setTimeout(() => {
             processTranslation();
-        }, 150);
+        }, 300); // Increased debounce
     }, [processTranslation]);
 
     // Set up MutationObserver to watch for DOM changes
     useEffect(() => {
         if (!containerRef.current) return;
 
-        observerRef.current = new MutationObserver(() => {
+        observerRef.current = new MutationObserver((mutations) => {
+            // Ignore mutations that are just user typing in input/textarea
+            const isUserInput = mutations.every(mutation => {
+                const target = mutation.target as Node;
+                const parent = target.parentElement;
+
+                // Check if mutation is in an input, textarea, or contenteditable
+                if (target.nodeName === 'INPUT' || target.nodeName === 'TEXTAREA') return true;
+                if (parent?.nodeName === 'INPUT' || parent?.nodeName === 'TEXTAREA') return true;
+                if (parent?.getAttribute('contenteditable') === 'true') return true;
+
+                // Check if it's a text change in a form field
+                if (mutation.type === 'characterData') {
+                    const closestInput = (target.parentElement as HTMLElement)?.closest('input, textarea, [contenteditable="true"]');
+                    if (closestInput) return true;
+                }
+
+                return false;
+            });
+
+            // Skip if all mutations are user input
+            if (isUserInput) return;
+
             scheduleTranslation();
         });
 
@@ -341,7 +363,7 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
             childList: true,
             subtree: true,
             characterData: true,
-            attributes: true, // Also watch for attribute changes
+            attributes: true,
             attributeFilter: TRANSLATABLE_ATTRIBUTES
         });
 
