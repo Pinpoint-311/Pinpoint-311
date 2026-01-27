@@ -4,6 +4,9 @@ Encryption utilities for protecting sensitive data at rest.
 Uses Fernet symmetric encryption (AES-128-CBC with HMAC) derived from 
 the application's SECRET_KEY environment variable.
 
+For PII data (resident email, phone, name), uses Google Cloud KMS
+for HSM-backed encryption with full audit logging.
+
 Government compliance: Secrets are encrypted before storage and 
 decrypted only when needed by authorized services.
 """
@@ -11,6 +14,7 @@ decrypted only when needed by authorized services.
 import base64
 import hashlib
 import logging
+import os
 from typing import Optional
 from cryptography.fernet import Fernet, InvalidToken
 from functools import lru_cache
@@ -19,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Prefix used to identify encrypted values
 ENCRYPTED_PREFIX = "gAAAA"  # Fernet tokens always start with this
+KMS_ENCRYPTED_PREFIX = "kms:"  # Google KMS encrypted values
 
 
 def _derive_key(secret_key: str) -> bytes:
@@ -105,7 +110,7 @@ def decrypt(ciphertext: str) -> str:
 
 def is_encrypted(value: Optional[str]) -> bool:
     """
-    Check if a value appears to be encrypted (Fernet format).
+    Check if a value appears to be encrypted (Fernet or KMS format).
     
     This is used during migration to handle both encrypted and 
     legacy unencrypted values.
@@ -114,11 +119,11 @@ def is_encrypted(value: Optional[str]) -> bool:
         value: The string to check
         
     Returns:
-        True if the value appears to be Fernet-encrypted
+        True if the value appears to be encrypted
     """
     if not value:
         return False
-    return value.startswith(ENCRYPTED_PREFIX)
+    return value.startswith(ENCRYPTED_PREFIX) or value.startswith(KMS_ENCRYPTED_PREFIX)
 
 
 def decrypt_safe(ciphertext: str) -> str:
@@ -137,6 +142,10 @@ def decrypt_safe(ciphertext: str) -> str:
     if not ciphertext:
         return ciphertext
     
+    # Check if it's KMS encrypted
+    if ciphertext.startswith(KMS_ENCRYPTED_PREFIX):
+        return decrypt_pii(ciphertext)
+    
     # Check if it looks like an encrypted value
     if not is_encrypted(ciphertext):
         # Return as-is (legacy unencrypted value)
@@ -152,4 +161,147 @@ def decrypt_safe(ciphertext: str) -> str:
         return ""
     except Exception as e:
         logger.error(f"Unexpected decryption error: {e}")
+        return ""
+
+
+# ============================================================================
+# Google Cloud KMS - For PII Data (Resident Info)
+# ============================================================================
+
+_kms_client = None
+_kms_key_name = None
+
+
+def _is_kms_available() -> bool:
+    """Check if Google Cloud KMS is available."""
+    project = os.getenv("GOOGLE_CLOUD_PROJECT")
+    return bool(project)
+
+
+def _get_kms_key_name() -> Optional[str]:
+    """Get the KMS key resource name."""
+    global _kms_key_name
+    
+    if _kms_key_name:
+        return _kms_key_name
+    
+    project = os.getenv("GOOGLE_CLOUD_PROJECT")
+    if not project:
+        return None
+    
+    # Key location and ring can be configured, defaults to reasonable values
+    location = os.getenv("KMS_LOCATION", "us-central1")
+    key_ring = os.getenv("KMS_KEY_RING", "pinpoint311")
+    key_id = os.getenv("KMS_KEY_ID", "pii-encryption")
+    
+    _kms_key_name = f"projects/{project}/locations/{location}/keyRings/{key_ring}/cryptoKeys/{key_id}"
+    return _kms_key_name
+
+
+def _get_kms_client():
+    """Get a cached KMS client."""
+    global _kms_client
+    
+    if _kms_client:
+        return _kms_client
+    
+    try:
+        from google.cloud import kms
+        _kms_client = kms.KeyManagementServiceClient()
+        return _kms_client
+    except Exception as e:
+        logger.warning(f"Failed to initialize KMS client: {e}")
+        return None
+
+
+def encrypt_pii(plaintext: str) -> str:
+    """
+    Encrypt PII data (resident email, phone, name) using Google Cloud KMS.
+    
+    Falls back to Fernet encryption if KMS is not available (local dev).
+    
+    Args:
+        plaintext: The PII data to encrypt
+        
+    Returns:
+        Encrypted string prefixed with "kms:" or Fernet encrypted
+    """
+    if not plaintext:
+        return plaintext
+    
+    if not _is_kms_available():
+        # Fallback to Fernet for local development
+        return encrypt(plaintext)
+    
+    try:
+        client = _get_kms_client()
+        key_name = _get_kms_key_name()
+        
+        if not client or not key_name:
+            return encrypt(plaintext)
+        
+        # Encrypt the plaintext
+        response = client.encrypt(
+            request={
+                "name": key_name,
+                "plaintext": plaintext.encode("utf-8")
+            }
+        )
+        
+        # Base64 encode and add prefix
+        encrypted_b64 = base64.b64encode(response.ciphertext).decode("utf-8")
+        return f"{KMS_ENCRYPTED_PREFIX}{encrypted_b64}"
+        
+    except Exception as e:
+        logger.error(f"KMS encryption failed, falling back to Fernet: {e}")
+        return encrypt(plaintext)
+
+
+def decrypt_pii(ciphertext: str) -> str:
+    """
+    Decrypt PII data encrypted with Google Cloud KMS.
+    
+    Args:
+        ciphertext: The encrypted string (with "kms:" prefix)
+        
+    Returns:
+        Decrypted plaintext
+    """
+    if not ciphertext:
+        return ciphertext
+    
+    # Handle non-KMS encrypted values
+    if not ciphertext.startswith(KMS_ENCRYPTED_PREFIX):
+        return decrypt_safe(ciphertext)
+    
+    if not _is_kms_available():
+        logger.error("KMS encrypted data but KMS not available")
+        return ""
+    
+    try:
+        client = _get_kms_client()
+        key_name = _get_kms_key_name()
+        
+        if not client or not key_name:
+            logger.error("KMS client or key not available")
+            return ""
+        
+        # Remove prefix and decode
+        encrypted_b64 = ciphertext[len(KMS_ENCRYPTED_PREFIX):]
+        encrypted_bytes = base64.b64decode(encrypted_b64)
+        
+        # Decrypt
+        response = client.decrypt(
+            request={
+                "name": key_name,
+                "ciphertext": encrypted_bytes
+            }
+        )
+        
+        return response.plaintext.decode("utf-8")
+        
+    except Exception as e:
+        logger.error(f"KMS decryption failed: {e}")
+        return ""
+
         return ""

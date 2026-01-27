@@ -34,18 +34,18 @@ async def generate_bootstrap_token(
     
     Requires the INITIAL_ADMIN_PASSWORD from environment to authorize.
     """
-    from app.services.auth0_service import get_auth0_status
+    from app.services.zitadel_service import get_zitadel_status
     from app.core.config import get_settings
     from fastapi import Header
     
     settings = get_settings()
     
     # Check if Auth0 is already configured
-    status_info = await get_auth0_status()
+    status_info = await get_zitadel_status()
     if status_info["configured"]:
         raise HTTPException(
             status_code=403,
-            detail="Bootstrap access disabled - Auth0 is already configured. Use SSO to log in."
+            detail="Bootstrap access disabled - Zitadel SSO is already configured. Use SSO to log in."
         )
     
     # Find admin user
@@ -86,11 +86,11 @@ async def use_bootstrap_token(
     
     ONLY works when Auth0 is NOT configured.
     """
-    from app.services.auth0_service import get_auth0_status
-    import time
+    from app.services.zitadel_service import get_zitadel_status
+    import time as time_module
     
-    # Check if Auth0 is configured - if so, reject
-    status_info = await get_auth0_status()
+    # Check if SSO is already configured
+    status_info = await get_zitadel_status()
     if status_info["configured"]:
         # Clear all bootstrap tokens since Auth0 is now configured
         _bootstrap_tokens.clear()
@@ -105,7 +105,7 @@ async def use_bootstrap_token(
         raise HTTPException(status_code=401, detail="Invalid or expired bootstrap token")
     
     # Check expiry
-    if time.time() > token_data["expires"]:
+    if time_module.time() > token_data["expires"]:
         raise HTTPException(status_code=401, detail="Bootstrap token has expired")
     
     # Get user
@@ -146,12 +146,12 @@ async def initiate_login(
     """
     Initiate Auth0 login flow.
     
-    Returns the Auth0 authorization URL to redirect the user to.
+    Returns the Auth0 authorization    (token exchange handled by callback endpoint).
     """
-    from app.services.auth0_service import get_auth0_login_url, get_auth0_status
+    from app.services.zitadel_service import get_zitadel_login_url, get_zitadel_status
     
-    # Check if Auth0 is configured
-    status_info = await get_auth0_status()
+    # Check if Zitadel is configured
+    status_info = await get_zitadel_status()
     if not status_info["configured"]:
         raise HTTPException(
             status_code=503,
@@ -165,9 +165,9 @@ async def initiate_login(
     # Build callback URL (backend receives the code)
     callback_url = redirect_uri.rsplit("/", 1)[0] + "/api/auth/callback"
     
-    auth_url = get_auth0_login_url(callback_url, state)
+    auth_url = await get_zitadel_login_url(callback_url, state)
     if not auth_url:
-        raise HTTPException(status_code=503, detail="Failed to generate Auth0 login URL")
+        raise HTTPException(status_code=503, detail="Failed to generate Zitadel login URL")
     
     return {"auth_url": auth_url, "state": state}
 
@@ -184,7 +184,7 @@ async def auth0_callback(
     Receives the authorization code from Auth0, exchanges it for tokens,
     creates/updates the user in our database, and returns a JWT.
     """
-    from app.services.auth0_service import exchange_auth0_code
+    from app.services.zitadel_service import exchange_zitadel_code
     
     # Verify state token
     redirect_uri = _pending_states.pop(state, None)
@@ -195,7 +195,7 @@ async def auth0_callback(
     callback_url = redirect_uri.rsplit("/", 1)[0] + "/api/auth/callback"
     
     # Exchange code for tokens and user info
-    user_info = await exchange_auth0_code(code, callback_url)
+    user_info = await exchange_zitadel_code(code, callback_url)
     if not user_info:
         raise HTTPException(status_code=401, detail="Authentication failed")
     
@@ -244,9 +244,9 @@ async def logout(
     
     Frontend should redirect to this URL to log out of Auth0.
     """
-    from app.services.auth0_service import get_auth0_logout_url
+    from app.services.zitadel_service import get_zitadel_logout_url
     
-    logout_url = get_auth0_logout_url(return_to)
+    logout_url = await get_zitadel_logout_url(return_to)
     if not logout_url:
         # If Auth0 not configured, just return the return_to URL
         return {"logout_url": return_to}
@@ -259,11 +259,11 @@ async def auth_status():
     """
     Get authentication configuration status.
     
-    Returns whether Auth0 is configured and available.
+    Clear all session data and optionally redirect to Zitadel logout.
     """
-    from app.services.auth0_service import get_auth0_status
+    from app.services.zitadel_service import get_zitadel_status
     
-    status_info = await get_auth0_status()
+    status_info = await get_zitadel_status()
     return {
         "auth0_configured": status_info["configured"],
         "provider": "auth0" if status_info["configured"] else None,

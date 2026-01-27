@@ -27,6 +27,20 @@ services:
       timeout: 5s
       retries: 5
 
+  # Watchtower - Automatic container updates for security
+  watchtower:
+    image: containrrr/watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_SCHEDULE: "0 0 3 * * *" # Update at 3am daily
+      WATCHTOWER_ROLLING_RESTART: "true"
+      WATCHTOWER_INCLUDE_STOPPED: "false"
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
   backend:
     build: ./backend
     restart: unless-stopped
@@ -41,6 +55,7 @@ services:
       INITIAL_ADMIN_USER: ${INITIAL_ADMIN_USER:-admin}
       INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-admin@example.com}
       INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-admin123}
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
       GOOGLE_VERTEX_PROJECT: ${GOOGLE_VERTEX_PROJECT:-}
       GOOGLE_VERTEX_LOCATION: ${GOOGLE_VERTEX_LOCATION:-us-central1}
       PROJECT_ROOT: /project
@@ -102,3 +117,5 @@ volumes:
   postgres_data:
   caddy_data:
   caddy_config:
+
+

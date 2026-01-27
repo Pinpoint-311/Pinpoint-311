@@ -33,18 +33,76 @@ The Pinpoint 311 platform is designed for on-premises deployment within municipa
 
 ## 2. Security Posture
 
-### Authentication & Authorization
+### Enterprise Security Stack
+
+Pinpoint 311 implements a production-grade, managed security stack:
+
+| Component | Purpose | Provider |
+|-----------|---------|----------|
+| **Zitadel Cloud** | SSO with MFA & Passkeys | Managed Identity |
+| **Google Secret Manager** | API keys & credentials | Google Cloud |
+| **Google Cloud KMS** | Resident PII encryption | Google Cloud |
+| **Watchtower** | Container auto-updates | Self-hosted |
+
+### Zero-Password Authentication (Zitadel Cloud)
+
+Staff login via **Zitadel Cloud SSO** eliminates password-related vulnerabilities:
 
 | Feature | Implementation |
 |---------|----------------|
-| Password Storage | bcrypt one-way hashing with automatic salting |
-| Session Management | JWT tokens with configurable expiration (default 8 hours) |
-| Endpoint Security | FastAPI role-based dependency injection |
-| Login Protection | Per-user authentication with salted hashes |
+| Authentication | Zitadel Cloud OIDC with JWT tokens |
+| Multi-Factor | TOTP, passkeys, biometric support |
+| Session Management | JWT tokens with 8-hour expiration |
+| Passwordless | WebAuthn/passkeys for phishing resistance |
+| Social Login | Google, Microsoft identity providers |
+| Password Storage | **None** - fully delegated to Zitadel |
 
-### Encryption at Rest
+### Secrets Management (Google Secret Manager)
 
-All sensitive data stored in the `system_secrets` table is encrypted before database storage:
+API credentials stored in Google Secret Manager with HSM-backed encryption:
+
+| Property | Value |
+|----------|-------|
+| Storage | Google Cloud Secret Manager |
+| Encryption | Google-managed HSMs (AES-256-GCM) |
+| Access Control | IAM + VPC controls |
+| Audit Logging | Full access logs in Cloud Audit |
+| Free Tier | 6 active secret versions (bundled secrets) |
+
+**Protected Secrets (6 Bundles):**
+- `secret-zitadel`: SSO credentials
+- `secret-smtp`: Email configuration
+- `secret-sms`: SMS provider keys
+- `secret-google`: Maps, Vertex AI credentials
+- `secret-backup`: S3/backup configuration
+- `secret-config`: Township-specific settings
+
+### PII Encryption (Google Cloud KMS)
+
+Resident personal information encrypted with Google Cloud KMS:
+
+| Property | Value |
+|----------|-------|
+| Algorithm | AES-256-GCM (HSM-backed) |
+| Key Management | Google-managed, automatic rotation |
+| Protected Fields | Email, phone, name, address |
+| Audit Trail | Cloud Audit Logs for all encrypt/decrypt |
+| Compliance | SOC 2, ISO 27001, FedRAMP eligible |
+
+### Container Auto-Updates (Watchtower)
+
+Automatic security patching via Watchtower:
+
+| Property | Value |
+|----------|-------|
+| Schedule | Daily at 3am (configurable) |
+| Restart | Rolling restarts for zero downtime |
+| Containers | PostgreSQL, Redis, Caddy, Backend |
+| Cleanup | Old images automatically removed |
+
+### Legacy Encryption (Local Development)
+
+For environments without GCP, Fernet encryption provides fallback:
 
 | Property | Value |
 |----------|-------|
@@ -53,13 +111,6 @@ All sensitive data stored in the `system_secrets` table is encrypted before data
 | Key Size | 256-bit derived key |
 | Implementation | `cryptography` library (PyCA) |
 | Location | `backend/app/core/encryption.py` |
-
-**Protected Secrets:**
-- Google Maps API Key
-- Twilio Account SID / Auth Token
-- SMTP Credentials (username, password)
-- Vertex AI Service Account JSON
-- SMS HTTP API Keys
 
 ### Rate Limiting
 
@@ -135,11 +186,14 @@ AI priority suggestions follow a **strict human accountability model**:
 
 | Area | Current State | Risk | Remediation |
 |------|---------------|------|-------------|
-| **MFA** | Single-factor only | Moderate | Integrate TOTP or SSO (OIDC/SAML) for staff |
+| **MFA** | ✅ **Implemented** (Zitadel Cloud SSO) | Resolved | TOTP, passkeys, biometric via Zitadel |
 | **Rate Limiting** | ✅ **Implemented** (slowapi 500/min) | Resolved | N/A |
-| **Encryption at Rest** | ✅ **Implemented** (Fernet AES-128-CBC) | Resolved | N/A |
+| **Encryption at Rest** | ✅ **Implemented** (GCP KMS + Fernet fallback) | Resolved | N/A |
+| **PII Encryption** | ✅ **Implemented** (Google Cloud KMS) | Resolved | HSM-backed AES-256-GCM |
+| **Secrets Management** | ✅ **Implemented** (Google Secret Manager) | Resolved | Bundled secrets with audit logging |
 | **AI Human-in-the-Loop** | ✅ **Implemented** | Resolved | AI priority requires explicit staff acceptance |
 | **Vertex AI Security** | ✅ **Enterprise-grade** (GCP Vertex AI) | Resolved | SOC/FedRAMP compliant, no data training |
+| **Container Updates** | ✅ **Implemented** (Watchtower) | Resolved | Automatic security patches at 3am daily |
 | **Audit Retention** | Permanent (no purge) | Low | Implement configurable archival policy |
 | **PII in Comments** | Text input only | Moderate | Add AI/regex PII scanning for public fields |
 
@@ -230,7 +284,41 @@ The platform implements comprehensive accessibility features to meet **WCAG 2.2 
 
 ---
 
-## 7. Contact & Resources
+## 7. Automated Setup Scripts
+
+Pinpoint 311 includes one-command setup scripts to minimize deployment friction:
+
+### Google Cloud Platform Setup
+```bash
+./scripts/setup_gcp.sh [PROJECT_ID] [LOCATION]
+```
+
+**Automatically configures:**
+| Service | Purpose |
+|---------|---------|
+| Cloud KMS | PII encryption keys |
+| Cloud Translation API | 130+ language support |
+| Vertex AI | AI analysis (Gemini Flash) |
+| Secret Manager | Credential storage |
+
+### Zitadel Cloud SSO Setup
+```bash
+./scripts/setup_zitadel.sh [DOMAIN] [TOKEN] [APP_DOMAIN]
+```
+
+**Automatically configures:**
+- Creates Zitadel project and web application
+- Configures redirect URLs for production and development
+- Outputs credentials for Admin Console
+
+### Prerequisites
+- `gcloud` CLI installed and authenticated
+- Zitadel Cloud account (free tier available)
+- GCP project with billing enabled
+
+---
+
+## 8. Contact & Resources
 
 - **Repository**: [GitHub](https://github.com/WestWindsorForward/WWF-Open-Source-311-Template)
 - **API Documentation**: `/api/docs` (Swagger UI)
@@ -238,4 +326,5 @@ The platform implements comprehensive accessibility features to meet **WCAG 2.2 
 
 ---
 
-*Document Version: 1.0 | Last Updated: January 2026*
+*Document Version: 1.1 | Last Updated: January 2026*
+

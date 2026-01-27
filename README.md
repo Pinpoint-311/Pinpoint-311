@@ -301,12 +301,43 @@ All research fields are computed on-the-fly using real APIs:
 
 ### 🔒 Security Standards
 
-#### Encryption at Rest
-All API keys and sensitive secrets (Google Maps, Twilio, SMTP, Vertex AI credentials) are encrypted before storage:
-- **Algorithm**: Fernet symmetric encryption (AES-128-CBC with HMAC-SHA256)
-- **Key Derivation**: PBKDF2 using application's `SECRET_KEY` environment variable
-- **Migration**: Legacy plain text values automatically encrypted on first update
-- **Location**: All sensitive data in `system_secrets` table stored as encrypted ciphertext
+#### Enterprise Security Stack
+Pinpoint 311 implements a production-grade security stack with managed cloud services:
+
+| Component | Purpose | Provider |
+|-----------|---------|----------|
+| **Zitadel Cloud** | SSO with MFA & Passkeys | Managed Identity |
+| **Google Secret Manager** | API keys & credentials | Google Cloud |
+| **Google Cloud KMS** | Resident PII encryption | Google Cloud |
+| **Watchtower** | Container auto-updates | Self-hosted |
+
+#### Zero-Password Authentication
+Staff login via **Zitadel Cloud SSO** with enterprise-grade security:
+- **Multi-Factor Authentication**: TOTP, passkeys, and biometric support
+- **Social Login**: Google, Microsoft, and other identity providers
+- **Passwordless Option**: WebAuthn/passkeys for phishing resistance
+- **No passwords stored**: Authentication fully delegated to Zitadel
+
+#### Secrets Management
+Two-tier security for credentials:
+
+| Secret Type | Storage | Encryption |
+|-------------|---------|------------|
+| API Keys (SMTP, SMS, Maps) | Google Secret Manager | Google-managed HSMs |
+| Resident PII (email, phone, name) | PostgreSQL | Google Cloud KMS (AES-256) |
+| Local Development | Encrypted Database | Fernet (AES-128-CBC) |
+
+#### Container Auto-Updates
+**Watchtower** automatically pulls and deploys security updates:
+- Updates at 3am daily (configurable)
+- Rolling restarts for zero downtime
+- Applies to all containers (PostgreSQL, Redis, Caddy)
+
+#### Legacy Encryption Support
+For local development without GCP, Fernet encryption provides fallback:
+- **Algorithm**: Fernet (AES-128-CBC with HMAC-SHA256)
+- **Key Derivation**: PBKDF2 from `SECRET_KEY` environment variable
+- **Automatic migration**: Plain text values encrypted on first update
 
 #### API Security
 - **Rate Limiting**: slowapi middleware (500 requests/minute per IP)

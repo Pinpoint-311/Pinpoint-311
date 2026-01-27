@@ -60,40 +60,25 @@ async def get_auth0_status() -> Dict[str, Any]:
     }
 
 
-def get_auth0_login_url(redirect_uri: str, state: str) -> Optional[str]:
+async def get_auth0_login_url(redirect_uri: str, state: str) -> Optional[str]:
     """Generate Auth0 authorization URL for Universal Login."""
-    import asyncio
+    config = await get_auth0_config()
+    if not config:
+        return None
     
-    async def _get():
-        config = await get_auth0_config()
-        if not config:
-            return None
-        
-        params = {
-            "client_id": config["client_id"],
-            "redirect_uri": redirect_uri,
-            "response_type": "code",
-            "scope": "openid email profile",
-            "state": state,
-        }
-        
-        # Add audience if configured (for API access tokens)
-        if config.get("audience"):
-            params["audience"] = config["audience"]
-        
-        return f"https://{config['domain']}/authorize?{urlencode(params)}"
+    params = {
+        "client_id": config["client_id"],
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+    }
     
-    # Handle both sync and async contexts
-    try:
-        loop = asyncio.get_running_loop()
-        # We're in an async context, need to handle differently
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(asyncio.run, _get())
-            return future.result()
-    except RuntimeError:
-        # No running loop, safe to use asyncio.run
-        return asyncio.run(_get())
+    # Add audience if configured (for API access tokens)
+    if config.get("audience"):
+        params["audience"] = config["audience"]
+    
+    return f"https://{config['domain']}/authorize?{urlencode(params)}"
 
 
 async def exchange_auth0_code(code: str, redirect_uri: str) -> Optional[Dict[str, Any]]:
@@ -224,27 +209,15 @@ async def verify_auth0_token(token: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def get_auth0_logout_url(return_to: str) -> Optional[str]:
+async def get_auth0_logout_url(return_to: str) -> Optional[str]:
     """Generate Auth0 logout URL."""
-    import asyncio
+    config = await get_auth0_config()
+    if not config:
+        return None
     
-    async def _get():
-        config = await get_auth0_config()
-        if not config:
-            return None
-        
-        params = {
-            "client_id": config["client_id"],
-            "returnTo": return_to,
-        }
-        
-        return f"https://{config['domain']}/v2/logout?{urlencode(params)}"
+    params = {
+        "client_id": config["client_id"],
+        "returnTo": return_to,
+    }
     
-    try:
-        loop = asyncio.get_running_loop()
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(asyncio.run, _get())
-            return future.result()
-    except RuntimeError:
-        return asyncio.run(_get())
+    return f"https://{config['domain']}/v2/logout?{urlencode(params)}"
