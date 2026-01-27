@@ -17,6 +17,164 @@ Beyond the UI, it features a sophisticated **AI & Geospatial Engine** that autom
 
 ---
 
+## 🎭 Choose Your Experience
+
+<table>
+<tr>
+<td width="25%" align="center">
+
+### 🏠 Resident
+**Report issues in 60 seconds**
+
+✅ No account needed<br>
+✅ 130+ languages<br>
+✅ Track via magic link<br>
+✅ Photo uploads
+
+<a href="#-resident-portal-features">→ Features</a>
+
+</td>
+<td width="25%" align="center">
+
+### 👷 Staff
+**Manage & resolve requests**
+
+✅ AI-powered triage<br>
+✅ Priority scoring<br>
+✅ Department routing<br>
+✅ Internal comments
+
+<a href="#-staff-dashboard-features">→ Features</a>
+
+</td>
+<td width="25%" align="center">
+
+### ⚙️ Admin
+**Configure everything**
+
+✅ Service categories<br>
+✅ Custom branding<br>
+✅ API key management<br>
+✅ User & role control
+
+<a href="#️-admin-console-features">→ Features</a>
+
+</td>
+<td width="25%" align="center">
+
+### 🔬 Researcher
+**Analyze municipal data**
+
+✅ 60+ research fields<br>
+✅ Privacy-preserved<br>
+✅ CSV & GeoJSON export<br>
+✅ Census integration
+
+<a href="#-research-suite-university-lab-integration">→ Features</a>
+
+</td>
+</tr>
+</table>
+
+<details>
+<summary><b>📊 System Architecture</b> (click to expand)</summary>
+
+```mermaid
+graph TB
+    subgraph "Frontend"
+        RP[Resident Portal]
+        SP[Staff Dashboard]
+        AC[Admin Console]
+    end
+
+    subgraph "Backend Services"
+        API[FastAPI Server]
+        WK[Celery Worker]
+        RD[(Redis Cache)]
+    end
+
+    subgraph "Data Layer"
+        PG[(PostgreSQL + PostGIS)]
+    end
+
+    subgraph "External Services"
+        VA[Vertex AI - Gemini]
+        GM[Google Maps]
+        GT[Google Translate]
+        SM[SMTP / SMS]
+        ZT[Zitadel SSO]
+    end
+
+    RP --> API
+    SP --> API
+    AC --> API
+    
+    API --> PG
+    API --> RD
+    API --> WK
+    
+    WK --> SM
+    WK --> VA
+    
+    API --> GM
+    API --> GT
+    API --> ZT
+```
+
+</details>
+
+<details>
+<summary><b>🔄 Request Lifecycle</b> (click to expand)</summary>
+
+```mermaid
+flowchart LR
+    A[📱 Resident Submits] --> B{Within Boundary?}
+    B -->|No| C[❌ Rejected]
+    B -->|Yes| D[✅ Created]
+    
+    D --> E[🤖 AI Analysis]
+    E --> F[📧 Confirmation Email]
+    
+    F --> G[👷 Staff Reviews]
+    G --> H{Action?}
+    
+    H -->|Assign| I[📋 In Progress]
+    H -->|Resolve| J[✅ Resolved]
+    H -->|Transfer| K[↗️ Third Party]
+    
+    I --> J
+    J --> L[📧 Closure Email]
+```
+
+</details>
+
+<details>
+<summary><b>🔐 Security Stack</b> (click to expand)</summary>
+
+```mermaid
+graph LR
+    subgraph "Identity"
+        ZT[Zitadel Cloud SSO]
+        MFA[MFA / Passkeys]
+    end
+
+    subgraph "Secrets"
+        GSM[Google Secret Manager]
+        KMS[Cloud KMS - PII]
+    end
+
+    subgraph "Infrastructure"
+        WT[Watchtower Auto-Updates]
+        CD[Caddy HTTPS]
+    end
+
+    ZT --> MFA
+    GSM --> KMS
+    WT --> CD
+```
+
+</details>
+
 ## 🌟 Core Features Overview
 
 ### 🎨 User Experience First
