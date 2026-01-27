@@ -2564,7 +2564,11 @@ export default function AdminConsole() {
                                         key={req.id}
                                         onClick={() => {
                                             setShowLegalHoldModal(false);
-                                            navigate(`/staff?highlight=${req.service_request_id}`);
+                                            // Map status to URL path segment
+                                            const statusPath = req.status === 'open' ? 'active' :
+                                                req.status === 'in_progress' ? 'in_progress' :
+                                                    req.status === 'closed' ? 'resolved' : 'active';
+                                            navigate(`/staff#${statusPath}/request/${req.service_request_id}`);
                                         }}
                                         className="w-full text-left bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 hover:bg-amber-500/20 transition-colors"
                                     >
@@ -2573,8 +2577,8 @@ export default function AdminConsole() {
                                                 {req.service_request_id}
                                             </span>
                                             <span className={`text-xs px-2 py-1 rounded capitalize ${req.status === 'open' ? 'bg-emerald-500/20 text-emerald-400' :
-                                                    req.status === 'in_progress' ? 'bg-blue-500/20 text-blue-400' :
-                                                        'bg-gray-500/20 text-gray-400'
+                                                req.status === 'in_progress' ? 'bg-blue-500/20 text-blue-400' :
+                                                    'bg-gray-500/20 text-gray-400'
                                                 }`}>
                                                 {req.status.replace('_', ' ')}
                                             </span>
