@@ -147,6 +147,57 @@ async def sync_secrets(
     return {"status": "success", "added_secrets": added, "count": len(added)}
 
 
+@router.post("/secrets/migrate-encryption")
+async def migrate_secrets_to_encrypted(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin)
+):
+    """
+    Migrate existing plaintext secrets to encrypted format.
+    
+    This is a one-time migration for secrets that were stored before 
+    encryption was implemented. Safe to run multiple times - already
+    encrypted values are skipped.
+    """
+    from app.core.encryption import encrypt, is_encrypted
+    
+    result = await db.execute(
+        select(SystemSecret).where(SystemSecret.is_configured == True)
+    )
+    secrets = result.scalars().all()
+    
+    migrated = []
+    already_encrypted = []
+    errors = []
+    
+    for secret in secrets:
+        if not secret.key_value:
+            continue
+            
+        # Check if already encrypted (starts with gAAAA)
+        if is_encrypted(secret.key_value):
+            already_encrypted.append(secret.key_name)
+            continue
+        
+        try:
+            # Encrypt the plaintext value
+            secret.key_value = encrypt(secret.key_value)
+            migrated.append(secret.key_name)
+        except Exception as e:
+            errors.append({"key": secret.key_name, "error": str(e)})
+    
+    await db.commit()
+    
+    return {
+        "status": "success",
+        "migrated": migrated,
+        "migrated_count": len(migrated),
+        "already_encrypted": already_encrypted,
+        "already_encrypted_count": len(already_encrypted),
+        "errors": errors
+    }
+
+
 # ============ Document Retention ============
 
 @router.get("/retention/states")
