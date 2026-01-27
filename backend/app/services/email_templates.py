@@ -58,24 +58,49 @@ EMAIL_I18N = {
         "sms_details": "Details",
     },
     "es": {
+        # Common
         "service_portal": "Portal de Servicios 311",
-        "request_received": "¡Solicitud Recibida!",
-        "report_submitted": "Su reporte ha sido enviado exitosamente",
         "request_id": "ID de Solicitud",
         "category": "Categoría",
         "description": "Descripción",
         "location": "Ubicación",
-        "track_request": "Seguir Su Solicitud",
         "or_visit": "o visite",
-        "thank_you": "¡Gracias por ayudar a hacer de {township} un lugar mejor!",
         "no_reply": "Por favor no responda directamente a este correo.",
+        
+        # Confirmation email
+        "request_received": "¡Solicitud Recibida!",
+        "report_submitted": "Su reporte ha sido enviado exitosamente",
+        "track_request": "Seguir Su Solicitud",
+        "thank_you": "¡Gracias por ayudar a hacer de {township} un lugar mejor!",
         "subject_received": "Solicitud #{id} Recibida - {township}",
-        "subject_update": "Actualización de Solicitud #{id} - {township}",
-        "status_updated": "Estado Actualizado",
+        
+        # Status update email
+        "status_update": "Actualización de Estado",
         "your_request_status": "El estado de su solicitud ha sido actualizado",
-        "new_status": "Nuevo Estado",
-        "message_from_staff": "Mensaje del personal",
-        "request_details": "Detalles de la Solicitud",
+        "current_status": "Estado Actual",
+        "resolution_notes": "Notas de Resolución",
+        "completion_photo": "Foto de Finalización",
+        "view_details": "Ver Detalles de Solicitud",
+        "subject_status": "Solicitud #{id} Estado: {status} - {township}",
+        "status_open": "Abierto",
+        "status_in_progress": "En Progreso",
+        "status_closed": "Resuelto",
+        
+        # Comment email
+        "new_update": "Nueva Actualización en Su Solicitud",
+        "staff_member": "Miembro del Personal",
+        "view_conversation": "Ver Conversación Completa",
+        "receiving_because": "Está recibiendo esto porque envió una solicitud a {township}.",
+        "subject_comment": "Nueva Actualización en Solicitud #{id} - {township}",
+        
+        # SMS
+        "sms_received": "¡Su solicitud ha sido recibida!",
+        "sms_ref": "Ref",
+        "sms_track": "Seguir",
+        "sms_being_reviewed": "está siendo revisada",
+        "sms_being_worked": "se está trabajando en ella",
+        "sms_resolved": "ha sido resuelta",
+        "sms_details": "Detalles",
     },
     "zh": {
         "service_portal": "311服务门户",
@@ -98,24 +123,49 @@ EMAIL_I18N = {
         "request_details": "请求详情",
     },
     "hi": {
+        # Common
         "service_portal": "311 सेवा पोर्टल",
-        "request_received": "अनुरोध प्राप्त!",
-        "report_submitted": "आपकी रिपोर्ट सफलतापूर्वक जमा की गई है",
         "request_id": "अनुरोध आईडी",
         "category": "श्रेणी",
         "description": "विवरण",
         "location": "स्थान",
-        "track_request": "अपना अनुरोध ट्रैक करें",
         "or_visit": "या देखें",
-        "thank_you": "{township} को बेहतर बनाने में मदद के लिए धन्यवाद!",
         "no_reply": "कृपया इस ईमेल का सीधे जवाब न दें।",
+        
+        # Confirmation email
+        "request_received": "अनुरोध प्राप्त!",
+        "report_submitted": "आपकी रिपोर्ट सफलतापूर्वक जमा की गई है",
+        "track_request": "अपना अनुरोध ट्रैक करें",
+        "thank_you": "{township} को बेहतर बनाने में मदद के लिए धन्यवाद!",
         "subject_received": "अनुरोध #{id} प्राप्त - {township}",
-        "subject_update": "अनुरोध #{id} पर अपडेट - {township}",
-        "status_updated": "स्थिति अपडेट",
+        
+        # Status update email
+        "status_update": "स्थिति अपडेट",
         "your_request_status": "आपके अनुरोध की स्थिति अपडेट की गई है",
-        "new_status": "नई स्थिति",
-        "message_from_staff": "स्टाफ से संदेश",
-        "request_details": "अनुरोध विवरण",
+        "current_status": "वर्तमान स्थिति",
+        "resolution_notes": "समाधान नोट्स",
+        "completion_photo": "पूर्णता फोटो",
+        "view_details": "अनुरोध विवरण देखें",
+        "subject_status": "अनुरोध #{id} स्थिति: {status} - {township}",
+        "status_open": "खुला",
+        "status_in_progress": "कार्य प्रगति पर है",
+        "status_closed": "समाधित",
+        
+        # Comment email
+        "new_update": "आपके अनुरोध पर नया अपडेट",
+        "staff_member": "स्टाफ सदस्य",
+        "view_conversation": "पूर्ण वार्तालाप देखें",
+        "receiving_because": "आप यह प्राप्त कर रहे हैं क्योंकि आपने {township} को एक अनुरोध प्रस्तुत किया था।",
+        "subject_comment": "अनुरोध #{id} पर नया अपडेट - {township}",
+        
+        # SMS
+        "sms_received": "आपका अनुरोध प्राप्त हुआ!",
+        "sms_ref": "संदर्भ",
+        "sms_track": "ट्रैक करें",
+        "sms_being_reviewed": "समीक्षा की जा रही है",
+        "sms_being_worked": "काम किया जा रहा है",
+        "sms_resolved": "समाधित हो गया है",
+        "sms_details": "विवरण",
     },
     "ko": {
         "service_portal": "311 서비스 포털",
