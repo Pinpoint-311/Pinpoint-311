@@ -636,6 +636,22 @@ class ApiClient {
         return this.request('/system/retention/run', { method: 'POST' });
     }
 
+    async getLegalHoldRequests(): Promise<{
+        count: number;
+        requests: Array<{
+            id: number;
+            service_request_id: string;
+            service_name: string;
+            description: string;
+            status: string;
+            address: string;
+            requested_datetime: string;
+            closed_datetime: string | null;
+        }>;
+    }> {
+        return this.request('/system/retention/legal-hold');
+    }
+
     async exportForPublicRecords(startDate?: string, endDate?: string): Promise<void> {
         const params = new URLSearchParams();
         if (startDate) params.append('start_date', startDate);

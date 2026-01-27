@@ -281,6 +281,20 @@ export default function AdminConsole() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [deletedRequests, setDeletedRequests] = useState<any[]>([]);
 
+    // Legal hold modal state
+    const [showLegalHoldModal, setShowLegalHoldModal] = useState(false);
+    const [legalHoldRequests, setLegalHoldRequests] = useState<Array<{
+        id: number;
+        service_request_id: string;
+        service_name: string;
+        description: string;
+        status: string;
+        address: string;
+        requested_datetime: string;
+        closed_datetime: string | null;
+    }>>([]);
+    const [isLoadingLegalHold, setIsLoadingLegalHold] = useState(false);
+
     useEffect(() => {
         if (settings) {
             setBrandingForm({
@@ -2163,10 +2177,25 @@ export default function AdminConsole() {
                                                 <div className="text-blue-300 text-sm">Eligible for Archival</div>
                                                 <div className="text-2xl font-bold text-blue-300">{retentionPolicy.stats.eligible_for_archival}</div>
                                             </div>
-                                            <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4">
+                                            <button
+                                                onClick={async () => {
+                                                    setIsLoadingLegalHold(true);
+                                                    try {
+                                                        const result = await api.getLegalHoldRequests();
+                                                        setLegalHoldRequests(result.requests);
+                                                        setShowLegalHoldModal(true);
+                                                    } catch (err) {
+                                                        console.error('Failed to load legal hold requests:', err);
+                                                    } finally {
+                                                        setIsLoadingLegalHold(false);
+                                                    }
+                                                }}
+                                                className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 text-left hover:bg-amber-500/20 hover:border-amber-500/50 transition-all cursor-pointer"
+                                            >
                                                 <div className="text-amber-400 text-sm">Under Legal Hold</div>
                                                 <div className="text-2xl font-bold text-amber-400">{retentionPolicy.stats.under_legal_hold}</div>
-                                            </div>
+                                                <div className="text-amber-400/60 text-xs mt-1">Click to view →</div>
+                                            </button>
                                             <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
                                                 <div className="text-green-400 text-sm">Already Archived</div>
                                                 <div className="text-2xl font-bold text-green-400">{retentionPolicy.stats.already_archived}</div>
@@ -2509,6 +2538,69 @@ export default function AdminConsole() {
                         <Button type="submit">Create User</Button>
                     </div>
                 </form>
+            </Modal>
+
+            {/* Legal Hold Requests Modal */}
+            <Modal
+                isOpen={showLegalHoldModal}
+                onClose={() => setShowLegalHoldModal(false)}
+                title="Requests Under Legal Hold"
+            >
+                <div className="space-y-4">
+                    {isLoadingLegalHold ? (
+                        <div className="text-center py-8 text-white/60">Loading...</div>
+                    ) : legalHoldRequests.length === 0 ? (
+                        <div className="text-center py-8 text-white/60">
+                            No requests are currently under legal hold.
+                        </div>
+                    ) : (
+                        <>
+                            <p className="text-white/60 text-sm">
+                                These requests have been flagged and are protected from automatic archival or deletion.
+                            </p>
+                            <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+                                {legalHoldRequests.map((req) => (
+                                    <button
+                                        key={req.id}
+                                        onClick={() => {
+                                            setShowLegalHoldModal(false);
+                                            navigate(`/staff?highlight=${req.service_request_id}`);
+                                        }}
+                                        className="w-full text-left bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 hover:bg-amber-500/20 transition-colors"
+                                    >
+                                        <div className="flex justify-between items-start mb-2">
+                                            <span className="font-mono text-amber-400 font-semibold">
+                                                {req.service_request_id}
+                                            </span>
+                                            <span className={`text-xs px-2 py-1 rounded capitalize ${req.status === 'open' ? 'bg-emerald-500/20 text-emerald-400' :
+                                                    req.status === 'in_progress' ? 'bg-blue-500/20 text-blue-400' :
+                                                        'bg-gray-500/20 text-gray-400'
+                                                }`}>
+                                                {req.status.replace('_', ' ')}
+                                            </span>
+                                        </div>
+                                        <div className="text-white font-medium">{req.service_name}</div>
+                                        {req.description && (
+                                            <div className="text-white/60 text-sm mt-1 line-clamp-2">{req.description}</div>
+                                        )}
+                                        {req.address && (
+                                            <div className="text-white/50 text-xs mt-2 flex items-center gap-1">
+                                                <MapPin className="w-3 h-3" />
+                                                {req.address}
+                                            </div>
+                                        )}
+                                        <div className="text-white/40 text-xs mt-2">
+                                            Submitted: {new Date(req.requested_datetime).toLocaleDateString()}
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        </>
+                    )}
+                    <div className="flex justify-end pt-4 border-t border-white/10">
+                        <Button variant="ghost" onClick={() => setShowLegalHoldModal(false)}>Close</Button>
+                    </div>
+                </div>
             </Modal>
 
             {/* Add Service Modal */}

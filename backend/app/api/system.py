@@ -249,6 +249,42 @@ async def run_retention_now(
     }
 
 
+@router.get("/retention/legal-hold")
+async def get_legal_hold_requests(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin)
+):
+    """Get all requests currently under legal hold (flagged)"""
+    from app.models import ServiceRequest
+    
+    result = await db.execute(
+        select(ServiceRequest).where(
+            and_(
+                ServiceRequest.flagged == True,
+                ServiceRequest.deleted_at.is_(None)
+            )
+        ).order_by(ServiceRequest.requested_datetime.desc())
+    )
+    requests = result.scalars().all()
+    
+    return {
+        "count": len(requests),
+        "requests": [
+            {
+                "id": r.id,
+                "service_request_id": r.service_request_id,
+                "service_name": r.service_name,
+                "description": r.description[:100] + "..." if r.description and len(r.description) > 100 else r.description,
+                "status": r.status,
+                "address": r.address,
+                "requested_datetime": r.requested_datetime.isoformat() if r.requested_datetime else None,
+                "closed_datetime": r.closed_datetime.isoformat() if r.closed_datetime else None,
+            }
+            for r in requests
+        ]
+    }
+
+
 @router.get("/retention/export")
 async def export_for_public_records(
     start_date: str = None,
