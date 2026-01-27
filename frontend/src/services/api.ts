@@ -675,6 +675,28 @@ class ApiClient {
         a.click();
         window.URL.revokeObjectURL(url);
     }
+
+    // ========== Database Backups ==========
+
+    async getBackupStatus(): Promise<BackupStatus> {
+        return this.request<BackupStatus>('/system/backups/status');
+    }
+
+    async listBackups(): Promise<BackupList> {
+        return this.request<BackupList>('/system/backups');
+    }
+
+    async createBackup(): Promise<BackupResult> {
+        return this.request<BackupResult>('/system/backups/create', { method: 'POST' });
+    }
+
+    async deleteBackup(backupName: string): Promise<{ status: string; deleted: string }> {
+        return this.request(`/system/backups/${encodeURIComponent(backupName)}`, { method: 'DELETE' });
+    }
+
+    async cleanupBackups(): Promise<{ status: string; deleted_count: number; deleted: string[] }> {
+        return this.request('/system/backups/cleanup', { method: 'POST' });
+    }
 }
 
 // Notification Preferences type
@@ -771,4 +793,44 @@ export interface RetentionPolicyConfig {
         already_archived: number;
         next_run: string;
     };
+}
+
+// Database Backup types
+export interface BackupStatus {
+    configured: boolean;
+    message?: string;
+    required_secrets?: string[];
+    optional_secrets?: string[];
+    bucket?: string;
+    endpoint?: string;
+    last_backup?: {
+        name: string;
+        size_bytes: number;
+        created_at: string;
+        age_days: number;
+    } | null;
+    total_backups?: number;
+    next_scheduled?: string;
+}
+
+export interface BackupList {
+    status: string;
+    count: number;
+    message?: string;
+    backups: Array<{
+        name: string;
+        size_bytes: number;
+        created_at: string;
+        age_days: number;
+    }>;
+}
+
+export interface BackupResult {
+    status: string;
+    message?: string;
+    backup_name?: string;
+    size_bytes?: number;
+    unencrypted_size_bytes?: number;
+    created_at?: string;
+    bucket?: string;
 }

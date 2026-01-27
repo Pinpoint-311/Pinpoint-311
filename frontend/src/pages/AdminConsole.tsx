@@ -295,6 +295,25 @@ export default function AdminConsole() {
     }>>([]);
     const [isLoadingLegalHold, setIsLoadingLegalHold] = useState(false);
 
+    // Backup management state
+    const [backupStatus, setBackupStatus] = useState<{
+        configured: boolean;
+        message?: string;
+        bucket?: string;
+        last_backup?: { name: string; size_bytes: number; created_at: string; age_days: number } | null;
+        total_backups?: number;
+        next_scheduled?: string;
+        required_secrets?: string[];
+    } | null>(null);
+    const [backups, setBackups] = useState<Array<{
+        name: string;
+        size_bytes: number;
+        created_at: string;
+        age_days: number;
+    }>>([]);
+    const [isLoadingBackups, setIsLoadingBackups] = useState(false);
+    const [isCreatingBackup, setIsCreatingBackup] = useState(false);
+
     useEffect(() => {
         if (settings) {
             setBrandingForm({
@@ -2206,6 +2225,164 @@ export default function AdminConsole() {
                                         </p>
                                     </Card>
                                 )}
+
+                                {/* Database Backups */}
+                                <Card className="p-6">
+                                    <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                                        <Upload className="w-5 h-5 text-blue-400" />
+                                        Database Backups
+                                    </h3>
+
+                                    {backupStatus === null ? (
+                                        <div className="text-center py-4">
+                                            <Button
+                                                variant="ghost"
+                                                onClick={async () => {
+                                                    setIsLoadingBackups(true);
+                                                    try {
+                                                        const [status, list] = await Promise.all([
+                                                            api.getBackupStatus(),
+                                                            api.listBackups()
+                                                        ]);
+                                                        setBackupStatus(status);
+                                                        setBackups(list.backups || []);
+                                                    } catch (err) {
+                                                        console.error('Failed to load backups:', err);
+                                                    } finally {
+                                                        setIsLoadingBackups(false);
+                                                    }
+                                                }}
+                                                disabled={isLoadingBackups}
+                                            >
+                                                <RefreshCw className={`w-4 h-4 mr-2 ${isLoadingBackups ? 'animate-spin' : ''}`} />
+                                                {isLoadingBackups ? 'Loading...' : 'Load Backup Status'}
+                                            </Button>
+                                        </div>
+                                    ) : !backupStatus.configured ? (
+                                        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4">
+                                            <p className="text-amber-400 mb-3">
+                                                {backupStatus.message || 'Backup not configured'}
+                                            </p>
+                                            {backupStatus.required_secrets && (
+                                                <div className="text-white/60 text-sm">
+                                                    <p className="mb-2">Add these secrets in the Secrets tab:</p>
+                                                    <ul className="list-disc list-inside space-y-1">
+                                                        {backupStatus.required_secrets.map(s => (
+                                                            <li key={s} className="font-mono text-xs">{s}</li>
+                                                        ))}
+                                                    </ul>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-4">
+                                            {/* Status Summary */}
+                                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                                <div className="bg-white/5 rounded-lg p-3">
+                                                    <div className="text-white/50 text-xs">Storage</div>
+                                                    <div className="text-white font-medium truncate">{backupStatus.bucket}</div>
+                                                </div>
+                                                <div className="bg-white/5 rounded-lg p-3">
+                                                    <div className="text-white/50 text-xs">Total Backups</div>
+                                                    <div className="text-white font-bold text-lg">{backupStatus.total_backups || 0}</div>
+                                                </div>
+                                                <div className="bg-white/5 rounded-lg p-3">
+                                                    <div className="text-white/50 text-xs">Last Backup</div>
+                                                    <div className="text-white font-medium">
+                                                        {backupStatus.last_backup
+                                                            ? `${backupStatus.last_backup.age_days}d ago`
+                                                            : 'Never'}
+                                                    </div>
+                                                </div>
+                                                <div className="bg-white/5 rounded-lg p-3">
+                                                    <div className="text-white/50 text-xs">Schedule</div>
+                                                    <div className="text-white font-medium text-sm">{backupStatus.next_scheduled || 'Daily'}</div>
+                                                </div>
+                                            </div>
+
+                                            {/* Actions */}
+                                            <div className="flex gap-3">
+                                                <Button
+                                                    onClick={async () => {
+                                                        if (!confirm('Create a new database backup now?')) return;
+                                                        setIsCreatingBackup(true);
+                                                        try {
+                                                            const result = await api.createBackup();
+                                                            if (result.status === 'success') {
+                                                                alert(`Backup created: ${result.backup_name}`);
+                                                                // Refresh list
+                                                                const list = await api.listBackups();
+                                                                setBackups(list.backups || []);
+                                                                const status = await api.getBackupStatus();
+                                                                setBackupStatus(status);
+                                                            }
+                                                        } catch (err) {
+                                                            alert('Backup failed: ' + (err as Error).message);
+                                                        } finally {
+                                                            setIsCreatingBackup(false);
+                                                        }
+                                                    }}
+                                                    disabled={isCreatingBackup}
+                                                    className="bg-blue-600 hover:bg-blue-700"
+                                                >
+                                                    {isCreatingBackup ? (
+                                                        <>
+                                                            <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                                                            Creating...
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <Upload className="w-4 h-4 mr-2" />
+                                                            Create Backup Now
+                                                        </>
+                                                    )}
+                                                </Button>
+                                                <Button
+                                                    variant="ghost"
+                                                    onClick={async () => {
+                                                        setIsLoadingBackups(true);
+                                                        try {
+                                                            const list = await api.listBackups();
+                                                            setBackups(list.backups || []);
+                                                        } catch (err) {
+                                                            console.error(err);
+                                                        } finally {
+                                                            setIsLoadingBackups(false);
+                                                        }
+                                                    }}
+                                                >
+                                                    <RefreshCw className={`w-4 h-4 mr-2 ${isLoadingBackups ? 'animate-spin' : ''}`} />
+                                                    Refresh
+                                                </Button>
+                                            </div>
+
+                                            {/* Backup List */}
+                                            {backups.length > 0 && (
+                                                <div className="mt-4">
+                                                    <h4 className="text-white/70 text-sm font-medium mb-2">Recent Backups</h4>
+                                                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                                                        {backups.slice(0, 10).map((backup) => (
+                                                            <div key={backup.name} className="flex items-center justify-between bg-white/5 rounded-lg p-3">
+                                                                <div>
+                                                                    <div className="text-white font-mono text-sm">{backup.name}</div>
+                                                                    <div className="text-white/50 text-xs">
+                                                                        {new Date(backup.created_at).toLocaleString()} · {(backup.size_bytes / 1024 / 1024).toFixed(2)} MB
+                                                                    </div>
+                                                                </div>
+                                                                <span className={`text-xs px-2 py-1 rounded ${backup.age_days === 0 ? 'bg-green-500/20 text-green-400' :
+                                                                        backup.age_days < 7 ? 'bg-blue-500/20 text-blue-400' :
+                                                                            'bg-white/10 text-white/60'
+                                                                    }`}>
+                                                                    {backup.age_days === 0 ? 'Today' : `${backup.age_days}d ago`}
+                                                                </span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </Card>
 
                                 {/* Soft-Deleted Requests */}
                                 {deletedRequests.length > 0 && (

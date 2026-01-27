@@ -726,3 +726,63 @@ def enforce_retention_policy():
     except Exception as e:
         logger.error(f"[Retention] Task failed: {e}")
         return {"status": "error", "error": str(e)}
+
+
+@celery_app.task
+def backup_database():
+    """
+    Create an encrypted database backup and upload to S3.
+    
+    Should be scheduled to run daily via Celery Beat.
+    Backups are encrypted with AES-256 using the BACKUP_ENCRYPTION_KEY secret.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    async def _backup():
+        from app.services.backup_service import create_backup
+        return await create_backup()
+    
+    try:
+        logger.info("[Backup] Starting scheduled database backup...")
+        result = run_async(_backup())
+        
+        if result["status"] == "success":
+            logger.info(f"[Backup] Completed successfully: {result['backup_name']} ({result['size_bytes']} bytes)")
+        else:
+            logger.error(f"[Backup] Failed: {result.get('message', 'Unknown error')}")
+        
+        return result
+    except Exception as e:
+        logger.error(f"[Backup] Task failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@celery_app.task
+def cleanup_expired_backups():
+    """
+    Delete database backups older than the retention period.
+    
+    Should be scheduled to run weekly via Celery Beat.
+    Uses state-specific retention policy to determine cutoff.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    async def _cleanup():
+        from app.services.backup_service import cleanup_old_backups
+        return await cleanup_old_backups()
+    
+    try:
+        logger.info("[Backup Cleanup] Starting expired backup cleanup...")
+        result = run_async(_cleanup())
+        
+        if result["status"] == "success":
+            logger.info(f"[Backup Cleanup] Deleted {result['deleted_count']} expired backups")
+        else:
+            logger.error(f"[Backup Cleanup] Failed: {result.get('message', 'Unknown error')}")
+        
+        return result
+    except Exception as e:
+        logger.error(f"[Backup Cleanup] Task failed: {e}")
+        return {"status": "error", "error": str(e)}

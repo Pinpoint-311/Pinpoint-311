@@ -1411,3 +1411,62 @@ async def batch_translate(
         translations.append(translated or text)
     
     return {"translations": translations}
+
+
+# ============ Database Backups ============
+
+@router.get("/backups/status")
+async def get_backup_status_endpoint(
+    _: User = Depends(get_current_admin)
+):
+    """Get backup system status including configuration and last backup"""
+    from app.services.backup_service import get_backup_status
+    return await get_backup_status()
+
+
+@router.get("/backups")
+async def list_backups_endpoint(
+    _: User = Depends(get_current_admin)
+):
+    """List all available database backups"""
+    from app.services.backup_service import list_backups
+    return await list_backups()
+
+
+@router.post("/backups/create")
+async def create_backup_endpoint(
+    _: User = Depends(get_current_admin)
+):
+    """Trigger a manual database backup"""
+    from app.services.backup_service import create_backup
+    
+    result = await create_backup()
+    if result["status"] == "error":
+        raise HTTPException(status_code=500, detail=result.get("message", "Backup failed"))
+    
+    return result
+
+
+@router.post("/backups/cleanup")
+async def cleanup_backups_endpoint(
+    retention_days: int = None,
+    _: User = Depends(get_current_admin)
+):
+    """Clean up old backups based on retention policy"""
+    from app.services.backup_service import cleanup_old_backups
+    return await cleanup_old_backups(retention_days)
+
+
+@router.delete("/backups/{backup_name}")
+async def delete_backup_endpoint(
+    backup_name: str,
+    _: User = Depends(get_current_admin)
+):
+    """Delete a specific backup"""
+    from app.services.backup_service import delete_backup
+    
+    result = await delete_backup(backup_name)
+    if result["status"] == "error":
+        raise HTTPException(status_code=500, detail=result.get("message", "Delete failed"))
+    
+    return result
