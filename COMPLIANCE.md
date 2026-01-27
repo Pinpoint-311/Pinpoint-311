@@ -7,9 +7,11 @@ The Pinpoint 311 platform is designed for on-premises deployment within municipa
 ## 1. Government-Ready Core Features
 
 ### Data Sovereignty
-- **On-Premises Deployment**: Containerized via Docker for deployment behind municipal firewalls or private government clouds
-- **Total PII Control**: All citizen data remains within the township's infrastructure
-- **No Third-Party Data Sharing**: No external analytics or tracking services
+- **On-Premises Deployment**: Containerized via Docker for deployment behind municipal firewalls
+- **Configurable PII Handling**:
+  - **Cloud Mode**: PII encrypted via Google Cloud KMS (data transits to GCP for encryption, stored encrypted locally)
+  - **Local Mode**: PII encrypted via Fernet locally (no cloud dependency, `SECRET_KEY` based)
+- **No Third-Party Analytics**: No external tracking or analytics services
 
 ### Audit Logging
 - **Comprehensive Trail**: Every lifecycle event recorded in `request_audit_logs` table
