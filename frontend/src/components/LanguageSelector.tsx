@@ -119,7 +119,7 @@ const LANGUAGES = [
 export default function LanguageSelector() {
     const [isOpen, setIsOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-    const { language, setLanguage, isLoading } = useTranslation();
+    const { language, setLanguage } = useTranslation();
 
     const currentLanguage = LANGUAGES.find(lang => lang.code === language) || LANGUAGES.find(l => l.code === 'en')!;
 
@@ -131,9 +131,18 @@ export default function LanguageSelector() {
     );
 
     const changeLanguage = (code: string) => {
+        if (code === language) {
+            setIsOpen(false);
+            setSearchQuery('');
+            return;
+        }
         setLanguage(code);
         setIsOpen(false);
         setSearchQuery('');
+        // Refresh the page to apply translations cleanly
+        setTimeout(() => {
+            window.location.reload();
+        }, 100);
     };
 
     return (
@@ -142,9 +151,8 @@ export default function LanguageSelector() {
                 onClick={() => setIsOpen(!isOpen)}
                 className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-white/10 transition-all text-white shadow-lg"
                 aria-label="Select language"
-                disabled={isLoading}
             >
-                <Globe className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+                <Globe className="w-4 h-4" />
                 <span className="hidden sm:inline text-sm font-medium">{currentLanguage.nativeName}</span>
                 <span className="sm:hidden text-sm">{currentLanguage.code.toUpperCase()}</span>
                 <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
@@ -203,8 +211,8 @@ export default function LanguageSelector() {
                                             key={lang.code}
                                             onClick={() => changeLanguage(lang.code)}
                                             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-left ${language === lang.code
-                                                    ? 'bg-primary-500/30 text-white border border-primary-400/30'
-                                                    : 'text-white/80 hover:bg-white/10 hover:text-white'
+                                                ? 'bg-primary-500/30 text-white border border-primary-400/30'
+                                                : 'text-white/80 hover:bg-white/10 hover:text-white'
                                                 }`}
                                         >
                                             <div className="flex-1 min-w-0">
