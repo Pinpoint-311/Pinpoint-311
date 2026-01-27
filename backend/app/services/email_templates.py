@@ -212,8 +212,58 @@ EMAIL_I18N = {
     },
 }
 
+# Cache for translated email strings: {(key, lang): translated_value}
+_email_translation_cache: Dict[tuple, str] = {}
+
+
+async def get_i18n_async(lang: str) -> Dict[str, str]:
+    """
+    Get i18n strings for a language.
+    1. First checks static dictionary for pre-translated common languages
+    2. Falls back to Google Translate API with caching for all other 130+ languages
+    """
+    # If we have static translations for this language, use them
+    if lang in EMAIL_I18N:
+        return EMAIL_I18N[lang]
+    
+    # English - use as-is
+    if lang == "en":
+        return EMAIL_I18N["en"]
+    
+    # For other languages, translate using Google Translate API with caching
+    from app.services.translation import translate_text
+    
+    english_strings = EMAIL_I18N["en"]
+    translated = {}
+    
+    for key, english_value in english_strings.items():
+        cache_key = (key, lang)
+        
+        # Check cache first
+        if cache_key in _email_translation_cache:
+            translated[key] = _email_translation_cache[cache_key]
+            continue
+        
+        # Translate via Google Translate API
+        try:
+            result = await translate_text(english_value, "en", lang)
+            if result:
+                translated[key] = result
+                _email_translation_cache[cache_key] = result
+            else:
+                # Fallback to English if translation fails
+                translated[key] = english_value
+        except Exception:
+            translated[key] = english_value
+    
+    return translated
+
+
 def get_i18n(lang: str) -> Dict[str, str]:
-    """Get i18n strings for a language, falling back to English"""
+    """
+    Synchronous version - returns static translations only.
+    For full translation support, use get_i18n_async().
+    """
     return EMAIL_I18N.get(lang, EMAIL_I18N["en"])
 
 
@@ -298,6 +348,102 @@ def build_confirmation_email(
     """
     tracking_url = f"{portal_url}/#track/{request_id}"
     i18n = get_i18n(language)
+    
+    content = f"""
+        <div style="text-align: center; margin-bottom: 24px;">
+            <div style="display: inline-block; background-color: #dcfce7; border-radius: 50%; width: 64px; height: 64px; line-height: 64px; margin-bottom: 16px;">
+                <span style="font-size: 32px;">✓</span>
+            </div>
+            <h2 style="margin: 0 0 8px 0; color: #1e293b; font-size: 22px; font-weight: 600;">{i18n['request_received']}</h2>
+            <p style="margin: 0; color: #64748b; font-size: 15px;">{i18n['report_submitted']}</p>
+        </div>
+        
+        <div style="background-color: #f8fafc; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                    <td style="padding: 8px 0; border-bottom: 1px solid #e2e8f0;">
+                        <span style="color: #64748b; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">{i18n['request_id']}</span>
+                        <p style="margin: 4px 0 0 0; color: {primary_color}; font-size: 18px; font-weight: 600;">#{request_id}</p>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0;">
+                        <span style="color: #64748b; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">{i18n['category']}</span>
+                        <p style="margin: 4px 0 0 0; color: #1e293b; font-size: 15px; font-weight: 500;">{service_name}</p>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 12px 0;{' border-bottom: 1px solid #e2e8f0;' if address else ''}">
+                        <span style="color: #64748b; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">{i18n['description']}</span>
+                        <p style="margin: 4px 0 0 0; color: #1e293b; font-size: 15px;">{description[:200]}{'...' if len(description) > 200 else ''}</p>
+                    </td>
+                </tr>
+                {f'''
+                <tr>
+                    <td style="padding: 12px 0;">
+                        <span style="color: #64748b; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">{i18n['location']}</span>
+                        <p style="margin: 4px 0 0 0; color: #1e293b; font-size: 15px;">{address}</p>
+                    </td>
+                </tr>
+                ''' if address else ''}
+            </table>
+        </div>
+        
+        <div style="text-align: center;">
+            <a href="{tracking_url}" style="display: inline-block; background-color: {primary_color}; color: white; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 15px;">{i18n['track_request']}</a>
+            <p style="margin: 16px 0 0 0; color: #94a3b8; font-size: 13px;">
+                {i18n['or_visit']}: <a href="{tracking_url}" style="color: {primary_color};">{tracking_url}</a>
+            </p>
+        </div>
+    """
+    
+    html = get_base_template(
+        township_name=township_name,
+        logo_url=logo_url,
+        primary_color=primary_color,
+        content=content,
+        footer_text=i18n['thank_you'].format(township=township_name),
+        language=language
+    )
+    
+    text = f"""
+{i18n['request_received']}
+
+{i18n['request_id']}: #{request_id}
+{i18n['category']}: {service_name}
+{i18n['description']}: {description[:200]}
+{f"{i18n['location']}: {address}" if address else ""}
+
+{i18n['track_request']}: {tracking_url}
+
+{i18n['thank_you'].format(township=township_name)}
+"""
+    
+    return {
+        "subject": i18n['subject_received'].format(id=request_id, township=township_name),
+        "html": html,
+        "text": text.strip()
+    }
+
+
+async def build_confirmation_email_async(
+    township_name: str,
+    logo_url: Optional[str],
+    primary_color: str,
+    request_id: str,
+    service_name: str,
+    description: str,
+    address: Optional[str],
+    portal_url: str,
+    language: str = "en"
+) -> Dict[str, str]:
+    """
+    Async version - Build email for new request confirmation.
+    Uses Google Translate API for any language not in the static dictionary.
+    Results are cached to minimize API calls.
+    """
+    tracking_url = f"{portal_url}/#track/{request_id}"
+    i18n = await get_i18n_async(language)
     
     content = f"""
         <div style="text-align: center; margin-bottom: 24px;">

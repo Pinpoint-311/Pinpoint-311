@@ -366,7 +366,7 @@ def send_branded_notification(request_id: int, notification_type: str, old_statu
                 
                 # Send branded confirmation email if enabled
                 if email_enabled and request.email:
-                    notification_service.send_request_confirmation_branded(
+                    await notification_service.send_request_confirmation_branded_async(
                         request_id=str(request.service_request_id),
                         service_name=service_name_translated,
                         description=description_translated,

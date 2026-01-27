@@ -234,7 +234,7 @@ class NotificationService:
         portal_url: str,
         language: str = "en"
     ):
-        """Send branded confirmation for a new service request"""
+        """Send branded confirmation for a new service request (sync - uses static translations only)"""
         from app.services.email_templates import build_confirmation_email, build_sms_confirmation
         
         # Build branded email with translation
@@ -255,6 +255,44 @@ class NotificationService:
             self.send_email(email, email_content["subject"], email_content["html"], email_content["text"])
         
         # Send SMS - removed as not in scope for confirmation
+    
+    async def send_request_confirmation_branded_async(
+        self,
+        request_id: str,
+        service_name: str,
+        description: str,
+        address: Optional[str],
+        email: str,
+        phone: Optional[str],
+        township_name: str,
+        logo_url: Optional[str],
+        primary_color: str,
+        portal_url: str,
+        language: str = "en"
+    ):
+        """
+        Send branded confirmation for a new service request (async - uses Google Translate API).
+        Supports 130+ languages with automatic translation and caching.
+        """
+        from app.services.email_templates import build_confirmation_email_async
+        
+        # Build branded email with translation via Google Translate API
+        email_content = await build_confirmation_email_async(
+            township_name=township_name,
+            logo_url=logo_url,
+            primary_color=primary_color,
+            request_id=request_id,
+            service_name=service_name,
+            description=description,
+            address=address,
+            portal_url=portal_url,
+            language=language
+        )
+        
+        # Send email
+        if email:
+            self.send_email(email, email_content["subject"], email_content["html"], email_content["text"])
+    
     
     def send_request_confirmation(self, request_id: str, email: str, phone: Optional[str] = None):
         """Legacy confirmation - now calls branded version with defaults"""
