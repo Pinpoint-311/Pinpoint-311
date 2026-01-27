@@ -1671,6 +1671,73 @@ export default function AdminConsole() {
                                         </div>
                                     </div>
                                 </Card>
+
+                                {/* Database Backup Settings */}
+                                <Card className="p-6">
+                                    <div className="space-y-6">
+                                        <div>
+                                            <h2 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
+                                                <Upload className="w-5 h-5 text-blue-400" />
+                                                Database Backup Storage
+                                            </h2>
+                                            <p className="text-white/60 text-sm">
+                                                Configure S3-compatible object storage for encrypted database backups.
+                                                Works with Oracle Cloud Object Storage, AWS S3, MinIO, etc.
+                                            </p>
+                                        </div>
+
+                                        <div className="space-y-4">
+                                            {[
+                                                { key: 'BACKUP_S3_BUCKET', label: 'Bucket Name', placeholder: 'my-backup-bucket', required: true },
+                                                { key: 'BACKUP_S3_ACCESS_KEY', label: 'Access Key ID', placeholder: 'AKIA...', required: true, isPassword: true },
+                                                { key: 'BACKUP_S3_SECRET_KEY', label: 'Secret Access Key', placeholder: '********', required: true, isPassword: true },
+                                                { key: 'BACKUP_ENCRYPTION_KEY', label: 'Encryption Passphrase', placeholder: 'Strong passphrase for AES-256 encryption', required: true, isPassword: true },
+                                                { key: 'BACKUP_S3_ENDPOINT', label: 'S3 Endpoint URL', placeholder: 'https://objectstorage.us-ashburn-1.oraclecloud.com (optional for AWS)', required: false },
+                                                { key: 'BACKUP_S3_REGION', label: 'Region', placeholder: 'us-ashburn-1 or us-east-1', required: false },
+                                            ].map(({ key, label, placeholder, required, isPassword }) => {
+                                                const secret = secrets.find(s => s.key_name === key);
+                                                const isConfigured = secret?.is_configured;
+                                                return (
+                                                    <div key={key} className="space-y-2">
+                                                        <label className="block text-sm font-medium text-white/70">
+                                                            {label}
+                                                            {required && <span className="text-red-400 ml-1">*</span>}
+                                                            {!required && <span className="text-white/40 text-xs ml-2">(optional)</span>}
+                                                        </label>
+                                                        {isConfigured && !secretValues[key] ? (
+                                                            <div className="flex items-center gap-3">
+                                                                <div className="flex-1 h-10 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center px-3">
+                                                                    <Check className="w-4 h-4 text-green-400 mr-2" />
+                                                                    <span className="text-green-300 text-sm">Saved securely</span>
+                                                                </div>
+                                                                <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, [key]: ' ' }))}>
+                                                                    Change
+                                                                </Button>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="flex gap-2">
+                                                                <Input
+                                                                    type={isPassword ? 'password' : 'text'}
+                                                                    placeholder={placeholder}
+                                                                    value={secretValues[key]?.trim() || ''}
+                                                                    onChange={(e) => setSecretValues((p) => ({ ...p, [key]: e.target.value }))}
+                                                                />
+                                                                <Button size="sm" onClick={() => handleUpdateSecret(key)} disabled={!secretValues[key]?.trim()}>
+                                                                    Save
+                                                                </Button>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+
+                                        <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4 text-blue-300 text-sm">
+                                            <strong>Tip:</strong> Once all required fields are configured, backups will run automatically daily at 2 AM UTC.
+                                            You can trigger manual backups from the Retention tab.
+                                        </div>
+                                    </div>
+                                </Card>
                             </div>
                         )}
 
@@ -2370,8 +2437,8 @@ export default function AdminConsole() {
                                                                     </div>
                                                                 </div>
                                                                 <span className={`text-xs px-2 py-1 rounded ${backup.age_days === 0 ? 'bg-green-500/20 text-green-400' :
-                                                                        backup.age_days < 7 ? 'bg-blue-500/20 text-blue-400' :
-                                                                            'bg-white/10 text-white/60'
+                                                                    backup.age_days < 7 ? 'bg-blue-500/20 text-blue-400' :
+                                                                        'bg-white/10 text-white/60'
                                                                     }`}>
                                                                     {backup.age_days === 0 ? 'Today' : `${backup.age_days}d ago`}
                                                                 </span>
