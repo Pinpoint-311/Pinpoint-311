@@ -1441,8 +1441,8 @@ export default function StaffDashboard() {
                                         const ai = r.ai_analysis as any;
                                         return ai?.priority_score != null && r.manual_priority_score == null;
                                     })
-                                        // Sort by submission date (oldest first) instead of AI priority
-                                        .sort((a, b) => new Date(a.requested_datetime).getTime() - new Date(b.requested_datetime).getTime());
+                                        // Sort by submission date (newest first) instead of AI priority
+                                        .sort((a, b) => new Date(b.requested_datetime).getTime() - new Date(a.requested_datetime).getTime());
 
                                     const otherRequests = sortedRequests.filter(r => {
                                         const ai = r.ai_analysis as any;
