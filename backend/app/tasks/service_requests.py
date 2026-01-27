@@ -413,7 +413,8 @@ def send_branded_notification(request_id: int, notification_type: str, old_statu
                     township_name=township_name,
                     logo_url=logo_url,
                     primary_color=primary_color,
-                    portal_url=portal_url
+                    portal_url=portal_url,
+                    language=preferred_lang
                 )
             
             return {
@@ -484,8 +485,8 @@ def send_comment_notification_task(request_id: int, comment_author: str, comment
             service_name_translated = await translate_if_needed(request.service_name)
             comment_content_translated = await translate_if_needed(comment_content)
             
-            # Send comment notification
-            notification_service.send_comment_notification(
+            # Send comment notification using async version with language support
+            await notification_service.send_comment_notification_async(
                 request_id=str(request.service_request_id),
                 service_name=service_name_translated,
                 comment_author=comment_author,
@@ -494,7 +495,8 @@ def send_comment_notification_task(request_id: int, comment_author: str, comment
                 township_name=township_name,
                 logo_url=logo_url,
                 primary_color=primary_color,
-                portal_url=portal_url
+                portal_url=portal_url,
+                language=preferred_lang
             )
             
             return {"status": "sent", "type": "comment", "language": preferred_lang}

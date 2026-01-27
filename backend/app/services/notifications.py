@@ -332,13 +332,17 @@ class NotificationService:
         township_name: str,
         logo_url: Optional[str],
         primary_color: str,
-        portal_url: str
+        portal_url: str,
+        language: str = "en"
     ):
-        """Send branded status update notification with completion photo support"""
-        from app.services.email_templates import build_status_update_email, build_sms_status_update
+        """
+        Send branded status update notification with completion photo support.
+        Uses Google Translate API for 130+ languages with caching.
+        """
+        from app.services.email_templates import build_status_update_email_async, build_sms_status_update_async
         
-        # Build branded email
-        email_content = build_status_update_email(
+        # Build branded email with translation
+        email_content = await build_status_update_email_async(
             township_name=township_name,
             logo_url=logo_url,
             primary_color=primary_color,
@@ -348,14 +352,18 @@ class NotificationService:
             new_status=new_status,
             completion_message=completion_message,
             completion_photo_url=completion_photo_url,
-            portal_url=portal_url
+            portal_url=portal_url,
+            language=language
         )
         
         if email:
             self.send_email(email, email_content["subject"], email_content["html"], email_content["text"])
         
         if phone:
-            sms_message = build_sms_status_update(request_id, new_status, township_name, portal_url, completion_message, service_name)
+            sms_message = await build_sms_status_update_async(
+                request_id, new_status, township_name, portal_url, 
+                completion_message or "", service_name, language
+            )
             await self.send_sms(phone, sms_message)
     
     async def send_status_update(
@@ -390,6 +398,40 @@ class NotificationService:
         if phone:
             await self.send_sms(phone, sms_message)
     
+    async def send_comment_notification_async(
+        self,
+        request_id: str,
+        service_name: str,
+        comment_author: str,
+        comment_content: str,
+        email: str,
+        township_name: str,
+        logo_url: Optional[str],
+        primary_color: str,
+        portal_url: str,
+        language: str = "en"
+    ):
+        """
+        Send notification when staff leaves a public comment.
+        Uses Google Translate API for 130+ languages with caching.
+        """
+        from app.services.email_templates import build_comment_email_async
+        
+        email_content = await build_comment_email_async(
+            township_name=township_name,
+            logo_url=logo_url,
+            primary_color=primary_color,
+            request_id=request_id,
+            service_name=service_name,
+            comment_author=comment_author,
+            comment_content=comment_content,
+            portal_url=portal_url,
+            language=language
+        )
+        
+        if email:
+            self.send_email(email, email_content["subject"], email_content["html"], email_content["text"])
+    
     def send_comment_notification(
         self,
         request_id: str,
@@ -402,7 +444,7 @@ class NotificationService:
         primary_color: str,
         portal_url: str
     ):
-        """Send notification when staff leaves a public comment"""
+        """Send notification when staff leaves a public comment (sync - static translations only)"""
         from app.services.email_templates import build_comment_email
         
         email_content = build_comment_email(
