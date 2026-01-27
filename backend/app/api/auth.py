@@ -17,6 +17,126 @@ logger = logging.getLogger(__name__)
 # Store state tokens temporarily (in production, use Redis)
 _pending_states: dict = {}
 
+# One-time bootstrap tokens (only work until Auth0 is configured)
+_bootstrap_tokens: dict = {}
+
+
+@router.post("/bootstrap")
+async def generate_bootstrap_token(
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate a one-time magic link for admin access.
+    
+    ONLY works when Auth0 is NOT configured. This allows the initial admin
+    to log in and configure Auth0. Once Auth0 is configured, this endpoint
+    returns an error.
+    
+    Requires the INITIAL_ADMIN_PASSWORD from environment to authorize.
+    """
+    from app.services.auth0_service import get_auth0_status
+    from app.core.config import get_settings
+    from fastapi import Header
+    
+    settings = get_settings()
+    
+    # Check if Auth0 is already configured
+    status_info = await get_auth0_status()
+    if status_info["configured"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Bootstrap access disabled - Auth0 is already configured. Use SSO to log in."
+        )
+    
+    # Find admin user
+    result = await db.execute(
+        select(User).where(User.role == "admin", User.is_active == True).limit(1)
+    )
+    admin = result.scalar_one_or_none()
+    
+    if not admin:
+        raise HTTPException(status_code=404, detail="No admin user found")
+    
+    # Generate one-time token
+    token = secrets.token_urlsafe(48)
+    _bootstrap_tokens[token] = {
+        "user_id": admin.id,
+        "username": admin.username,
+        "expires": __import__("time").time() + 3600  # 1 hour expiry
+    }
+    
+    logger.info(f"Bootstrap token generated for admin: {admin.username}")
+    
+    return {
+        "message": "Bootstrap token generated",
+        "token": token,
+        "expires_in_seconds": 3600,
+        "login_url": f"/api/auth/bootstrap/{token}",
+        "warning": "This token will be invalidated once Auth0 is configured"
+    }
+
+
+@router.get("/bootstrap/{token}")
+async def use_bootstrap_token(
+    token: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Use a bootstrap token to get a JWT for admin access.
+    
+    ONLY works when Auth0 is NOT configured.
+    """
+    from app.services.auth0_service import get_auth0_status
+    import time
+    
+    # Check if Auth0 is configured - if so, reject
+    status_info = await get_auth0_status()
+    if status_info["configured"]:
+        # Clear all bootstrap tokens since Auth0 is now configured
+        _bootstrap_tokens.clear()
+        raise HTTPException(
+            status_code=403,
+            detail="Bootstrap access disabled - Auth0 is configured. Use SSO to log in."
+        )
+    
+    # Verify token
+    token_data = _bootstrap_tokens.pop(token, None)
+    if not token_data:
+        raise HTTPException(status_code=401, detail="Invalid or expired bootstrap token")
+    
+    # Check expiry
+    if time.time() > token_data["expires"]:
+        raise HTTPException(status_code=401, detail="Bootstrap token has expired")
+    
+    # Get user
+    result = await db.execute(select(User).where(User.id == token_data["user_id"]))
+    user = result.scalar_one_or_none()
+    
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+    
+    # Create JWT
+    access_token = create_access_token(data={"sub": user.username, "role": user.role})
+    
+    logger.info(f"Bootstrap login successful for: {user.username}")
+    
+    # Return HTML that stores token and redirects
+    html_response = f"""
+    <!DOCTYPE html>
+    <html>
+    <head><title>Logging in...</title></head>
+    <body>
+        <script>
+            localStorage.setItem('token', '{access_token}');
+            window.location.href = '/admin';
+        </script>
+        <p>Logging in... If not redirected, <a href="/admin">click here</a></p>
+    </body>
+    </html>
+    """
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(content=html_response)
+
 
 @router.get("/login")
 async def initiate_login(
