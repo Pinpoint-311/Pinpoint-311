@@ -231,12 +231,13 @@ class NotificationService:
         township_name: str,
         logo_url: Optional[str],
         primary_color: str,
-        portal_url: str
+        portal_url: str,
+        language: str = "en"
     ):
         """Send branded confirmation for a new service request"""
         from app.services.email_templates import build_confirmation_email, build_sms_confirmation
         
-        # Build branded email
+        # Build branded email with translation
         email_content = build_confirmation_email(
             township_name=township_name,
             logo_url=logo_url,
@@ -245,7 +246,8 @@ class NotificationService:
             service_name=service_name,
             description=description,
             address=address,
-            portal_url=portal_url
+            portal_url=portal_url,
+            language=language
         )
         
         # Send email

@@ -376,7 +376,8 @@ def send_branded_notification(request_id: int, notification_type: str, old_statu
                         township_name=township_name,
                         logo_url=logo_url,
                         primary_color=primary_color,
-                        portal_url=portal_url
+                        portal_url=portal_url,
+                        language=preferred_lang
                     )
                 
                 # Also send SMS if enabled and phone provided
