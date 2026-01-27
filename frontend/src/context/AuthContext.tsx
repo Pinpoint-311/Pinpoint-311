@@ -84,7 +84,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isLoading: false,
         });
 
-        // Get Auth0 logout URL and redirect
+        // Get SSO logout URL and redirect
         try {
             const response = await fetch(`/api/auth/logout?return_to=${encodeURIComponent(window.location.origin)}`);
             const data = await response.json();

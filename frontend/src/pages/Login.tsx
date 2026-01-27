@@ -119,7 +119,7 @@ export default function Login() {
                                     <div>
                                         <p className="text-amber-300 font-medium">Authentication Not Configured</p>
                                         <p className="text-amber-200/70 text-sm mt-1">
-                                            An administrator needs to configure Auth0 in the Admin Console before staff can log in.
+                                            An administrator needs to configure SSO in the Admin Console before staff can log in.
                                         </p>
                                     </div>
                                 </div>
@@ -156,7 +156,7 @@ export default function Login() {
 
                                     <div className="flex items-center justify-center gap-2 text-white/40 text-sm">
                                         <Shield className="w-4 h-4" />
-                                        <span>Secured by Auth0 with MFA</span>
+                                        <span>Secured by Zitadel SSO with MFA</span>
                                     </div>
                                 </div>
                             </>
