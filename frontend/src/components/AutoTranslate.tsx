@@ -339,32 +339,31 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
         processTranslation();
     }, [language, processTranslation]);
 
-    // Get language display name
-    const getLanguageName = (code: string) => {
-        const names: Record<string, string> = {
-            en: 'English',
-            es: 'Español',
-            zh: '中文',
-            hi: 'हिन्दी',
-            gu: 'ગુજરાતી',
-            ko: '한국어',
-            sq: 'Shqip',
-            ar: 'العربية',
-            pt: 'Português',
-            fr: 'Français',
-            de: 'Deutsch',
-            it: 'Italiano',
-            ja: '日本語',
-            ru: 'Русский',
-            vi: 'Tiếng Việt',
-            tl: 'Tagalog',
+    // Get pre-translated banner message for each language
+    const getBannerMessage = (code: string) => {
+        const messages: Record<string, string> = {
+            es: 'Traducido por Google Translate. Las traducciones pueden no ser 100% precisas.',
+            zh: '由 Google 翻译翻译。翻译可能不是 100% 准确。',
+            hi: 'Google Translate द्वारा अनुवादित। अनुवाद 100% सटीक नहीं हो सकते।',
+            gu: 'Google Translate દ્વારા અનુવાદિત. અનુવાદો 100% ચોક્કસ ન હોઈ શકે.',
+            ko: 'Google 번역으로 번역되었습니다. 번역이 100% 정확하지 않을 수 있습니다.',
+            sq: 'Përkthyer nga Google Translate. Përkthimet mund të mos jenë 100% të sakta.',
+            ar: 'مترجم بواسطة Google Translate. قد لا تكون الترجمات دقيقة 100%.',
+            pt: 'Traduzido pelo Google Tradutor. As traduções podem não ser 100% precisas.',
+            fr: 'Traduit par Google Translate. Les traductions peuvent ne pas être 100% exactes.',
+            de: 'Übersetzt von Google Translate. Übersetzungen sind möglicherweise nicht 100% genau.',
+            it: 'Tradotto da Google Translate. Le traduzioni potrebbero non essere accurate al 100%.',
+            ja: 'Google 翻訳で翻訳されました。翻訳は100%正確ではない場合があります。',
+            ru: 'Переведено Google Translate. Переводы могут быть не на 100% точными.',
+            vi: 'Được dịch bởi Google Dịch. Bản dịch có thể không chính xác 100%.',
+            tl: 'Isinalin ng Google Translate. Ang mga pagsasalin ay maaaring hindi 100% tumpak.',
         };
-        return names[code] || code.toUpperCase();
+        return messages[code] || 'Translated by Google Translate. Translations may not be 100% accurate.';
     };
 
     return (
         <>
-            {/* Translation accuracy banner */}
+            {/* Translation accuracy banner - in the user's selected language */}
             {language !== 'en' && (
                 <div
                     className="fixed top-0 left-0 right-0 z-[9999] bg-gradient-to-r from-amber-500/95 to-orange-500/95 text-white py-2 px-4 text-center text-sm font-medium shadow-lg backdrop-blur-sm"
@@ -374,10 +373,7 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
                         </svg>
-                        <span>
-                            Translated by <strong>Google Translate</strong> to {getLanguageName(language)}.
-                            Translations may not be 100% accurate.
-                        </span>
+                        <span>{getBannerMessage(language)}</span>
                     </div>
                 </div>
             )}
@@ -389,3 +385,4 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
         </>
     );
 }
+
