@@ -14,7 +14,7 @@ export default function Login() {
 
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
-    const [authStatus, setAuthStatus] = useState<{ configured: boolean; message?: string } | null>(null);
+    const [authStatus, setAuthStatus] = useState<{ auth0_configured: boolean; message?: string } | null>(null);
 
     // Set page title for accessibility
     useEffect(() => {
@@ -112,7 +112,7 @@ export default function Login() {
                         </div>
 
                         {/* Auth Status */}
-                        {authStatus && !authStatus.configured ? (
+                        {authStatus && !authStatus.auth0_configured ? (
                             <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-6">
                                 <div className="flex items-start gap-3">
                                     <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
