@@ -1336,6 +1336,88 @@ export default function AdminConsole() {
                                     <h1 className="text-2xl font-bold text-white">Integrations & API Keys</h1>
                                 </div>
 
+                                {/* Auth0 SSO Section */}
+                                <Card>
+                                    <div className="space-y-4">
+                                        <div className="flex items-center gap-3 pb-3 border-b border-white/10">
+                                            <div className="w-10 h-10 rounded-xl bg-orange-500/20 flex items-center justify-center">
+                                                <Key className="w-5 h-5 text-orange-400" />
+                                            </div>
+                                            <div className="flex-1">
+                                                <h3 className="font-semibold text-white">🔐 Auth0 SSO (Required)</h3>
+                                                <p className="text-sm text-white/50">Staff authentication with MFA</p>
+                                            </div>
+                                            {secrets.find(s => s.key_name === 'AUTH0_DOMAIN')?.is_configured && (
+                                                <Badge variant="success">Configured</Badge>
+                                            )}
+                                        </div>
+
+                                        <div className="text-sm text-blue-300 flex items-start gap-2 mb-4">
+                                            <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                                            <span>
+                                                Set up Auth0 at{' '}
+                                                <a href="https://auth0.com" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-200">
+                                                    auth0.com
+                                                </a>
+                                                {' → Create Application → Single Page Application'}
+                                            </span>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 gap-4">
+                                            {[
+                                                { key: 'AUTH0_DOMAIN', label: 'Domain', placeholder: 'yourtown.us.auth0.com', isPassword: false },
+                                                { key: 'AUTH0_CLIENT_ID', label: 'Client ID', placeholder: 'abc123...', isPassword: false },
+                                                { key: 'AUTH0_CLIENT_SECRET', label: 'Client Secret', placeholder: '********', isPassword: true },
+                                            ].map(({ key, label, placeholder, isPassword }) => {
+                                                const secret = secrets.find(s => s.key_name === key);
+                                                const isConfigured = secret?.is_configured;
+                                                return (
+                                                    <div key={key} className="space-y-2">
+                                                        <label className="block text-sm font-medium text-white/70">
+                                                            {label}
+                                                        </label>
+                                                        {isConfigured && !secretValues[key] ? (
+                                                            <div className="flex items-center gap-3">
+                                                                <div className="flex-1 h-10 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center px-3">
+                                                                    <span className="text-green-300 text-sm">✓ Configured</span>
+                                                                </div>
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="sm"
+                                                                    onClick={() => setSecretValues(prev => ({ ...prev, [key]: '' }))}
+                                                                >
+                                                                    Change
+                                                                </Button>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="flex items-center gap-3">
+                                                                <Input
+                                                                    type={isPassword ? 'password' : 'text'}
+                                                                    placeholder={placeholder}
+                                                                    value={secretValues[key] || ''}
+                                                                    onChange={(e) => setSecretValues(prev => ({ ...prev, [key]: e.target.value }))}
+                                                                    className="flex-1"
+                                                                />
+                                                                <Button
+                                                                    size="sm"
+                                                                    onClick={() => handleSaveSecretDirect(key, secretValues[key] || '')}
+                                                                    disabled={!secretValues[key]}
+                                                                >
+                                                                    Save
+                                                                </Button>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+
+                                        <div className="text-xs text-white/40 pt-2">
+                                            Callback URLs to add in Auth0: <code className="bg-white/10 px-1 rounded">{window.location.origin}/login</code> and <code className="bg-white/10 px-1 rounded">{window.location.origin}/api/auth/callback</code>
+                                        </div>
+                                    </div>
+                                </Card>
+
                                 {/* SMS Provider Section */}
                                 <Card>
                                     <div className="space-y-4">
