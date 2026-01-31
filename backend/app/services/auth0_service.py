@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from app.models import SystemSecret
-from app.services.encryption import decrypt_safe
+from app.core.encryption import decrypt_safe
 
 
 class Auth0Service:
