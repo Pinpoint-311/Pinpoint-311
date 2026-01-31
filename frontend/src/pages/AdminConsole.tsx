@@ -64,6 +64,7 @@ import { useSettings } from '../context/SettingsContext';
 import { api, MapLayer } from '../services/api';
 import { User, ServiceDefinition, SystemSettings, SystemSecret, Department } from '../types';
 import { usePageNavigation } from '../hooks/usePageNavigation';
+import SystemHealthDashboard from '../components/SystemHealthDashboard';
 
 // Icon library for service categories
 const ICON_LIBRARY: { name: string; icon: LucideIcon }[] = [
@@ -98,7 +99,7 @@ const ICON_LIBRARY: { name: string; icon: LucideIcon }[] = [
     { name: 'Users', icon: Users },
 ];
 
-type Tab = 'branding' | 'users' | 'departments' | 'services' | 'secrets' | 'modules' | 'maps' | 'retention' | 'setup';
+type Tab = 'branding' | 'users' | 'departments' | 'services' | 'secrets' | 'modules' | 'maps' | 'retention' | 'setup' | 'health';
 
 export default function AdminConsole() {
     const navigate = useNavigate();
@@ -129,7 +130,8 @@ export default function AdminConsole() {
             modules: 'Modules',
             maps: 'Maps Configuration',
             retention: 'Document Retention',
-            setup: 'Setup Guide'
+            setup: 'Setup Guide',
+            health: 'System Health'
         };
         updateTitle(tabTitles[currentTab]);
         scrollToTop('instant');
@@ -729,6 +731,7 @@ export default function AdminConsole() {
         { id: 'maps', icon: MapPin, label: 'Maps' },
         { id: 'retention', icon: Clock, label: 'Retention' },
         { id: 'setup', icon: Terminal, label: 'Setup Guide' },
+        { id: 'health', icon: BarChart3, label: 'System Health' },
     ];
 
     return (
@@ -2854,6 +2857,11 @@ export default function AdminConsole() {
                                     </div>
                                 </Card>
                             </div>
+                        )}
+
+                        {/* System Health Tab */}
+                        {currentTab === 'health' && (
+                            <SystemHealthDashboard />
                         )}
 
                     </div>
