@@ -353,3 +353,49 @@ class ResearchAccessLog(Base):
     
     # Relationship
     user = relationship("User", backref="research_access_logs")
+
+
+class AuditLog(Base):
+    """Government-compliant audit logging for all authentication events (NIST 800-53)"""
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # User info (nullable for failed login attempts where user doesn't exist)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    username = Column(String(100), index=True)  # Username attempted (even if failed)
+    
+    # Event classification
+    event_type = Column(String(50), nullable=False, index=True)
+    # Event types: login_success, login_failed, logout, session_expired,
+    #              mfa_enrolled, mfa_disabled, password_changed, role_changed,
+    #              account_locked, account_unlocked, token_refreshed
+    
+    # Event outcome
+    success = Column(Boolean, nullable=False, index=True)
+    failure_reason = Column(String(255))  # Why authentication failed
+    
+    # Request context
+    ip_address = Column(String(45), index=True)  # IPv4 or IPv6
+    user_agent = Column(String(500))  # Browser/client info
+    
+    # Session tracking
+    session_id = Column(String(255), index=True)  # Auth0 session ID or JWT jti
+    
+    # Additional event details (flexible JSON for event-specific data)
+    details = Column(JSON)
+    # Examples:
+    # - MFA type used (totp, sms, email)
+    # - Role change: {"old_role": "staff", "new_role": "admin", "changed_by": "admin_user"}
+    # - Password change method: {"method": "forgot_password", "reset_token_used": true}
+    
+    # Timestamps
+    timestamp = Column(DateTime(timezone=True), server_default=func.now(), index=True, nullable=False)
+    
+    # Tamper detection (hash of previous log entry for integrity chain)
+    previous_hash = Column(String(64))  # SHA-256 of previous audit log
+    entry_hash = Column(String(64))  # SHA-256 of this entry
+    
+    # Relationship
+    user = relationship("User", backref="audit_logs")
+

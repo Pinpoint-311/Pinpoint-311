@@ -1,223 +1,282 @@
 """
-Auth0 Service for SSO Authentication
-
-Provides secure single sign-on using Auth0's Universal Login.
-Supports Google, Microsoft, and other identity providers configured in Auth0.
-Includes built-in MFA support.
+Auth0 authentication service using pure OAuth 2.0 / OpenID Connect.
+Clean abstraction with no Auth0 SDK dependencies.
 """
 
 import httpx
-import logging
+import jwt
 from typing import Optional, Dict, Any
-from jose import jwt, JWTError
-from urllib.parse import urlencode
+from datetime import datetime, timedelta
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
+from sqlalchemy import select
 
-logger = logging.getLogger(__name__)
+from app.models import SystemSecret
+from app.services.encryption import decrypt_safe
 
 
-async def get_auth0_config() -> Optional[Dict[str, str]]:
-    """Get Auth0 configuration from SystemSecrets."""
-    from app.db.session import SessionLocal
-    from app.models import SystemSecret
-    from app.core.encryption import decrypt_safe
-    from sqlalchemy import select
+class Auth0Service:
+    """
+    Auth0 authentication using standard OAuth 2.0 Authorization Code Flow with PKCE.
+    All configuration stored in database via SystemSecret.
+    """
     
-    async with SessionLocal() as db:
-        result = await db.execute(
+    @staticmethod
+    async def get_config(db: Session) -> Optional[Dict[str, str]]:
+        """
+        Retrieve Auth0 configuration from database.
+        
+        Returns dict with: domain, client_id, client_secret
+        Returns None if not configured.
+        """
+        # Fetch all Auth0 secrets
+        result = db.execute(
             select(SystemSecret).where(
                 SystemSecret.key_name.in_([
                     "AUTH0_DOMAIN",
                     "AUTH0_CLIENT_ID",
-                    "AUTH0_CLIENT_SECRET",
-                    "AUTH0_AUDIENCE",
+                    "AUTH0_CLIENT_SECRET"
                 ])
             )
         )
-        secrets = result.scalars().all()
+        secrets = {s.key_name: s for s in result.scalars().all()}
         
-        config = {}
-        for secret in secrets:
-            if secret.key_value and secret.is_configured:
-                key = secret.key_name.replace("AUTH0_", "").lower()
-                config[key] = decrypt_safe(secret.key_value)
-        
-        # Check required keys
-        required = ["domain", "client_id", "client_secret"]
-        if not all(k in config for k in required):
-            logger.warning("Auth0 not configured - missing required secrets")
+        # Check if all required secrets are configured
+        if not all(key in secrets and secrets[key].is_configured 
+                   for key in ["AUTH0_DOMAIN", "AUTH0_CLIENT_ID", "AUTH0_CLIENT_SECRET"]):
             return None
         
-        return config
-
-
-async def get_auth0_status() -> Dict[str, Any]:
-    """Get Auth0 configuration status."""
-    config = await get_auth0_config()
+        # Decrypt values
+        domain = decrypt_safe(secrets["AUTH0_DOMAIN"].key_value)
+        client_id = decrypt_safe(secrets["AUTH0_CLIENT_ID"].key_value)
+        client_secret = decrypt_safe(secrets["AUTH0_CLIENT_SECRET"].key_value)
+        
+        if not all([domain, client_id, client_secret]):
+            return None
+        
+        return {
+            "domain": domain,
+            "client_id": client_id,
+            "client_secret": client_secret
+        }
     
-    return {
-        "configured": config is not None,
-        "domain": config.get("domain", "").split(".")[0] + "..." if config else None,
-    }
-
-
-async def get_auth0_login_url(redirect_uri: str, state: str) -> Optional[str]:
-    """Generate Auth0 authorization URL for Universal Login."""
-    config = await get_auth0_config()
-    if not config:
-        return None
+    @staticmethod
+    async def get_authorization_url(
+        redirect_uri: str,
+        state: str,
+        db: Session
+    ) -> str:
+        """
+        Generate Auth0 authorization URL for OAuth flow.
+        
+        Args:
+            redirect_uri: Where Auth0 should redirect after login
+            state: CSRF protection token
+            db: Database session
+        
+        Returns:
+            Full authorization URL to redirect user to
+        """
+        config = await Auth0Service.get_config(db)
+        if not config:
+            raise HTTPException(status_code=500, detail="Auth0 not configured")
+        
+        domain = config["domain"]
+        client_id = config["client_id"]
+        
+        # Build authorization URL
+        params = {
+            "response_type": "code",
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "scope": "openid profile email",
+            "state": state,
+            "audience": f"https://{domain}/api/v2/"  # For API access tokens
+        }
+        
+        query_string = "&".join(f"{k}={httpx.QueryParams({k: v})[k]}" for k, v in params.items())
+        return f"https://{domain}/authorize?{query_string}"
     
-    params = {
-        "client_id": config["client_id"],
-        "redirect_uri": redirect_uri,
-        "response_type": "code",
-        "scope": "openid email profile",
-        "state": state,
-    }
-    
-    # Add audience if configured (for API access tokens)
-    if config.get("audience"):
-        params["audience"] = config["audience"]
-    
-    return f"https://{config['domain']}/authorize?{urlencode(params)}"
-
-
-async def exchange_auth0_code(code: str, redirect_uri: str) -> Optional[Dict[str, Any]]:
-    """
-    Exchange Auth0 authorization code for tokens and user info.
-    
-    Returns user profile with email, name, and Auth0 user ID.
-    """
-    config = await get_auth0_config()
-    if not config:
-        return None
-    
-    try:
+    @staticmethod
+    async def exchange_code_for_tokens(
+        code: str,
+        redirect_uri: str,
+        db: Session
+    ) -> Dict[str, Any]:
+        """
+        Exchange authorization code for access token and ID token.
+        
+        Args:
+            code: Authorization code from Auth0 callback
+            redirect_uri: Same redirect URI used in authorization request
+            db: Database session
+        
+        Returns:
+            Dict with: access_token, id_token, token_type, expires_in
+        """
+        config = await Auth0Service.get_config(db)
+        if not config:
+            raise HTTPException(status_code=500, detail="Auth0 not configured")
+        
+        domain = config["domain"]
+        client_id = config["client_id"]
+        client_secret = config["client_secret"]
+        
+        # Exchange code for tokens
         async with httpx.AsyncClient() as client:
-            # Exchange code for tokens
-            token_response = await client.post(
-                f"https://{config['domain']}/oauth/token",
+            response = await client.post(
+                f"https://{domain}/oauth/token",
                 json={
-                    "client_id": config["client_id"],
-                    "client_secret": config["client_secret"],
-                    "code": code,
                     "grant_type": "authorization_code",
-                    "redirect_uri": redirect_uri,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "code": code,
+                    "redirect_uri": redirect_uri
                 },
-                headers={"Content-Type": "application/json"}
-            )
-            
-            if token_response.status_code != 200:
-                logger.error(f"Auth0 token exchange failed: {token_response.text}")
-                return None
-            
-            tokens = token_response.json()
-            access_token = tokens.get("access_token")
-            id_token = tokens.get("id_token")
-            
-            if not access_token:
-                logger.error("No access token in Auth0 response")
-                return None
-            
-            # Get user info from Auth0
-            userinfo_response = await client.get(
-                f"https://{config['domain']}/userinfo",
-                headers={"Authorization": f"Bearer {access_token}"}
-            )
-            
-            if userinfo_response.status_code != 200:
-                logger.error(f"Auth0 userinfo failed: {userinfo_response.text}")
-                return None
-            
-            userinfo = userinfo_response.json()
-            
-            return {
-                "provider": "auth0",
-                "provider_id": userinfo.get("sub"),  # Auth0 user ID
-                "email": userinfo.get("email"),
-                "email_verified": userinfo.get("email_verified", False),
-                "name": userinfo.get("name") or userinfo.get("nickname"),
-                "picture": userinfo.get("picture"),
-                "access_token": access_token,
-                "id_token": id_token,
-            }
-            
-    except Exception as e:
-        logger.error(f"Auth0 OAuth error: {e}")
-        return None
-
-
-async def verify_auth0_token(token: str) -> Optional[Dict[str, Any]]:
-    """
-    Verify an Auth0 access token or ID token.
-    
-    This is used for API authentication after initial login.
-    """
-    config = await get_auth0_config()
-    if not config:
-        return None
-    
-    try:
-        # Get JWKS (JSON Web Key Set) from Auth0
-        async with httpx.AsyncClient() as client:
-            jwks_response = await client.get(
-                f"https://{config['domain']}/.well-known/jwks.json"
-            )
-            
-            if jwks_response.status_code != 200:
-                logger.error("Failed to fetch Auth0 JWKS")
-                return None
-            
-            jwks = jwks_response.json()
-        
-        # Decode and verify the token
-        # Note: python-jose handles JWKS verification
-        unverified_header = jwt.get_unverified_header(token)
-        
-        # Find the key
-        rsa_key = {}
-        for key in jwks.get("keys", []):
-            if key.get("kid") == unverified_header.get("kid"):
-                rsa_key = {
-                    "kty": key["kty"],
-                    "kid": key["kid"],
-                    "use": key["use"],
-                    "n": key["n"],
-                    "e": key["e"]
+                headers={
+                    "Content-Type": "application/json"
                 }
+            )
+            
+            if response.status_code != 200:
+                error_detail = response.json().get("error_description", "Token exchange failed")
+                raise HTTPException(status_code=400, detail=error_detail)
+            
+            return response.json()
+    
+    @staticmethod
+    async def get_jwks(domain: str) -> Dict[str, Any]:
+        """
+        Fetch JSON Web Key Set (JWKS) from Auth0 for JWT verification.
+        
+        Args:
+            domain: Auth0 domain
+        
+        Returns:
+            JWKS dictionary
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"https://{domain}/.well-known/jwks.json")
+            response.raise_for_status()
+            return response.json()
+    
+    @staticmethod
+    async def verify_token(token: str, db: Session) -> Dict[str, Any]:
+        """
+        Verify and decode JWT token from Auth0.
+        
+        Args:
+            token: JWT access token or ID token
+            db: Database session
+        
+        Returns:
+            Decoded token payload
+        """
+        config = await Auth0Service.get_config(db)
+        if not config:
+            raise HTTPException(status_code=500, detail="Auth0 not configured")
+        
+        domain = config["domain"]
+        client_id = config["client_id"]
+        
+        # Get JWKS for verification
+        jwks = await Auth0Service.get_jwks(domain)
+        
+        # Decode header to get key ID (kid)
+        unverified_header = jwt.get_unverified_header(token)
+        kid = unverified_header.get("kid")
+        
+        # Find the matching key
+        key = None
+        for jwk in jwks.get("keys", []):
+            if jwk.get("kid") == kid:
+                key = jwt.algorithms.RSAAlgorithm.from_jwk(jwk)
                 break
         
-        if not rsa_key:
-            logger.error("Unable to find matching Auth0 key")
-            return None
+        if not key:
+            raise HTTPException(status_code=401, detail="Unable to find appropriate key")
         
-        # Verify the token
-        payload = jwt.decode(
-            token,
-            rsa_key,
-            algorithms=["RS256"],
-            audience=config.get("audience") or config["client_id"],
-            issuer=f"https://{config['domain']}/"
-        )
-        
-        return payload
-        
-    except JWTError as e:
-        logger.warning(f"Auth0 token verification failed: {e}")
-        return None
-    except Exception as e:
-        logger.error(f"Auth0 token verification error: {e}")
-        return None
-
-
-async def get_auth0_logout_url(return_to: str) -> Optional[str]:
-    """Generate Auth0 logout URL."""
-    config = await get_auth0_config()
-    if not config:
-        return None
+        # Verify and decode token
+        try:
+            payload = jwt.decode(
+                token,
+                key,
+                algorithms=["RS256"],
+                audience=client_id,
+                issuer=f"https://{domain}/"
+            )
+            return payload
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token has expired")
+        except jwt.JWTClaimsError:
+            raise HTTPException(status_code=401, detail="Invalid token claims")
+        except Exception as e:
+            raise HTTPException(status_code=401, detail=f"Token validation failed: {str(e)}")
     
-    params = {
-        "client_id": config["client_id"],
-        "returnTo": return_to,
-    }
+    @staticmethod
+    async def get_user_info(access_token: str, db: Session) -> Dict[str, Any]:
+        """
+        Fetch user profile information from Auth0.
+        
+        Args:
+            access_token: Auth0 access token
+            db: Database session
+        
+        Returns:
+            User profile dict
+        """
+        config = await Auth0Service.get_config(db)
+        if not config:
+            raise HTTPException(status_code=500, detail="Auth0 not configured")
+        
+        domain = config["domain"]
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://{domain}/userinfo",
+                headers={
+                    "Authorization": f"Bearer {access_token}"
+                }
+            )
+            
+            if response.status_code != 200:
+                raise HTTPException(status_code=400, detail="Failed to fetch user info")
+            
+            return response.json()
     
-    return f"https://{config['domain']}/v2/logout?{urlencode(params)}"
+    @staticmethod
+    async def check_status(db: Session) -> Dict[str, Any]:
+        """
+        Check Auth0 configuration status for health check.
+        
+        Returns:
+            Dict with status, domain, client_id (masked), and connectivity
+        """
+        config = await Auth0Service.get_config(db)
+        
+        if not config:
+            return {
+                "status": "not_configured",
+                "message": "Auth0 is not configured"
+            }
+        
+        domain = config["domain"]
+        client_id = config["client_id"]
+        
+        # Test OIDC discovery endpoint
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(
+                    f"https://{domain}/.well-known/openid-configuration"
+                )
+                oidc_reachable = response.status_code == 200
+        except Exception:
+            oidc_reachable = False
+        
+        return {
+            "status": "configured" if oidc_reachable else "error",
+            "message": "Auth0 is configured and reachable" if oidc_reachable else "Auth0 configured but unreachable",
+            "domain": domain,
+            "client_id": f"{client_id[:10]}...",  # Mask for security
+            "oidc_discovery": "reachable" if oidc_reachable else "unreachable"
+        }

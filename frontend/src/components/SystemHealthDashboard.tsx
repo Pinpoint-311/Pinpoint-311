@@ -12,7 +12,7 @@ interface HealthCheckResponse {
     overall_status: string;
     checks: {
         database: HealthCheckResult;
-        zitadel_sso: HealthCheckResult;
+        auth0: HealthCheckResult;
         google_kms: HealthCheckResult;
         google_secret_manager: HealthCheckResult;
         vertex_ai: HealthCheckResult;
@@ -186,16 +186,16 @@ export default function SystemHealthDashboard() {
                         </div>
                     </Card>
 
-                    {/* Zitadel SSO */}
+                    {/* Auth0 SSO */}
                     <Card>
                         <div className="flex items-start gap-3">
-                            {getStatusIcon(health.checks.zitadel_sso.status)}
+                            {getStatusIcon(health.checks.auth0.status)}
                             <div className="flex-1">
-                                <h3 className="font-semibold text-white">Zitadel SSO</h3>
-                                <p className={`text-sm mt-1 ${getStatusColor(health.checks.zitadel_sso.status)}`}>
-                                    {health.checks.zitadel_sso.message}
+                                <h3 className="font-semibold text-white">Auth0 SSO</h3>
+                                <p className={`text-sm mt-1 ${getStatusColor(health.checks.auth0.status)}`}>
+                                    {health.checks.auth0.message}
                                 </p>
-                                {renderCheckDetails(health.checks.zitadel_sso)}
+                                {renderCheckDetails(health.checks.auth0)}
                             </div>
                         </div>
                     </Card>

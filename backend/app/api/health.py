@@ -2,7 +2,7 @@
 System Health Check API
 
 Tests all integrations and provides detailed status for:
-- Zitadel SSO
+- Auth0 SSO
 - Google Cloud KMS (PII Encryption)
 - Google Secret Manager
 - Vertex AI (Gemini)
@@ -38,65 +38,19 @@ async def check_database(db: AsyncSession) -> Dict[str, Any]:
         }
 
 
-async def check_zitadel() -> Dict[str, Any]:
-    """Test Zitadel SSO configuration"""
-    from app.services.zitadel_service import get_zitadel_config
+async def check_auth0(db: AsyncSession) -> Dict[str, Any]:
+    """Test Auth0 SSO configuration"""
+    from app.services.auth0_service import Auth0Service
     
     try:
-        config = await get_zitadel_config()
-        
-        if not config:
-            return {
-                "status": "not_configured",
-                "message": "Zitadel not configured. Add ZITADEL_DOMAIN and ZITADEL_CLIENT_ID in Admin Console.",
-                "domain": None,
-                "client_id": None,
-                "auth_method": None
-            }
-        
-        # Determine auth method
-        has_jwt = "jwt_private_key" in config
-        has_secret = "client_secret" in config
-        
-        if has_jwt:
-            auth_method = "JWT (Private Key)"
-        elif has_secret:
-            auth_method = "Client Secret"
-        else:
-            auth_method = "Unknown"
-        
-        # Test OIDC discovery
-        domain = config["domain"]
-        if not domain.startswith("http"):
-            domain = f"https://{domain}"
-        
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(f"{domain}/.well-known/openid-configuration")
-                if response.status_code == 200:
-                    oidc_status = "reachable"
-                else:
-                    oidc_status = f"error (HTTP {response.status_code})"
-        except Exception as e:
-            oidc_status = f"unreachable ({str(e)[:50]})"
-        
-        return {
-            "status": "configured",
-            "message": "Zitadel SSO configured",
-            "domain": config["domain"],
-            "client_id": config["client_id"],
-            "auth_method": auth_method,
-            "oidc_discovery": oidc_status
-        }
-        
+        status_info = await Auth0Service.check_status(db)
+        return status_info
     except Exception as e:
         return {
             "status": "error",
-            "message": f"Zitadel check failed: {str(e)}",
-            "domain": None,
-            "client_id": None,
-            "auth_method": None
+            "message": f"Auth0 check failed: {str(e)}"
         }
+
 
 
 async def check_google_kms() -> Dict[str, Any]:
@@ -288,7 +242,7 @@ async def health_check(
     # Run all checks
     results = {
         "database": await check_database(db),
-        "zitadel_sso": await check_zitadel(),
+        "auth0": await check_auth0(db),
         "google_kms": await check_google_kms(),
         "google_secret_manager": await check_secret_manager(),
         "vertex_ai": await check_vertex_ai(),

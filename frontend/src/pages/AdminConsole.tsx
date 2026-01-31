@@ -65,6 +65,7 @@ import { api, MapLayer } from '../services/api';
 import { User, ServiceDefinition, SystemSettings, SystemSecret, Department } from '../types';
 import { usePageNavigation } from '../hooks/usePageNavigation';
 import SystemHealthDashboard from '../components/SystemHealthDashboard';
+import AuditLogViewer from '../components/AuditLogViewer';
 
 // Icon library for service categories
 const ICON_LIBRARY: { name: string; icon: LucideIcon }[] = [
@@ -99,7 +100,7 @@ const ICON_LIBRARY: { name: string; icon: LucideIcon }[] = [
     { name: 'Users', icon: Users },
 ];
 
-type Tab = 'branding' | 'users' | 'departments' | 'services' | 'secrets' | 'modules' | 'maps' | 'retention' | 'setup' | 'health';
+type Tab = 'branding' | 'users' | 'departments' | 'services' | 'secrets' | 'modules' | 'maps' | 'retention' | 'setup' | 'health' | 'audit';
 
 export default function AdminConsole() {
     const navigate = useNavigate();
@@ -131,7 +132,8 @@ export default function AdminConsole() {
             maps: 'Maps Configuration',
             retention: 'Document Retention',
             setup: 'Setup Guide',
-            health: 'System Health'
+            health: 'System Health',
+            audit: 'Audit Logs'
         };
         updateTitle(tabTitles[currentTab]);
         scrollToTop('instant');
@@ -732,6 +734,7 @@ export default function AdminConsole() {
         { id: 'retention', icon: Clock, label: 'Retention' },
         { id: 'setup', icon: Terminal, label: 'Setup Guide' },
         { id: 'health', icon: BarChart3, label: 'System Health' },
+        { id: 'audit', icon: Shield, label: 'Audit Logs' },
     ];
 
     return (
@@ -2862,6 +2865,11 @@ export default function AdminConsole() {
                         {/* System Health Tab */}
                         {currentTab === 'health' && (
                             <SystemHealthDashboard />
+                        )}
+
+                        {/* Audit Logs Tab */}
+                        {currentTab === 'audit' && (
+                            <AuditLogViewer />
                         )}
 
                     </div>
