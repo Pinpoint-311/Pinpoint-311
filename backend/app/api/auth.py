@@ -175,9 +175,9 @@ async def initiate_login(
 
 @router.get("/callback")
 async def auth0_callback(
+    request: Request,
     code: str = Query(...),
     state: str = Query(...),
-    request: Request,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -293,10 +293,10 @@ async def auth0_callback(
 
 @router.get("/logout")
 async def logout(
-    return_to: str = Query(..., description="URL to return to after logout"),
     request: Request,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    return_to: str = Query(..., description="URL to return to after logout")
 ):
     """
     Logout endpoint - logs the logout event and returns Auth0 logout URL.
