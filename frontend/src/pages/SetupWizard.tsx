@@ -362,6 +362,49 @@ function GCPSetupForm({ form, setForm, onSubmit, onSkip, loading, success, alrea
                 ))}
             </div>
 
+            {/* Required IAM Permissions */}
+            <div className="bg-amber-500/20 border border-amber-400/30 rounded-xl p-4 mb-6">
+                <div className="flex items-start space-x-3">
+                    <Key className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+                    <div>
+                        <p className="text-amber-200 font-medium text-sm mb-2">Required Service Account Permissions</p>
+                        <p className="text-amber-100/80 text-sm mb-3">
+                            Your service account needs these IAM roles. Add them at{' '}
+                            <a
+                                href="https://console.cloud.google.com/iam-admin/iam"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-amber-300 underline hover:text-amber-200"
+                            >
+                                GCP Console → IAM & Admin
+                            </a>
+                        </p>
+                        <ul className="text-amber-100 text-sm space-y-1">
+                            <li className="flex items-center">
+                                <Check className="w-4 h-4 mr-2 text-amber-400" />
+                                <code className="bg-black/20 px-1.5 py-0.5 rounded text-xs">Cloud KMS Admin</code>
+                                <span className="text-amber-200/70 ml-2">— creates encryption keys</span>
+                            </li>
+                            <li className="flex items-center">
+                                <Check className="w-4 h-4 mr-2 text-amber-400" />
+                                <code className="bg-black/20 px-1.5 py-0.5 rounded text-xs">Secret Manager Admin</code>
+                                <span className="text-amber-200/70 ml-2">— manages secrets</span>
+                            </li>
+                            <li className="flex items-center">
+                                <Check className="w-4 h-4 mr-2 text-amber-400" />
+                                <code className="bg-black/20 px-1.5 py-0.5 rounded text-xs">Cloud Translation API User</code>
+                                <span className="text-amber-200/70 ml-2">— multi-language support</span>
+                            </li>
+                            <li className="flex items-center">
+                                <Check className="w-4 h-4 mr-2 text-amber-400" />
+                                <code className="bg-black/20 px-1.5 py-0.5 rounded text-xs">Vertex AI User</code>
+                                <span className="text-amber-200/70 ml-2">— AI analysis features</span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
             <div className="space-y-5 mb-8">
                 <div>
                     <label className="block text-sm font-medium text-white/80 mb-3">
