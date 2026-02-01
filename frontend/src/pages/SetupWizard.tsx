@@ -545,7 +545,7 @@ function Auth0SetupForm({ form, setForm, onSubmit, loading, success, gcpConfigur
                 <div className="space-y-3 text-sm text-white/70">
                     <p>1. In your new app, go to the <strong className="text-white">Settings</strong> tab</p>
                     <p>2. Scroll to <strong className="text-white">"Allowed Callback URLs"</strong></p>
-                    <p>3. Add this URL:</p>
+                    <p>3. Add this URL (your current location):</p>
                     <div className="bg-white/10 rounded-lg p-3 flex items-center justify-between">
                         <code className="text-green-400 text-xs break-all">{callbackUrl}</code>
                         <button
@@ -554,6 +554,11 @@ function Auth0SetupForm({ form, setForm, onSubmit, loading, success, gcpConfigur
                         >
                             Copy
                         </button>
+                    </div>
+                    <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 mt-2">
+                        <p className="text-blue-300 text-xs">💡 <strong>Tip:</strong> If you have a custom domain (e.g., <code className="bg-white/10 px-1 rounded">311.yourorg.gov</code>), also add:</p>
+                        <code className="text-blue-200 text-xs block mt-1">https://your-domain.gov/auth/callback</code>
+                        <p className="text-blue-300/70 text-xs mt-1">You can add multiple URLs separated by commas.</p>
                     </div>
                     <p>4. Scroll to <strong className="text-white">"Allowed Logout URLs"</strong> and add: <code className="bg-white/10 px-1 rounded">{typeof window !== 'undefined' ? window.location.origin : ''}</code></p>
                     <p>5. Click <strong className="text-white">Save Changes</strong></p>
