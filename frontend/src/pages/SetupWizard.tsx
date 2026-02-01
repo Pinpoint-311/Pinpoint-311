@@ -290,7 +290,7 @@ function GCPSetupForm({ form, setForm, onSubmit, onSkip, loading, success }: GCP
                     <Database className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
                     <div>
                         <p className="text-blue-200 font-medium text-sm">Why Configure GCP First?</p>
-                        <p className="text-blue-300/80 text-sm mt-1">
+                        <p className="text-blue-100 text-sm mt-1">
                             Google Cloud Secret Manager securely stores Auth0 credentials. If you skip this, credentials will be stored locally with Fernet encryption.
                         </p>
                     </div>
@@ -311,7 +311,7 @@ function GCPSetupForm({ form, setForm, onSubmit, onSkip, loading, success }: GCP
                         </div>
                         <div>
                             <p className="text-white text-sm font-semibold">{name}</p>
-                            <p className="text-white/50 text-xs">{desc}</p>
+                            <p className="text-white/75 text-xs">{desc}</p>
                         </div>
                     </div>
                 ))}
@@ -372,7 +372,7 @@ function GCPSetupForm({ form, setForm, onSubmit, onSkip, loading, success }: GCP
                     href="https://console.cloud.google.com/iam-admin/serviceaccounts"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-sm text-indigo-400 hover:text-indigo-300 flex items-center"
+                    className="text-sm text-indigo-300 hover:text-indigo-200 flex items-center"
                 >
                     <ExternalLink className="w-4 h-4 mr-2" />
                     Google Cloud Console → IAM → Service Accounts
@@ -389,7 +389,7 @@ function GCPSetupForm({ form, setForm, onSubmit, onSkip, loading, success }: GCP
                 <button
                     onClick={onSubmit}
                     disabled={loading || !form.project_id || !form.service_account_json}
-                    className="flex-1 bg-indigo-600 hover:bg-indigo-500 disabled:bg-white/10 disabled:text-white/40 disabled:cursor-not-allowed text-white font-semibold py-3.5 px-6 rounded-xl transition-all shadow-lg shadow-indigo-500/25 disabled:shadow-none flex items-center justify-center"
+                    className="flex-1 bg-indigo-600 hover:bg-indigo-500 disabled:bg-white/10 disabled:text-white/60 disabled:cursor-not-allowed text-white font-semibold py-3.5 px-6 rounded-xl transition-all shadow-lg shadow-indigo-500/25 disabled:shadow-none flex items-center justify-center"
                 >
                     {loading ? (
                         <>
