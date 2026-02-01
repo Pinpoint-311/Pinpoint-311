@@ -2387,8 +2387,14 @@ export default function AdminConsole() {
 
                                 {/* Current Policy Status */}
                                 {retentionPolicy && (
-                                    <Card className="p-6">
-                                        <h3 className="text-lg font-semibold text-white mb-4">Current Policy</h3>
+                                    <AccordionSection
+                                        title={`Current Policy: ${retentionPolicy.policy.name}`}
+                                        subtitle={`${retentionPolicy.policy.retention_years} years retention • ${retentionPolicy.mode === 'anonymize' ? 'Anonymize mode' : 'Delete mode'}`}
+                                        icon={Shield}
+                                        iconClassName="text-green-400"
+                                        badge={<Badge variant="success">Active</Badge>}
+                                        defaultOpen={true}
+                                    >
                                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                                             <div className="bg-white/5 rounded-lg p-4">
                                                 <div className="text-white/60 text-sm">Active State</div>
@@ -2440,16 +2446,16 @@ export default function AdminConsole() {
                                         <p className="text-white/40 text-sm mt-4">
                                             Source: {retentionPolicy.policy.source}
                                         </p>
-                                    </Card>
+                                    </AccordionSection>
                                 )}
 
                                 {/* Database Backups */}
-                                <Card className="p-6">
-                                    <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                                        <Upload className="w-5 h-5 text-blue-400" />
-                                        Database Backups
-                                    </h3>
-
+                                <AccordionSection
+                                    title="Database Backups"
+                                    subtitle="Encrypted S3-compatible backup management"
+                                    icon={Upload}
+                                    iconClassName="text-blue-400"
+                                >
                                     {backupStatus === null ? (
                                         <div className="text-center py-4">
                                             <Button
@@ -2599,15 +2605,17 @@ export default function AdminConsole() {
                                             )}
                                         </div>
                                     )}
-                                </Card>
+                                </AccordionSection>
 
                                 {/* Soft-Deleted Requests */}
                                 {deletedRequests.length > 0 && (
-                                    <Card className="p-6">
-                                        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                                            <Trash2 className="w-5 h-5 text-red-400" />
-                                            Soft-Deleted Requests ({deletedRequests.length})
-                                        </h3>
+                                    <AccordionSection
+                                        title={`Soft-Deleted Requests`}
+                                        subtitle="Requests removed by administrators but recoverable"
+                                        icon={Trash2}
+                                        iconClassName="text-red-400"
+                                        badge={<Badge variant="danger">{deletedRequests.length}</Badge>}
+                                    >
                                         <p className="text-white/60 mb-4 text-sm">
                                             These requests have been soft-deleted by administrators and are no longer visible to staff.
                                         </p>
@@ -2655,12 +2663,16 @@ export default function AdminConsole() {
                                                 </div>
                                             ))}
                                         </div>
-                                    </Card>
+                                    </AccordionSection>
                                 )}
 
                                 {/* State Selection */}
-                                <Card className="p-6">
-                                    <h3 className="text-lg font-semibold text-white mb-4">Recommended Retention Policy</h3>
+                                <AccordionSection
+                                    title="Retention Policy Configuration"
+                                    subtitle="Configure state-mandated record retention requirements"
+                                    icon={Clock}
+                                    iconClassName="text-amber-400"
+                                >
                                     <p className="text-white/60 mb-4">Choose your state to apply the appropriate record retention requirements.</p>
 
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2789,11 +2801,15 @@ export default function AdminConsole() {
                                             Export for {retentionPolicy?.policy?.public_records_law?.split("(")[0]?.trim() || 'FOIA'}
                                         </Button>
                                     </div>
-                                </Card>
+                                </AccordionSection>
 
                                 {/* All States Reference */}
-                                <Card className="p-6">
-                                    <h3 className="text-lg font-semibold text-white mb-4">All State Policies ({retentionStates.length} States)</h3>
+                                <AccordionSection
+                                    title={`All State Policies`}
+                                    subtitle={`Reference guide for ${retentionStates.length} states with retention requirements`}
+                                    icon={FileText}
+                                    iconClassName="text-blue-400"
+                                >
                                     <div className="overflow-x-auto">
                                         <table className="w-full text-sm">
                                             <thead>
@@ -2818,7 +2834,7 @@ export default function AdminConsole() {
                                             </tbody>
                                         </table>
                                     </div>
-                                </Card>
+                                </AccordionSection>
                             </div>
                         )}
 
