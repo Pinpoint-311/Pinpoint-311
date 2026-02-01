@@ -692,31 +692,34 @@ async def setup_workload_identity_federation(
     from app.services.audit_service import AuditService
     
     # Log the action
-    audit_service = AuditService(db)
-    await audit_service.log_action(
-        action="federation_setup_started",
+    await AuditService.log_event(
+        db=db,
+        event_type="federation_setup_started",
+        success=True,
         user_id=current_user.id,
-        resource_type="workload_identity",
-        resource_id="federation",
+        username=current_user.username,
         details={"initiated_by": current_user.username}
     )
     
     result = await setup_federation()
     
     if result.get("status") == "success":
-        await audit_service.log_action(
-            action="federation_setup_completed",
+        await AuditService.log_event(
+            db=db,
+            event_type="federation_setup_completed",
+            success=True,
             user_id=current_user.id,
-            resource_type="workload_identity",
-            resource_id="federation",
+            username=current_user.username,
             details=result
         )
     else:
-        await audit_service.log_action(
-            action="federation_setup_failed",
+        await AuditService.log_event(
+            db=db,
+            event_type="federation_setup_failed",
+            success=False,
             user_id=current_user.id,
-            resource_type="workload_identity",
-            resource_id="federation",
+            username=current_user.username,
+            failure_reason=result.get("error"),
             details=result
         )
     

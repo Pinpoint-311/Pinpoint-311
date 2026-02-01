@@ -253,9 +253,73 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                             </div>
                             {getStatusBadge(smtpConfigured)}
                         </div>
-                        <p className="text-gray-300 text-xs">
-                            Configure SMTP credentials in the detailed settings above.
-                        </p>
+                        {!smtpConfigured || secretValues['SMTP_HOST'] !== undefined ? (
+                            <div className="space-y-2">
+                                <div className="flex gap-2">
+                                    <Input
+                                        type="text"
+                                        placeholder="SMTP Host (e.g., smtp.gmail.com)"
+                                        value={secretValues['SMTP_HOST'] || ''}
+                                        onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_HOST': e.target.value }))}
+                                        className="flex-1 text-sm"
+                                    />
+                                    <Input
+                                        type="text"
+                                        placeholder="Port"
+                                        value={secretValues['SMTP_PORT'] || ''}
+                                        onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_PORT': e.target.value }))}
+                                        className="w-20 text-sm"
+                                    />
+                                </div>
+                                <div className="flex gap-2">
+                                    <Input
+                                        type="text"
+                                        placeholder="From Email"
+                                        value={secretValues['SMTP_FROM_EMAIL'] || ''}
+                                        onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_FROM_EMAIL': e.target.value }))}
+                                        className="flex-1 text-sm"
+                                    />
+                                </div>
+                                <div className="flex gap-2">
+                                    <Input
+                                        type="text"
+                                        placeholder="Username"
+                                        value={secretValues['SMTP_USERNAME'] || ''}
+                                        onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_USERNAME': e.target.value }))}
+                                        className="flex-1 text-sm"
+                                    />
+                                    <Input
+                                        type="password"
+                                        placeholder="Password"
+                                        value={secretValues['SMTP_PASSWORD'] || ''}
+                                        onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_PASSWORD': e.target.value }))}
+                                        className="flex-1 text-sm"
+                                    />
+                                </div>
+                                <Button
+                                    size="sm"
+                                    onClick={async () => {
+                                        if (secretValues['SMTP_HOST']) await handleSave('SMTP_HOST');
+                                        if (secretValues['SMTP_PORT']) await handleSave('SMTP_PORT');
+                                        if (secretValues['SMTP_FROM_EMAIL']) await handleSave('SMTP_FROM_EMAIL');
+                                        if (secretValues['SMTP_USERNAME']) await handleSave('SMTP_USERNAME');
+                                        if (secretValues['SMTP_PASSWORD']) await handleSave('SMTP_PASSWORD');
+                                    }}
+                                    disabled={!secretValues['SMTP_HOST'] || savingKey !== null}
+                                >
+                                    Save SMTP Settings
+                                </Button>
+                            </div>
+                        ) : (
+                            <div className="flex items-center gap-2">
+                                <div className="flex-1 h-9 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center px-3">
+                                    <span className="text-green-300 text-xs">✓ Configured</span>
+                                </div>
+                                <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, 'SMTP_HOST': '' }))}>
+                                    Change
+                                </Button>
+                            </div>
+                        )}
                     </Card>
 
                     {/* Sentry Error Tracking */}
