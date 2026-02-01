@@ -85,9 +85,9 @@ async def check_google_kms(db: AsyncSession) -> Dict[str, Any]:
     try:
         # Check environment variables OR database secrets
         project = await get_config_value(db, "GOOGLE_CLOUD_PROJECT")
-        key_ring = os.getenv("KMS_KEY_RING")  # KMS settings are optional
-        key_id = os.getenv("KMS_KEY_ID")
-        location = os.getenv("KMS_LOCATION", "us-central1")
+        key_ring = await get_config_value(db, "KMS_KEY_RING")
+        key_id = await get_config_value(db, "KMS_KEY_ID")
+        location = await get_config_value(db, "KMS_LOCATION") or "us-central1"
         
         if not project:
             return {

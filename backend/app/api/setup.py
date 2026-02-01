@@ -173,6 +173,93 @@ async def configure_gcp(
         
         await db.commit()
         
+        # Try to create KMS keyring and key automatically
+        kms_created = False
+        kms_error = None
+        kms_keyring = "pinpoint311-keyring"
+        kms_key = "pii-encryption-key"
+        kms_location = "us-central1"
+        
+        try:
+            from google.cloud import kms
+            from google.oauth2 import service_account
+            
+            # Create credentials from service account JSON
+            credentials = service_account.Credentials.from_service_account_info(sa_data)
+            kms_client = kms.KeyManagementServiceClient(credentials=credentials)
+            
+            # Create keyring
+            parent = f"projects/{request.project_id}/locations/{kms_location}"
+            keyring_name = f"{parent}/keyRings/{kms_keyring}"
+            
+            try:
+                kms_client.create_key_ring(
+                    request={"parent": parent, "key_ring_id": kms_keyring, "key_ring": {}}
+                )
+                logger.info(f"Created KMS keyring: {kms_keyring}")
+            except Exception as e:
+                if "already exists" in str(e).lower() or "ALREADY_EXISTS" in str(e):
+                    logger.info(f"KMS keyring already exists: {kms_keyring}")
+                else:
+                    raise
+            
+            # Create encryption key
+            key_name = f"{keyring_name}/cryptoKeys/{kms_key}"
+            try:
+                kms_client.create_crypto_key(
+                    request={
+                        "parent": keyring_name,
+                        "crypto_key_id": kms_key,
+                        "crypto_key": {
+                            "purpose": kms.CryptoKey.CryptoKeyPurpose.ENCRYPT_DECRYPT,
+                            "version_template": {
+                                "algorithm": kms.CryptoKeyVersion.CryptoKeyVersionAlgorithm.GOOGLE_SYMMETRIC_ENCRYPTION
+                            }
+                        }
+                    }
+                )
+                logger.info(f"Created KMS key: {kms_key}")
+            except Exception as e:
+                if "already exists" in str(e).lower() or "ALREADY_EXISTS" in str(e):
+                    logger.info(f"KMS key already exists: {kms_key}")
+                else:
+                    raise
+            
+            kms_created = True
+            
+            # Store KMS configuration
+            for key, value in [
+                ("KMS_KEY_RING", kms_keyring),
+                ("KMS_KEY_ID", kms_key),
+                ("KMS_LOCATION", kms_location)
+            ]:
+                result = await db.execute(
+                    select(SystemSecret).where(SystemSecret.key_name == key)
+                )
+                secret = result.scalar_one_or_none()
+                encrypted_value = encrypt(value)
+                
+                if secret:
+                    secret.key_value = encrypted_value
+                    secret.is_configured = True
+                else:
+                    secret = SystemSecret(
+                        key_name=key,
+                        key_value=encrypted_value,
+                        is_configured=True,
+                        description=f"KMS {key.replace('_', ' ').lower()}"
+                    )
+                    db.add(secret)
+            
+            await db.commit()
+            
+        except ImportError:
+            kms_error = "google-cloud-kms package not installed"
+            logger.warning(f"KMS setup skipped: {kms_error}")
+        except Exception as e:
+            kms_error = str(e)[:200]
+            logger.warning(f"KMS auto-setup failed (will use Fernet fallback): {e}")
+        
         # Log successful setup
         await AuditService.log_event(
             db=db,
@@ -182,7 +269,9 @@ async def configure_gcp(
             username=current_user.username,
             details={
                 "project_id": request.project_id,
-                "service_account_email": sa_data.get("client_email")
+                "service_account_email": sa_data.get("client_email"),
+                "kms_configured": kms_created,
+                "kms_error": kms_error
             }
         )
         
@@ -191,7 +280,11 @@ async def configure_gcp(
         return {
             "success": True,
             "message": "Google Cloud Platform configured successfully",
-            "project_id": request.project_id
+            "project_id": request.project_id,
+            "kms_configured": kms_created,
+            "kms_keyring": kms_keyring if kms_created else None,
+            "kms_key": kms_key if kms_created else None,
+            "kms_note": None if kms_created else f"KMS not auto-created ({kms_error}), using Fernet encryption"
         }
         
     except HTTPException:
