@@ -10,7 +10,8 @@ import {
     Shield,
     Package,
     AlertCircle,
-    Loader2
+    Loader2,
+    GitCommit
 } from 'lucide-react';
 
 interface Release {
@@ -56,11 +57,12 @@ const SHORT_LABELS: Record<string, string> = {
 };
 
 export default function VersionSwitcher() {
-    const [currentVersion, setCurrentVersion] = useState<{ sha: string; tag: string | null; display: string } | null>(null);
+    const [currentVersion, setCurrentVersion] = useState<{ sha: string; tag: string | null; display: string; commit_message?: string } | null>(null);
     const [releases, setReleases] = useState<Release[]>([]);
     const [recentCommits, setRecentCommits] = useState<RecentCommit[]>([]);
     const [selectedRef, setSelectedRef] = useState<string | null>(null);
     const [selectedRelease, setSelectedRelease] = useState<Release | null>(null);
+    const [selectedCommit, setSelectedCommit] = useState<RecentCommit | null>(null);
     const [security, setSecurity] = useState<{ verification: Record<string, SecurityCheck>; summary: SecuritySummary } | null>(null);
 
     const [isLoading, setIsLoading] = useState(false);
@@ -127,9 +129,10 @@ export default function VersionSwitcher() {
         }
     };
 
-    const handleSelectRef = (ref: string, release: Release | null) => {
+    const handleSelectRef = (ref: string, release: Release | null, commit: RecentCommit | null) => {
         setSelectedRef(ref);
         setSelectedRelease(release);
+        setSelectedCommit(commit);
         setDropdownOpen(false);
         fetchSecurity(ref);
     };
@@ -191,11 +194,32 @@ export default function VersionSwitcher() {
         return <Clock className="w-3.5 h-3.5 text-white/50" />;
     };
 
+    // Parse commit message into type and description
+    const parseCommitMessage = (msg: string) => {
+        const match = msg.match(/^(\w+)(?:\(([^)]+)\))?:\s*(.+)$/);
+        if (match) {
+            return { type: match[1], scope: match[2], desc: match[3] };
+        }
+        return { type: null, scope: null, desc: msg };
+    };
+
+    const getTypeColor = (type: string | null) => {
+        switch (type) {
+            case 'feat': return 'bg-emerald-500/20 text-emerald-400';
+            case 'fix': return 'bg-amber-500/20 text-amber-400';
+            case 'style': return 'bg-purple-500/20 text-purple-400';
+            case 'refactor': return 'bg-blue-500/20 text-blue-400';
+            case 'docs': return 'bg-sky-500/20 text-sky-400';
+            case 'chore': return 'bg-gray-500/20 text-gray-400';
+            default: return 'bg-white/10 text-white/60';
+        }
+    };
+
     return (
         <div className="space-y-3">
             {/* Current Version */}
             <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 min-w-0">
                     <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center flex-shrink-0">
                         <GitBranch className="w-4 h-4 text-indigo-400" />
                     </div>
@@ -215,6 +239,13 @@ export default function VersionSwitcher() {
                 </button>
             </div>
 
+            {/* Current commit message */}
+            {currentVersion?.commit_message && (
+                <p className="text-xs text-white/50 px-1 truncate" title={currentVersion.commit_message}>
+                    {currentVersion.commit_message}
+                </p>
+            )}
+
             {/* Version Selector */}
             <div className="relative">
                 <button
@@ -224,7 +255,7 @@ export default function VersionSwitcher() {
                     <span className="flex items-center gap-2 min-w-0">
                         <Package className="w-3.5 h-3.5 text-white/60 flex-shrink-0" />
                         {selectedRef ? (
-                            <span className="font-mono truncate">{selectedRef.slice(0, 12)}{selectedRef.length > 12 ? '...' : ''}</span>
+                            <span className="font-mono truncate">@{selectedRef.slice(0, 7)}</span>
                         ) : (
                             <span className="text-white/50">Select version</span>
                         )}
@@ -233,7 +264,7 @@ export default function VersionSwitcher() {
                 </button>
 
                 {dropdownOpen && (
-                    <div className="absolute z-50 mt-2 w-full bg-slate-800 border border-white/20 rounded-xl shadow-xl max-h-64 overflow-y-auto">
+                    <div className="absolute z-50 mt-2 w-[calc(100%+60px)] -left-[30px] bg-slate-800 border border-white/20 rounded-xl shadow-xl max-h-80 overflow-y-auto">
                         {/* Releases */}
                         {releases.length > 0 && (
                             <>
@@ -243,39 +274,53 @@ export default function VersionSwitcher() {
                                 {releases.map((release) => (
                                     <button
                                         key={release.tag}
-                                        onClick={() => handleSelectRef(release.tag, release)}
-                                        className={`w-full flex items-center justify-between px-3 py-2 text-left hover:bg-white/10 transition-colors text-sm ${selectedRef === release.tag ? 'bg-indigo-500/20' : ''
+                                        onClick={() => handleSelectRef(release.tag, release, null)}
+                                        className={`w-full px-3 py-2 text-left hover:bg-white/10 transition-colors ${selectedRef === release.tag ? 'bg-indigo-500/20' : ''
                                             }`}
                                     >
-                                        <span className="font-mono text-white">{release.tag}</span>
-                                        <span className="text-xs text-white/40">{formatDate(release.published_at)}</span>
+                                        <div className="flex items-center justify-between">
+                                            <span className="font-mono text-white text-sm">{release.tag}</span>
+                                            <span className="text-xs text-white/40">{formatDate(release.published_at)}</span>
+                                        </div>
+                                        <p className="text-xs text-white/60 mt-0.5">{release.name}</p>
                                     </button>
                                 ))}
                             </>
                         )}
 
-                        {/* Recent Commits */}
+                        {/* Recent Commits - Enhanced */}
                         {recentCommits.length > 0 && (
                             <>
                                 <p className="px-3 py-1.5 text-xs font-medium text-white/40 uppercase tracking-wider border-y border-white/10">
-                                    Recent Commits
+                                    Recent Updates
                                 </p>
-                                {recentCommits.map((commit) => (
-                                    <button
-                                        key={commit.sha}
-                                        onClick={() => handleSelectRef(commit.full_sha, null)}
-                                        className={`w-full px-3 py-2 text-left hover:bg-white/10 transition-colors text-sm ${selectedRef === commit.full_sha ? 'bg-indigo-500/20' : ''
-                                            }`}
-                                    >
-                                        <div className="flex items-center justify-between">
-                                            <span className="font-mono text-white">@{commit.sha}</span>
-                                            <span className="text-xs text-white/40">{formatDate(commit.date)}</span>
-                                        </div>
-                                        <p className="text-xs text-white/50 truncate mt-0.5">
-                                            {commit.message}
-                                        </p>
-                                    </button>
-                                ))}
+                                {recentCommits.map((commit) => {
+                                    const parsed = parseCommitMessage(commit.message);
+                                    return (
+                                        <button
+                                            key={commit.sha}
+                                            onClick={() => handleSelectRef(commit.full_sha, null, commit)}
+                                            className={`w-full px-3 py-2.5 text-left hover:bg-white/10 transition-colors border-b border-white/5 last:border-0 ${selectedRef === commit.full_sha ? 'bg-indigo-500/20' : ''
+                                                }`}
+                                        >
+                                            <div className="flex items-center justify-between mb-1">
+                                                <div className="flex items-center gap-2">
+                                                    <GitCommit className="w-3 h-3 text-white/40" />
+                                                    <span className="font-mono text-white text-xs">@{commit.sha}</span>
+                                                    {parsed.type && (
+                                                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${getTypeColor(parsed.type)}`}>
+                                                            {parsed.type}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <span className="text-[10px] text-white/40">{formatDate(commit.date)}</span>
+                                            </div>
+                                            <p className="text-sm text-white/80 leading-snug">
+                                                {parsed.scope && <span className="text-white/40">[{parsed.scope}]</span>} {parsed.desc}
+                                            </p>
+                                        </button>
+                                    );
+                                })}
                             </>
                         )}
 
@@ -288,38 +333,54 @@ export default function VersionSwitcher() {
                 )}
             </div>
 
-            {/* Selected Release Details */}
+            {/* Selected Version Details */}
             {selectedRef && (
                 <div className="bg-white/5 border border-white/10 rounded-lg p-3 space-y-3">
-                    {/* Release Info */}
-                    {selectedRelease && (
-                        <div>
-                            <div className="flex items-center justify-between mb-1">
-                                <h4 className="font-medium text-white text-sm truncate">{selectedRelease.name}</h4>
-                                <a
-                                    href={selectedRelease.html_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-xs text-indigo-400 hover:text-indigo-300 flex-shrink-0"
-                                >
-                                    <ExternalLink className="w-3 h-3" />
-                                </a>
+                    {/* What's in this update */}
+                    <div>
+                        <p className="text-xs font-medium text-white/50 mb-1.5">What's in this update:</p>
+                        {selectedRelease ? (
+                            <div className="text-sm text-white/80">
+                                <p className="font-medium text-white mb-1">{selectedRelease.name}</p>
+                                <p className="text-xs text-white/60 line-clamp-3">{selectedRelease.body.split('\n').slice(0, 3).join(' ')}</p>
                             </div>
-                            <p className="text-xs text-white/60 line-clamp-2">
-                                {selectedRelease.body.split('\n')[0]}
-                            </p>
-                        </div>
-                    )}
+                        ) : selectedCommit ? (
+                            <div className="text-sm">
+                                {(() => {
+                                    const parsed = parseCommitMessage(selectedCommit.message);
+                                    return (
+                                        <>
+                                            <div className="flex items-center gap-2 mb-1">
+                                                {parsed.type && (
+                                                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${getTypeColor(parsed.type)}`}>
+                                                        {parsed.type === 'feat' ? 'New Feature' :
+                                                            parsed.type === 'fix' ? 'Bug Fix' :
+                                                                parsed.type === 'style' ? 'Style Update' :
+                                                                    parsed.type === 'refactor' ? 'Refactor' : parsed.type}
+                                                    </span>
+                                                )}
+                                                {parsed.scope && <span className="text-xs text-white/40">{parsed.scope}</span>}
+                                            </div>
+                                            <p className="text-white/80">{parsed.desc}</p>
+                                        </>
+                                    );
+                                })()}
+                                <p className="text-[10px] text-white/40 mt-1">by {selectedCommit.author} • {formatDate(selectedCommit.date)}</p>
+                            </div>
+                        ) : (
+                            <p className="text-xs text-white/50">Commit details not available</p>
+                        )}
+                    </div>
 
                     {/* Security Verification - Compact */}
                     <div>
                         <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-medium text-white/60 flex items-center gap-1">
+                            <span className="text-xs font-medium text-white/50 flex items-center gap-1">
                                 <Shield className="w-3 h-3" />
-                                Security
+                                Verified
                             </span>
                             {security?.summary && (
-                                <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${security.summary.all_passed
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${security.summary.all_passed
                                         ? 'bg-emerald-500/20 text-emerald-400'
                                         : 'bg-amber-500/20 text-amber-400'
                                     }`}>
@@ -331,14 +392,14 @@ export default function VersionSwitcher() {
                         {isLoadingSecurity ? (
                             <div className="flex items-center gap-2 text-white/50 text-xs">
                                 <Loader2 className="w-3 h-3 animate-spin" />
-                                Loading...
+                                Checking...
                             </div>
                         ) : security ? (
-                            <div className="grid grid-cols-2 gap-1.5">
+                            <div className="grid grid-cols-2 gap-1">
                                 {Object.entries(security.verification).map(([key, check]) => (
                                     <div
                                         key={key}
-                                        className="flex items-center gap-1.5 text-xs bg-white/5 rounded px-2 py-1.5"
+                                        className="flex items-center gap-1.5 text-[11px] bg-white/5 rounded px-2 py-1"
                                         title={check.name}
                                     >
                                         {getStatusIcon(check)}
@@ -348,7 +409,7 @@ export default function VersionSwitcher() {
                                                 href={check.run_url}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
-                                                className="text-white/40 hover:text-white/60 ml-auto"
+                                                className="text-white/30 hover:text-white/60 ml-auto"
                                             >
                                                 <ExternalLink className="w-2.5 h-2.5" />
                                             </a>
@@ -376,13 +437,13 @@ export default function VersionSwitcher() {
                         ) : (
                             <>
                                 <Package className="w-3.5 h-3.5" />
-                                Switch
+                                Deploy this version
                             </>
                         )}
                     </button>
 
                     {security && !security.summary.all_passed && (
-                        <p className="text-xs text-amber-400/80 flex items-start gap-1">
+                        <p className="text-[10px] text-amber-400/80 flex items-start gap-1">
                             <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
                             <span>Some checks incomplete</span>
                         </p>
