@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Shield, Download, RefreshCw, AlertCircle, CheckCircle, XCircle, User, Clock, MapPin, ChevronLeft, ChevronRight, Calendar, Search, Sparkles } from 'lucide-react';
+import { Shield, Download, RefreshCw, AlertCircle, CheckCircle, XCircle, User, Clock, ChevronLeft, ChevronRight, Search, Sparkles } from 'lucide-react';
 import { AccordionSection } from './ui';
 
 interface AuditLog {
@@ -29,12 +29,10 @@ export default function AuditLogViewer() {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // Pagination
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(25);
     const [totalCount, setTotalCount] = useState(0);
 
-    // Filters
     const [filterEventType, setFilterEventType] = useState('all');
     const [filterSuccess, setFilterSuccess] = useState('all');
     const [filterUsername, setFilterUsername] = useState('');
@@ -203,99 +201,72 @@ export default function AuditLogViewer() {
                 ) : undefined
             }
         >
-            <div className="space-y-5">
-                {/* Statistics - Compact Row */}
+            <div className="space-y-4">
+                {/* Statistics Row */}
                 {stats && (
-                    <div className="flex flex-wrap gap-6 px-1">
-                        <div>
-                            <span className="text-white/50 text-xs uppercase tracking-wide">Total</span>
-                            <span className="ml-2 text-lg font-semibold text-white">{stats.total_events.toLocaleString()}</span>
+                    <div className="grid grid-cols-5 gap-4 text-sm">
+                        <div className="flex items-baseline gap-2">
+                            <span className="text-white/50">Total</span>
+                            <span className="text-lg font-medium text-white">{stats.total_events}</span>
                         </div>
-                        <div>
-                            <span className="text-emerald-400/70 text-xs uppercase tracking-wide">Success</span>
-                            <span className="ml-2 text-lg font-semibold text-emerald-400">{stats.successful_logins.toLocaleString()}</span>
+                        <div className="flex items-baseline gap-2">
+                            <span className="text-white/50">Success</span>
+                            <span className="text-lg font-medium text-emerald-400">{stats.successful_logins}</span>
                         </div>
-                        <div>
-                            <span className="text-red-400/70 text-xs uppercase tracking-wide">Failed</span>
-                            <span className="ml-2 text-lg font-semibold text-red-400">{stats.failed_logins.toLocaleString()}</span>
+                        <div className="flex items-baseline gap-2">
+                            <span className="text-white/50">Failed</span>
+                            <span className="text-lg font-medium text-red-400">{stats.failed_logins}</span>
                         </div>
-                        <div>
-                            <span className="text-blue-400/70 text-xs uppercase tracking-wide">Logouts</span>
-                            <span className="ml-2 text-lg font-semibold text-blue-400">{stats.total_logouts.toLocaleString()}</span>
+                        <div className="flex items-baseline gap-2">
+                            <span className="text-white/50">Logouts</span>
+                            <span className="text-lg font-medium text-blue-400">{stats.total_logouts}</span>
                         </div>
-                        <div>
-                            <span className="text-purple-400/70 text-xs uppercase tracking-wide">Unique Users</span>
-                            <span className="ml-2 text-lg font-semibold text-purple-400">{stats.unique_users.toLocaleString()}</span>
+                        <div className="flex items-baseline gap-2">
+                            <span className="text-white/50">Users</span>
+                            <span className="text-lg font-medium text-purple-400">{stats.unique_users}</span>
                         </div>
                     </div>
                 )}
 
-                {/* Filters - Simplified Single Row */}
-                <div className="flex flex-wrap items-end gap-3">
-                    {/* Time Range Dropdown */}
+                {/* Filters Row */}
+                <div className="grid grid-cols-6 gap-3 items-end">
                     <div>
-                        <label className="block text-xs text-white/50 mb-1">Time Range</label>
+                        <label className="block text-xs text-white/50 mb-1.5">Time Range</label>
                         <select
                             value={quickRange}
                             onChange={(e) => applyQuickRange(e.target.value)}
-                            className="bg-white/10 text-white rounded-lg px-3 py-2 border border-white/15 focus:outline-none focus:border-indigo-500/50 text-sm min-w-[140px]"
+                            className="w-full h-10 bg-white/10 text-white text-sm rounded-lg px-3 border border-white/15 focus:outline-none focus:border-indigo-500/50"
                         >
                             <option value="today" className="bg-slate-800">Today</option>
                             <option value="7" className="bg-slate-800">Last 7 Days</option>
                             <option value="30" className="bg-slate-800">Last 30 Days</option>
                             <option value="90" className="bg-slate-800">Last 90 Days</option>
                             <option value="365" className="bg-slate-800">Last Year</option>
-                            <option value="custom" className="bg-slate-800">Custom Range</option>
+                            <option value="custom" className="bg-slate-800">Custom</option>
                         </select>
                     </div>
 
-                    {/* Custom Date Range (only show when custom selected) */}
-                    {quickRange === 'custom' && (
-                        <>
-                            <div>
-                                <label className="block text-xs text-white/50 mb-1">From</label>
-                                <input
-                                    type="date"
-                                    value={startDate}
-                                    onChange={(e) => setStartDate(e.target.value)}
-                                    className="bg-white/10 text-white rounded-lg px-3 py-2 border border-white/15 focus:outline-none focus:border-indigo-500/50 text-sm"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs text-white/50 mb-1">To</label>
-                                <input
-                                    type="date"
-                                    value={endDate}
-                                    onChange={(e) => setEndDate(e.target.value)}
-                                    className="bg-white/10 text-white rounded-lg px-3 py-2 border border-white/15 focus:outline-none focus:border-indigo-500/50 text-sm"
-                                />
-                            </div>
-                        </>
-                    )}
-
-                    {/* Event Type */}
                     <div>
-                        <label className="block text-xs text-white/50 mb-1">Event Type</label>
+                        <label className="block text-xs text-white/50 mb-1.5">Event Type</label>
                         <select
                             value={filterEventType}
                             onChange={(e) => setFilterEventType(e.target.value)}
-                            className="bg-white/10 text-white rounded-lg px-3 py-2 border border-white/15 focus:outline-none focus:border-indigo-500/50 text-sm min-w-[130px]"
+                            className="w-full h-10 bg-white/10 text-white text-sm rounded-lg px-3 border border-white/15 focus:outline-none focus:border-indigo-500/50"
                         >
                             <option value="all" className="bg-slate-800">All Events</option>
                             <option value="login_success" className="bg-slate-800">Login Success</option>
                             <option value="login_failed" className="bg-slate-800">Login Failed</option>
                             <option value="logout" className="bg-slate-800">Logout</option>
-                            <option value="emergency_access_success" className="bg-slate-800">Emergency Access</option>
+                            <option value="emergency_access_success" className="bg-slate-800">Emergency</option>
                         </select>
                     </div>
 
-                    {/* Status */}
                     <div>
-                        <label className="block text-xs text-white/50 mb-1">Status</label>
+                        <label className="block text-xs text-white/50 mb-1.5">Status</label>
                         <select
                             value={filterSuccess}
                             onChange={(e) => setFilterSuccess(e.target.value)}
-                            className="bg-white/10 text-white rounded-lg px-3 py-2 border border-white/15 focus:outline-none focus:border-indigo-500/50 text-sm min-w-[100px]"
+                            className="w-full h-10 bg-white/10 text-white text-sm rounded-lg px-3 border border-white/15 focus:outline-none focus:border-indigo-500/50"
                         >
                             <option value="all" className="bg-slate-800">All</option>
                             <option value="true" className="bg-slate-800">Success</option>
@@ -303,9 +274,8 @@ export default function AuditLogViewer() {
                         </select>
                     </div>
 
-                    {/* Username Search */}
                     <div>
-                        <label className="block text-xs text-white/50 mb-1">Username</label>
+                        <label className="block text-xs text-white/50 mb-1.5">Username</label>
                         <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
                             <input
@@ -314,148 +284,157 @@ export default function AuditLogViewer() {
                                 onChange={(e) => setFilterUsername(e.target.value)}
                                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                                 placeholder="Search..."
-                                className="bg-white/10 text-white rounded-lg pl-9 pr-3 py-2 border border-white/15 focus:outline-none focus:border-indigo-500/50 placeholder-white/30 text-sm w-[140px]"
+                                className="w-full h-10 bg-white/10 text-white text-sm rounded-lg pl-9 pr-3 border border-white/15 focus:outline-none focus:border-indigo-500/50 placeholder-white/30"
                             />
                         </div>
                     </div>
 
-                    {/* Actions */}
-                    <div className="flex gap-2 ml-auto">
-                        <button
-                            onClick={fetchLogs}
-                            disabled={isLoading}
-                            className="flex items-center gap-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors disabled:opacity-50 text-sm font-medium"
-                        >
-                            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-                            Refresh
-                        </button>
-                        <button
-                            onClick={handleExport}
-                            className="flex items-center gap-2 px-3 py-2 bg-white/10 hover:bg-white/15 text-white rounded-lg transition-colors text-sm"
-                        >
-                            <Download className="w-4 h-4" />
-                            Export
-                        </button>
-                    </div>
+                    <button
+                        onClick={fetchLogs}
+                        disabled={isLoading}
+                        className="h-10 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                    >
+                        <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+                        Refresh
+                    </button>
+
+                    <button
+                        onClick={handleExport}
+                        className="h-10 flex items-center justify-center gap-2 bg-white/10 hover:bg-white/15 text-white text-sm rounded-lg transition-colors"
+                    >
+                        <Download className="w-4 h-4" />
+                        Export
+                    </button>
                 </div>
 
-                {/* Audit Logs Table */}
-                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl overflow-hidden">
+                {/* Custom Date Range (only when custom selected) */}
+                {quickRange === 'custom' && (
+                    <div className="grid grid-cols-6 gap-3">
+                        <div>
+                            <label className="block text-xs text-white/50 mb-1.5">From</label>
+                            <input
+                                type="date"
+                                value={startDate}
+                                onChange={(e) => setStartDate(e.target.value)}
+                                className="w-full h-10 bg-white/10 text-white text-sm rounded-lg px-3 border border-white/15 focus:outline-none focus:border-indigo-500/50"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs text-white/50 mb-1.5">To</label>
+                            <input
+                                type="date"
+                                value={endDate}
+                                onChange={(e) => setEndDate(e.target.value)}
+                                className="w-full h-10 bg-white/10 text-white text-sm rounded-lg px-3 border border-white/15 focus:outline-none focus:border-indigo-500/50"
+                            />
+                        </div>
+                    </div>
+                )}
+
+                {/* Table */}
+                <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
                     {error && (
-                        <div className="p-4 bg-red-500/10 border-b border-red-500/20 flex items-start gap-3">
-                            <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-                            <div>
-                                <div className="text-red-400 font-medium text-sm">Error</div>
-                                <div className="text-white/70 text-sm mt-1">{error}</div>
-                            </div>
+                        <div className="p-4 bg-red-500/10 border-b border-red-500/20 flex items-center gap-3">
+                            <AlertCircle className="w-5 h-5 text-red-400" />
+                            <span className="text-red-400 text-sm">{error}</span>
                         </div>
                     )}
 
                     {isLoading ? (
                         <div className="p-12 text-center">
                             <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-3 text-indigo-400" />
-                            <div className="text-white/50 text-sm">Loading audit logs...</div>
+                            <div className="text-white/50 text-sm">Loading...</div>
                         </div>
                     ) : logs.length === 0 ? (
                         <div className="p-12 text-center text-white/50 text-sm">
-                            No audit logs found for the selected filters.
+                            No logs found for selected filters.
                         </div>
                     ) : (
                         <>
-                            <div className="overflow-x-auto">
-                                <table className="w-full">
-                                    <thead>
-                                        <tr className="border-b border-white/10">
-                                            <th className="text-left p-4 text-xs font-medium text-white/50 uppercase tracking-wide">Event</th>
-                                            <th className="text-left p-4 text-xs font-medium text-white/50 uppercase tracking-wide">User</th>
-                                            <th className="text-left p-4 text-xs font-medium text-white/50 uppercase tracking-wide">IP Address</th>
-                                            <th className="text-left p-4 text-xs font-medium text-white/50 uppercase tracking-wide">Timestamp</th>
-                                            <th className="text-left p-4 text-xs font-medium text-white/50 uppercase tracking-wide">Details</th>
+                            <table className="w-full">
+                                <thead>
+                                    <tr className="border-b border-white/10 text-left">
+                                        <th className="p-4 text-xs font-medium text-white/50 uppercase">Event</th>
+                                        <th className="p-4 text-xs font-medium text-white/50 uppercase">User</th>
+                                        <th className="p-4 text-xs font-medium text-white/50 uppercase">IP Address</th>
+                                        <th className="p-4 text-xs font-medium text-white/50 uppercase">Timestamp</th>
+                                        <th className="p-4 text-xs font-medium text-white/50 uppercase">Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {logs.map((log, index) => (
+                                        <tr
+                                            key={log.id}
+                                            className={`border-b border-white/5 ${index % 2 === 0 ? 'bg-white/[0.02]' : ''}`}
+                                        >
+                                            <td className="p-4">
+                                                <div className="flex items-center gap-2">
+                                                    {getEventIcon(log.event_type, log.success)}
+                                                    <span className={`text-sm ${log.success ? 'text-white' : 'text-red-400'}`}>
+                                                        {getEventLabel(log.event_type)}
+                                                    </span>
+                                                </div>
+                                            </td>
+                                            <td className="p-4 text-sm text-white/80">{log.username || 'Unknown'}</td>
+                                            <td className="p-4 text-sm text-white/50 font-mono">{log.ip_address || '-'}</td>
+                                            <td className="p-4 text-sm text-white/50">{formatTimestamp(log.timestamp)}</td>
+                                            <td className="p-4 text-sm">
+                                                {log.failure_reason ? (
+                                                    <span className="text-red-400">{log.failure_reason}</span>
+                                                ) : (
+                                                    <span className="text-white/30">-</span>
+                                                )}
+                                            </td>
                                         </tr>
-                                    </thead>
-                                    <tbody>
-                                        {logs.map((log, index) => (
-                                            <tr
-                                                key={log.id}
-                                                className={`border-b border-white/5 hover:bg-white/5 transition-colors ${index % 2 === 0 ? 'bg-white/[0.02]' : ''
-                                                    }`}
-                                            >
-                                                <td className="p-4">
-                                                    <div className="flex items-center gap-2">
-                                                        {getEventIcon(log.event_type, log.success)}
-                                                        <span className={`text-sm ${log.success ? 'text-white' : 'text-red-400'}`}>
-                                                            {getEventLabel(log.event_type)}
-                                                        </span>
-                                                    </div>
-                                                </td>
-                                                <td className="p-4 text-white/80 text-sm">{log.username || 'Unknown'}</td>
-                                                <td className="p-4 text-white/50 font-mono text-xs">{log.ip_address || '-'}</td>
-                                                <td className="p-4 text-white/50 text-sm">{formatTimestamp(log.timestamp)}</td>
-                                                <td className="p-4">
-                                                    {log.failure_reason ? (
-                                                        <span className="text-red-400 text-sm">{log.failure_reason}</span>
-                                                    ) : log.details?.mfa_type ? (
-                                                        <span className="text-emerald-400 text-sm">MFA: {log.details.mfa_type}</span>
-                                                    ) : (
-                                                        <span className="text-white/30 text-sm">-</span>
-                                                    )}
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
+                                    ))}
+                                </tbody>
+                            </table>
 
                             {/* Pagination */}
-                            <div className="flex items-center justify-between p-4 border-t border-white/10">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-sm text-white/50">Show</span>
+                            <div className="flex items-center justify-between p-4 border-t border-white/10 text-sm">
+                                <div className="flex items-center gap-2 text-white/50">
+                                    <span>Show</span>
                                     <select
                                         value={pageSize}
                                         onChange={(e) => setPageSize(parseInt(e.target.value))}
-                                        className="bg-white/10 text-white rounded px-2 py-1 border border-white/15 text-sm"
+                                        className="h-8 bg-white/10 text-white rounded px-2 border border-white/15"
                                     >
                                         <option value="10" className="bg-slate-800">10</option>
                                         <option value="25" className="bg-slate-800">25</option>
                                         <option value="50" className="bg-slate-800">50</option>
-                                        <option value="100" className="bg-slate-800">100</option>
                                     </select>
-                                    <span className="text-sm text-white/50">
-                                        of {totalCount.toLocaleString()}
-                                    </span>
+                                    <span>of {totalCount.toLocaleString()}</span>
                                 </div>
 
-                                <div className="flex items-center gap-1">
+                                <div className="flex items-center gap-2 text-white/70">
                                     <button
                                         onClick={() => setCurrentPage(1)}
                                         disabled={currentPage === 1}
-                                        className="px-2 py-1 text-sm text-white/70 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                                        className="px-2 py-1 hover:text-white disabled:opacity-30"
                                     >
                                         First
                                     </button>
                                     <button
                                         onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                                         disabled={currentPage === 1}
-                                        className="p-1 text-white/70 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                                        className="p-1 hover:text-white disabled:opacity-30"
                                     >
                                         <ChevronLeft className="w-4 h-4" />
                                     </button>
-
-                                    <span className="px-3 text-sm text-white/70">
+                                    <span className="px-2">
                                         Page <span className="text-white">{currentPage}</span> of {totalPages}
                                     </span>
-
                                     <button
                                         onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                                         disabled={currentPage === totalPages}
-                                        className="p-1 text-white/70 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                                        className="p-1 hover:text-white disabled:opacity-30"
                                     >
                                         <ChevronRight className="w-4 h-4" />
                                     </button>
                                     <button
                                         onClick={() => setCurrentPage(totalPages)}
                                         disabled={currentPage === totalPages}
-                                        className="px-2 py-1 text-sm text-white/70 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                                        className="px-2 py-1 hover:text-white disabled:opacity-30"
                                     >
                                         Last
                                     </button>
@@ -466,10 +445,10 @@ export default function AuditLogViewer() {
                 </div>
 
                 {/* Compliance Note */}
-                <div className="flex items-center gap-3 text-sm text-white/50">
-                    <Shield className="w-4 h-4 text-indigo-400" />
-                    <span>NIST 800-53 compliant • Tamper-detection hash chaining (AU-9) • Immutable logs</span>
-                </div>
+                <p className="text-xs text-white/40 flex items-center gap-2">
+                    <Shield className="w-3.5 h-3.5" />
+                    NIST 800-53 compliant · Tamper-detection hash chaining (AU-9) · Immutable retention
+                </p>
             </div>
         </AccordionSection>
     );
