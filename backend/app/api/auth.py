@@ -148,7 +148,6 @@ async def use_bootstrap_token(
 @router.post("/emergency")
 async def emergency_access(
     request: Request,
-    emergency_token: str,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -156,6 +155,8 @@ async def emergency_access(
     
     Provides secure backdoor for admin access even when Auth0 is configured.
     Requires EMERGENCY_ACCESS_TOKEN from environment variables.
+    
+    Request body: {"emergency_token": "your-token-here"}
     
     Security features:
     - Constant-time token comparison (prevents timing attacks)
@@ -170,6 +171,13 @@ async def emergency_access(
     
     settings = get_settings()
     global _emergency_attempts, _emergency_global_attempts, _emergency_locked
+    
+    # Parse request body
+    try:
+        body = await request.json()
+        emergency_token = body.get("emergency_token", "")
+    except:
+        raise HTTPException(status_code=400, detail="Invalid request")
     
     # Get IP address for rate limiting and audit
     ip_address = request.client.host if request.client else "unknown"
