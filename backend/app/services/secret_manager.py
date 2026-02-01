@@ -150,8 +150,8 @@ async def get_secret(key_name: str) -> Optional[str]:
     """
     if _is_gcp_available():
         # Determine which bundle this key belongs to
-        if key_name.startswith("ZITADEL_"):
-            bundle = _get_secret_from_gcp("secret-zitadel")
+        if key_name.startswith("ZITADEL_") or key_name.startswith("AUTH0_"):
+            bundle = _get_secret_from_gcp("secret-auth")
         elif key_name.startswith("SMTP_") or key_name.startswith("EMAIL_"):
             bundle = _get_secret_from_gcp("secret-smtp")
         elif key_name.startswith("SMS_") or key_name.startswith("TWILIO_"):
@@ -202,8 +202,8 @@ async def get_secrets_bundle(prefix: str) -> Dict[str, str]:
     
     if _is_gcp_available():
         # Map prefix to bundle name
-        if prefix.startswith("ZITADEL"):
-            bundle = _get_secret_from_gcp("secret-zitadel")
+        if prefix.startswith("ZITADEL") or prefix.startswith("AUTH0"):
+            bundle = _get_secret_from_gcp("secret-auth")
         elif prefix.startswith("SMTP") or prefix.startswith("EMAIL"):
             bundle = _get_secret_from_gcp("secret-smtp")
         elif prefix.startswith("SMS") or prefix.startswith("TWILIO"):
@@ -248,3 +248,201 @@ def clear_cache():
     """Clear the secret cache (useful after updates)."""
     global _secret_cache
     _secret_cache = {}
+
+
+# ============================================================================
+# Secret Manager Write Operations
+# ============================================================================
+
+def _get_bundle_name(key_name: str) -> str:
+    """Determine which Secret Manager bundle a key belongs to."""
+    if key_name.startswith("ZITADEL_") or key_name.startswith("AUTH0_"):
+        return "secret-auth"
+    elif key_name.startswith("SMTP_") or key_name.startswith("EMAIL_"):
+        return "secret-smtp"
+    elif key_name.startswith("SMS_") or key_name.startswith("TWILIO_"):
+        return "secret-sms"
+    elif key_name.startswith("GOOGLE_") or key_name.startswith("VERTEX_") or key_name.startswith("KMS_") or key_name.startswith("GCP_"):
+        return "secret-google"
+    elif key_name.startswith("BACKUP_"):
+        return "secret-backup"
+    else:
+        return "secret-config"
+
+
+def _create_secret_if_not_exists(client, project: str, secret_id: str) -> bool:
+    """Create a secret in Secret Manager if it doesn't exist."""
+    try:
+        from google.cloud import secretmanager
+        
+        parent = f"projects/{project}"
+        secret_name = f"{parent}/secrets/{secret_id}"
+        
+        # Try to get the secret first
+        try:
+            client.get_secret(request={"name": secret_name})
+            return True  # Already exists
+        except Exception:
+            pass  # Doesn't exist, create it
+        
+        # Create the secret
+        client.create_secret(
+            request={
+                "parent": parent,
+                "secret_id": secret_id,
+                "secret": {"replication": {"automatic": {}}},
+            }
+        )
+        logger.info(f"Created secret: {secret_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to create secret {secret_id}: {e}")
+        return False
+
+
+def set_secret_sync(key_name: str, value: str) -> bool:
+    """
+    Write a secret to Google Secret Manager (sync version).
+    
+    Secrets are bundled into JSON objects to stay within free tier limits.
+    Returns True if successful, False otherwise.
+    """
+    if not _is_gcp_available():
+        logger.debug(f"Secret Manager not available, skipping write for {key_name}")
+        return False
+    
+    try:
+        from google.cloud import secretmanager
+        
+        project = os.getenv("GOOGLE_CLOUD_PROJECT") or _get_project_from_db()
+        client = _get_sm_client()
+        
+        if not client or not project:
+            return False
+        
+        bundle_name = _get_bundle_name(key_name)
+        
+        # Get existing bundle or create empty one
+        existing_bundle = _get_secret_from_gcp(bundle_name) or {}
+        
+        # Update the bundle with new value
+        existing_bundle[key_name] = value
+        
+        # Create secret if it doesn't exist
+        if not _create_secret_if_not_exists(client, project, bundle_name):
+            return False
+        
+        # Add new version with updated bundle
+        secret_path = f"projects/{project}/secrets/{bundle_name}"
+        payload = json.dumps(existing_bundle).encode("UTF-8")
+        
+        client.add_secret_version(
+            request={
+                "parent": secret_path,
+                "payload": {"data": payload},
+            }
+        )
+        
+        # Clear cache so next read gets fresh data
+        if bundle_name in _secret_cache:
+            del _secret_cache[bundle_name]
+        
+        logger.info(f"Secret {key_name} written to Secret Manager bundle {bundle_name}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to write secret {key_name} to Secret Manager: {e}")
+        return False
+
+
+async def set_secret(key_name: str, value: str) -> bool:
+    """
+    Write a secret to Google Secret Manager (async version).
+    
+    Wraps the sync version for async compatibility.
+    """
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, set_secret_sync, key_name, value)
+
+
+async def migrate_to_secret_manager() -> Dict[str, Any]:
+    """
+    Migrate all secrets from database to Google Secret Manager.
+    
+    Returns a summary of migrated secrets.
+    """
+    from app.db.session import SessionLocal
+    from app.models import SystemSecret
+    from app.core.encryption import decrypt_safe
+    from sqlalchemy import select
+    
+    if not _is_gcp_available():
+        return {
+            "status": "skipped",
+            "reason": "Secret Manager not available",
+            "migrated": 0
+        }
+    
+    migrated = []
+    failed = []
+    skipped = []
+    
+    # Keys that should NOT be migrated (they're needed to access Secret Manager itself)
+    bootstrap_keys = {
+        "GCP_SERVICE_ACCOUNT_JSON",
+        "GOOGLE_CLOUD_PROJECT",
+    }
+    
+    try:
+        async with SessionLocal() as db:
+            result = await db.execute(
+                select(SystemSecret).where(SystemSecret.is_configured == True)
+            )
+            secrets = result.scalars().all()
+            
+            for secret in secrets:
+                if secret.key_name in bootstrap_keys:
+                    skipped.append(secret.key_name)
+                    continue
+                
+                if not secret.key_value:
+                    skipped.append(secret.key_name)
+                    continue
+                
+                # Decrypt the value from database
+                try:
+                    plaintext = decrypt_safe(secret.key_value)
+                    if not plaintext:
+                        skipped.append(secret.key_name)
+                        continue
+                except Exception:
+                    failed.append({"key": secret.key_name, "error": "decryption failed"})
+                    continue
+                
+                # Write to Secret Manager
+                success = await set_secret(secret.key_name, plaintext)
+                
+                if success:
+                    migrated.append(secret.key_name)
+                else:
+                    failed.append({"key": secret.key_name, "error": "write failed"})
+        
+        return {
+            "status": "success",
+            "migrated": len(migrated),
+            "migrated_keys": migrated,
+            "skipped": len(skipped),
+            "skipped_keys": skipped,
+            "failed": len(failed),
+            "failed_keys": failed
+        }
+        
+    except Exception as e:
+        logger.error(f"Migration failed: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "migrated": len(migrated),
+            "migrated_keys": migrated
+        }

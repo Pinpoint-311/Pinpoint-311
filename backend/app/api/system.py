@@ -91,9 +91,24 @@ async def create_or_update_secret(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
-    """Create or update a secret (admin only) - values are encrypted at rest"""
+    """Create or update a secret (admin only) - values are encrypted at rest and stored in Secret Manager"""
     from app.core.encryption import encrypt
+    from app.services.secret_manager import set_secret, clear_cache
     
+    # Bootstrap keys that must stay in database (needed to access Secret Manager)
+    bootstrap_keys = {"GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT"}
+    
+    # Try to write to Secret Manager first (if not a bootstrap key)
+    sm_success = False
+    if secret_data.key_value and secret_data.key_name not in bootstrap_keys:
+        try:
+            sm_success = await set_secret(secret_data.key_name, secret_data.key_value)
+            if sm_success:
+                clear_cache()  # Clear cache so reads get fresh data
+        except Exception as e:
+            logger.warning(f"Failed to write to Secret Manager, using database only: {e}")
+    
+    # Always store in database as backup (encrypted)
     result = await db.execute(
         select(SystemSecret).where(SystemSecret.key_name == secret_data.key_name)
     )
@@ -116,7 +131,13 @@ async def create_or_update_secret(
     
     await db.commit()
     await db.refresh(secret)
-    return secret
+    
+    return {
+        **secret.__dict__,
+        "secret_manager": sm_success,
+        "_sa_instance_state": None  # Remove SQLAlchemy internal state
+    }
+
 
 
 @router.post("/secrets/sync")
@@ -145,6 +166,25 @@ async def sync_secrets(
     
     await db.commit()
     return {"status": "success", "added_secrets": added, "count": len(added)}
+
+
+@router.post("/secrets/migrate-to-secret-manager")
+async def migrate_secrets_to_secret_manager(
+    _: User = Depends(get_current_admin)
+):
+    """
+    Migrate all configured secrets from database to Google Secret Manager.
+    
+    This copies encrypted database secrets to Secret Manager for production use.
+    Bootstrap keys (GCP_SERVICE_ACCOUNT_JSON, GOOGLE_CLOUD_PROJECT) are skipped
+    as they're needed to access Secret Manager itself.
+    
+    Safe to run multiple times - existing secrets are overwritten with latest values.
+    """
+    from app.services.secret_manager import migrate_to_secret_manager
+    
+    result = await migrate_to_secret_manager()
+    return result
 
 
 @router.post("/secrets/migrate-encryption")
