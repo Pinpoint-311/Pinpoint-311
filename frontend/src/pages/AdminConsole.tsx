@@ -8,7 +8,7 @@ import {
     Users,
     Grid3X3,
     Key,
-    Puzzle,
+
     LogOut,
     Save,
     Trash2,
@@ -59,7 +59,7 @@ import {
     ChevronDown,
     type LucideIcon,
 } from 'lucide-react';
-import { Button, Card, Modal, Input, Select, Badge } from '../components/ui';
+import { Button, Card, Modal, Input, Select, Badge, AccordionSection } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { api, MapLayer } from '../services/api';
@@ -302,7 +302,7 @@ export default function AdminConsole() {
 
     const [isSearchingTownship, setIsSearchingTownship] = useState(false);
     const [isFetchingBoundary, setIsFetchingBoundary] = useState(false);
-    const [isSavingMaps, setIsSavingMaps] = useState(false);
+
 
     // Custom map layers state
     const [mapLayers, setMapLayers] = useState<MapLayer[]>([]);
@@ -797,16 +797,7 @@ export default function AdminConsole() {
 
     // Note: Password reset functionality removed - using Auth0 SSO
 
-    const tabs = [
-        { id: 'branding', icon: Palette, label: 'Branding' },
-        { id: 'users', icon: Users, label: 'Users' },
-        { id: 'departments', icon: Building2, label: 'Departments' },
-        { id: 'services', icon: Grid3X3, label: 'Service Categories' },
-        { id: 'integration', icon: Terminal, label: 'Setup & Integration' },
-        { id: 'system', icon: Settings, label: 'System Settings' },
-        { id: 'health', icon: BarChart3, label: 'System Health' },
-        { id: 'compliance', icon: Shield, label: 'Compliance' },
-    ];
+    // Tabs are now rendered using SidebarGroup/SidebarItem components in the sidebar
 
     return (
         <div className="min-h-screen flex">
@@ -1471,21 +1462,14 @@ export default function AdminConsole() {
                                 </div>
 
                                 {/* Auth0 Cloud SSO Section */}
-                                <Card>
+                                <AccordionSection
+                                    title="Auth0 SSO (Required)"
+                                    subtitle="Staff authentication with MFA & passkeys"
+                                    icon={Key}
+                                    iconClassName="text-orange-400"
+                                    badge={secrets.find(s => s.key_name === 'AUTH0_DOMAIN')?.is_configured ? <Badge variant="success">Configured</Badge> : undefined}
+                                >
                                     <div className="space-y-4">
-                                        <div className="flex items-center gap-3 pb-3 border-b border-white/10">
-                                            <div className="w-10 h-10 rounded-xl bg-orange-500/20 flex items-center justify-center">
-                                                <Key className="w-5 h-5 text-orange-400" />
-                                            </div>
-                                            <div className="flex-1">
-                                                <h3 className="font-semibold text-white">🔐 Auth0 SSO (Required)</h3>
-                                                <p className="text-sm text-white/50">Staff authentication with MFA & passkeys</p>
-                                            </div>
-                                            {secrets.find(s => s.key_name === 'AUTH0_DOMAIN')?.is_configured && (
-                                                <Badge variant="success">Configured</Badge>
-                                            )}
-                                        </div>
-
                                         <div className="flex items-start gap-2 mb-4">
                                             <button
                                                 onClick={() => window.location.href = '/setup'}
@@ -1561,145 +1545,132 @@ export default function AdminConsole() {
                                             Callback URLs to add in Auth0: <code className="bg-white/10 px-1 rounded">{window.location.origin}/login</code> and <code className="bg-white/10 px-1 rounded">{window.location.origin}/api/auth/callback</code>
                                         </div>
                                     </div>
-                                </Card>
+                                </AccordionSection>
 
                                 {/* SMS Provider Section */}
-                                <Card>
+                                <AccordionSection
+                                    title="SMS Notifications"
+                                    subtitle="Send text message alerts to residents"
+                                    icon={MessageSquare}
+                                    iconClassName="text-green-400"
+                                >
                                     <div className="space-y-4">
-                                        <div className="flex items-center gap-3 pb-3 border-b border-white/10">
-                                            <div className="w-10 h-10 rounded-xl bg-green-500/20 flex items-center justify-center">
-                                                <Key className="w-5 h-5 text-green-400" />
-                                            </div>
-                                            <div>
-                                                <h3 className="font-semibold text-white">SMS Notifications</h3>
-                                                <p className="text-sm text-white/50">Send text message alerts to residents</p>
-                                            </div>
-                                        </div>
+                                        <Select
+                                            label="SMS Provider"
+                                            options={[
+                                                { value: 'none', label: 'Disabled' },
+                                                { value: 'twilio', label: 'Twilio' },
+                                                { value: 'http', label: 'Custom HTTP API' },
+                                            ]}
+                                            value={secrets.find(s => s.key_name === 'SMS_PROVIDER')?.key_value || 'none'}
+                                            onChange={(e) => {
+                                                handleSaveSecretDirect('SMS_PROVIDER', e.target.value);
+                                            }}
+                                        />
 
-                                        {/* SMS Provider Selection */}
-                                        <div className="space-y-4">
-                                            <Select
-                                                label="SMS Provider"
-                                                options={[
-                                                    { value: 'none', label: 'Disabled' },
-                                                    { value: 'twilio', label: 'Twilio' },
-                                                    { value: 'http', label: 'Custom HTTP API' },
-                                                ]}
-                                                value={secrets.find(s => s.key_name === 'SMS_PROVIDER')?.key_value || 'none'}
-                                                onChange={(e) => {
-                                                    handleSaveSecretDirect('SMS_PROVIDER', e.target.value);
-                                                }}
-                                            />
-
-                                            {/* Twilio Fields */}
-                                            {secrets.find(s => s.key_name === 'SMS_PROVIDER')?.key_value === 'twilio' && (
-                                                <div className="space-y-4 p-4 rounded-xl bg-white/5 border border-white/10">
-                                                    <div className="text-sm text-blue-300 flex items-start gap-2 mb-4">
-                                                        <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                                                        <span>
-                                                            Get your credentials at{' '}
-                                                            <a href="https://console.twilio.com" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-200">
-                                                                console.twilio.com
-                                                            </a>
-                                                            {' → Account Info'}
-                                                        </span>
-                                                    </div>
-                                                    {['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER'].map(key => {
-                                                        const secret = secrets.find(s => s.key_name === key);
-                                                        const isConfigured = secret?.is_configured;
-                                                        return (
-                                                            <div key={key} className="space-y-2">
-                                                                <label className="block text-sm font-medium text-white/70">
-                                                                    {key.replace('TWILIO_', '').replace(/_/g, ' ')}
-                                                                </label>
-                                                                {isConfigured && !secretValues[key] ? (
-                                                                    <div className="flex items-center gap-3">
-                                                                        <div className="flex-1 h-10 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center px-3">
-                                                                            <Check className="w-4 h-4 text-green-400 mr-2" />
-                                                                            <span className="text-green-300 text-sm">Saved securely</span>
-                                                                        </div>
-                                                                        <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, [key]: ' ' }))}>
-                                                                            Change
-                                                                        </Button>
-                                                                    </div>
-                                                                ) : (
-                                                                    <div className="flex gap-2">
-                                                                        <Input
-                                                                            type={key.includes('TOKEN') ? 'password' : 'text'}
-                                                                            placeholder={key === 'TWILIO_PHONE_NUMBER' ? '+12125551234' : `Enter ${key.toLowerCase()}`}
-                                                                            value={secretValues[key]?.trim() || ''}
-                                                                            onChange={(e) => setSecretValues((p) => ({ ...p, [key]: e.target.value }))}
-                                                                        />
-                                                                        <Button size="sm" onClick={() => handleUpdateSecret(key)} disabled={!secretValues[key]?.trim()}>
-                                                                            Save
-                                                                        </Button>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        );
-                                                    })}
+                                        {/* Twilio Fields */}
+                                        {secrets.find(s => s.key_name === 'SMS_PROVIDER')?.key_value === 'twilio' && (
+                                            <div className="space-y-4 p-4 rounded-xl bg-white/5 border border-white/10">
+                                                <div className="text-sm text-blue-300 flex items-start gap-2 mb-4">
+                                                    <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                                                    <span>
+                                                        Get your credentials at{' '}
+                                                        <a href="https://console.twilio.com" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-200">
+                                                            console.twilio.com
+                                                        </a>
+                                                        {' → Account Info'}
+                                                    </span>
                                                 </div>
-                                            )}
+                                                {['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER'].map(key => {
+                                                    const secret = secrets.find(s => s.key_name === key);
+                                                    const isConfigured = secret?.is_configured;
+                                                    return (
+                                                        <div key={key} className="space-y-2">
+                                                            <label className="block text-sm font-medium text-white/70">
+                                                                {key.replace('TWILIO_', '').replace(/_/g, ' ')}
+                                                            </label>
+                                                            {isConfigured && !secretValues[key] ? (
+                                                                <div className="flex items-center gap-3">
+                                                                    <div className="flex-1 h-10 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center px-3">
+                                                                        <Check className="w-4 h-4 text-green-400 mr-2" />
+                                                                        <span className="text-green-300 text-sm">Saved securely</span>
+                                                                    </div>
+                                                                    <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, [key]: ' ' }))}>
+                                                                        Change
+                                                                    </Button>
+                                                                </div>
+                                                            ) : (
+                                                                <div className="flex gap-2">
+                                                                    <Input
+                                                                        type={key.includes('TOKEN') ? 'password' : 'text'}
+                                                                        placeholder={key === 'TWILIO_PHONE_NUMBER' ? '+12125551234' : `Enter ${key.toLowerCase()}`}
+                                                                        value={secretValues[key]?.trim() || ''}
+                                                                        onChange={(e) => setSecretValues((p) => ({ ...p, [key]: e.target.value }))}
+                                                                    />
+                                                                    <Button size="sm" onClick={() => handleUpdateSecret(key)} disabled={!secretValues[key]?.trim()}>
+                                                                        Save
+                                                                    </Button>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
 
-                                            {/* HTTP API Fields */}
-                                            {secrets.find(s => s.key_name === 'SMS_PROVIDER')?.key_value === 'http' && (
-                                                <div className="space-y-4 p-4 rounded-xl bg-white/5 border border-white/10">
-                                                    <div className="text-sm text-white/50 mb-4">
-                                                        Configure any HTTP-based SMS API (MessageBird, Vonage, etc.)
-                                                    </div>
-                                                    {['SMS_HTTP_API_URL', 'SMS_HTTP_API_KEY', 'SMS_FROM_NUMBER'].map(key => {
-                                                        const secret = secrets.find(s => s.key_name === key);
-                                                        const isConfigured = secret?.is_configured;
-                                                        return (
-                                                            <div key={key} className="space-y-2">
-                                                                <label className="block text-sm font-medium text-white/70">
-                                                                    {key.replace('SMS_HTTP_', '').replace('SMS_', '').replace(/_/g, ' ')}
-                                                                </label>
-                                                                {isConfigured && !secretValues[key] ? (
-                                                                    <div className="flex items-center gap-3">
-                                                                        <div className="flex-1 h-10 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center px-3">
-                                                                            <Check className="w-4 h-4 text-green-400 mr-2" />
-                                                                            <span className="text-green-300 text-sm">Saved securely</span>
-                                                                        </div>
-                                                                        <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, [key]: ' ' }))}>
-                                                                            Change
-                                                                        </Button>
-                                                                    </div>
-                                                                ) : (
-                                                                    <div className="flex gap-2">
-                                                                        <Input
-                                                                            type={key.includes('KEY') ? 'password' : 'text'}
-                                                                            placeholder={key === 'SMS_HTTP_API_URL' ? 'https://api.provider.com/sms' : ''}
-                                                                            value={secretValues[key]?.trim() || ''}
-                                                                            onChange={(e) => setSecretValues((p) => ({ ...p, [key]: e.target.value }))}
-                                                                        />
-                                                                        <Button size="sm" onClick={() => handleUpdateSecret(key)} disabled={!secretValues[key]?.trim()}>
-                                                                            Save
-                                                                        </Button>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        );
-                                                    })}
+                                        {/* HTTP API Fields */}
+                                        {secrets.find(s => s.key_name === 'SMS_PROVIDER')?.key_value === 'http' && (
+                                            <div className="space-y-4 p-4 rounded-xl bg-white/5 border border-white/10">
+                                                <div className="text-sm text-white/50 mb-4">
+                                                    Configure any HTTP-based SMS API (MessageBird, Vonage, etc.)
                                                 </div>
-                                            )}
-                                        </div>
+                                                {['SMS_HTTP_API_URL', 'SMS_HTTP_API_KEY', 'SMS_FROM_NUMBER'].map(key => {
+                                                    const secret = secrets.find(s => s.key_name === key);
+                                                    const isConfigured = secret?.is_configured;
+                                                    return (
+                                                        <div key={key} className="space-y-2">
+                                                            <label className="block text-sm font-medium text-white/70">
+                                                                {key.replace('SMS_HTTP_', '').replace('SMS_', '').replace(/_/g, ' ')}
+                                                            </label>
+                                                            {isConfigured && !secretValues[key] ? (
+                                                                <div className="flex items-center gap-3">
+                                                                    <div className="flex-1 h-10 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center px-3">
+                                                                        <Check className="w-4 h-4 text-green-400 mr-2" />
+                                                                        <span className="text-green-300 text-sm">Saved securely</span>
+                                                                    </div>
+                                                                    <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, [key]: ' ' }))}>
+                                                                        Change
+                                                                    </Button>
+                                                                </div>
+                                                            ) : (
+                                                                <div className="flex gap-2">
+                                                                    <Input
+                                                                        type={key.includes('KEY') ? 'password' : 'text'}
+                                                                        placeholder={key === 'SMS_HTTP_API_URL' ? 'https://api.provider.com/sms' : ''}
+                                                                        value={secretValues[key]?.trim() || ''}
+                                                                        onChange={(e) => setSecretValues((p) => ({ ...p, [key]: e.target.value }))}
+                                                                    />
+                                                                    <Button size="sm" onClick={() => handleUpdateSecret(key)} disabled={!secretValues[key]?.trim()}>
+                                                                        Save
+                                                                    </Button>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
                                     </div>
-                                </Card>
+                                </AccordionSection>
 
                                 {/* Email Provider Section */}
-                                <Card>
+                                <AccordionSection
+                                    title="Email Notifications"
+                                    subtitle="Send email updates to residents and staff"
+                                    icon={Mail}
+                                    iconClassName="text-blue-400"
+                                >
                                     <div className="space-y-4">
-                                        <div className="flex items-center gap-3 pb-3 border-b border-white/10">
-                                            <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
-                                                <Mail className="w-5 h-5 text-blue-400" />
-                                            </div>
-                                            <div>
-                                                <h3 className="font-semibold text-white">Email Notifications</h3>
-                                                <p className="text-sm text-white/50">Send email updates to residents and staff</p>
-                                            </div>
-                                        </div>
-
                                         <Select
                                             label="Email Enabled"
                                             options={[
@@ -1782,156 +1753,141 @@ export default function AdminConsole() {
                                             </div>
                                         )}
                                     </div>
-                                </Card>
+                                </AccordionSection>
 
                                 {/* AI & Maps Section */}
-                                <Card>
-                                    <div className="space-y-4">
-                                        <div className="flex items-center gap-3 pb-3 border-b border-white/10">
-                                            <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center">
-                                                <Sparkles className="w-5 h-5 text-purple-400" />
-                                            </div>
+                                <AccordionSection
+                                    title="AI & Maps"
+                                    subtitle="Google Cloud services for AI triage and geocoding"
+                                    icon={Sparkles}
+                                    iconClassName="text-purple-400"
+                                >
+                                    <div className="space-y-4 p-4 rounded-xl bg-white/5 border border-white/10">
+                                        <div className="text-sm text-blue-300 flex items-start gap-2 mb-4">
+                                            <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
                                             <div>
-                                                <h3 className="font-semibold text-white">AI & Maps</h3>
-                                                <p className="text-sm text-white/50">Google Cloud services for AI triage and geocoding</p>
+                                                <strong>Google Cloud:</strong> Enable Maps Geocoding API at{' '}
+                                                <a href="https://console.cloud.google.com/apis/library/geocoding-backend.googleapis.com" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-200">
+                                                    Google Cloud Console
+                                                </a>
+                                                {' '}then create an API key.
                                             </div>
                                         </div>
 
-                                        <div className="space-y-4 p-4 rounded-xl bg-white/5 border border-white/10">
-                                            <div className="text-sm text-blue-300 flex items-start gap-2 mb-4">
-                                                <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                                                <div>
-                                                    <strong>Google Cloud:</strong> Enable Maps Geocoding API at{' '}
-                                                    <a href="https://console.cloud.google.com/apis/library/geocoding-backend.googleapis.com" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-200">
-                                                        Google Cloud Console
-                                                    </a>
-                                                    {' '}then create an API key.
-                                                </div>
-                                            </div>
-
-                                            {['GOOGLE_MAPS_API_KEY', 'VERTEX_AI_PROJECT', 'VERTEX_AI_SERVICE_ACCOUNT_KEY'].map(key => {
-                                                const secret = secrets.find(s => s.key_name === key);
-                                                const isConfigured = secret?.is_configured;
-                                                const label = key === 'GOOGLE_MAPS_API_KEY' ? 'Google Maps API Key' :
-                                                    key === 'VERTEX_AI_PROJECT' ? 'Vertex AI Project ID' :
-                                                        'Service Account Key (JSON)';
-                                                const placeholder = key === 'GOOGLE_MAPS_API_KEY' ? 'AIza...' :
-                                                    key === 'VERTEX_AI_PROJECT' ? 'my-gcp-project' :
-                                                        '{"type": "service_account", ...}';
-                                                const isMultiline = key === 'VERTEX_AI_SERVICE_ACCOUNT_KEY';
-                                                return (
-                                                    <div key={key} className="space-y-2">
-                                                        <label className="block text-sm font-medium text-white/70">
-                                                            {label}
-                                                            {key === 'VERTEX_AI_SERVICE_ACCOUNT_KEY' && (
-                                                                <span className="text-white/40 text-xs ml-2">(optional if using default GCP credentials)</span>
-                                                            )}
-                                                        </label>
-                                                        {isConfigured && !secretValues[key] ? (
-                                                            <div className="flex items-center gap-3">
-                                                                <div className="flex-1 h-10 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center px-3">
-                                                                    <Check className="w-4 h-4 text-green-400 mr-2" />
-                                                                    <span className="text-green-300 text-sm">Saved securely</span>
-                                                                </div>
-                                                                <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, [key]: ' ' }))}>
-                                                                    Change
-                                                                </Button>
-                                                            </div>
-                                                        ) : (
-                                                            <div className="flex gap-2">
-                                                                {isMultiline ? (
-                                                                    <textarea
-                                                                        placeholder={placeholder}
-                                                                        value={secretValues[key]?.trim() || ''}
-                                                                        onChange={(e) => setSecretValues((p) => ({ ...p, [key]: e.target.value }))}
-                                                                        className="flex-1 min-h-[80px] p-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm font-mono resize-y"
-                                                                    />
-                                                                ) : (
-                                                                    <Input
-                                                                        type={key === 'GOOGLE_MAPS_API_KEY' ? 'password' : 'text'}
-                                                                        placeholder={placeholder}
-                                                                        value={secretValues[key]?.trim() || ''}
-                                                                        onChange={(e) => setSecretValues((p) => ({ ...p, [key]: e.target.value }))}
-                                                                    />
-                                                                )}
-                                                                <Button size="sm" onClick={() => handleUpdateSecret(key)} disabled={!secretValues[key]?.trim()}>
-                                                                    Save
-                                                                </Button>
-                                                            </div>
+                                        {['GOOGLE_MAPS_API_KEY', 'VERTEX_AI_PROJECT', 'VERTEX_AI_SERVICE_ACCOUNT_KEY'].map(key => {
+                                            const secret = secrets.find(s => s.key_name === key);
+                                            const isConfigured = secret?.is_configured;
+                                            const label = key === 'GOOGLE_MAPS_API_KEY' ? 'Google Maps API Key' :
+                                                key === 'VERTEX_AI_PROJECT' ? 'Vertex AI Project ID' :
+                                                    'Service Account Key (JSON)';
+                                            const placeholder = key === 'GOOGLE_MAPS_API_KEY' ? 'AIza...' :
+                                                key === 'VERTEX_AI_PROJECT' ? 'my-gcp-project' :
+                                                    '{"type": "service_account", ...}';
+                                            const isMultiline = key === 'VERTEX_AI_SERVICE_ACCOUNT_KEY';
+                                            return (
+                                                <div key={key} className="space-y-2">
+                                                    <label className="block text-sm font-medium text-white/70">
+                                                        {label}
+                                                        {key === 'VERTEX_AI_SERVICE_ACCOUNT_KEY' && (
+                                                            <span className="text-white/40 text-xs ml-2">(optional if using default GCP credentials)</span>
                                                         )}
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                </Card>
-
-                                {/* Database Backup Settings */}
-                                <Card className="p-6">
-                                    <div className="space-y-6">
-                                        <div>
-                                            <h2 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
-                                                <Upload className="w-5 h-5 text-blue-400" />
-                                                Database Backup Storage
-                                            </h2>
-                                            <p className="text-white/60 text-sm">
-                                                Configure S3-compatible object storage for encrypted database backups.
-                                                Works with Oracle Cloud Object Storage, AWS S3, MinIO, etc.
-                                            </p>
-                                        </div>
-
-                                        <div className="space-y-4">
-                                            {[
-                                                { key: 'BACKUP_S3_BUCKET', label: 'Bucket Name', placeholder: 'my-backup-bucket', required: true },
-                                                { key: 'BACKUP_S3_ACCESS_KEY', label: 'Access Key ID', placeholder: 'AKIA...', required: true, isPassword: true },
-                                                { key: 'BACKUP_S3_SECRET_KEY', label: 'Secret Access Key', placeholder: '********', required: true, isPassword: true },
-                                                { key: 'BACKUP_ENCRYPTION_KEY', label: 'Encryption Passphrase', placeholder: 'Strong passphrase for AES-256 encryption', required: true, isPassword: true },
-                                                { key: 'BACKUP_S3_ENDPOINT', label: 'S3 Endpoint URL', placeholder: 'https://objectstorage.us-ashburn-1.oraclecloud.com (optional for AWS)', required: false },
-                                                { key: 'BACKUP_S3_REGION', label: 'Region', placeholder: 'us-ashburn-1 or us-east-1', required: false },
-                                            ].map(({ key, label, placeholder, required, isPassword }) => {
-                                                const secret = secrets.find(s => s.key_name === key);
-                                                const isConfigured = secret?.is_configured;
-                                                return (
-                                                    <div key={key} className="space-y-2">
-                                                        <label className="block text-sm font-medium text-white/70">
-                                                            {label}
-                                                            {required && <span className="text-red-400 ml-1">*</span>}
-                                                            {!required && <span className="text-white/40 text-xs ml-2">(optional)</span>}
-                                                        </label>
-                                                        {isConfigured && !secretValues[key] ? (
-                                                            <div className="flex items-center gap-3">
-                                                                <div className="flex-1 h-10 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center px-3">
-                                                                    <Check className="w-4 h-4 text-green-400 mr-2" />
-                                                                    <span className="text-green-300 text-sm">Saved securely</span>
-                                                                </div>
-                                                                <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, [key]: ' ' }))}>
-                                                                    Change
-                                                                </Button>
+                                                    </label>
+                                                    {isConfigured && !secretValues[key] ? (
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="flex-1 h-10 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center px-3">
+                                                                <Check className="w-4 h-4 text-green-400 mr-2" />
+                                                                <span className="text-green-300 text-sm">Saved securely</span>
                                                             </div>
-                                                        ) : (
-                                                            <div className="flex gap-2">
+                                                            <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, [key]: ' ' }))}>
+                                                                Change
+                                                            </Button>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex gap-2">
+                                                            {isMultiline ? (
+                                                                <textarea
+                                                                    placeholder={placeholder}
+                                                                    value={secretValues[key]?.trim() || ''}
+                                                                    onChange={(e) => setSecretValues((p) => ({ ...p, [key]: e.target.value }))}
+                                                                    className="flex-1 min-h-[80px] p-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm font-mono resize-y"
+                                                                />
+                                                            ) : (
                                                                 <Input
-                                                                    type={isPassword ? 'password' : 'text'}
+                                                                    type={key === 'GOOGLE_MAPS_API_KEY' ? 'password' : 'text'}
                                                                     placeholder={placeholder}
                                                                     value={secretValues[key]?.trim() || ''}
                                                                     onChange={(e) => setSecretValues((p) => ({ ...p, [key]: e.target.value }))}
                                                                 />
-                                                                <Button size="sm" onClick={() => handleUpdateSecret(key)} disabled={!secretValues[key]?.trim()}>
-                                                                    Save
-                                                                </Button>
+                                                            )}
+                                                            <Button size="sm" onClick={() => handleUpdateSecret(key)} disabled={!secretValues[key]?.trim()}>
+                                                                Save
+                                                            </Button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </AccordionSection>
+
+                                {/* Database Backup Settings */}
+                                <AccordionSection
+                                    title="Database Backup Storage"
+                                    subtitle="Configure S3-compatible object storage for encrypted backups"
+                                    icon={Upload}
+                                    iconClassName="text-blue-400"
+                                >
+                                    <div className="space-y-4">
+                                        {[
+                                            { key: 'BACKUP_S3_BUCKET', label: 'Bucket Name', placeholder: 'my-backup-bucket', required: true },
+                                            { key: 'BACKUP_S3_ACCESS_KEY', label: 'Access Key ID', placeholder: 'AKIA...', required: true, isPassword: true },
+                                            { key: 'BACKUP_S3_SECRET_KEY', label: 'Secret Access Key', placeholder: '********', required: true, isPassword: true },
+                                            { key: 'BACKUP_ENCRYPTION_KEY', label: 'Encryption Passphrase', placeholder: 'Strong passphrase for AES-256 encryption', required: true, isPassword: true },
+                                            { key: 'BACKUP_S3_ENDPOINT', label: 'S3 Endpoint URL', placeholder: 'https://objectstorage.us-ashburn-1.oraclecloud.com (optional for AWS)', required: false },
+                                            { key: 'BACKUP_S3_REGION', label: 'Region', placeholder: 'us-ashburn-1 or us-east-1', required: false },
+                                        ].map(({ key, label, placeholder, required, isPassword }) => {
+                                            const secret = secrets.find(s => s.key_name === key);
+                                            const isConfigured = secret?.is_configured;
+                                            return (
+                                                <div key={key} className="space-y-2">
+                                                    <label className="block text-sm font-medium text-white/70">
+                                                        {label}
+                                                        {required && <span className="text-red-400 ml-1">*</span>}
+                                                        {!required && <span className="text-white/40 text-xs ml-2">(optional)</span>}
+                                                    </label>
+                                                    {isConfigured && !secretValues[key] ? (
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="flex-1 h-10 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center px-3">
+                                                                <Check className="w-4 h-4 text-green-400 mr-2" />
+                                                                <span className="text-green-300 text-sm">Saved securely</span>
                                                             </div>
-                                                        )}
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
+                                                            <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, [key]: ' ' }))}>
+                                                                Change
+                                                            </Button>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex gap-2">
+                                                            <Input
+                                                                type={isPassword ? 'password' : 'text'}
+                                                                placeholder={placeholder}
+                                                                value={secretValues[key]?.trim() || ''}
+                                                                onChange={(e) => setSecretValues((p) => ({ ...p, [key]: e.target.value }))}
+                                                            />
+                                                            <Button size="sm" onClick={() => handleUpdateSecret(key)} disabled={!secretValues[key]?.trim()}>
+                                                                Save
+                                                            </Button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
 
                                         <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4 text-blue-300 text-sm">
                                             <strong>Tip:</strong> Once all required fields are configured, backups will run automatically daily at 2 AM UTC.
                                             You can trigger manual backups from the Retention tab.
                                         </div>
                                     </div>
-                                </Card>
+                                </AccordionSection>
                             </div>
                         )}
 

@@ -1,11 +1,12 @@
 import { useState, ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, type LucideIcon } from 'lucide-react';
 
 interface AccordionSectionProps {
     title: string;
     subtitle?: string;
-    icon?: ReactNode;
+    icon?: LucideIcon;
+    iconClassName?: string;
     badge?: ReactNode;
     defaultOpen?: boolean;
     children: ReactNode;
@@ -15,7 +16,8 @@ interface AccordionSectionProps {
 export function AccordionSection({
     title,
     subtitle,
-    icon,
+    icon: Icon,
+    iconClassName = 'text-white/60',
     badge,
     defaultOpen = false,
     children,
@@ -31,13 +33,13 @@ export function AccordionSection({
                 className="w-full flex items-center gap-3 p-4 hover:bg-white/5 transition-colors text-left"
                 aria-expanded={isOpen}
             >
-                {icon && (
-                    <div className="flex-shrink-0">
-                        {icon}
+                {Icon && (
+                    <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center flex-shrink-0">
+                        <Icon className={`w-5 h-5 ${iconClassName}`} />
                     </div>
                 )}
                 <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-white truncate">{title}</h3>
+                    <h3 className="font-semibold text-white">{title}</h3>
                     {subtitle && (
                         <p className="text-sm text-white/50 truncate">{subtitle}</p>
                     )}
@@ -63,7 +65,7 @@ export function AccordionSection({
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: 'auto', opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.2, ease: 'easeInOut' }}
+                        transition={{ duration: 0.25, ease: 'easeInOut' }}
                         className="overflow-hidden"
                     >
                         <div className="p-4 pt-0 border-t border-white/10">
