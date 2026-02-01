@@ -2169,20 +2169,20 @@ async def get_health_dashboard(
         "uptime": "Active (responding to requests)"
     }
     
-    # Check frontend via socket connection to Docker service
+    # Check frontend via socket connection to Docker service (Vite dev server on 5173)
     try:
         import socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(2)
-        result = sock.connect_ex(('frontend', 80))
+        result = sock.connect_ex(('frontend', 5173))
         sock.close()
         if result == 0:
             health["services"]["frontend"] = {
                 "status": "running",
-                "uptime": "Port 80 reachable"
+                "uptime": "Vite dev server active"
             }
         else:
-            health["services"]["frontend"] = {"status": "stopped", "uptime": "Port 80 not reachable"}
+            health["services"]["frontend"] = {"status": "stopped", "uptime": "Port 5173 not reachable"}
     except Exception as e:
         health["services"]["frontend"] = {"status": "unknown", "error": str(e)[:50]}
     
