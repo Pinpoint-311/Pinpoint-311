@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Key, Shield, Cloud, MessageSquare, Mail, Sparkles, CheckCircle,
@@ -20,6 +20,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [savingKey, setSavingKey] = useState<string | null>(null);
     const [showTerminal, setShowTerminal] = useState(false);
     const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+    const [localSmsProvider, setLocalSmsProvider] = useState<string>('none');
 
     const isConfigured = (key: string) => secrets.find(s => s.key_name === key)?.is_configured;
 
@@ -52,8 +53,15 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
     // Check configuration status
     const auth0Configured = isConfigured('AUTH0_DOMAIN') && isConfigured('AUTH0_CLIENT_ID') && isConfigured('AUTH0_CLIENT_SECRET');
-    const smsProvider = secrets.find(s => s.key_name === 'SMS_PROVIDER')?.key_value;
+    const smsProviderFromSecrets = secrets.find(s => s.key_name === 'SMS_PROVIDER')?.key_value;
     const smtpConfigured = isConfigured('SMTP_HOST') && isConfigured('SMTP_FROM_EMAIL');
+
+    // Sync local SMS provider state with secrets
+    useEffect(() => {
+        if (smsProviderFromSecrets) {
+            setLocalSmsProvider(smsProviderFromSecrets);
+        }
+    }, [smsProviderFromSecrets]);
     const sentryConfigured = isConfigured('SENTRY_DSN');
 
     return (
@@ -226,7 +234,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     <p className="text-gray-300 text-xs">Twilio or custom HTTP</p>
                                 </div>
                             </div>
-                            {getStatusBadge(!!(smsProvider && smsProvider !== 'none'))}
+                            {getStatusBadge(!!(localSmsProvider && localSmsProvider !== 'none'))}
                         </div>
                         <Select
                             options={[
@@ -234,14 +242,18 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 { value: 'twilio', label: 'Twilio' },
                                 { value: 'http', label: 'Custom HTTP API' },
                             ]}
-                            value={smsProvider || 'none'}
+                            value={localSmsProvider}
                             onChange={async (e) => {
                                 const newValue = e.target.value;
+                                // Update local state immediately for instant feedback
+                                setLocalSmsProvider(newValue);
                                 try {
                                     await onSaveSecret('SMS_PROVIDER', newValue);
                                     onRefresh();
                                 } catch (err) {
                                     console.error('Failed to save SMS provider:', err);
+                                    // Revert on error
+                                    setLocalSmsProvider(localSmsProvider);
                                 }
                             }}
                         />
