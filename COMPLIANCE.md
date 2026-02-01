@@ -41,23 +41,23 @@ Pinpoint 311 implements a production-grade, managed security stack:
 
 | Component | Purpose | Provider |
 |-----------|---------|----------|
-| **Zitadel Cloud** | SSO with MFA & Passkeys | Managed Identity |
+| **Auth0** | SSO with MFA & Passkeys | Managed Identity |
 | **Google Secret Manager** | API keys & credentials | Google Cloud |
 | **Google Cloud KMS** | Resident PII encryption | Google Cloud |
 | **Watchtower** | Container auto-updates | Self-hosted |
 
-### Zero-Password Authentication (Zitadel Cloud)
+### Zero-Password Authentication (Auth0)
 
-Staff login via **Zitadel Cloud SSO** eliminates password-related vulnerabilities:
+Staff login via **Auth0** eliminates password-related vulnerabilities:
 
 | Feature | Implementation |
 |---------|----------------|
-| Authentication | Zitadel Cloud OIDC with JWT tokens |
+| Authentication | Auth0 OIDC with JWT tokens |
 | Multi-Factor | TOTP, passkeys, biometric support |
 | Session Management | JWT tokens with 8-hour expiration |
 | Passwordless | WebAuthn/passkeys for phishing resistance |
 | Social Login | Google, Microsoft identity providers |
-| Password Storage | **None** - fully delegated to Zitadel |
+| Password Storage | **None** - fully delegated to Auth0 |
 
 ### Secrets Management (Google Secret Manager)
 
@@ -72,7 +72,7 @@ API credentials stored in Google Secret Manager with HSM-backed encryption:
 | Free Tier | 6 active secret versions (bundled secrets) |
 
 **Protected Secrets (6 Bundles):**
-- `secret-zitadel`: SSO credentials
+- `secret-auth0`: SSO credentials
 - `secret-smtp`: Email configuration
 - `secret-sms`: SMS provider keys
 - `secret-google`: Maps, Vertex AI credentials
@@ -188,7 +188,7 @@ AI priority suggestions follow a **strict human accountability model**:
 
 | Area | Current State | Risk | Remediation |
 |------|---------------|------|-------------|
-| **MFA** | ✅ **Implemented** (Zitadel Cloud SSO) | Resolved | TOTP, passkeys, biometric via Zitadel |
+| **MFA** | ✅ **Implemented** (Auth0) | Resolved | TOTP, passkeys, biometric via Auth0 |
 | **Rate Limiting** | ✅ **Implemented** (slowapi 500/min) | Resolved | N/A |
 | **Encryption at Rest** | ✅ **Implemented** (GCP KMS + Fernet fallback) | Resolved | N/A |
 | **PII Encryption** | ✅ **Implemented** (Google Cloud KMS) | Resolved | HSM-backed AES-256-GCM |
@@ -320,19 +320,19 @@ Pinpoint 311 includes one-command setup scripts to minimize deployment friction:
 | Vertex AI | AI analysis (Gemini Flash) |
 | Secret Manager | Credential storage |
 
-### Zitadel Cloud SSO Setup
+### Auth0 SSO Setup
 ```bash
-./scripts/setup_zitadel.sh [DOMAIN] [TOKEN] [APP_DOMAIN]
+./scripts/setup_auth0.sh [DOMAIN] [CLIENT_ID] [CLIENT_SECRET]
 ```
 
 **Automatically configures:**
-- Creates Zitadel project and web application
+- Creates Auth0 application and configures callbacks
 - Configures redirect URLs for production and development
 - Outputs credentials for Admin Console
 
 ### Prerequisites
 - `gcloud` CLI installed and authenticated
-- Zitadel Cloud account (free tier available)
+- Auth0 account (free tier available)
 - GCP project with billing enabled
 
 ---

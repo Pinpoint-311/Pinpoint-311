@@ -9,6 +9,12 @@
   <img src="https://img.shields.io/badge/Geo-PostGIS-336791.svg" alt="PostGIS">
 </p>
 
+<p align="center">
+  <a href="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/build-publish.yml"><img src="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/build-publish.yml/badge.svg" alt="Build Status"></a>
+  <a href="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/codeql.yml"><img src="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
+  <a href="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/security-scan.yml"><img src="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/security-scan.yml/badge.svg" alt="Security Scan"></a>
+</p>
+
 ## 🏛️ Introduction
 
 Pinpoint 311 is a production-grade, open-source platform designed for modern municipalities. It replaces legacy, clunky government forms with a **consumer-grade user experience** that feels as polished as a ride-sharing or food-delivery app.
@@ -102,7 +108,7 @@ graph TB
         GM[Google Maps]
         GT[Google Translate]
         SM[SMTP / SMS]
-        ZT[Zitadel SSO]
+        A0[Auth0 SSO]
     end
 
     RP --> API
@@ -154,7 +160,7 @@ flowchart LR
 ```mermaid
 graph LR
     subgraph "Identity"
-        ZT[Zitadel Cloud SSO]
+        A0[Auth0 SSO]
         MFA[MFA / Passkeys]
     end
 
@@ -464,17 +470,17 @@ Pinpoint 311 implements a production-grade security stack with managed cloud ser
 
 | Component | Purpose | Provider |
 |-----------|---------|----------|
-| **Zitadel Cloud** | SSO with MFA & Passkeys | Managed Identity |
+| **Auth0** | SSO with MFA & Passkeys | Managed Identity |
 | **Google Secret Manager** | API keys & credentials | Google Cloud |
 | **Google Cloud KMS** | Resident PII encryption | Google Cloud |
 | **Watchtower** | Container auto-updates | Self-hosted |
 
 #### Zero-Password Authentication
-Staff login via **Zitadel Cloud SSO** with enterprise-grade security:
+Staff login via **Auth0** with enterprise-grade security:
 - **Multi-Factor Authentication**: TOTP, passkeys, and biometric support
 - **Social Login**: Google, Microsoft, and other identity providers
 - **Passwordless Option**: WebAuthn/passkeys for phishing resistance
-- **No passwords stored**: Authentication fully delegated to Zitadel
+- **No passwords stored**: Authentication fully delegated to Auth0
 
 #### Secrets Management
 Two-tier security for credentials:
