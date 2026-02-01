@@ -1,8 +1,3 @@
-# ZAP Scanning Rules Configuration
-# Format: ruleId	action
-# Actions: IGNORE, WARN, FAIL
-
-# Informational alerts - ignore
 10015	IGNORE
 10020	IGNORE
 10021	IGNORE
@@ -35,8 +30,6 @@
 10053	IGNORE
 10054	IGNORE
 10055	IGNORE
-
-# Low risk - warn but don't fail
 10011	WARN
 10012	WARN
 10016	WARN
@@ -46,17 +39,10 @@
 10024	WARN
 10025	WARN
 10026	WARN
-
-# Medium and High risk - fail the scan
-# SQL Injection
 40018	FAIL
-# XSS
 40012	FAIL
 40014	FAIL
 40016	FAIL
-# Path Traversal
 6	FAIL
-# Remote File Include
 7	FAIL
-# CSRF
 40013	FAIL
