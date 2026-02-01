@@ -67,6 +67,7 @@ import { api, MapLayer } from '../services/api';
 import { User, ServiceDefinition, SystemSettings, SystemSecret, Department } from '../types';
 import { usePageNavigation } from '../hooks/usePageNavigation';
 import SystemHealthDashboard from '../components/SystemHealthDashboard';
+import OperationsPanel from '../components/OperationsPanel';
 import AuditLogViewer from '../components/AuditLogViewer';
 import VersionSwitcher from '../components/VersionSwitcher';
 
@@ -3003,7 +3004,10 @@ export default function AdminConsole() {
 
                         {/* System Health Tab */}
                         {currentTab === 'health' && (
-                            <SystemHealthDashboard />
+                            <div className="space-y-8">
+                                <OperationsPanel />
+                                <SystemHealthDashboard />
+                            </div>
                         )}
 
                         {/* Audit Logs - part of Compliance */}
