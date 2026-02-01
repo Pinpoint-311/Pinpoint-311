@@ -177,7 +177,7 @@ async def check_vertex_ai() -> Dict[str, Any]:
             }
         
         # Try a simple test call
-        from app.services.vertex_ai_service import analyze_service_request_with_ai
+        from app.services.vertex_ai_service import analyze_with_gemini
         
         # Don't actually call the API to save costs, just check if it's importable
         return {
@@ -204,7 +204,7 @@ async def check_translation_api(db: AsyncSession) -> Dict[str, Any]:
         from app.services.translation import translate_text
         
         # Check if API key is configured
-        api_key = await get_secret(db, "GOOGLE_MAPS_API_KEY")
+        api_key = await get_secret("GOOGLE_MAPS_API_KEY")
         
         if not api_key:
             return {
