@@ -27,9 +27,9 @@ class AuditService:
         return hashlib.sha256(canonical.encode()).hexdigest()
     
     @staticmethod
-    def _get_last_entry_hash(db: Session) -> Optional[str]:
+    async def _get_last_entry_hash(db) -> Optional[str]:
         """Get hash of the most recent audit log entry"""
-        result = db.execute(
+        result = await db.execute(
             select(AuditLog.entry_hash)
             .order_by(desc(AuditLog.id))
             .limit(1)
@@ -68,7 +68,7 @@ class AuditService:
             Created AuditLog entry
         """
         # Get previous hash for integrity chain
-        previous_hash = AuditService._get_last_entry_hash(db)
+        previous_hash = await AuditService._get_last_entry_hash(db)
         
         # Prepare entry data for hashing
         entry_data = {
@@ -101,8 +101,8 @@ class AuditService:
         )
         
         db.add(audit_log)
-        db.commit()
-        db.refresh(audit_log)
+        await db.commit()
+        await db.refresh(audit_log)
         
         return audit_log
     
