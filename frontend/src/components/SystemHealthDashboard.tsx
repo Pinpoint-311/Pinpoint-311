@@ -13,6 +13,7 @@ interface HealthCheckResponse {
     checks: {
         database: HealthCheckResult;
         auth0: HealthCheckResult;
+        workload_identity: HealthCheckResult;
         google_kms: HealthCheckResult;
         google_secret_manager: HealthCheckResult;
         vertex_ai: HealthCheckResult;
@@ -199,6 +200,23 @@ export default function SystemHealthDashboard() {
                             </div>
                         </div>
                     </Card>
+
+                    {/* Workload Identity Federation */}
+                    {health.checks.workload_identity && (
+                        <Card>
+                            <div className="flex items-start gap-3">
+                                {getStatusIcon(health.checks.workload_identity.status)}
+                                <div className="flex-1">
+                                    <h3 className="font-semibold text-white">Workload Identity Federation</h3>
+                                    <p className="text-xs text-gray-500 mb-1">Keyless GCP Auth</p>
+                                    <p className={`text-sm ${getStatusColor(health.checks.workload_identity.status)}`}>
+                                        {health.checks.workload_identity.message}
+                                    </p>
+                                    {renderCheckDetails(health.checks.workload_identity)}
+                                </div>
+                            </div>
+                        </Card>
+                    )}
 
                     {/* Google Cloud KMS */}
                     <Card>

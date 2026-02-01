@@ -265,6 +265,47 @@ async def check_translation_api(db: AsyncSession) -> Dict[str, Any]:
         }
 
 
+async def check_workload_identity(db: AsyncSession) -> Dict[str, Any]:
+    """Test Workload Identity Federation status"""
+    try:
+        from app.services.workload_identity import is_federation_available, _get_federation_config
+        
+        # Check if federation is configured
+        config = await _get_federation_config()
+        
+        if config:
+            # Federation is set up
+            return {
+                "status": "healthy",
+                "message": "Federation active — using Auth0 for GCP access",
+                "pool_id": config.get("pool_id"),
+                "provider_id": config.get("provider_id")
+            }
+        
+        # Check if there's a service account key (bootstrap mode)
+        result = await db.execute(
+            select(SystemSecret).where(SystemSecret.key_name == "GCP_SERVICE_ACCOUNT_JSON")
+        )
+        sa_secret = result.scalar_one_or_none()
+        
+        if sa_secret and sa_secret.is_configured:
+            return {
+                "status": "fallback",
+                "message": "Using service account key — federation not yet configured",
+                "bootstrap_mode": True
+            }
+        
+        return {
+            "status": "not_configured",
+            "message": "Not configured — upload GCP service account to enable"
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Federation check failed: {str(e)}"
+        }
+
 @router.get("/")
 async def health_check(
     db: AsyncSession = Depends(get_db),
@@ -280,6 +321,7 @@ async def health_check(
     results = {
         "database": await check_database(db),
         "auth0": await check_auth0(db),
+        "workload_identity": await check_workload_identity(db),
         "google_kms": await check_google_kms(db),
         "google_secret_manager": await check_secret_manager(db),
         "vertex_ai": await check_vertex_ai(db),

@@ -94,6 +94,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 </div>
             </Card>
 
+            {/* Workload Identity Federation */}
+            <FederationCard />
+
             {/* Required Integrations */}
             <div>
                 <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
@@ -192,9 +195,6 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                     Optional Integrations
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {/* Workload Identity Federation - moved from standalone */}
-                    <FederationCard />
-
                     {/* Google Cloud */}
                     <Card>
                         <div className="flex items-start justify-between mb-3">
