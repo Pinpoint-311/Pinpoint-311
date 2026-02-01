@@ -93,6 +93,256 @@ def _get_auth0_config() -> Tuple[Optional[str], Optional[str], Optional[str]]:
         return None, None, str(e)
 
 
+async def _get_auth0_management_token(domain: str, client_id: str, client_secret: str) -> Optional[str]:
+    """
+    Get an Auth0 Management API token.
+    The client must have access to the Management API with appropriate scopes.
+    """
+    import httpx
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"https://{domain}/oauth/token",
+                json={
+                    "grant_type": "client_credentials",
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "audience": f"https://{domain}/api/v2/"
+                }
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"Failed to get Management API token: {response.text}")
+                return None
+            
+            return response.json().get("access_token")
+    except Exception as e:
+        logger.error(f"Error getting Management API token: {e}")
+        return None
+
+
+async def _ensure_auth0_m2m_app(project_number: str, pool_id: str, provider_id: str) -> Dict[str, Any]:
+    """
+    Ensure an Auth0 M2M application exists for GCP federation.
+    
+    Creates:
+    1. An Auth0 API resource with the GCP Workload Identity audience
+    2. An M2M application with client_credentials grant
+    3. A client grant authorizing the M2M app
+    
+    Returns:
+        Dict with status, m2m_client_id, m2m_client_secret, or error
+    """
+    import httpx
+    from app.db.session import SessionLocal
+    from app.models import SystemSecret
+    from app.core.encryption import encrypt_value, decrypt_safe
+    from sqlalchemy import select
+    
+    M2M_APP_NAME = "Pinpoint 311 GCP Federation"
+    API_NAME = "GCP Workload Identity"
+    GCP_AUDIENCE = f"https://iam.googleapis.com/projects/{project_number}/locations/global/workloadIdentityPools/{pool_id}/providers/{provider_id}"
+    
+    # Get Auth0 config including domain
+    domain, client_id, error = _get_auth0_config()
+    if error:
+        return {"status": "error", "error": f"Auth0 not configured: {error}"}
+    
+    # Get client secret for management API
+    try:
+        from app.db.session import sync_engine
+        from sqlalchemy import text
+        
+        with sync_engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT key_value FROM system_secrets WHERE key_name = 'AUTH0_CLIENT_SECRET'")
+            )
+            row = result.fetchone()
+            client_secret = decrypt_safe(row[0]) if row else None
+    except Exception as e:
+        return {"status": "error", "error": f"Could not get Auth0 secret: {e}"}
+    
+    if not client_secret:
+        return {"status": "error", "error": "Auth0 client secret not found"}
+    
+    # Check if M2M credentials already exist
+    try:
+        async with SessionLocal() as db:
+            result = await db.execute(
+                select(SystemSecret).where(
+                    SystemSecret.key_name.in_(["AUTH0_M2M_CLIENT_ID", "AUTH0_M2M_CLIENT_SECRET"])
+                )
+            )
+            existing = {s.key_name: s for s in result.scalars()}
+            
+            if len(existing) == 2 and all(s.is_configured for s in existing.values()):
+                m2m_id = decrypt_safe(existing["AUTH0_M2M_CLIENT_ID"].key_value)
+                m2m_secret = decrypt_safe(existing["AUTH0_M2M_CLIENT_SECRET"].key_value)
+                
+                # Verify the M2M app still works
+                async with httpx.AsyncClient() as client:
+                    test_resp = await client.post(
+                        f"https://{domain}/oauth/token",
+                        json={
+                            "grant_type": "client_credentials",
+                            "client_id": m2m_id,
+                            "client_secret": m2m_secret,
+                            "audience": GCP_AUDIENCE
+                        }
+                    )
+                    if test_resp.status_code == 200:
+                        logger.info("Existing M2M app verified")
+                        return {
+                            "status": "exists",
+                            "m2m_client_id": m2m_id,
+                            "m2m_client_secret": m2m_secret
+                        }
+    except Exception as e:
+        logger.warning(f"Could not verify existing M2M app: {e}")
+    
+    # Get Management API token
+    mgmt_token = await _get_auth0_management_token(domain, client_id, client_secret)
+    if not mgmt_token:
+        return {
+            "status": "error", 
+            "error": "Could not get Management API token. Ensure the Auth0 app has access to the Management API with create:clients, create:resource_servers, and create:client_grants scopes."
+        }
+    
+    headers = {
+        "Authorization": f"Bearer {mgmt_token}",
+        "Content-Type": "application/json"
+    }
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            # Step 1: Create or find the API resource
+            apis_resp = await client.get(
+                f"https://{domain}/api/v2/resource-servers",
+                headers=headers
+            )
+            
+            api_id = None
+            if apis_resp.status_code == 200:
+                for api in apis_resp.json():
+                    if api.get("identifier") == GCP_AUDIENCE:
+                        api_id = api.get("id")
+                        logger.info(f"Found existing API: {api_id}")
+                        break
+            
+            if not api_id:
+                # Create the API
+                create_api_resp = await client.post(
+                    f"https://{domain}/api/v2/resource-servers",
+                    headers=headers,
+                    json={
+                        "name": API_NAME,
+                        "identifier": GCP_AUDIENCE,
+                        "signing_alg": "RS256",
+                        "token_lifetime": 3600,
+                        "scopes": []
+                    }
+                )
+                
+                if create_api_resp.status_code in [200, 201]:
+                    api_id = create_api_resp.json().get("id")
+                    logger.info(f"Created API: {api_id}")
+                else:
+                    logger.error(f"Failed to create API: {create_api_resp.text}")
+                    return {"status": "error", "error": f"Failed to create API resource: {create_api_resp.text}"}
+            
+            # Step 2: Create M2M application
+            apps_resp = await client.get(
+                f"https://{domain}/api/v2/clients",
+                headers=headers
+            )
+            
+            m2m_app = None
+            if apps_resp.status_code == 200:
+                for app in apps_resp.json():
+                    if app.get("name") == M2M_APP_NAME:
+                        m2m_app = app
+                        logger.info(f"Found existing M2M app: {app.get('client_id')}")
+                        break
+            
+            if not m2m_app:
+                # Create M2M app
+                create_app_resp = await client.post(
+                    f"https://{domain}/api/v2/clients",
+                    headers=headers,
+                    json={
+                        "name": M2M_APP_NAME,
+                        "description": "Machine-to-machine app for GCP Workload Identity Federation",
+                        "app_type": "non_interactive",
+                        "grant_types": ["client_credentials"],
+                        "token_endpoint_auth_method": "client_secret_post"
+                    }
+                )
+                
+                if create_app_resp.status_code in [200, 201]:
+                    m2m_app = create_app_resp.json()
+                    logger.info(f"Created M2M app: {m2m_app.get('client_id')}")
+                else:
+                    logger.error(f"Failed to create M2M app: {create_app_resp.text}")
+                    return {"status": "error", "error": f"Failed to create M2M application: {create_app_resp.text}"}
+            
+            m2m_client_id = m2m_app.get("client_id")
+            m2m_client_secret = m2m_app.get("client_secret")
+            
+            # Step 3: Create client grant (authorize M2M app to use the API)
+            grant_resp = await client.post(
+                f"https://{domain}/api/v2/client-grants",
+                headers=headers,
+                json={
+                    "client_id": m2m_client_id,
+                    "audience": GCP_AUDIENCE,
+                    "scope": []
+                }
+            )
+            
+            # 409 means grant already exists, which is fine
+            if grant_resp.status_code not in [200, 201, 409]:
+                logger.warning(f"Client grant creation returned {grant_resp.status_code}: {grant_resp.text}")
+            
+            # Step 4: Store M2M credentials in database
+            async with SessionLocal() as db:
+                for key_name, key_value in [
+                    ("AUTH0_M2M_CLIENT_ID", m2m_client_id),
+                    ("AUTH0_M2M_CLIENT_SECRET", m2m_client_secret)
+                ]:
+                    result = await db.execute(
+                        select(SystemSecret).where(SystemSecret.key_name == key_name)
+                    )
+                    secret = result.scalar_one_or_none()
+                    
+                    encrypted_value = encrypt_value(key_value)
+                    
+                    if secret:
+                        secret.key_value = encrypted_value
+                        secret.is_configured = True
+                    else:
+                        db.add(SystemSecret(
+                            key_name=key_name,
+                            key_value=encrypted_value,
+                            key_type="auth0_m2m",
+                            is_required=False,
+                            is_configured=True,
+                            description="Auth0 M2M app for GCP federation"
+                        ))
+                
+                await db.commit()
+            
+            logger.info("Auth0 M2M app configured successfully")
+            return {
+                "status": "created",
+                "m2m_client_id": m2m_client_id,
+                "m2m_client_secret": m2m_client_secret
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in M2M setup: {e}")
+            return {"status": "error", "error": str(e)}
+
 async def setup_federation() -> Dict[str, Any]:
     """
     Create Workload Identity Pool and OIDC provider for Auth0 federation.
@@ -268,11 +518,19 @@ async def setup_federation() -> Dict[str, Any]:
             # Store federation config in database
             await _store_federation_config(project_id, project_number, auth0_domain, auth0_client_id)
             
+            # Create M2M app for runtime token exchange
+            m2m_result = await _ensure_auth0_m2m_app(project_number, POOL_ID, PROVIDER_ID)
+            if m2m_result.get("status") == "error":
+                logger.warning(f"M2M app creation failed: {m2m_result.get('error')} - federation will work but may need manual M2M setup")
+            else:
+                logger.info(f"M2M app ready: {m2m_result.get('status')}")
+            
             return {
                 "status": "success",
                 "pool_name": pool_name,
                 "provider_name": provider_name,
                 "issuer": issuer_uri,
+                "m2m_status": m2m_result.get("status", "unknown"),
                 "message": "Federation setup complete. You can now delete the service account key."
             }
             
@@ -415,21 +673,36 @@ async def get_federation_credentials():
         auth0_domain = config["auth0_domain"]
         
         # Get Auth0 credentials from database
+        # Prefer M2M credentials if available (they have client_credentials grant enabled)
         from app.db.session import SessionLocal
         from app.models import SystemSecret
         from app.core.encryption import decrypt_safe
         from sqlalchemy import select
         
         async with SessionLocal() as db:
+            # First try M2M credentials
             result = await db.execute(
                 select(SystemSecret).where(
-                    SystemSecret.key_name.in_(["AUTH0_CLIENT_ID", "AUTH0_CLIENT_SECRET"])
+                    SystemSecret.key_name.in_(["AUTH0_M2M_CLIENT_ID", "AUTH0_M2M_CLIENT_SECRET"])
                 )
             )
-            secrets = {s.key_name: decrypt_safe(s.key_value) for s in result.scalars()}
-        
-        client_id = secrets.get("AUTH0_CLIENT_ID")
-        client_secret = secrets.get("AUTH0_CLIENT_SECRET")
+            m2m_secrets = {s.key_name: decrypt_safe(s.key_value) for s in result.scalars() if s.is_configured}
+            
+            if len(m2m_secrets) == 2:
+                client_id = m2m_secrets.get("AUTH0_M2M_CLIENT_ID")
+                client_secret = m2m_secrets.get("AUTH0_M2M_CLIENT_SECRET")
+                logger.debug("Using M2M credentials for federation")
+            else:
+                # Fall back to SSO app credentials
+                result = await db.execute(
+                    select(SystemSecret).where(
+                        SystemSecret.key_name.in_(["AUTH0_CLIENT_ID", "AUTH0_CLIENT_SECRET"])
+                    )
+                )
+                secrets = {s.key_name: decrypt_safe(s.key_value) for s in result.scalars()}
+                client_id = secrets.get("AUTH0_CLIENT_ID")
+                client_secret = secrets.get("AUTH0_CLIENT_SECRET")
+                logger.debug("Using SSO app credentials for federation (M2M not configured)")
         
         if not client_id or not client_secret:
             logger.warning("Auth0 credentials not found for federation")
