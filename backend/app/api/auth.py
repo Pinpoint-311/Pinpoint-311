@@ -22,6 +22,11 @@ _pending_states: dict = {}
 # One-time bootstrap tokens (only work until Auth0 is configured)
 _bootstrap_tokens: dict = {}
 
+# Emergency access rate limiting
+_emergency_attempts: dict = {}  # {ip: [timestamp, timestamp, ...]}
+_emergency_global_attempts: int = 0
+_emergency_locked: bool = False
+
 
 @router.post("/bootstrap")
 async def generate_bootstrap_token(
@@ -138,6 +143,158 @@ async def use_bootstrap_token(
     """
     from fastapi.responses import HTMLResponse
     return HTMLResponse(content=html_response)
+
+
+@router.post("/emergency")
+async def emergency_access(
+    request: Request,
+    emergency_token: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Emergency admin access endpoint.
+    
+    Provides secure backdoor for admin access even when Auth0 is configured.
+    Requires EMERGENCY_ACCESS_TOKEN from environment variables.
+    
+    Security features:
+    - Constant-time token comparison (prevents timing attacks)
+    - Rate limiting: 3 attempts/hour per IP, 5/hour globally
+    - Auto-lockout after 5 failed global attempts  
+    - All attempts audited
+    - Generic error messages (prevents enumeration)
+    """
+    import time as time_module
+    import hmac
+    from app.core.config import get_settings
+    
+    settings = get_settings()
+    global _emergency_attempts, _emergency_global_attempts, _emergency_locked
+    
+    # Get IP address for rate limiting and audit
+    ip_address = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "unknown")
+    current_time = time_module.time()
+    
+    # Check if emergency access is locked
+    if _emergency_locked:
+        await AuditService.log_event(
+            db=db,
+            event_type="emergency_access_failed",
+            success=False,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            failure_reason="System locked - too many failed attempts"
+        )
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Check if emergency token is configured
+    if not settings.emergency_access_token:
+        await AuditService.log_event(
+            db=db,
+            event_type="emergency_access_failed",
+            success=False,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            failure_reason="Emergency token not configured"
+        )
+        raise HTTPException(status_code=503, detail="Emergency access not configured")
+    
+    # Rate limiting per IP (3 attempts per hour)
+    if ip_address in _emergency_attempts:
+        # Clean up attempts older than 1 hour
+        _emergency_attempts[ip_address] = [
+            t for t in _emergency_attempts[ip_address]
+            if current_time - t < 3600
+        ]
+        
+        if len(_emergency_attempts[ip_address]) >= 3:
+            await AuditService.log_event(
+                db=db,
+                event_type="emergency_access_failed",
+                success=False,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                failure_reason="Rate limit exceeded"
+            )
+            raise HTTPException(status_code=429, detail="Too many attempts")
+    else:
+        _emergency_attempts[ip_address] = []
+    
+    # Constant-time comparison to prevent timing attacks
+    expected_token = settings.emergency_access_token.encode()
+    provided_token = emergency_token.encode()
+    
+    if not hmac.compare_digest(expected_token, provided_token):
+        # Record failed attempt
+        _emergency_attempts[ip_address].append(current_time)
+        _emergency_global_attempts += 1
+        
+        # Lock after 5 global failed attempts
+        if _emergency_global_attempts >= 5:
+            _emergency_locked = True
+            logger.critical(f"EMERGENCY ACCESS LOCKED after 5 failed attempts. Last from {ip_address}")
+        
+        await AuditService.log_event(
+            db=db,
+            event_type="emergency_access_failed",
+            success=False,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            failure_reason="Invalid token"
+        )
+        
+        logger.warning(f"Failed emergency access attempt from {ip_address}")
+        raise HTTPException(status_code=401, detail="Access denied")
+    
+    # Valid token - find admin user
+    result = await db.execute(
+        select(User).where(User.role == "admin", User.is_active == True).limit(1)
+    )
+    admin = result.scalar_one_or_none()
+    
+    if not admin:
+        await AuditService.log_event(
+            db=db,
+            event_type="emergency_access_failed",
+            success=False,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            failure_reason="No active admin found"
+        )
+        raise HTTPException(status_code=500, detail="No admin user available")
+    
+    # Create JWT
+    access_token = create_access_token(data={"sub": admin.username, "role": admin.role})
+    
+    # Extract JWT ID for session tracking
+    import jwt as jwt_lib
+    decoded = jwt_lib.decode(access_token, options={"verify_signature": False})
+    session_id = decoded.get("jti", "unknown")
+    
+    # Log successful emergency access
+    await AuditService.log_event(
+        db=db,
+        event_type="emergency_access_success",
+        success=True,
+        user_id=admin.id,
+        username=admin.username,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        details={"session_id": session_id}
+    )
+    
+    logger.warning(f"Emergency access granted to {admin.username} from {ip_address}")
+    
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "username": admin.username,
+            "email": admin.email,
+            "role": admin.role
+        }
+    }
 
 
 @router.get("/login")

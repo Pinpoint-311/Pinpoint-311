@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     initial_admin_email: str = "admin@example.com"
     initial_admin_password: str = "admin123"
     
+    # Emergency Access (secure backdoor)
+    emergency_access_token: Optional[str] = None
+    
     # Google Vertex AI
     google_vertex_project: Optional[str] = None
     google_vertex_location: str = "us-central1"
