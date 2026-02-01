@@ -163,7 +163,7 @@ export default function OperationsPanel() {
                         <Activity className="w-6 h-6 text-blue-400" />
                         System Dashboard
                     </h2>
-                    <p className="text-gray-400 text-sm mt-1">
+                    <p className="text-gray-300 text-sm mt-1">
                         Infrastructure, integrations, and emergency operations
                     </p>
                 </div>
@@ -181,7 +181,7 @@ export default function OperationsPanel() {
                         <div className="flex items-center gap-3">
                             <Server className="w-8 h-8 text-blue-400" />
                             <div>
-                                <p className="text-gray-400 text-xs uppercase tracking-wide">Infrastructure</p>
+                                <p className="text-gray-300 text-xs uppercase tracking-wide">Infrastructure</p>
                                 <p className="text-white font-semibold">
                                     {Object.values(health.services).filter((s: any) => s.status === 'running').length}/{Object.keys(health.services).length} Running
                                 </p>
@@ -194,7 +194,7 @@ export default function OperationsPanel() {
                         <div className="flex items-center gap-3">
                             <Cloud className="w-8 h-8 text-purple-400" />
                             <div>
-                                <p className="text-gray-400 text-xs uppercase tracking-wide">Integrations</p>
+                                <p className="text-gray-300 text-xs uppercase tracking-wide">Integrations</p>
                                 <p className="text-white font-semibold">
                                     {integrationCounts.healthy}/{integrationCounts.total} Configured
                                 </p>
@@ -207,7 +207,7 @@ export default function OperationsPanel() {
                         <div className="flex items-center gap-3">
                             <Database className="w-8 h-8 text-purple-400" />
                             <div>
-                                <p className="text-gray-400 text-xs uppercase tracking-wide">PostgreSQL</p>
+                                <p className="text-gray-300 text-xs uppercase tracking-wide">PostgreSQL</p>
                                 <p className="text-white font-semibold">{health.database.size || '?'}</p>
                                 <p className="text-gray-500 text-xs">{health.database.connections || 0} connections</p>
                             </div>
@@ -219,7 +219,7 @@ export default function OperationsPanel() {
                         <div className="flex items-center gap-3">
                             <HardDrive className="w-8 h-8 text-orange-400" />
                             <div>
-                                <p className="text-gray-400 text-xs uppercase tracking-wide">Redis Cache</p>
+                                <p className="text-gray-300 text-xs uppercase tracking-wide">Redis Cache</p>
                                 <p className="text-white font-semibold">{health.cache.used_memory || 'N/A'}</p>
                             </div>
                         </div>
@@ -282,7 +282,7 @@ export default function OperationsPanel() {
                                     {integrations.checks.auth0.status}
                                 </span>
                             </div>
-                            <p className="text-gray-400 text-xs">{integrations.checks.auth0.message}</p>
+                            <p className="text-gray-300 text-xs">{integrations.checks.auth0.message}</p>
                         </div>
 
                         {/* Google KMS */}
@@ -294,7 +294,7 @@ export default function OperationsPanel() {
                                     {integrations.checks.google_kms.status}
                                 </span>
                             </div>
-                            <p className="text-gray-400 text-xs">{integrations.checks.google_kms.message}</p>
+                            <p className="text-gray-300 text-xs">{integrations.checks.google_kms.message}</p>
                         </div>
 
                         {/* Secret Manager */}
@@ -306,7 +306,7 @@ export default function OperationsPanel() {
                                     {integrations.checks.google_secret_manager.status}
                                 </span>
                             </div>
-                            <p className="text-gray-400 text-xs">{integrations.checks.google_secret_manager.message}</p>
+                            <p className="text-gray-300 text-xs">{integrations.checks.google_secret_manager.message}</p>
                         </div>
 
                         {/* Vertex AI */}
@@ -318,7 +318,7 @@ export default function OperationsPanel() {
                                     {integrations.checks.vertex_ai.status}
                                 </span>
                             </div>
-                            <p className="text-gray-400 text-xs">{integrations.checks.vertex_ai.message}</p>
+                            <p className="text-gray-300 text-xs">{integrations.checks.vertex_ai.message}</p>
                         </div>
 
                         {/* Translation API */}
@@ -330,7 +330,7 @@ export default function OperationsPanel() {
                                     {integrations.checks.translation_api.status}
                                 </span>
                             </div>
-                            <p className="text-gray-400 text-xs">{integrations.checks.translation_api.message}</p>
+                            <p className="text-gray-300 text-xs">{integrations.checks.translation_api.message}</p>
                         </div>
 
                         {/* Database */}
@@ -342,7 +342,7 @@ export default function OperationsPanel() {
                                     {integrations.checks.database.status}
                                 </span>
                             </div>
-                            <p className="text-gray-400 text-xs">{integrations.checks.database.message}</p>
+                            <p className="text-gray-300 text-xs">{integrations.checks.database.message}</p>
                         </div>
                     </div>
                 </Card>
@@ -425,7 +425,7 @@ export default function OperationsPanel() {
                         <Clock className="w-5 h-5 text-green-400" />
                         <div>
                             <span className="text-white font-medium">Last Backup</span>
-                            <span className="text-gray-400 text-sm ml-3">
+                            <span className="text-gray-300 text-sm ml-3">
                                 {new Date(health.last_backup.created).toLocaleString()}
                             </span>
                         </div>
@@ -446,7 +446,7 @@ export default function OperationsPanel() {
                                 {lastAction.status === 'success' ? <CheckCircle className="w-5 h-5 text-green-400" /> : <XCircle className="w-5 h-5 text-red-400" />}
                                 <div className="flex-1">
                                     <span className="font-medium text-white">{lastAction.action}: {lastAction.status}</span>
-                                    <span className="text-gray-400 text-sm ml-2">at {new Date(lastAction.timestamp).toLocaleTimeString()}</span>
+                                    <span className="text-gray-300 text-sm ml-2">at {new Date(lastAction.timestamp).toLocaleTimeString()}</span>
                                 </div>
                                 <Button size="sm" variant="ghost" onClick={() => setLastAction(null)}>Dismiss</Button>
                             </div>
@@ -459,7 +459,7 @@ export default function OperationsPanel() {
             {isLoading && !health && (
                 <div className="flex items-center justify-center py-12">
                     <RefreshCw className="w-8 h-8 text-blue-400 animate-spin" />
-                    <span className="ml-3 text-gray-400">Loading system dashboard...</span>
+                    <span className="ml-3 text-gray-300">Loading system dashboard...</span>
                 </div>
             )}
         </div>

@@ -60,7 +60,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             {/* Header */}
             <div>
                 <h1 className="text-2xl font-bold text-white">Setup & Integrations</h1>
-                <p className="text-gray-400 mt-1">Configure authentication, notifications, and cloud services</p>
+                <p className="text-gray-300 mt-1">Configure authentication, notifications, and cloud services</p>
             </div>
 
             {/* Setup Wizard CTA */}
@@ -101,7 +101,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 </div>
                                 <div>
                                     <h3 className="font-semibold text-white">Auth0 SSO</h3>
-                                    <p className="text-gray-400 text-xs">Staff authentication with MFA</p>
+                                    <p className="text-gray-300 text-xs">Staff authentication with MFA</p>
                                 </div>
                             </div>
                             {getStatusBadge(auth0Configured)}
@@ -113,7 +113,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 const label = key.replace('AUTH0_', '').replace(/_/g, ' ');
                                 return (
                                     <div key={key}>
-                                        <label className="text-xs text-gray-400 block mb-1">{label}</label>
+                                        <label className="text-xs text-gray-300 block mb-1">{label}</label>
                                         {configured && !secretValues[key] ? (
                                             <div className="flex items-center gap-2">
                                                 <div className="flex-1 h-9 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center px-3">
@@ -160,12 +160,12 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 </div>
                                 <div>
                                     <h3 className="font-semibold text-white">PostgreSQL Database</h3>
-                                    <p className="text-gray-400 text-xs">Primary data storage</p>
+                                    <p className="text-gray-300 text-xs">Primary data storage</p>
                                 </div>
                             </div>
                             <Badge variant="success">Auto-configured</Badge>
                         </div>
-                        <p className="text-gray-400 text-sm">
+                        <p className="text-gray-300 text-sm">
                             Database connection is configured via <code className="bg-white/10 px-1 rounded">DATABASE_URL</code> environment variable in docker-compose.yml.
                         </p>
                         <div className="mt-4 flex items-center gap-2 text-green-400 text-sm">
@@ -192,11 +192,11 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 </div>
                                 <div>
                                     <h3 className="font-semibold text-white">Google Cloud</h3>
-                                    <p className="text-gray-400 text-xs">KMS, AI, Secrets, Translation</p>
+                                    <p className="text-gray-300 text-xs">KMS, AI, Secrets, Translation</p>
                                 </div>
                             </div>
                         </div>
-                        <p className="text-gray-400 text-sm mb-3">
+                        <p className="text-gray-300 text-sm mb-3">
                             Set up via environment variables or the Setup Wizard.
                         </p>
                         <Button
@@ -219,7 +219,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 </div>
                                 <div>
                                     <h3 className="font-semibold text-white">SMS Notifications</h3>
-                                    <p className="text-gray-400 text-xs">Twilio or custom HTTP</p>
+                                    <p className="text-gray-300 text-xs">Twilio or custom HTTP</p>
                                 </div>
                             </div>
                             {getStatusBadge(!!(smsProvider && smsProvider !== 'none'))}
@@ -244,12 +244,12 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 </div>
                                 <div>
                                     <h3 className="font-semibold text-white">Email (SMTP)</h3>
-                                    <p className="text-gray-400 text-xs">Outgoing notifications</p>
+                                    <p className="text-gray-300 text-xs">Outgoing notifications</p>
                                 </div>
                             </div>
                             {getStatusBadge(smtpConfigured)}
                         </div>
-                        <p className="text-gray-400 text-xs">
+                        <p className="text-gray-300 text-xs">
                             Configure SMTP credentials in the detailed settings above.
                         </p>
                     </Card>
@@ -263,7 +263,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 </div>
                                 <div>
                                     <h3 className="font-semibold text-white">Sentry</h3>
-                                    <p className="text-gray-400 text-xs">Error monitoring</p>
+                                    <p className="text-gray-300 text-xs">Error monitoring</p>
                                 </div>
                             </div>
                             {getStatusBadge(sentryConfigured)}
@@ -309,10 +309,10 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         <Terminal className="w-5 h-5 text-green-400" />
                         <div className="text-left">
                             <h3 className="font-semibold text-white">Advanced: Terminal Setup Commands</h3>
-                            <p className="text-gray-400 text-xs">For manual server configuration</p>
+                            <p className="text-gray-300 text-xs">For manual server configuration</p>
                         </div>
                     </div>
-                    {showTerminal ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
+                    {showTerminal ? <ChevronUp className="w-5 h-5 text-gray-300" /> : <ChevronDown className="w-5 h-5 text-gray-300" />}
                 </button>
 
                 <AnimatePresence>
