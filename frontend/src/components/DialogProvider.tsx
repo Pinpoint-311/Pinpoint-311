@@ -101,7 +101,7 @@ const Dialog = ({ isOpen, config, onConfirm, onCancel, showCancel = true }: Dial
                         exit={{ opacity: 0 }}
                     >
                         <motion.div
-                            className="bg-slate-800 backdrop-blur-xl border border-slate-600/50 rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden"
+                            className="bg-slate-800 backdrop-blur-xl border border-slate-600/40 rounded-3xl shadow-2xl max-w-xl w-full overflow-hidden"
                             initial={{ scale: 0.9, y: 20 }}
                             animate={{ scale: 1, y: 0 }}
                             exit={{ scale: 0.9, y: 20 }}
@@ -109,24 +109,24 @@ const Dialog = ({ isOpen, config, onConfirm, onCancel, showCancel = true }: Dial
                             onClick={(e) => e.stopPropagation()}
                         >
                             {/* Header */}
-                            <div className="p-6 pb-4">
-                                <div className="flex items-start gap-4">
+                            <div className="p-8 pb-6">
+                                <div className="flex items-start gap-5">
                                     {/* Icon */}
-                                    <div className={`p-3 rounded-xl ${styles.iconBg}`}>
+                                    <div className={`p-4 rounded-2xl ${styles.iconBg}`}>
                                         {config.icon || styles.icon}
                                     </div>
 
                                     {/* Title & Close */}
-                                    <div className="flex-1 min-w-0">
+                                    <div className="flex-1 min-w-0 pt-1">
                                         <div className="flex items-center justify-between">
                                             <h3 className="text-xl font-semibold text-white">
                                                 {config.title}
                                             </h3>
                                             <button
                                                 onClick={onCancel}
-                                                className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors ml-4"
+                                                className="p-2.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-xl transition-colors ml-4"
                                             >
-                                                <X size={20} />
+                                                <X size={22} />
                                             </button>
                                         </div>
                                     </div>
@@ -134,25 +134,25 @@ const Dialog = ({ isOpen, config, onConfirm, onCancel, showCancel = true }: Dial
                             </div>
 
                             {/* Content */}
-                            <div className="px-6 pb-6">
+                            <div className="px-8 pb-8">
                                 <div className="text-slate-300 text-base leading-relaxed whitespace-pre-wrap">
                                     {config.message}
                                 </div>
                             </div>
 
                             {/* Actions */}
-                            <div className="px-6 pb-6 pt-2 flex gap-4 justify-end border-t border-slate-700/50">
+                            <div className="px-8 py-6 flex gap-4 justify-end bg-slate-900/50 border-t border-slate-700/50">
                                 {showCancel && (
                                     <button
                                         onClick={onCancel}
-                                        className="px-6 py-3 text-sm font-medium text-slate-300 hover:text-white bg-slate-700/50 hover:bg-slate-700 border border-slate-600/50 rounded-xl transition-all"
+                                        className="px-8 py-3.5 text-base font-medium text-slate-200 hover:text-white bg-slate-700 hover:bg-slate-600 border border-slate-500/50 rounded-xl transition-all"
                                     >
                                         {config.cancelText || 'Cancel'}
                                     </button>
                                 )}
                                 <button
                                     onClick={onConfirm}
-                                    className={`px-6 py-3 text-sm font-medium text-white rounded-xl transition-all ${styles.confirmBtn}`}
+                                    className={`px-8 py-3.5 text-base font-medium text-white rounded-xl transition-all ${styles.confirmBtn}`}
                                 >
                                     {config.confirmText || 'Confirm'}
                                 </button>
