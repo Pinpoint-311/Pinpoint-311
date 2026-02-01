@@ -255,7 +255,7 @@ export default function AdminConsole() {
     const [isSearchingNominatim, setIsSearchingNominatim] = useState(false);
 
 
-    // SSO users don't have passwords - authentication handled by Zitadel Cloud
+    // SSO users don't have passwords - authentication handled by Auth0
 
     // Update in progress
     const [isUpdating, setIsUpdating] = useState(false);
@@ -721,7 +721,7 @@ export default function AdminConsole() {
         navigate('/login');
     };
 
-    // Note: Password reset functionality removed - using Zitadel Cloud SSO
+    // Note: Password reset functionality removed - using Auth0 SSO
 
     const tabs = [
         { id: 'branding', icon: Palette, label: 'Branding' },
@@ -1347,7 +1347,7 @@ export default function AdminConsole() {
                                     <h1 className="text-2xl font-bold text-white">Integrations & API Keys</h1>
                                 </div>
 
-                                {/* Zitadel Cloud SSO Section */}
+                                {/* Auth0 Cloud SSO Section */}
                                 <Card>
                                     <div className="space-y-4">
                                         <div className="flex items-center gap-3 pb-3 border-b border-white/10">
@@ -1355,7 +1355,7 @@ export default function AdminConsole() {
                                                 <Key className="w-5 h-5 text-orange-400" />
                                             </div>
                                             <div className="flex-1">
-                                                <h3 className="font-semibold text-white">🔐 Zitadel Cloud SSO (Required)</h3>
+                                                <h3 className="font-semibold text-white">🔐 Auth0 SSO (Required)</h3>
                                                 <p className="text-sm text-white/50">Staff authentication with MFA & passkeys</p>
                                             </div>
                                             {secrets.find(s => s.key_name === 'ZITADEL_DOMAIN')?.is_configured && (
@@ -1366,11 +1366,11 @@ export default function AdminConsole() {
                                         <div className="text-sm text-blue-300 flex items-start gap-2 mb-4">
                                             <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
                                             <span>
-                                                Set up Zitadel Cloud at{' '}
-                                                <a href="https://zitadel.cloud" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-200">
-                                                    zitadel.cloud
+                                                Set up Auth0 at{' '}
+                                                <a href="https://auth0.com" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-200">
+                                                    auth0.com
                                                 </a>
-                                                {' → Create Project → Add Web Application'}
+                                                {' → Create Application → Regular Web App'}
                                             </span>
                                         </div>
 
@@ -1424,7 +1424,7 @@ export default function AdminConsole() {
                                         </div>
 
                                         <div className="text-xs text-white/40 pt-2">
-                                            Callback URLs to add in Zitadel: <code className="bg-white/10 px-1 rounded">{window.location.origin}/login</code> and <code className="bg-white/10 px-1 rounded">{window.location.origin}/api/auth/callback</code>
+                                            Callback URLs to add in Auth0: <code className="bg-white/10 px-1 rounded">{window.location.origin}/login</code> and <code className="bg-white/10 px-1 rounded">{window.location.origin}/api/auth/callback</code>
                                         </div>
                                     </div>
                                 </Card>
@@ -2779,14 +2779,14 @@ export default function AdminConsole() {
                                     </div>
                                 </Card>
 
-                                {/* Zitadel Setup */}
+                                {/* Auth0 Setup */}
                                 <Card className="p-6">
                                     <div className="flex items-center gap-3 mb-4">
                                         <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center">
                                             <Shield className="w-5 h-5 text-amber-400" />
                                         </div>
                                         <div>
-                                            <h3 className="text-lg font-semibold text-white">Zitadel Cloud SSO</h3>
+                                            <h3 className="text-lg font-semibold text-white">Auth0 SSO</h3>
                                             <p className="text-white/60 text-sm">Single Sign-On with MFA and Passkeys</p>
                                         </div>
                                     </div>
@@ -2823,7 +2823,7 @@ export default function AdminConsole() {
                                         className="inline-flex items-center gap-2 mt-4 text-amber-400 hover:text-amber-300 text-sm transition-colors"
                                     >
                                         <ExternalLink className="w-4 h-4" />
-                                        Create free Zitadel Cloud account →
+                                        Create free Auth0 account →
                                     </a>
                                 </Card>
 
@@ -2939,7 +2939,7 @@ export default function AdminConsole() {
                     <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-sm text-blue-200">
                         <p className="font-medium">🔐 SSO Authentication</p>
                         <p className="text-blue-200/70 mt-1">
-                            Users log in via Zitadel Cloud SSO using their email address. No password is required.
+                            Users log in via Auth0 SSO using their email address. No password is required.
                         </p>
                     </div>
 
@@ -3897,7 +3897,7 @@ export default function AdminConsole() {
                 </form>
             </Modal>
 
-            {/* Password management handled by Zitadel Cloud SSO */}
+            {/* Password management handled by Auth0 SSO */}
         </div>
     );
 }

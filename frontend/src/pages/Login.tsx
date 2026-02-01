@@ -156,7 +156,7 @@ export default function Login() {
 
                                     <div className="flex items-center justify-center gap-2 text-white/40 text-sm">
                                         <Shield className="w-4 h-4" />
-                                        <span>Secured by Zitadel SSO with MFA</span>
+                                        <span>Secured by Auth0 SSO with MFA</span>
                                     </div>
                                 </div>
                             </>
