@@ -2021,7 +2021,7 @@ export default function AdminConsole() {
                                             >
                                                 <div className="text-amber-400 text-sm">Under Legal Hold</div>
                                                 <div className="text-2xl font-bold text-amber-400">{retentionPolicy.stats.under_legal_hold}</div>
-                                                <div className="text-amber-400/60 text-xs mt-1">Click to view →</div>
+                                                <div className="text-amber-300 text-xs mt-1">Click to view →</div>
                                             </button>
                                             <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
                                                 <div className="text-green-400 text-sm">Already Archived</div>
