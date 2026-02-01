@@ -71,10 +71,23 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Security headers middleware (added first, runs last)
 app.add_middleware(SecurityHeadersMiddleware)
 
-# CORS middleware - allow all origins for development
+# CORS middleware - use environment-based origins for production security
+# In production, set CORS_ORIGINS environment variable (comma-separated)
+import os
+CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "").split(",") if os.environ.get("CORS_ORIGINS") else []
+
+# If no origins specified, allow localhost for development only
+if not CORS_ORIGINS or CORS_ORIGINS == ['']:
+    CORS_ORIGINS = [
+        "http://localhost:5173",  # Vite dev server
+        "http://localhost:3000",  # Alternative dev port
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
