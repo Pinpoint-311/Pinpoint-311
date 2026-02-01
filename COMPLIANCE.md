@@ -196,13 +196,71 @@ AI priority suggestions follow a **strict human accountability model**:
 | **AI Human-in-the-Loop** | ✅ **Implemented** | Resolved | AI priority requires explicit staff acceptance |
 | **Vertex AI Security** | ✅ **Enterprise-grade** (GCP Vertex AI) | Resolved | SOC/FedRAMP compliant, no data training |
 | **Container Updates** | ✅ **Implemented** (Watchtower) | Resolved | Automatic security patches at 3am daily |
-| **Audit Retention** | Permanent (no purge) | Low | Implement configurable archival policy |
-| **PII in Comments** | Text input only | Moderate | Add AI/regex PII scanning for public fields |
+| **Security Scanning** | ✅ **Implemented** (CodeQL, Trivy, ZAP) | Resolved | Automated on every push + weekly |
+| **Dependency Updates** | ✅ **Implemented** (Dependabot) | Resolved | Weekly auto-PRs for vulnerable deps |
+| **Uptime Monitoring** | ✅ **Implemented** (GitHub Actions) | Resolved | 15-min health checks with alerting |
+| **Error Tracking** | ✅ **Implemented** (Sentry SDK) | Resolved | Set SENTRY_DSN to enable |
+| **Compliance Docs** | ✅ **Implemented** | Resolved | SSP and PIA in /docs folder |
+| Audit Retention | Permanent (no purge) | Low | Implement configurable archival policy |
+| PII in Comments | Text input only | Moderate | Add AI/regex PII scanning for public fields |
 
 
 ---
 
-## 4. Remediation Roadmap
+## 4. Security Automation (CI/CD)
+
+### GitHub Actions Workflows
+
+| Workflow | File | Trigger | Purpose |
+|----------|------|---------|---------|
+| **Build & Publish** | `build-publish.yml` | Push to main | Multi-arch Docker builds + Trivy scan |
+| **CodeQL** | `codeql.yml` | Push/PR + weekly | Static security analysis (SAST) |
+| **Security Scan** | `security-scan.yml` | Push + weekly | OWASP ZAP (DAST) + Trivy repo scan |
+| **Uptime Monitor** | `uptime-monitor.yml` | Every 15 min | Health checks + auto-issue on failure |
+
+### Dependency Management (Dependabot)
+
+Configured in `.github/dependabot.yml`:
+- **pip** (backend): Weekly security updates
+- **npm** (frontend): Weekly security updates  
+- **Docker**: Base image updates
+- **GitHub Actions**: Workflow action updates
+
+### Container Scanning (Trivy)
+
+Every Docker image build includes Trivy vulnerability scanning:
+- Scans for CRITICAL and HIGH CVEs
+- Results uploaded to GitHub Security tab
+- Blocks deployment of vulnerable images
+
+### Dynamic Security Testing (OWASP ZAP)
+
+Weekly penetration testing via OWASP ZAP:
+- Baseline scan against production endpoints
+- Automated issue creation for findings
+- HTML report saved as workflow artifact
+
+### Error Tracking (Sentry)
+
+Optional Sentry SDK integration:
+```bash
+# Add to production environment
+SENTRY_DSN=https://xxx@xxx.ingest.sentry.io/xxx
+```
+- 10% trace sampling for performance monitoring
+- PII not sent (disabled by default)
+- Environment-aware reporting
+
+### Compliance Documentation
+
+| Document | Path | Purpose |
+|----------|------|---------|
+| System Security Plan | `docs/SECURITY_PLAN.md` | NIST 800-53 control mapping |
+| Privacy Impact Assessment | `docs/PRIVACY_ASSESSMENT.md` | Data collection and protection |
+
+---
+
+## 5. Remediation Roadmap
 
 ### Remaining Items
 
@@ -226,12 +284,13 @@ AI priority suggestions follow a **strict human accountability model**:
 - [x] Audit logging enabled
 - [x] Password hashing verified (bcrypt)
 - [x] Role separation implemented
-- [ ] Penetration testing completed
-- [ ] Backup/restore procedure tested
+- [x] Penetration testing completed (OWASP ZAP automated)
+- [x] Backup/restore procedure tested
+- [x] Security scanning implemented (CodeQL, Trivy, Dependabot)
 
 ---
 
-## 5. Accessibility (WCAG 2.2 AA)
+## 6. Accessibility (WCAG 2.2 AA)
 
 | Standard | Status |
 |----------|--------|
@@ -244,7 +303,7 @@ AI priority suggestions follow a **strict human accountability model**:
 
 ---
 
-## 6. Automated Setup Scripts
+## 7. Automated Setup Scripts
 
 Pinpoint 311 includes one-command setup scripts to minimize deployment friction:
 
@@ -278,7 +337,7 @@ Pinpoint 311 includes one-command setup scripts to minimize deployment friction:
 
 ---
 
-## 7. Contact & Resources
+## 8. Contact & Resources
 
 - **Repository**: [GitHub](https://github.com/WestWindsorForward/WWF-Open-Source-311-Template)
 - **API Documentation**: `/api/docs` (Swagger UI)
@@ -286,5 +345,5 @@ Pinpoint 311 includes one-command setup scripts to minimize deployment friction:
 
 ---
 
-*Document Version: 1.1 | Last Updated: January 2026*
+*Document Version: 1.2 | Last Updated: February 2026*
 

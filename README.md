@@ -530,6 +530,43 @@ Full keyboard navigation, 4.5:1 contrast ratio, proper aria-labels on all intera
 
 ## 📦 Deployment & Setup
 
+### CI/CD Pipeline
+
+Pinpoint 311 uses GitHub Actions for automated builds and security scanning:
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| **Build & Publish** | Push to main | Multi-arch Docker images to GHCR |
+| **CodeQL** | Push/PR + weekly | Static security analysis (Python/JS) |
+| **Security Scan** | Push + weekly | OWASP ZAP + Trivy vulnerability scanning |
+| **Uptime Monitor** | Every 15 min | Health checks with auto-alerting |
+| **Dependabot** | Weekly | Automatic dependency updates |
+
+### Docker Images
+
+Pre-built images available on GitHub Container Registry:
+```bash
+ghcr.io/westwindsorforward/wwf-311-backend:latest
+ghcr.io/westwindsorforward/wwf-311-frontend:latest
+```
+
+Supports both `linux/amd64` and `linux/arm64` architectures.
+
+### Production Deployment (Recommended)
+
+```bash
+# Pull prebuilt images and deploy
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+### Development Deployment
+
+```bash
+# Build locally (slower, for development only)
+docker compose up --build -d
+```
+
 ### Prerequisites
 - Docker & Docker Compose
 - A Google Cloud Project (for Maps & Vertex AI)
