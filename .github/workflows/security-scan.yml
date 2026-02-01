@@ -1,0 +1,64 @@
+name: Security Scan (OWASP ZAP)
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 4 * * 0'  # Weekly on Sunday at 4am UTC
+  workflow_dispatch:
+
+jobs:
+  zap-scan:
+    name: OWASP ZAP Baseline Scan
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: 'https://311.westwindsorforward.org'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a -j'
+          fail_action: false  # Don't fail build, just report
+          allow_issue_writing: true
+          issue_title: 'ZAP Security Scan Report'
+
+      - name: Upload ZAP Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zap-scan-report
+          path: report_html.html
+          retention-days: 30
+
+  trivy-repo-scan:
+    name: Trivy Repository Scan
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner (repo)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
