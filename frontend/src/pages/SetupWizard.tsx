@@ -504,6 +504,106 @@ interface Auth0SetupFormProps {
 }
 
 function Auth0SetupForm({ form, setForm, onSubmit, loading, success, gcpConfigured }: Auth0SetupFormProps) {
+    const [showGuide, setShowGuide] = useState(true);
+    const [expandedStep, setExpandedStep] = useState<number | null>(1);
+
+    const callbackUrl = typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : form.callback_url;
+
+    const setupSteps = [
+        {
+            num: 1,
+            title: "Create Auth0 Account & Tenant",
+            content: (
+                <div className="space-y-3 text-sm text-white/70">
+                    <p>1. Go to <a href="https://auth0.com/signup" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:text-indigo-300 inline-flex items-center">auth0.com/signup <ExternalLink className="w-3 h-3 ml-1" /></a></p>
+                    <p>2. Sign up with your email or SSO provider</p>
+                    <p>3. Choose a <strong className="text-white">tenant name</strong> (e.g., "pinpoint311" or your org name)</p>
+                    <p>4. Select your <strong className="text-white">region</strong> (US, EU, or AU)</p>
+                    <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 mt-2">
+                        <p className="text-blue-300 text-xs">💡 Your tenant domain will be: <code className="bg-white/10 px-1 rounded">tenant-name.region.auth0.com</code></p>
+                    </div>
+                </div>
+            )
+        },
+        {
+            num: 2,
+            title: "Create Application",
+            content: (
+                <div className="space-y-3 text-sm text-white/70">
+                    <p>1. In Auth0 Dashboard, go to <strong className="text-white">Applications → Applications</strong></p>
+                    <p>2. Click <strong className="text-white">"+ Create Application"</strong></p>
+                    <p>3. Enter name: <code className="bg-white/10 px-2 py-0.5 rounded text-white">Pinpoint 311</code></p>
+                    <p>4. Select <strong className="text-white">"Regular Web Application"</strong></p>
+                    <p>5. Click <strong className="text-white">Create</strong></p>
+                </div>
+            )
+        },
+        {
+            num: 3,
+            title: "Configure Callback URLs",
+            content: (
+                <div className="space-y-3 text-sm text-white/70">
+                    <p>1. In your new app, go to the <strong className="text-white">Settings</strong> tab</p>
+                    <p>2. Scroll to <strong className="text-white">"Allowed Callback URLs"</strong></p>
+                    <p>3. Add this URL:</p>
+                    <div className="bg-white/10 rounded-lg p-3 flex items-center justify-between">
+                        <code className="text-green-400 text-xs break-all">{callbackUrl}</code>
+                        <button
+                            onClick={() => navigator.clipboard.writeText(callbackUrl)}
+                            className="ml-2 px-2 py-1 bg-white/10 hover:bg-white/20 rounded text-xs text-white/70 flex-shrink-0"
+                        >
+                            Copy
+                        </button>
+                    </div>
+                    <p>4. Scroll to <strong className="text-white">"Allowed Logout URLs"</strong> and add: <code className="bg-white/10 px-1 rounded">{typeof window !== 'undefined' ? window.location.origin : ''}</code></p>
+                    <p>5. Click <strong className="text-white">Save Changes</strong></p>
+                </div>
+            )
+        },
+        {
+            num: 4,
+            title: "Enable Management API (Required for GCP Federation)",
+            content: (
+                <div className="space-y-3 text-sm text-white/70">
+                    <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 mb-3">
+                        <p className="text-amber-300 text-xs">⚠️ This step enables automatic M2M app creation for Workload Identity Federation</p>
+                    </div>
+                    <p>1. Go to <strong className="text-white">Applications → APIs</strong></p>
+                    <p>2. Click on <strong className="text-white">"Auth0 Management API"</strong></p>
+                    <p>3. Go to the <strong className="text-white">"Machine to Machine Applications"</strong> tab</p>
+                    <p>4. Find <strong className="text-white">"Pinpoint 311"</strong> and toggle it <strong className="text-green-400">ON</strong></p>
+                    <p>5. Click the <strong className="text-white">dropdown arrow</strong> to expand permissions</p>
+                    <p>6. Select these scopes:</p>
+                    <div className="bg-white/5 rounded-lg p-3 space-y-1">
+                        <code className="block text-purple-400 text-xs">✓ create:clients</code>
+                        <code className="block text-purple-400 text-xs">✓ create:resource_servers</code>
+                        <code className="block text-purple-400 text-xs">✓ create:client_grants</code>
+                        <code className="block text-purple-400 text-xs">✓ read:clients</code>
+                        <code className="block text-purple-400 text-xs">✓ read:resource_servers</code>
+                    </div>
+                    <p>7. Click <strong className="text-white">Update</strong></p>
+                </div>
+            )
+        },
+        {
+            num: 5,
+            title: "Copy Credentials",
+            content: (
+                <div className="space-y-3 text-sm text-white/70">
+                    <p>1. Go back to <strong className="text-white">Applications → Applications</strong></p>
+                    <p>2. Click on <strong className="text-white">"Pinpoint 311"</strong></p>
+                    <p>3. In the <strong className="text-white">Settings</strong> tab, copy:</p>
+                    <div className="bg-white/5 rounded-lg p-3 space-y-2">
+                        <p><strong className="text-white">Domain:</strong> <span className="text-white/50">e.g., yourorg.us.auth0.com</span></p>
+                        <p><strong className="text-white">Client ID:</strong> <span className="text-white/50">e.g., abc123xyz...</span></p>
+                        <p><strong className="text-white">Client Secret:</strong> <span className="text-white/50">Click "Reveal" first</span></p>
+                    </div>
+                    <p>4. Paste them into the fields below ↓</p>
+                </div>
+            )
+        }
+    ];
+
     if (success) {
         return (
             <div className="text-center py-12">
@@ -524,8 +624,49 @@ function Auth0SetupForm({ form, setForm, onSubmit, loading, success, gcpConfigur
                     Configure Auth0 SSO
                 </h2>
                 <p className="text-white/60">
-                    Provide your Auth0 credentials for Single Sign-On with MFA and passkeys.
+                    Set up enterprise Single Sign-On with MFA and passkeys.
                 </p>
+            </div>
+
+            {/* Expandable Setup Guide */}
+            <div className="mb-6">
+                <button
+                    onClick={() => setShowGuide(!showGuide)}
+                    className="w-full flex items-center justify-between text-left bg-gradient-to-r from-indigo-500/20 to-purple-500/20 hover:from-indigo-500/30 hover:to-purple-500/30 border border-indigo-500/30 rounded-xl p-4 transition-colors"
+                >
+                    <span className="flex items-center">
+                        <Sparkles className="w-5 h-5 text-indigo-400 mr-2" />
+                        <span className="font-medium text-white">New to Auth0? Complete Setup Guide</span>
+                    </span>
+                    <span className={`text-white/60 transition-transform ${showGuide ? 'rotate-180' : ''}`}>▼</span>
+                </button>
+
+                {showGuide && (
+                    <div className="mt-3 bg-white/5 rounded-xl border border-white/10 overflow-hidden">
+                        {setupSteps.map((step) => (
+                            <div key={step.num} className="border-b border-white/10 last:border-b-0">
+                                <button
+                                    onClick={() => setExpandedStep(expandedStep === step.num ? null : step.num)}
+                                    className="w-full flex items-center p-4 hover:bg-white/5 transition-colors"
+                                >
+                                    <span className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-medium mr-3 ${expandedStep === step.num ? 'bg-indigo-500 text-white' : 'bg-white/10 text-white/60'
+                                        }`}>
+                                        {step.num}
+                                    </span>
+                                    <span className="font-medium text-white">{step.title}</span>
+                                    <span className={`ml-auto text-white/40 transition-transform ${expandedStep === step.num ? 'rotate-180' : ''}`}>
+                                        ▼
+                                    </span>
+                                </button>
+                                {expandedStep === step.num && (
+                                    <div className="px-4 pb-4 pl-14">
+                                        {step.content}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
 
             {/* Storage Info */}
