@@ -24,23 +24,41 @@ async def get_audit_logs(
     event_type: Optional[str] = Query(None),
     success: Optional[bool] = Query(None),
     username: Optional[str] = Query(None),
-    days: int = Query(7, ge=1, le=365),
-    limit: int = Query(100, ge=1, le=1000),
-    offset: int = Query(0, ge=0),
+    days: Optional[int] = Query(None, ge=1, le=365),
+    start_date: Optional[str] = Query(None, description="Start date in YYYY-MM-DD format"),
+    end_date: Optional[str] = Query(None, description="End date in YYYY-MM-DD format"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
     """
-    Query audit logs with filtering.
+    Query audit logs with filtering and pagination.
     
     Admin only endpoint.
+    Supports date range filtering via start_date/end_date or days parameter.
     """
-    # Build query
+    # Build query conditions
     conditions = []
     
-    # Time range filter
-    since = datetime.utcnow() - timedelta(days=days)
-    conditions.append(AuditLog.timestamp >= since)
+    # Time range filter - prefer start_date/end_date, fall back to days
+    if start_date and end_date:
+        try:
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)  # Include end date
+            conditions.append(AuditLog.timestamp >= start_dt)
+            conditions.append(AuditLog.timestamp < end_dt)
+        except ValueError:
+            # Invalid date format, fall back to days
+            since = datetime.utcnow() - timedelta(days=days or 7)
+            conditions.append(AuditLog.timestamp >= since)
+    elif days:
+        since = datetime.utcnow() - timedelta(days=days)
+        conditions.append(AuditLog.timestamp >= since)
+    else:
+        # Default to last 7 days
+        since = datetime.utcnow() - timedelta(days=7)
+        conditions.append(AuditLog.timestamp >= since)
     
     # Event type filter
     if event_type and event_type != "all":
@@ -54,12 +72,20 @@ async def get_audit_logs(
     if username:
         conditions.append(AuditLog.username.ilike(f"%{username}%"))
     
-    # Execute query
+    # Get total count for pagination
+    count_query = select(func.count(AuditLog.id)).where(and_(*conditions))
+    count_result = await db.execute(count_query)
+    total_count = count_result.scalar() or 0
+    
+    # Calculate offset from page
+    offset = (page - 1) * page_size
+    
+    # Execute query with pagination
     query = (
         select(AuditLog)
         .where(and_(*conditions))
         .order_by(desc(AuditLog.timestamp))
-        .limit(limit)
+        .limit(page_size)
         .offset(offset)
     )
     
@@ -85,10 +111,16 @@ async def get_audit_logs(
     return {
         "logs": logs_data,
         "count": len(logs_data),
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total_count + page_size - 1) // page_size,
         "filters": {
             "event_type": event_type,
             "success": success,
             "username": username,
+            "start_date": start_date,
+            "end_date": end_date,
             "days": days
         }
     }
@@ -193,7 +225,9 @@ async def export_audit_logs(
     event_type: Optional[str] = Query(None),
     success: Optional[bool] = Query(None),
     username: Optional[str] = Query(None),
-    days: int = Query(30, ge=1, le=365),
+    days: Optional[int] = Query(None, ge=1, le=365),
+    start_date: Optional[str] = Query(None, description="Start date in YYYY-MM-DD format"),
+    end_date: Optional[str] = Query(None, description="End date in YYYY-MM-DD format"),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
@@ -201,12 +235,27 @@ async def export_audit_logs(
     Export audit logs to CSV.
     
     Admin only endpoint.
+    Supports date range filtering via start_date/end_date or days parameter.
     """
     # Build query (same as get_audit_logs but no limit)
     conditions = []
     
-    since = datetime.utcnow() - timedelta(days=days)
-    conditions.append(AuditLog.timestamp >= since)
+    # Time range filter - prefer start_date/end_date, fall back to days
+    if start_date and end_date:
+        try:
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+            conditions.append(AuditLog.timestamp >= start_dt)
+            conditions.append(AuditLog.timestamp < end_dt)
+        except ValueError:
+            since = datetime.utcnow() - timedelta(days=days or 30)
+            conditions.append(AuditLog.timestamp >= since)
+    elif days:
+        since = datetime.utcnow() - timedelta(days=days)
+        conditions.append(AuditLog.timestamp >= since)
+    else:
+        since = datetime.utcnow() - timedelta(days=30)
+        conditions.append(AuditLog.timestamp >= since)
     
     if event_type and event_type != "all":
         conditions.append(AuditLog.event_type == event_type)

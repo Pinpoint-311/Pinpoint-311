@@ -2997,7 +2997,7 @@ export default function AdminConsole() {
 
                         {/* Audit Logs - part of Compliance */}
                         {currentTab === 'compliance' && (
-                            <div className="mt-12 p-6 rounded-2xl bg-white/5 backdrop-blur-sm border border-white/10">
+                            <div className="mt-8">
                                 <AuditLogViewer />
                             </div>
                         )}
