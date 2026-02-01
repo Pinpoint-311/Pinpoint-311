@@ -2169,14 +2169,20 @@ async def get_health_dashboard(
         "uptime": "Active (responding to requests)"
     }
     
-    # Check frontend via internal Docker network
+    # Check frontend via socket connection to Docker service
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            resp = await client.get("http://frontend:80")
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        result = sock.connect_ex(('frontend', 80))
+        sock.close()
+        if result == 0:
             health["services"]["frontend"] = {
-                "status": "running" if resp.status_code < 500 else "error",
-                "uptime": f"HTTP {resp.status_code}"
+                "status": "running",
+                "uptime": "Port 80 reachable"
             }
+        else:
+            health["services"]["frontend"] = {"status": "stopped", "uptime": "Port 80 not reachable"}
     except Exception as e:
         health["services"]["frontend"] = {"status": "unknown", "error": str(e)[:50]}
     
@@ -2215,21 +2221,23 @@ async def get_health_dashboard(
         health["overall_status"] = "degraded"
         health["services"]["db"] = {"status": "error", "error": str(e)[:50]}
     
-    # Redis health check
+    # Redis health check - use direct connection to docker service
     try:
-        if redis_client:
-            info = redis_client.info()
-            health["cache"]["status"] = "healthy"
-            health["cache"]["used_memory"] = info.get("used_memory_human", "unknown")
-            health["cache"]["connected_clients"] = info.get("connected_clients", 0)
-            # Update service status
-            health["services"]["redis"] = {
-                "status": "running",
-                "uptime": f"{health['cache']['used_memory']} memory"
-            }
-        else:
-            health["cache"]["status"] = "not_configured"
-            health["services"]["redis"] = {"status": "not_configured", "uptime": "Not configured"}
+        import redis
+        redis_direct = redis.Redis(host="redis", port=6379, socket_timeout=3)
+        info = redis_direct.info()
+        health["cache"]["status"] = "healthy"
+        health["cache"]["used_memory"] = info.get("used_memory_human", "unknown")
+        health["cache"]["connected_clients"] = info.get("connected_clients", 0)
+        # Update service status
+        health["services"]["redis"] = {
+            "status": "running",
+            "uptime": f"{health['cache']['used_memory']} memory"
+        }
+    except redis.ConnectionError:
+        health["cache"]["status"] = "not_configured"
+        health["cache"]["error"] = "Redis not available"
+        health["services"]["redis"] = {"status": "stopped", "uptime": "Not reachable"}
     except Exception as e:
         health["cache"]["status"] = "error"
         health["cache"]["error"] = str(e)
