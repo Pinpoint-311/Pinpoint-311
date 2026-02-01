@@ -36,7 +36,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
                         {required && <span className="sr-only">(required)</span>}
                     </label>
                 )}
-                <div className="relative">
+                <div className="relative z-10">
                     <select
                         ref={ref}
                         id={selectId}
