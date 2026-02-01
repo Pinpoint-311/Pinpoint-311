@@ -13,6 +13,7 @@ import {
     Loader2,
     GitCommit
 } from 'lucide-react';
+import { useConfirmDeploy } from './DialogProvider';
 
 interface Release {
     tag: string;
@@ -57,6 +58,8 @@ const SHORT_LABELS: Record<string, string> = {
 };
 
 export default function VersionSwitcher() {
+    const confirmDeploy = useConfirmDeploy();
+
     const [currentVersion, setCurrentVersion] = useState<{ sha: string; tag: string | null; display: string; commit_message?: string } | null>(null);
     const [releases, setReleases] = useState<Release[]>([]);
     const [recentCommits, setRecentCommits] = useState<RecentCommit[]>([]);
@@ -140,22 +143,10 @@ export default function VersionSwitcher() {
     const handleSwitchVersion = async () => {
         if (!selectedRef) return;
 
-        const deploymentWarning = `🚀 FULL DEPLOYMENT
+        const hasWarnings = security && !security.summary.all_passed;
+        const confirmed = await confirmDeploy(selectedRef.slice(0, 7), hasWarnings || false);
 
-This will:
-1. Create database backup
-2. Checkout version ${selectedRef.slice(0, 7)}
-3. Run database migrations
-4. Rebuild all containers
-5. Health check the new deployment
-
-If anything fails, it will automatically rollback.
-
-${security && !security.summary.all_passed ? '⚠️ Warning: Some security checks did not pass.\n\n' : ''}Continue with deployment?`;
-
-        if (!confirm(deploymentWarning)) {
-            return;
-        }
+        if (!confirmed) return;
 
         setIsSwitching(true);
         setMessage('Starting deployment...');

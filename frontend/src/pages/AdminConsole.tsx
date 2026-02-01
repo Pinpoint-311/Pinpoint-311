@@ -62,6 +62,7 @@ import {
 import { Button, Card, Modal, Input, Select, Badge, AccordionSection } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
+import { useDialog } from '../components/DialogProvider';
 import { api, MapLayer } from '../services/api';
 import { User, ServiceDefinition, SystemSettings, SystemSecret, Department } from '../types';
 import { usePageNavigation } from '../hooks/usePageNavigation';
@@ -184,6 +185,7 @@ export default function AdminConsole() {
     const navigate = useNavigate();
     const { user, logout } = useAuth();
     const { settings, refreshSettings } = useSettings();
+    const dialog = useDialog();
 
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [currentTab, setCurrentTab] = useState<Tab>('branding');
@@ -590,7 +592,13 @@ export default function AdminConsole() {
     };
 
     const handleDeleteUser = async (userId: number) => {
-        if (!confirm('Are you sure you want to delete this user?')) return;
+        const confirmed = await dialog.confirm({
+            title: 'Delete User',
+            message: 'Are you sure you want to delete this user?\n\nThis action cannot be undone.',
+            variant: 'danger',
+            confirmText: 'Delete',
+        });
+        if (!confirmed) return;
         try {
             await api.deleteUser(userId);
             loadTabData();
@@ -612,7 +620,13 @@ export default function AdminConsole() {
     };
 
     const handleDeleteService = async (serviceId: number) => {
-        if (!confirm('Are you sure you want to delete this service?')) return;
+        const confirmed = await dialog.confirm({
+            title: 'Delete Service',
+            message: 'Are you sure you want to delete this service?\n\nThis action cannot be undone.',
+            variant: 'danger',
+            confirmText: 'Delete',
+        });
+        if (!confirmed) return;
         try {
             await api.deleteService(serviceId);
             loadTabData();
@@ -733,7 +747,13 @@ export default function AdminConsole() {
     };
 
     const handleDeleteDepartment = async (deptId: number) => {
-        if (!confirm('Are you sure you want to delete this department?')) return;
+        const confirmed = await dialog.confirm({
+            title: 'Delete Department',
+            message: 'Are you sure you want to delete this department?\n\nThis action cannot be undone.',
+            variant: 'danger',
+            confirmText: 'Delete',
+        });
+        if (!confirmed) return;
         try {
             await api.deleteDepartment(deptId);
             loadTabData();

@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { SettingsProvider } from './context/SettingsContext';
 import { AccessibilityProvider } from './context/AccessibilityContext';
 import { TranslationProvider } from './context/TranslationContext';
+import { DialogProvider } from './components/DialogProvider';
 import { AutoTranslate } from './components/AutoTranslate';
 import ResidentPortal from './pages/ResidentPortal';
 import StaffDashboard from './pages/StaffDashboard';
@@ -101,11 +102,13 @@ export default function App() {
             <AccessibilityProvider>
                 <SettingsProvider>
                     <TranslationProvider>
-                        <AutoTranslate>
-                            <AuthProvider>
-                                <AppRoutes />
-                            </AuthProvider>
-                        </AutoTranslate>
+                        <DialogProvider>
+                            <AutoTranslate>
+                                <AuthProvider>
+                                    <AppRoutes />
+                                </AuthProvider>
+                            </AutoTranslate>
+                        </DialogProvider>
                     </TranslationProvider>
                 </SettingsProvider>
             </AccessibilityProvider>
