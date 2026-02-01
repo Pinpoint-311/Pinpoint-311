@@ -19,6 +19,7 @@ google-cloud-kms==2.21.0
 aiohttp==3.9.1
 google-auth==2.27.0
 google-cloud-secret-manager==2.18.0
+google-cloud-iam==2.14.0
 alembic==1.13.1
 aiofiles==23.2.1
 cryptography==42.0.2

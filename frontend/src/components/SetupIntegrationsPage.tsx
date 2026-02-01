@@ -235,7 +235,15 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 { value: 'http', label: 'Custom HTTP API' },
                             ]}
                             value={smsProvider || 'none'}
-                            onChange={(e) => onSaveSecret('SMS_PROVIDER', e.target.value)}
+                            onChange={async (e) => {
+                                const newValue = e.target.value;
+                                try {
+                                    await onSaveSecret('SMS_PROVIDER', newValue);
+                                    onRefresh();
+                                } catch (err) {
+                                    console.error('Failed to save SMS provider:', err);
+                                }
+                            }}
                         />
                     </Card>
 
