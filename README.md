@@ -13,6 +13,7 @@
   <a href="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/build-publish.yml"><img src="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/build-publish.yml/badge.svg" alt="Build Status"></a>
   <a href="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/codeql.yml"><img src="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
   <a href="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/security-scan.yml"><img src="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/security-scan.yml/badge.svg" alt="Security Scan"></a>
+  <a href="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/accessibility.yml"><img src="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/accessibility.yml/badge.svg" alt="Accessibility"></a>
 </p>
 
 ## 🏛️ Introduction
