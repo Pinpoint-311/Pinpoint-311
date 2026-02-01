@@ -172,34 +172,66 @@ _kms_client = None
 _kms_key_name = None
 
 
+def _get_config_sync(key_name: str) -> Optional[str]:
+    """Synchronously get a config value from env var or database."""
+    # First check environment variable
+    env_value = os.getenv(key_name)
+    if env_value:
+        return env_value
+    
+    # Try database
+    try:
+        from app.db.session import sync_engine
+        from sqlalchemy import text
+        
+        with sync_engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT key_value FROM system_secrets WHERE key_name = :key"),
+                {"key": key_name}
+            )
+            row = result.fetchone()
+            if row and row[0]:
+                from app.core.encryption import decrypt
+                return decrypt(row[0])
+    except Exception:
+        pass
+    
+    return None
+
+
 def _is_kms_available() -> bool:
-    """Check if Google Cloud KMS is available."""
-    project = os.getenv("GOOGLE_CLOUD_PROJECT")
+    """Check if Google Cloud KMS is available (from env or database)."""
+    project = _get_config_sync("GOOGLE_CLOUD_PROJECT")
     return bool(project)
 
 
 def _get_kms_key_name() -> Optional[str]:
-    """Get the KMS key resource name."""
+    """Get the KMS key resource name from env vars or database."""
     global _kms_key_name
     
     if _kms_key_name:
         return _kms_key_name
     
-    project = os.getenv("GOOGLE_CLOUD_PROJECT")
+    project = _get_config_sync("GOOGLE_CLOUD_PROJECT")
     if not project:
         return None
     
-    # Key location and ring can be configured, defaults to reasonable values
-    location = os.getenv("KMS_LOCATION", "us-central1")
-    key_ring = os.getenv("KMS_KEY_RING", "pinpoint311")
-    key_id = os.getenv("KMS_KEY_ID", "pii-encryption")
+    # Key location and ring from env or database (Setup Wizard stores these)
+    location = _get_config_sync("KMS_LOCATION") or "us-central1"
+    key_ring = _get_config_sync("KMS_KEY_RING") or "pinpoint311-keyring"
+    key_id = _get_config_sync("KMS_KEY_ID") or "pii-encryption-key"
     
     _kms_key_name = f"projects/{project}/locations/{location}/keyRings/{key_ring}/cryptoKeys/{key_id}"
     return _kms_key_name
 
 
 def _get_kms_client():
-    """Get a cached KMS client."""
+    """Get a cached KMS client.
+    
+    Loads credentials from:
+    1. Database (GCP_SERVICE_ACCOUNT_JSON stored by Setup Wizard)
+    2. Falls back to default application credentials
+    """
     global _kms_client
     
     if _kms_client:
@@ -207,6 +239,32 @@ def _get_kms_client():
     
     try:
         from google.cloud import kms
+        from google.oauth2 import service_account
+        import json
+        
+        # First try to load from database (Setup Wizard storage)
+        try:
+            from app.db.session import sync_engine
+            from sqlalchemy import text
+            
+            with sync_engine.connect() as conn:
+                result = conn.execute(
+                    text("SELECT key_value FROM system_secrets WHERE key_name = 'GCP_SERVICE_ACCOUNT_JSON'")
+                )
+                row = result.fetchone()
+                if row and row[0]:
+                    # Decrypt the stored value
+                    from app.core.encryption import decrypt
+                    sa_json = decrypt(row[0])
+                    sa_data = json.loads(sa_json)
+                    credentials = service_account.Credentials.from_service_account_info(sa_data)
+                    _kms_client = kms.KeyManagementServiceClient(credentials=credentials)
+                    logger.info("KMS client initialized with database credentials")
+                    return _kms_client
+        except Exception as db_err:
+            logger.debug(f"Could not load KMS credentials from database: {db_err}")
+        
+        # Fall back to default credentials (env GOOGLE_APPLICATION_CREDENTIALS)
         _kms_client = kms.KeyManagementServiceClient()
         return _kms_client
     except Exception as e:
