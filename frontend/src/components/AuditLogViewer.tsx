@@ -187,6 +187,10 @@ export default function AuditLogViewer() {
         });
     };
 
+    // Common input style
+    const inputStyle = "bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-400 text-sm";
+    const labelStyle = "block text-sm font-medium text-white/70 mb-2";
+
     return (
         <AccordionSection
             title="Audit Logs"
@@ -201,135 +205,108 @@ export default function AuditLogViewer() {
                 ) : undefined
             }
         >
-            <div className="space-y-4">
-                {/* Statistics Row */}
-                {stats && (
-                    <div className="grid grid-cols-5 gap-4 text-sm">
-                        <div className="flex items-baseline gap-2">
-                            <span className="text-white/50">Total</span>
-                            <span className="text-lg font-medium text-white">{stats.total_events}</span>
-                        </div>
-                        <div className="flex items-baseline gap-2">
-                            <span className="text-white/50">Success</span>
-                            <span className="text-lg font-medium text-emerald-400">{stats.successful_logins}</span>
-                        </div>
-                        <div className="flex items-baseline gap-2">
-                            <span className="text-white/50">Failed</span>
-                            <span className="text-lg font-medium text-red-400">{stats.failed_logins}</span>
-                        </div>
-                        <div className="flex items-baseline gap-2">
-                            <span className="text-white/50">Logouts</span>
-                            <span className="text-lg font-medium text-blue-400">{stats.total_logouts}</span>
-                        </div>
-                        <div className="flex items-baseline gap-2">
-                            <span className="text-white/50">Users</span>
-                            <span className="text-lg font-medium text-purple-400">{stats.unique_users}</span>
-                        </div>
-                    </div>
-                )}
-
-                {/* Filters Row */}
-                <div className="grid grid-cols-6 gap-3 items-end">
+            <div className="space-y-6">
+                {/* Filters */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div>
-                        <label className="block text-xs text-white/50 mb-1.5">Time Range</label>
+                        <label className={labelStyle}>Time Range</label>
                         <select
                             value={quickRange}
                             onChange={(e) => applyQuickRange(e.target.value)}
-                            className="w-full h-10 bg-white/10 text-white text-sm rounded-lg px-3 border border-white/15 focus:outline-none focus:border-indigo-500/50"
+                            className={inputStyle + " w-full"}
                         >
                             <option value="today" className="bg-slate-800">Today</option>
                             <option value="7" className="bg-slate-800">Last 7 Days</option>
                             <option value="30" className="bg-slate-800">Last 30 Days</option>
                             <option value="90" className="bg-slate-800">Last 90 Days</option>
                             <option value="365" className="bg-slate-800">Last Year</option>
-                            <option value="custom" className="bg-slate-800">Custom</option>
+                            <option value="custom" className="bg-slate-800">Custom Range</option>
                         </select>
                     </div>
 
                     <div>
-                        <label className="block text-xs text-white/50 mb-1.5">Event Type</label>
+                        <label className={labelStyle}>Event Type</label>
                         <select
                             value={filterEventType}
                             onChange={(e) => setFilterEventType(e.target.value)}
-                            className="w-full h-10 bg-white/10 text-white text-sm rounded-lg px-3 border border-white/15 focus:outline-none focus:border-indigo-500/50"
+                            className={inputStyle + " w-full"}
                         >
                             <option value="all" className="bg-slate-800">All Events</option>
                             <option value="login_success" className="bg-slate-800">Login Success</option>
                             <option value="login_failed" className="bg-slate-800">Login Failed</option>
                             <option value="logout" className="bg-slate-800">Logout</option>
-                            <option value="emergency_access_success" className="bg-slate-800">Emergency</option>
+                            <option value="emergency_access_success" className="bg-slate-800">Emergency Access</option>
                         </select>
                     </div>
 
                     <div>
-                        <label className="block text-xs text-white/50 mb-1.5">Status</label>
+                        <label className={labelStyle}>Status</label>
                         <select
                             value={filterSuccess}
                             onChange={(e) => setFilterSuccess(e.target.value)}
-                            className="w-full h-10 bg-white/10 text-white text-sm rounded-lg px-3 border border-white/15 focus:outline-none focus:border-indigo-500/50"
+                            className={inputStyle + " w-full"}
                         >
                             <option value="all" className="bg-slate-800">All</option>
-                            <option value="true" className="bg-slate-800">Success</option>
-                            <option value="false" className="bg-slate-800">Failed</option>
+                            <option value="true" className="bg-slate-800">Success Only</option>
+                            <option value="false" className="bg-slate-800">Failed Only</option>
                         </select>
                     </div>
 
                     <div>
-                        <label className="block text-xs text-white/50 mb-1.5">Username</label>
-                        <div className="relative">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
-                            <input
-                                type="text"
-                                value={filterUsername}
-                                onChange={(e) => setFilterUsername(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                                placeholder="Search..."
-                                className="w-full h-10 bg-white/10 text-white text-sm rounded-lg pl-9 pr-3 border border-white/15 focus:outline-none focus:border-indigo-500/50 placeholder-white/30"
-                            />
-                        </div>
+                        <label className={labelStyle}>Username</label>
+                        <input
+                            type="text"
+                            value={filterUsername}
+                            onChange={(e) => setFilterUsername(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                            placeholder="Search by username..."
+                            className={inputStyle + " w-full placeholder:text-white/40"}
+                        />
                     </div>
-
-                    <button
-                        onClick={fetchLogs}
-                        disabled={isLoading}
-                        className="h-10 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
-                    >
-                        <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-                        Refresh
-                    </button>
-
-                    <button
-                        onClick={handleExport}
-                        className="h-10 flex items-center justify-center gap-2 bg-white/10 hover:bg-white/15 text-white text-sm rounded-lg transition-colors"
-                    >
-                        <Download className="w-4 h-4" />
-                        Export
-                    </button>
                 </div>
 
-                {/* Custom Date Range (only when custom selected) */}
+                {/* Custom Date Range */}
                 {quickRange === 'custom' && (
-                    <div className="grid grid-cols-6 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                         <div>
-                            <label className="block text-xs text-white/50 mb-1.5">From</label>
+                            <label className={labelStyle}>From Date</label>
                             <input
                                 type="date"
                                 value={startDate}
                                 onChange={(e) => setStartDate(e.target.value)}
-                                className="w-full h-10 bg-white/10 text-white text-sm rounded-lg px-3 border border-white/15 focus:outline-none focus:border-indigo-500/50"
+                                className={inputStyle + " w-full"}
                             />
                         </div>
                         <div>
-                            <label className="block text-xs text-white/50 mb-1.5">To</label>
+                            <label className={labelStyle}>To Date</label>
                             <input
                                 type="date"
                                 value={endDate}
                                 onChange={(e) => setEndDate(e.target.value)}
-                                className="w-full h-10 bg-white/10 text-white text-sm rounded-lg px-3 border border-white/15 focus:outline-none focus:border-indigo-500/50"
+                                className={inputStyle + " w-full"}
                             />
                         </div>
                     </div>
                 )}
+
+                {/* Actions */}
+                <div className="flex gap-3">
+                    <button
+                        onClick={fetchLogs}
+                        disabled={isLoading}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors disabled:opacity-50 font-medium"
+                    >
+                        <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+                        Refresh
+                    </button>
+                    <button
+                        onClick={handleExport}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors"
+                    >
+                        <Download className="w-4 h-4" />
+                        Export CSV
+                    </button>
+                </div>
 
                 {/* Table */}
                 <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
@@ -341,100 +318,99 @@ export default function AuditLogViewer() {
                     )}
 
                     {isLoading ? (
-                        <div className="p-12 text-center">
-                            <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-3 text-indigo-400" />
-                            <div className="text-white/50 text-sm">Loading...</div>
+                        <div className="p-16 text-center">
+                            <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-4 text-indigo-400" />
+                            <div className="text-white/50">Loading audit logs...</div>
                         </div>
                     ) : logs.length === 0 ? (
-                        <div className="p-12 text-center text-white/50 text-sm">
-                            No logs found for selected filters.
+                        <div className="p-16 text-center text-white/50">
+                            No audit logs found for selected filters.
                         </div>
                     ) : (
                         <>
-                            <table className="w-full">
-                                <thead>
-                                    <tr className="border-b border-white/10 text-left">
-                                        <th className="p-4 text-xs font-medium text-white/50 uppercase">Event</th>
-                                        <th className="p-4 text-xs font-medium text-white/50 uppercase">User</th>
-                                        <th className="p-4 text-xs font-medium text-white/50 uppercase">IP Address</th>
-                                        <th className="p-4 text-xs font-medium text-white/50 uppercase">Timestamp</th>
-                                        <th className="p-4 text-xs font-medium text-white/50 uppercase">Details</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {logs.map((log, index) => (
-                                        <tr
-                                            key={log.id}
-                                            className={`border-b border-white/5 ${index % 2 === 0 ? 'bg-white/[0.02]' : ''}`}
-                                        >
-                                            <td className="p-4">
-                                                <div className="flex items-center gap-2">
-                                                    {getEventIcon(log.event_type, log.success)}
-                                                    <span className={`text-sm ${log.success ? 'text-white' : 'text-red-400'}`}>
-                                                        {getEventLabel(log.event_type)}
-                                                    </span>
-                                                </div>
-                                            </td>
-                                            <td className="p-4 text-sm text-white/80">{log.username || 'Unknown'}</td>
-                                            <td className="p-4 text-sm text-white/50 font-mono">{log.ip_address || '-'}</td>
-                                            <td className="p-4 text-sm text-white/50">{formatTimestamp(log.timestamp)}</td>
-                                            <td className="p-4 text-sm">
-                                                {log.failure_reason ? (
-                                                    <span className="text-red-400">{log.failure_reason}</span>
-                                                ) : (
-                                                    <span className="text-white/30">-</span>
-                                                )}
-                                            </td>
+                            <div className="overflow-x-auto">
+                                <table className="w-full">
+                                    <thead>
+                                        <tr className="border-b border-white/10 text-left bg-white/5">
+                                            <th className="px-6 py-4 text-xs font-semibold text-white/60 uppercase tracking-wider">Event</th>
+                                            <th className="px-6 py-4 text-xs font-semibold text-white/60 uppercase tracking-wider">User</th>
+                                            <th className="px-6 py-4 text-xs font-semibold text-white/60 uppercase tracking-wider">IP Address</th>
+                                            <th className="px-6 py-4 text-xs font-semibold text-white/60 uppercase tracking-wider">Timestamp</th>
+                                            <th className="px-6 py-4 text-xs font-semibold text-white/60 uppercase tracking-wider">Details</th>
                                         </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                                    </thead>
+                                    <tbody className="divide-y divide-white/5">
+                                        {logs.map((log) => (
+                                            <tr key={log.id} className="hover:bg-white/5 transition-colors">
+                                                <td className="px-6 py-4">
+                                                    <div className="flex items-center gap-3">
+                                                        {getEventIcon(log.event_type, log.success)}
+                                                        <span className={`text-sm font-medium ${log.success ? 'text-white' : 'text-red-400'}`}>
+                                                            {getEventLabel(log.event_type)}
+                                                        </span>
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4 text-sm text-white/80">{log.username || 'Unknown'}</td>
+                                                <td className="px-6 py-4 text-sm text-white/50 font-mono">{log.ip_address || '-'}</td>
+                                                <td className="px-6 py-4 text-sm text-white/60">{formatTimestamp(log.timestamp)}</td>
+                                                <td className="px-6 py-4 text-sm">
+                                                    {log.failure_reason ? (
+                                                        <span className="text-red-400">{log.failure_reason}</span>
+                                                    ) : (
+                                                        <span className="text-white/30">-</span>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
 
                             {/* Pagination */}
-                            <div className="flex items-center justify-between p-4 border-t border-white/10 text-sm">
-                                <div className="flex items-center gap-2 text-white/50">
-                                    <span>Show</span>
+                            <div className="flex items-center justify-between px-6 py-4 border-t border-white/10 bg-white/5">
+                                <div className="flex items-center gap-3 text-sm text-white/60">
+                                    <span>Showing</span>
                                     <select
                                         value={pageSize}
                                         onChange={(e) => setPageSize(parseInt(e.target.value))}
-                                        className="h-8 bg-white/10 text-white rounded px-2 border border-white/15"
+                                        className="bg-white/10 text-white rounded-lg px-3 py-1.5 border border-white/20"
                                     >
                                         <option value="10" className="bg-slate-800">10</option>
                                         <option value="25" className="bg-slate-800">25</option>
                                         <option value="50" className="bg-slate-800">50</option>
                                     </select>
-                                    <span>of {totalCount.toLocaleString()}</span>
+                                    <span>of {totalCount.toLocaleString()} entries</span>
                                 </div>
 
-                                <div className="flex items-center gap-2 text-white/70">
+                                <div className="flex items-center gap-2">
                                     <button
                                         onClick={() => setCurrentPage(1)}
                                         disabled={currentPage === 1}
-                                        className="px-2 py-1 hover:text-white disabled:opacity-30"
+                                        className="px-3 py-1.5 text-sm text-white/70 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
                                     >
                                         First
                                     </button>
                                     <button
                                         onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                                         disabled={currentPage === 1}
-                                        className="p-1 hover:text-white disabled:opacity-30"
+                                        className="p-1.5 text-white/70 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
                                     >
-                                        <ChevronLeft className="w-4 h-4" />
+                                        <ChevronLeft className="w-5 h-5" />
                                     </button>
-                                    <span className="px-2">
-                                        Page <span className="text-white">{currentPage}</span> of {totalPages}
+                                    <span className="px-3 text-sm text-white/70">
+                                        Page <span className="text-white font-medium">{currentPage}</span> of {totalPages}
                                     </span>
                                     <button
                                         onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                                         disabled={currentPage === totalPages}
-                                        className="p-1 hover:text-white disabled:opacity-30"
+                                        className="p-1.5 text-white/70 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
                                     >
-                                        <ChevronRight className="w-4 h-4" />
+                                        <ChevronRight className="w-5 h-5" />
                                     </button>
                                     <button
                                         onClick={() => setCurrentPage(totalPages)}
                                         disabled={currentPage === totalPages}
-                                        className="px-2 py-1 hover:text-white disabled:opacity-30"
+                                        className="px-3 py-1.5 text-sm text-white/70 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
                                     >
                                         Last
                                     </button>
@@ -444,9 +420,9 @@ export default function AuditLogViewer() {
                     )}
                 </div>
 
-                {/* Compliance Note */}
+                {/* Compliance Footer */}
                 <p className="text-xs text-white/40 flex items-center gap-2">
-                    <Shield className="w-3.5 h-3.5" />
+                    <Shield className="w-4 h-4" />
                     NIST 800-53 compliant · Tamper-detection hash chaining (AU-9) · Immutable retention
                 </p>
             </div>
