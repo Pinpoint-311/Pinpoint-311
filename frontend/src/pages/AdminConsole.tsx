@@ -100,7 +100,7 @@ const ICON_LIBRARY: { name: string; icon: LucideIcon }[] = [
     { name: 'Users', icon: Users },
 ];
 
-type Tab = 'branding' | 'users' | 'departments' | 'services' | 'secrets' | 'modules' | 'maps' | 'retention' | 'setup' | 'health' | 'audit';
+type Tab = 'branding' | 'users' | 'departments' | 'services' | 'integration' | 'system' | 'health' | 'compliance';
 
 export default function AdminConsole() {
     const navigate = useNavigate();
@@ -127,13 +127,10 @@ export default function AdminConsole() {
             users: 'User Management',
             departments: 'Departments',
             services: 'Service Categories',
-            secrets: 'API Keys',
-            modules: 'Modules',
-            maps: 'Maps Configuration',
-            retention: 'Document Retention',
-            setup: 'Setup Guide',
+            integration: 'Setup & Integration',
+            system: 'System Settings',
             health: 'System Health',
-            audit: 'Audit Logs'
+            compliance: 'Compliance'
         };
         updateTitle(tabTitles[currentTab]);
         scrollToTop('instant');
@@ -364,13 +361,13 @@ export default function AdminConsole() {
                     setServices(servicesData);
                     setDepartments(deptsData);
                     break;
-                case 'secrets':
+                case 'integration':
                     // First sync to ensure all default secrets exist
                     try { await api.syncSecrets(); } catch { /* ignore sync errors */ }
                     const secretsData = await api.getSecrets();
                     setSecrets(secretsData);
                     break;
-                case 'maps':
+                case 'system':
                     // Load Maps configuration
                     try {
                         const mapsConfig = await api.getMapsConfig();
@@ -387,7 +384,7 @@ export default function AdminConsole() {
                         console.error('Failed to load Maps config:', err);
                     }
                     break;
-                case 'retention':
+                case 'compliance':
                     try {
                         const [states, policy, allRequests] = await Promise.all([
                             api.getRetentionStates(),
@@ -728,13 +725,10 @@ export default function AdminConsole() {
         { id: 'users', icon: Users, label: 'Users' },
         { id: 'departments', icon: Building2, label: 'Departments' },
         { id: 'services', icon: Grid3X3, label: 'Service Categories' },
-        { id: 'secrets', icon: Key, label: 'API Keys' },
-        { id: 'modules', icon: Puzzle, label: 'Modules' },
-        { id: 'maps', icon: MapPin, label: 'Maps' },
-        { id: 'retention', icon: Clock, label: 'Retention' },
-        { id: 'setup', icon: Terminal, label: 'Setup Guide' },
+        { id: 'integration', icon: Terminal, label: 'Setup & Integration' },
+        { id: 'system', icon: Settings, label: 'System Settings' },
         { id: 'health', icon: BarChart3, label: 'System Health' },
-        { id: 'audit', icon: Shield, label: 'Audit Logs' },
+        { id: 'compliance', icon: Shield, label: 'Compliance' },
     ];
 
     return (
@@ -1341,7 +1335,7 @@ export default function AdminConsole() {
                         )}
 
                         {/* Secrets Tab */}
-                        {currentTab === 'secrets' && (
+                        {currentTab === 'integration' && (
                             <div className="space-y-6">
                                 <div className="flex items-center justify-between">
                                     <h1 className="text-2xl font-bold text-white">Integrations & API Keys</h1>
@@ -1813,7 +1807,7 @@ export default function AdminConsole() {
                         )}
 
                         {/* Modules Tab */}
-                        {currentTab === 'modules' && (
+                        {currentTab === 'system' && (
                             <div className="space-y-6">
                                 <div className="flex items-center justify-between">
                                     <h1 className="text-2xl font-bold text-white">Feature Modules</h1>
@@ -1939,7 +1933,7 @@ export default function AdminConsole() {
                         )}
 
                         {/* Maps Tab */}
-                        {currentTab === 'maps' && (
+                        {currentTab === 'system' && (
                             <div className="space-y-6">
                                 <div>
                                     <h2 className="text-2xl font-bold text-white mb-2">Maps Configuration</h2>
@@ -2299,7 +2293,7 @@ export default function AdminConsole() {
                         )}
 
                         {/* Document Retention Tab */}
-                        {currentTab === 'retention' && (
+                        {currentTab === 'compliance' && (
                             <div className="space-y-6">
                                 <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
                                     <h2 className="text-2xl font-bold text-white mb-2">Document Retention</h2>
@@ -2744,7 +2738,7 @@ export default function AdminConsole() {
                         )}
 
                         {/* Setup Guide Tab */}
-                        {currentTab === 'setup' && (
+                        {currentTab === 'integration' && (
                             <div className="space-y-6">
                                 <div>
                                     <h1 className="text-2xl font-bold text-white">Setup Guide</h1>
@@ -2901,7 +2895,7 @@ export default function AdminConsole() {
                         )}
 
                         {/* Audit Logs Tab */}
-                        {currentTab === 'audit' && (
+                        {currentTab === 'compliance' && (
                             <AuditLogViewer />
                         )}
 
