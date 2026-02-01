@@ -32,7 +32,6 @@ def _get_gcp_client_with_key():
     """Get GCP IAM client using the temporary service account key from database."""
     try:
         from google.oauth2 import service_account
-        from google.cloud import iam_admin_v1
         from app.db.session import sync_engine
         from app.core.encryption import decrypt_safe
         from sqlalchemy import text
