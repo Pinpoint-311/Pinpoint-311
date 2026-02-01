@@ -58,6 +58,14 @@
 - **SI-4**: CodeQL static analysis
 - **SI-5**: OWASP ZAP dynamic security testing
 
+### 2.7 Workload Identity Federation (Keyless Access)
+- **WIF-1**: No long-lived GCP service account keys stored in production
+- **WIF-2**: Auth0 OIDC tokens exchanged for short-lived GCP credentials (1 hour expiry)
+- **WIF-3**: Bootstrap keys self-destruct after federation verification
+- **WIF-4**: All federation events logged to audit trail
+- **WIF-5**: Centralized access revocation via Auth0 tenant management
+
+
 ---
 
 ## 3. Network Architecture

@@ -533,3 +533,192 @@ async def verify_setup(
         results["auth0"]["error"] = str(e)
     
     return results
+
+
+# ============================================================================
+# Workload Identity Federation Endpoints
+# ============================================================================
+
+class FederationStatus(BaseModel):
+    """Federation setup status."""
+    federation_available: bool = False
+    bootstrap_key_present: bool = False
+    pool_name: Optional[str] = None
+    provider_name: Optional[str] = None
+    can_setup: bool = False
+    can_complete: bool = False
+
+
+@router.get("/federation/status", response_model=FederationStatus)
+async def get_federation_status(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get current Workload Identity Federation status.
+    
+    Returns whether federation is set up, if bootstrap key exists, etc.
+    """
+    from app.services.workload_identity import is_federation_available, _get_federation_config
+    from app.core.encryption import decrypt_safe
+    
+    response = FederationStatus()
+    
+    # Check if federation is already available
+    config = await _get_federation_config()
+    if config:
+        response.federation_available = True
+        response.pool_name = f"projects/{config.get('project_id')}/locations/global/workloadIdentityPools/{config.get('pool_id')}"
+        response.provider_name = f"{response.pool_name}/providers/{config.get('provider_id')}"
+    
+    # Check if bootstrap key exists
+    result = await db.execute(
+        select(SystemSecret).where(SystemSecret.key_name == "GCP_SERVICE_ACCOUNT_JSON")
+    )
+    key_secret = result.scalar_one_or_none()
+    response.bootstrap_key_present = bool(key_secret and key_secret.is_configured and key_secret.key_value)
+    
+    # Check if Auth0 is configured (required for federation)
+    auth0_result = await db.execute(
+        select(SystemSecret).where(
+            SystemSecret.key_name.in_(["AUTH0_DOMAIN", "AUTH0_CLIENT_ID", "AUTH0_CLIENT_SECRET"])
+        )
+    )
+    auth0_secrets = auth0_result.scalars().all()
+    auth0_configured = len(auth0_secrets) == 3 and all(s.is_configured for s in auth0_secrets)
+    
+    # Can setup if we have bootstrap key and Auth0
+    response.can_setup = response.bootstrap_key_present and auth0_configured and not response.federation_available
+    
+    # Can complete (delete key) if federation is working
+    response.can_complete = response.federation_available and response.bootstrap_key_present
+    
+    return response
+
+
+@router.post("/federation/setup")
+async def setup_workload_identity_federation(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Set up Workload Identity Federation with Auth0.
+    
+    This creates:
+    1. Workload Identity Pool in GCP
+    2. Auth0 OIDC provider
+    3. IAM bindings for Secret Manager and KMS access
+    
+    After this succeeds, you can call /federation/complete to delete
+    the bootstrap service account key.
+    """
+    from app.services.workload_identity import setup_federation
+    from app.services.audit_service import AuditService
+    
+    # Log the action
+    audit_service = AuditService(db)
+    await audit_service.log_action(
+        action="federation_setup_started",
+        user_id=current_user.id,
+        resource_type="workload_identity",
+        resource_id="federation",
+        details={"initiated_by": current_user.username}
+    )
+    
+    result = await setup_federation()
+    
+    if result.get("status") == "success":
+        await audit_service.log_action(
+            action="federation_setup_completed",
+            user_id=current_user.id,
+            resource_type="workload_identity",
+            resource_id="federation",
+            details=result
+        )
+    else:
+        await audit_service.log_action(
+            action="federation_setup_failed",
+            user_id=current_user.id,
+            resource_type="workload_identity",
+            resource_id="federation",
+            details=result
+        )
+    
+    return result
+
+
+@router.post("/federation/test")
+async def test_workload_identity_federation(
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Test that Workload Identity Federation is working.
+    
+    Attempts to access GCP using federation credentials (not service account key).
+    """
+    from app.services.workload_identity import test_federation
+    
+    result = await test_federation()
+    return result
+
+
+@router.post("/federation/complete")
+async def complete_federation_setup(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Complete federation setup by deleting the bootstrap service account key.
+    
+    This is the "self-destruct" step. After this:
+    - The service account key is permanently deleted from the database
+    - All future GCP access uses Auth0 federation (keyless)
+    
+    WARNING: Only call this after verifying federation works with /federation/test
+    """
+    from app.services.workload_identity import test_federation, delete_bootstrap_key
+    from app.services.audit_service import AuditService
+    
+    # First verify federation actually works
+    test_result = await test_federation()
+    if test_result.get("status") != "success":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Federation test failed. Cannot delete bootstrap key until federation works. Error: {test_result.get('error')}"
+        )
+    
+    # Log the critical action
+    audit_service = AuditService(db)
+    await audit_service.log_action(
+        action="bootstrap_key_deletion",
+        user_id=current_user.id,
+        resource_type="system_secret",
+        resource_id="GCP_SERVICE_ACCOUNT_JSON",
+        details={
+            "reason": "Federation verified working",
+            "initiated_by": current_user.username,
+            "federation_test_result": test_result
+        }
+    )
+    
+    # Delete the bootstrap key
+    delete_result = await delete_bootstrap_key()
+    
+    if delete_result.get("status") == "success":
+        await audit_service.log_action(
+            action="bootstrap_key_deleted",
+            user_id=current_user.id,
+            resource_type="system_secret",
+            resource_id="GCP_SERVICE_ACCOUNT_JSON",
+            details={"message": "Service account key permanently deleted, federation is now active"}
+        )
+    
+    # Clear secret manager cache to force use of federation
+    from app.services.secret_manager import clear_cache
+    clear_cache()
+    
+    return {
+        **delete_result,
+        "federation_active": True,
+        "message": "Bootstrap key deleted. All future GCP access will use Auth0 federation."
+    }

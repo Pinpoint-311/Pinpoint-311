@@ -492,17 +492,35 @@ Two-tier security for credentials:
 | Resident PII (email, phone, name) | PostgreSQL | Google Cloud KMS (AES-256) |
 | Local Development | Encrypted Database | Fernet (AES-128-CBC) |
 
-#### Container Auto-Updates
-**Watchtower** automatically pulls and deploys security updates:
-- Updates at 3am daily (configurable)
-- Rolling restarts for zero downtime
-- Applies to all containers (PostgreSQL, Redis, Caddy)
+#### Workload Identity Federation (Keyless GCP Access)
+Pinpoint 311 supports **keyless authentication** to Google Cloud using Auth0 as the identity provider:
 
-#### Legacy Encryption Support
-For local development without GCP, Fernet encryption provides fallback:
-- **Algorithm**: Fernet (AES-128-CBC with HMAC-SHA256)
-- **Key Derivation**: PBKDF2 from `SECRET_KEY` environment variable
-- **Automatic migration**: Plain text values encrypted on first update
+```
+┌─────────────┐    OIDC Token    ┌──────────────────┐    Short-lived    ┌─────────────┐
+│   Backend   │ ───────────────▶ │ GCP Workload     │ ────────────────▶ │ GCP APIs    │
+│   (FastAPI) │                  │ Identity Pool    │   Credentials     │ SM, KMS, AI │
+└─────────────┘                  └──────────────────┘                   └─────────────┘
+```
+
+**How it works:**
+1. Upload service account JSON during initial setup (temporary)
+2. System automatically creates Workload Identity Pool + OIDC provider
+3. After verification, the service account key **self-destructs**
+4. All future GCP access uses Auth0 tokens (no stored keys!)
+
+**Benefits:**
+- **No long-lived keys**: Service account key is deleted after federation setup
+- **Automatic rotation**: Auth0 tokens expire hourly, auto-refresh
+- **Centralized access control**: Revoke GCP access by disabling Auth0 app
+- **Audit trail**: All federation events logged to audit system
+
+**Setup via API:**
+```bash
+POST /api/setup/federation/setup    # Create pool + provider
+POST /api/setup/federation/test     # Verify federation works  
+POST /api/setup/federation/complete # Delete service account key
+```
+
 
 #### API & Infrastructure Security
 - **Rate Limiting**: 500 requests/minute per IP (slowapi)

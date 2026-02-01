@@ -46,7 +46,7 @@ def _get_project_from_db() -> Optional[str]:
 
 
 def _get_sm_client():
-    """Get Secret Manager client with database credentials."""
+    """Get Secret Manager client, preferring federation over service account key."""
     global _sm_client
     
     if _sm_client:
@@ -57,7 +57,20 @@ def _get_sm_client():
         from google.oauth2 import service_account
         import json as json_lib
         
-        # Try to load service account from database (Setup Wizard storage)
+        # Priority 1: Try Workload Identity Federation (keyless, most secure)
+        try:
+            from app.services.workload_identity import get_federation_credentials_sync, is_federation_available_sync
+            
+            if is_federation_available_sync():
+                credentials = get_federation_credentials_sync()
+                if credentials:
+                    _sm_client = secretmanager.SecretManagerServiceClient(credentials=credentials)
+                    logger.info("Secret Manager client initialized with federation credentials (keyless)")
+                    return _sm_client
+        except Exception as fed_err:
+            logger.debug(f"Federation not available: {fed_err}")
+        
+        # Priority 2: Try service account from database (Setup Wizard storage)
         try:
             from app.db.session import sync_engine
             from sqlalchemy import text
@@ -78,12 +91,14 @@ def _get_sm_client():
         except Exception as db_err:
             logger.debug(f"Could not load SM credentials from database: {db_err}")
         
-        # Fall back to default credentials
+        # Priority 3: Fall back to default credentials (ADC)
         _sm_client = secretmanager.SecretManagerServiceClient()
         return _sm_client
     except Exception as e:
         logger.warning(f"Failed to initialize Secret Manager client: {e}")
         return None
+
+
 
 
 def _is_gcp_available() -> bool:
