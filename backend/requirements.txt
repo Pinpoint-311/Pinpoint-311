@@ -23,3 +23,4 @@ cryptography==42.0.2
 slowapi==0.1.9
 boto3==1.34.25
 PyJWT==2.8.0
+sentry-sdk[fastapi]==1.39.1

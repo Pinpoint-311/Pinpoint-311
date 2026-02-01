@@ -5,6 +5,18 @@ from fastapi.responses import FileResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 import os
+import sentry_sdk
+
+# Initialize Sentry for error tracking (optional - set SENTRY_DSN env var)
+SENTRY_DSN = os.environ.get("SENTRY_DSN")
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        traces_sample_rate=0.1,  # 10% of requests for performance monitoring
+        profiles_sample_rate=0.1,
+        environment=os.environ.get("ENVIRONMENT", "production"),
+        send_default_pii=False,  # Don't send personally identifiable info
+    )
 
 from app.api import auth, users, departments, services, system, open311, gis, map_layers, comments, research, health, audit, setup
 from app.db.init_db import seed_database
