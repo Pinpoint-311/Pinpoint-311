@@ -6,6 +6,7 @@ Security: All endpoints require admin authentication and log actions to audit tr
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 import logging
