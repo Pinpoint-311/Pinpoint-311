@@ -1302,10 +1302,11 @@ async def get_release_security(ref: str, _: User = Depends(get_current_admin)):
     """
     import httpx
     
-    # Workflow names to check
+    # Workflow names to check - must match exactly the 'name:' field in each workflow file
+    # Note: Accessibility only runs on PRs and schedule, not direct pushes
     SECURITY_WORKFLOWS = {
         "Security Scan (OWASP ZAP)": {"icon": "🛡️", "key": "owasp_zap"},
-        "CodeQL": {"icon": "🔒", "key": "codeql"},
+        "CodeQL Security Analysis": {"icon": "🔒", "key": "codeql"},
         "Build and Publish Docker Images": {"icon": "📦", "key": "docker_build"},
         "Accessibility Audit (axe-core)": {"icon": "♿", "key": "accessibility"}
     }
