@@ -2129,3 +2129,198 @@ async def delete_backup_endpoint(
         raise HTTPException(status_code=500, detail=result.get("message", "Delete failed"))
     
     return result
+
+
+# ============ Health Dashboard (Bus Factor Mitigation) ============
+
+@router.get("/health-dashboard")
+async def get_health_dashboard(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin)
+):
+    """
+    Comprehensive system health dashboard for non-technical administrators.
+    Returns status of all services, database metrics, and last backup info.
+    """
+    import asyncio
+    from datetime import datetime
+    
+    health = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "services": {},
+        "database": {},
+        "cache": {},
+        "last_backup": None,
+        "overall_status": "healthy"
+    }
+    
+    # Check container statuses via docker
+    containers = ["backend", "frontend", "db", "redis", "caddy"]
+    for container in containers:
+        try:
+            result = subprocess.run(
+                ["docker", "ps", "--filter", f"name={container}", "--format", "{{.Status}}"],
+                capture_output=True, text=True, timeout=5
+            )
+            status = result.stdout.strip()
+            health["services"][container] = {
+                "status": "running" if "Up" in status else "stopped",
+                "uptime": status if "Up" in status else None
+            }
+        except Exception as e:
+            health["services"][container] = {"status": "unknown", "error": str(e)}
+    
+    # Database size and connection count
+    try:
+        db_size_result = await db.execute(text(
+            "SELECT pg_size_pretty(pg_database_size(current_database())) as size"
+        ))
+        health["database"]["size"] = db_size_result.scalar()
+        
+        conn_result = await db.execute(text(
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()"
+        ))
+        health["database"]["connections"] = conn_result.scalar()
+        health["database"]["status"] = "healthy"
+    except Exception as e:
+        health["database"]["status"] = "error"
+        health["database"]["error"] = str(e)
+        health["overall_status"] = "degraded"
+    
+    # Redis health check
+    try:
+        if redis_client:
+            info = redis_client.info()
+            health["cache"]["status"] = "healthy"
+            health["cache"]["used_memory"] = info.get("used_memory_human", "unknown")
+            health["cache"]["connected_clients"] = info.get("connected_clients", 0)
+        else:
+            health["cache"]["status"] = "not_configured"
+    except Exception as e:
+        health["cache"]["status"] = "error"
+        health["cache"]["error"] = str(e)
+        health["overall_status"] = "degraded"
+    
+    # Last backup info
+    try:
+        from app.services.backup_service import list_backups
+        backups = await list_backups()
+        if backups.get("backups"):
+            last = backups["backups"][0]
+            health["last_backup"] = {
+                "name": last.get("name"),
+                "created": last.get("created"),
+                "size": last.get("size")
+            }
+    except Exception:
+        health["last_backup"] = {"status": "unknown"}
+    
+    # Check for any down services
+    for svc, data in health["services"].items():
+        if data.get("status") != "running":
+            health["overall_status"] = "degraded"
+            break
+    
+    return health
+
+
+# ============ Runbook Automation (Emergency Operations) ============
+
+@router.post("/runbook/{action}")
+async def execute_runbook(
+    action: str,
+    backup_name: str = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Execute emergency runbook actions (admin only).
+    
+    Available actions:
+    - restart-all: Restart all containers
+    - restart-{service}: Restart specific service (backend, frontend, redis, caddy)
+    - clear-cache: Clear Redis cache
+    - vacuum: Run PostgreSQL vacuum analyze
+    - restore: Restore from backup (requires backup_name parameter)
+    """
+    from datetime import datetime
+    
+    result = {
+        "action": action,
+        "executed_by": current_user.email,
+        "timestamp": datetime.utcnow().isoformat(),
+        "status": "success",
+        "details": {}
+    }
+    
+    try:
+        if action == "restart-all":
+            # Restart all containers (except database to avoid data issues)
+            for service in ["backend", "frontend", "redis", "caddy"]:
+                subprocess.run(
+                    ["docker-compose", "restart", service],
+                    cwd="/home/ubuntu/WWF-Open-Source-311-Template",
+                    capture_output=True, timeout=60
+                )
+            result["details"]["restarted"] = ["backend", "frontend", "redis", "caddy"]
+            result["details"]["note"] = "Database not restarted for safety"
+        
+        elif action.startswith("restart-"):
+            service = action.replace("restart-", "")
+            if service not in ["backend", "frontend", "redis", "caddy"]:
+                raise HTTPException(status_code=400, detail=f"Cannot restart service: {service}")
+            subprocess.run(
+                ["docker-compose", "restart", service],
+                cwd="/home/ubuntu/WWF-Open-Source-311-Template",
+                capture_output=True, timeout=60
+            )
+            result["details"]["restarted"] = [service]
+        
+        elif action == "clear-cache":
+            if redis_client:
+                redis_client.flushdb()
+                result["details"]["cleared"] = True
+            else:
+                result["status"] = "skipped"
+                result["details"]["reason"] = "Redis not configured"
+        
+        elif action == "vacuum":
+            await db.execute(text("VACUUM ANALYZE"))
+            result["details"]["operation"] = "VACUUM ANALYZE completed"
+        
+        elif action == "restore":
+            if not backup_name:
+                raise HTTPException(status_code=400, detail="backup_name required for restore action")
+            from app.services.backup_service import restore_backup
+            restore_result = await restore_backup(backup_name)
+            result["details"] = restore_result
+        
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
+        
+        # Log the action to audit
+        try:
+            from app.models import RequestAuditLog
+            audit = RequestAuditLog(
+                request_id=None,
+                user_id=current_user.id,
+                action=f"runbook_{action}",
+                details=json.dumps(result["details"])
+            )
+            db.add(audit)
+            await db.commit()
+        except Exception:
+            pass  # Don't fail if audit logging fails
+        
+        return result
+        
+    except subprocess.TimeoutExpired:
+        result["status"] = "timeout"
+        result["details"]["error"] = "Operation timed out after 60 seconds"
+        raise HTTPException(status_code=504, detail="Operation timed out")
+    except HTTPException:
+        raise
+    except Exception as e:
+        result["status"] = "error"
+        result["details"]["error"] = str(e)
+        raise HTTPException(status_code=500, detail=str(e))

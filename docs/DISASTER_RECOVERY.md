@@ -226,10 +226,51 @@ curl https://311.westwindsorforward.org/api/health
 | Database Admin | [TBD] | [TBD] |
 | On-Call Engineer | [TBD] | [TBD] |
 
-### External Resources
-- **AWS Support**: [AWS Support Center]
+### Vendor Escalation Directory
+
+> These contacts can help even if the original developer is unavailable.
+
+#### Identity & Authentication (Auth0)
+| Resource | URL/Contact |
+|----------|-------------|
+| Auth0 Status | https://status.auth0.com/ |
+| Auth0 Support | https://support.auth0.com/ (paid plans) |
+| Auth0 Community | https://community.auth0.com/ |
+
+#### Google Cloud Platform
+| Resource | URL/Contact |
+|----------|-------------|
+| GCP Status | https://status.cloud.google.com/ |
+| GCP Console | https://console.cloud.google.com/ |
+| Vertex AI Docs | https://cloud.google.com/vertex-ai/docs |
+
+#### PostgreSQL Emergency Help
+| Resource | URL/Contact |
+|----------|-------------|
+| PostgreSQL Wiki | https://wiki.postgresql.org/wiki/Emergency_Recovery |
+| Crunchy Data | https://www.crunchydata.com/support |
+| Freelance DBAs | Upwork, Toptal (search "PostgreSQL DBA emergency") |
+
+#### Docker/DevOps Contractors
+| Resource | Best For |
+|----------|----------|
+| **Upwork** | Quick fixes, hourly work |
+| **Toptal** | Senior DevOps engineers |
+| **Fiverr Pro** | Small configuration tasks |
+
+### Emergency Contractor Onboarding Checklist
+
+Before giving a contractor access:
+- [ ] Review [ARCHITECTURE.md](./ARCHITECTURE.md) with them
+- [ ] Provide read-only access first
+- [ ] Create temporary admin credentials (revoke after)
+- [ ] Monitor actions in audit logs
+
+### External Status Pages
 - **Auth0 Status**: https://status.auth0.com/
 - **Sentry Status**: https://status.sentry.io/
+- **GitHub Status**: https://www.githubstatus.com/
+- **Google Cloud Status**: https://status.cloud.google.com/
 
 ---
 

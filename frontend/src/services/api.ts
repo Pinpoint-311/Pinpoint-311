@@ -746,6 +746,17 @@ class ApiClient {
     }> {
         return this.request('/setup/verify', { method: 'POST' });
     }
+
+    // ========== Health Dashboard & Runbook (Bus Factor Mitigation) ==========
+
+    async getHealthDashboard(): Promise<HealthDashboard> {
+        return this.request<HealthDashboard>('/system/health-dashboard');
+    }
+
+    async executeRunbook(action: string, backupName?: string): Promise<RunbookResult> {
+        const params = backupName ? `?backup_name=${encodeURIComponent(backupName)}` : '';
+        return this.request<RunbookResult>(`/system/runbook/${action}${params}`, { method: 'POST' });
+    }
 }
 
 // Notification Preferences type
@@ -883,3 +894,41 @@ export interface BackupResult {
     created_at?: string;
     bucket?: string;
 }
+
+// Health Dashboard (Bus Factor Mitigation)
+export interface HealthDashboard {
+    timestamp: string;
+    overall_status: 'healthy' | 'degraded' | 'critical';
+    services: Record<string, {
+        status: 'running' | 'stopped' | 'unknown';
+        uptime?: string;
+        error?: string;
+    }>;
+    database: {
+        status: 'healthy' | 'error';
+        size?: string;
+        connections?: number;
+        error?: string;
+    };
+    cache: {
+        status: 'healthy' | 'error' | 'not_configured';
+        used_memory?: string;
+        connected_clients?: number;
+        error?: string;
+    };
+    last_backup: {
+        name?: string;
+        created?: string;
+        size?: string;
+        status?: string;
+    } | null;
+}
+
+export interface RunbookResult {
+    action: string;
+    executed_by: string;
+    timestamp: string;
+    status: 'success' | 'error' | 'timeout' | 'skipped';
+    details: Record<string, unknown>;
+}
+
