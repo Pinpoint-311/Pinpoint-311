@@ -1,6 +1,8 @@
 name: Accessibility Audit (axe-core)
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
   schedule:
