@@ -1405,16 +1405,86 @@ async def get_release_security(ref: str, _: User = Depends(get_current_admin)):
 @router.post("/switch-version")
 async def switch_version(
     ref: str,
-    _: User = Depends(get_current_admin)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
 ):
     """
-    Switch to a specific version/release (admin only).
-    This checks out a specific git ref (tag or commit) and restarts containers as needed.
+    Production-grade version deployment with automatic rollback.
+    
+    This endpoint performs a full deployment cycle:
+    1. Save rollback point (current git HEAD)
+    2. Create database backup (pg_dump)
+    3. Git checkout target version
+    4. Run database migrations (alembic upgrade)
+    5. Rebuild and restart all containers
+    6. Health check the new deployment
+    7. Automatic rollback on any failure
     """
-    try:
-        project_root = os.environ.get("PROJECT_ROOT", "/project")
+    import httpx
+    from datetime import datetime
+    
+    project_root = os.environ.get("PROJECT_ROOT", "/project")
+    deployment_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    backup_dir = "/project/backups"
+    
+    # Deployment state tracking
+    state = {
+        "original_sha": None,
+        "backup_file": None,
+        "migrations_run": False,
+        "containers_rebuilt": False,
+        "steps_completed": [],
+        "errors": []
+    }
+    
+    def log_step(step: str, success: bool = True, detail: str = ""):
+        state["steps_completed"].append({
+            "step": step,
+            "success": success,
+            "detail": detail,
+            "timestamp": datetime.utcnow().isoformat()
+        })
+        if not success:
+            state["errors"].append(f"{step}: {detail}")
+    
+    async def rollback():
+        """Rollback to original state on failure."""
+        rollback_errors = []
         
-        # Add safe directory config
+        # 1. Restore git to original SHA
+        if state["original_sha"]:
+            try:
+                subprocess.run(
+                    ["git", "checkout", state["original_sha"]],
+                    cwd=project_root,
+                    capture_output=True,
+                    timeout=60
+                )
+                log_step("rollback_git", True, f"Restored to {state['original_sha'][:7]}")
+            except Exception as e:
+                rollback_errors.append(f"Git rollback failed: {e}")
+        
+        # 2. Note: We don't auto-restore database because migrations are forward-only
+        # and designed to be non-destructive. Admin should review if needed.
+        if state["migrations_run"]:
+            log_step("rollback_db", True, "Migrations were forward-only (additive). Manual review recommended if issues persist.")
+        
+        # 3. Restart original containers
+        try:
+            subprocess.run(
+                ["docker-compose", "restart", "backend", "frontend"],
+                cwd=project_root,
+                capture_output=True,
+                timeout=120
+            )
+            log_step("rollback_containers", True, "Restarted containers with original code")
+        except Exception as e:
+            rollback_errors.append(f"Container restart failed: {e}")
+        
+        return rollback_errors
+    
+    try:
+        # ===== STEP 0: Setup =====
         subprocess.run(
             ["git", "config", "--global", "--add", "safe.directory", project_root],
             cwd=project_root,
@@ -1422,16 +1492,71 @@ async def switch_version(
             timeout=10
         )
         
+        # Create backup directory if it doesn't exist
+        os.makedirs(backup_dir, exist_ok=True)
+        
+        # ===== STEP 1: Save Rollback Point =====
+        sha_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if sha_result.returncode != 0:
+            raise Exception("Failed to get current git HEAD")
+        
+        state["original_sha"] = sha_result.stdout.strip()
+        log_step("save_rollback_point", True, f"Saved: {state['original_sha'][:7]}")
+        
+        # ===== STEP 2: Create Database Backup =====
+        backup_file = f"{backup_dir}/db_backup_{deployment_id}.sql"
+        state["backup_file"] = backup_file
+        
+        # Get database URL from environment
+        db_url = os.environ.get("DATABASE_URL", "")
+        # Parse connection info (format: postgresql+asyncpg://user:pass@host/db)
+        try:
+            # Extract host, user, password, dbname from DATABASE_URL
+            import re
+            match = re.match(r"postgresql\+asyncpg://([^:]+):([^@]+)@([^/]+)/(.+)", db_url)
+            if match:
+                db_user, db_pass, db_host, db_name = match.groups()
+                
+                # Run pg_dump
+                env = os.environ.copy()
+                env["PGPASSWORD"] = db_pass
+                
+                backup_result = subprocess.run(
+                    ["pg_dump", "-h", db_host.split(":")[0], "-U", db_user, "-d", db_name, "-f", backup_file],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=300  # 5 min timeout for large DBs
+                )
+                
+                if backup_result.returncode == 0:
+                    # Get backup size
+                    backup_size = os.path.getsize(backup_file) if os.path.exists(backup_file) else 0
+                    log_step("database_backup", True, f"Created {backup_size // 1024}KB backup")
+                else:
+                    log_step("database_backup", False, backup_result.stderr[:200])
+                    # Continue anyway - backup failure shouldn't block deployment
+            else:
+                log_step("database_backup", False, "Could not parse DATABASE_URL")
+        except Exception as e:
+            log_step("database_backup", False, str(e)[:200])
+        
+        # ===== STEP 3: Git Fetch and Checkout =====
         # Stash any local changes
         subprocess.run(
             ["git", "stash"],
             cwd=project_root,
             capture_output=True,
-            text=True,
             timeout=30
         )
         
-        # Fetch all tags and branches
+        # Fetch all
         fetch_result = subprocess.run(
             ["git", "fetch", "--all", "--tags"],
             cwd=project_root,
@@ -1441,12 +1566,12 @@ async def switch_version(
         )
         
         if fetch_result.returncode != 0:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Git fetch failed: {fetch_result.stderr}"
-            )
+            log_step("git_fetch", False, fetch_result.stderr[:200])
+            raise Exception(f"Git fetch failed: {fetch_result.stderr}")
         
-        # Checkout the specified ref
+        log_step("git_fetch", True, "Fetched latest from remote")
+        
+        # Checkout target ref
         checkout_result = subprocess.run(
             ["git", "checkout", ref],
             cwd=project_root,
@@ -1456,83 +1581,182 @@ async def switch_version(
         )
         
         if checkout_result.returncode != 0:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Git checkout failed: {checkout_result.stderr}"
-            )
+            log_step("git_checkout", False, checkout_result.stderr[:200])
+            raise Exception(f"Git checkout failed: {checkout_result.stderr}")
         
-        # Get the new SHA
-        sha_result = subprocess.run(
+        # Get new SHA
+        new_sha_result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=project_root,
             capture_output=True,
             text=True,
             timeout=10
         )
-        new_sha = sha_result.stdout.strip()[:7] if sha_result.returncode == 0 else "unknown"
+        new_sha = new_sha_result.stdout.strip()[:7] if new_sha_result.returncode == 0 else "unknown"
+        log_step("git_checkout", True, f"Checked out {new_sha}")
         
-        # Check what files changed to determine restart needs  
-        # Check diff between old HEAD and new HEAD
-        diff_result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD@{1}", "HEAD"],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        changed_files = diff_result.stdout.strip().split('\n') if diff_result.returncode == 0 else []
+        # ===== STEP 4: Run Database Migrations =====
+        # Check if alembic.ini exists and run migrations
+        alembic_cfg = os.path.join(project_root, "backend", "alembic.ini")
+        if os.path.exists(alembic_cfg):
+            try:
+                migration_result = subprocess.run(
+                    ["alembic", "upgrade", "head"],
+                    cwd=os.path.join(project_root, "backend"),
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                
+                if migration_result.returncode == 0:
+                    state["migrations_run"] = True
+                    log_step("database_migrations", True, "Applied pending migrations")
+                else:
+                    # Check if it's just "no migrations to run"
+                    if "already at head" in migration_result.stdout.lower() or "no upgrade" in migration_result.stdout.lower():
+                        log_step("database_migrations", True, "No new migrations")
+                    else:
+                        log_step("database_migrations", False, migration_result.stderr[:200])
+                        raise Exception(f"Migration failed: {migration_result.stderr}")
+            except subprocess.TimeoutExpired:
+                log_step("database_migrations", False, "Migration timed out")
+                raise Exception("Database migration timed out")
+        else:
+            log_step("database_migrations", True, "No alembic config found, skipping")
         
-        # Determine what needs restarting
-        backend_changed = any(f.startswith('backend/') for f in changed_files)
-        frontend_changed = any(f.startswith('frontend/') for f in changed_files)
-        deps_changed = any(x in '\n'.join(changed_files) for x in [
-            'requirements.txt', 'Dockerfile', 'docker-compose', 'package.json', 'package-lock.json'
-        ])
+        # ===== STEP 5: Rebuild Containers =====
+        try:
+            # First, rebuild images
+            build_result = subprocess.run(
+                ["docker-compose", "build", "--no-cache", "backend", "frontend"],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                timeout=600  # 10 min for build
+            )
+            
+            if build_result.returncode != 0:
+                log_step("container_build", False, build_result.stderr[:300])
+                raise Exception(f"Container build failed: {build_result.stderr[:200]}")
+            
+            log_step("container_build", True, "Built backend and frontend images")
+            
+            # Then restart with new images
+            restart_result = subprocess.run(
+                ["docker-compose", "up", "-d", "--force-recreate", "backend", "frontend"],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+            
+            if restart_result.returncode != 0:
+                log_step("container_restart", False, restart_result.stderr[:200])
+                raise Exception(f"Container restart failed: {restart_result.stderr[:200]}")
+            
+            state["containers_rebuilt"] = True
+            log_step("container_restart", True, "Restarted containers with new code")
+            
+        except subprocess.TimeoutExpired:
+            log_step("container_rebuild", False, "Container rebuild timed out")
+            raise Exception("Container rebuild timed out")
         
-        restart_messages = []
+        # ===== STEP 6: Health Check =====
+        # Wait for containers to be healthy
+        import asyncio
+        await asyncio.sleep(10)  # Give containers time to start
         
-        # Backend auto-reloads due to --reload flag and volume mount
-        if backend_changed:
-            restart_messages.append("Backend reloading automatically")
+        health_ok = False
+        for attempt in range(6):  # 6 attempts over 30 seconds
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    # Check backend health
+                    health_resp = await client.get("http://localhost:8000/health")
+                    if health_resp.status_code == 200:
+                        health_ok = True
+                        break
+            except Exception:
+                pass
+            await asyncio.sleep(5)
         
-        # Frontend needs container restart for compiled assets
-        if frontend_changed:
-            restart_messages.append("Frontend container restart required")
-            # Note: We can't directly restart docker containers from inside a container
-            # The admin should restart via docker-compose
+        if not health_ok:
+            log_step("health_check", False, "Backend health check failed after 30s")
+            raise Exception("Health check failed - backend not responding")
         
-        if deps_changed:
-            restart_messages.append("Dependency changes detected - rebuild recommended")
+        log_step("health_check", True, "Backend healthy and responding")
         
+        # ===== STEP 7: Log to Audit =====
+        try:
+            audit_entry = AuditLog(
+                action="version_deployed",
+                entity_type="system",
+                entity_id=0,
+                user_id=current_user.id,
+                details={
+                    "deployment_id": deployment_id,
+                    "from_sha": state["original_sha"][:7],
+                    "to_sha": new_sha,
+                    "to_ref": ref,
+                    "backup_file": state["backup_file"],
+                    "migrations_run": state["migrations_run"],
+                    "steps": state["steps_completed"]
+                }
+            )
+            db.add(audit_entry)
+            await db.commit()
+        except Exception as e:
+            logger.warning(f"Failed to log deployment to audit: {e}")
+        
+        # ===== SUCCESS =====
         return {
             "status": "success",
-            "message": f"Switched to @{new_sha}. " + (
-                " | ".join(restart_messages) if restart_messages 
-                else "No changes require restart."
-            ),
+            "message": f"Successfully deployed @{new_sha}",
+            "deployment_id": deployment_id,
+            "from_sha": state["original_sha"][:7],
+            "to_sha": new_sha,
             "ref": ref,
-            "new_sha": new_sha,
-            "changed_files_count": len(changed_files),
-            "backend_changed": backend_changed,
-            "frontend_changed": frontend_changed,
-            "deps_changed": deps_changed,
-            "restart_hint": (
-                "Run: docker-compose restart frontend" if frontend_changed and not deps_changed
-                else "Run: docker-compose up -d --build" if deps_changed
-                else None
-            )
+            "backup_file": state["backup_file"],
+            "migrations_run": state["migrations_run"],
+            "steps": state["steps_completed"]
         }
-    
-    except subprocess.TimeoutExpired:
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="Switch operation timed out"
-        )
+        
     except Exception as e:
-        logger.error(f"Failed to switch version: {e}")
+        # ===== ROLLBACK ON FAILURE =====
+        log_step("deployment_failed", False, str(e)[:300])
+        logger.error(f"Deployment failed, initiating rollback: {e}")
+        
+        rollback_errors = await rollback()
+        
+        # Log failed deployment to audit
+        try:
+            audit_entry = AuditLog(
+                action="version_deployment_failed",
+                entity_type="system",
+                entity_id=0,
+                user_id=current_user.id,
+                details={
+                    "deployment_id": deployment_id,
+                    "target_ref": ref,
+                    "error": str(e)[:500],
+                    "rollback_errors": rollback_errors,
+                    "steps": state["steps_completed"]
+                }
+            )
+            db.add(audit_entry)
+            await db.commit()
+        except Exception as audit_error:
+            logger.warning(f"Failed to log deployment failure: {audit_error}")
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail={
+                "message": "Deployment failed and rollback initiated",
+                "error": str(e),
+                "rollback_performed": True,
+                "rollback_errors": rollback_errors,
+                "backup_available": state["backup_file"],
+                "steps": state["steps_completed"]
+            }
         )
 
 

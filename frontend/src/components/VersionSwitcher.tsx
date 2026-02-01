@@ -140,16 +140,27 @@ export default function VersionSwitcher() {
     const handleSwitchVersion = async () => {
         if (!selectedRef) return;
 
-        const warningMsg = security && !security.summary.all_passed
-            ? `⚠️ Warning: Some security checks did not pass (${security.summary.score}).\n\nSwitch to version ${selectedRef} anyway? This may require a container restart.`
-            : `Switch to version ${selectedRef}? This may require a container restart.`;
+        const deploymentWarning = `🚀 FULL DEPLOYMENT
 
-        if (!confirm(warningMsg)) {
+This will:
+1. Create database backup
+2. Checkout version ${selectedRef.slice(0, 7)}
+3. Run database migrations
+4. Rebuild all containers
+5. Health check the new deployment
+
+If anything fails, it will automatically rollback.
+
+${security && !security.summary.all_passed ? '⚠️ Warning: Some security checks did not pass.\n\n' : ''}Continue with deployment?`;
+
+        if (!confirm(deploymentWarning)) {
             return;
         }
 
         setIsSwitching(true);
-        setMessage(null);
+        setMessage('Starting deployment...');
+        setError(null);
+
         try {
             const token = localStorage.getItem('token');
             const response = await fetch(`/api/system/switch-version?ref=${encodeURIComponent(selectedRef)}`, {
@@ -157,16 +168,27 @@ export default function VersionSwitcher() {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
 
+            const data = await response.json();
+
             if (response.ok) {
-                const data = await response.json();
-                setMessage(data.message);
+                setMessage(`✅ ${data.message}`);
+                setSelectedRef(null);
+                setSelectedRelease(null);
+                setSelectedCommit(null);
+                setSecurity(null);
                 fetchCurrentVersion();
+                fetchReleases();
             } else {
-                const errData = await response.json();
-                setError(errData.detail || 'Failed to switch version');
+                // Handle rollback response
+                const detail = data.detail;
+                if (typeof detail === 'object') {
+                    setError(`❌ ${detail.message || 'Deployment failed'}${detail.rollback_performed ? ' - Rollback completed' : ''}`);
+                } else {
+                    setError(detail || 'Failed to deploy version');
+                }
             }
         } catch (err: any) {
-            setError(err.message || 'Failed to switch version');
+            setError(`Failed to deploy: ${err.message}`);
         } finally {
             setIsSwitching(false);
         }
@@ -381,8 +403,8 @@ export default function VersionSwitcher() {
                             </span>
                             {security?.summary && (
                                 <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${security.summary.all_passed
-                                        ? 'bg-emerald-500/20 text-emerald-400'
-                                        : 'bg-amber-500/20 text-amber-400'
+                                    ? 'bg-emerald-500/20 text-emerald-400'
+                                    : 'bg-amber-500/20 text-amber-400'
                                     }`}>
                                     {security.summary.score}
                                 </span>
@@ -425,8 +447,8 @@ export default function VersionSwitcher() {
                         onClick={handleSwitchVersion}
                         disabled={isSwitching || !selectedRef}
                         className={`w-full flex items-center justify-center gap-1.5 py-2 rounded-lg font-medium transition-colors text-sm ${security?.summary.all_passed
-                                ? 'bg-indigo-600 hover:bg-indigo-500 text-white'
-                                : 'bg-amber-600/80 hover:bg-amber-600 text-white'
+                            ? 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                            : 'bg-amber-600/80 hover:bg-amber-600 text-white'
                             }`}
                     >
                         {isSwitching ? (
