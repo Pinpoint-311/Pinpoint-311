@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Shield, Download, RefreshCw, AlertCircle, CheckCircle, XCircle, User, Clock, ChevronLeft, ChevronRight, Search, Sparkles } from 'lucide-react';
+import { Shield, Download, RefreshCw, AlertCircle, CheckCircle, XCircle, User, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
 import { AccordionSection } from './ui';
 
 interface AuditLog {
