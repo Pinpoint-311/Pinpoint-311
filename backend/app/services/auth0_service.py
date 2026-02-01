@@ -30,7 +30,7 @@ class Auth0Service:
         Returns None if not configured.
         """
         # Fetch all Auth0 secrets
-        result = db.execute(
+        result = await db.execute(
             select(SystemSecret).where(
                 SystemSecret.key_name.in_([
                     "AUTH0_DOMAIN",
