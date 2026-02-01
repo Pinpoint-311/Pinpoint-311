@@ -294,15 +294,86 @@ async def emergency_access(
     
     logger.warning(f"Emergency access granted to {admin.username} from {ip_address}")
     
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": {
-            "username": admin.username,
-            "email": admin.email,
-            "role": admin.role
-        }
-    }
+    # Return HTML that stores token and redirects (magic link pattern)
+    html_response = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Emergency Access - Logging in...</title>
+        <style>
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 100vh;
+                margin: 0;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            }}
+            .container {{
+                background: white;
+                padding: 3rem;
+                border-radius: 16px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                text-align: center;
+                max-width: 400px;
+            }}
+            .spinner {{
+                border: 4px solid #f3f3f3;
+                border-top: 4px solid #667eea;
+                border-radius: 50%;
+                width: 50px;
+                height: 50px;
+                animation: spin 1s linear infinite;
+                margin: 0 auto 1.5rem;
+            }}
+            @keyframes spin {{
+                0% {{ transform: rotate(0deg); }}
+                100% {{ transform: rotate(360deg); }}
+            }}
+            h1 {{
+                color: #333;
+                font-size: 24px;
+                margin: 0 0 1rem;
+            }}
+            p {{
+                color: #666;
+                margin: 0 0 1.5rem;
+            }}
+            .warning {{
+                background: #fff3cd;
+                border: 1px solid #ffc107;
+                color: #856404;
+                padding: 1rem;
+                border-radius: 8px;
+                font-size: 14px;
+            }}
+            a {{
+                color: #667eea;
+                text-decoration: none;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="spinner"></div>
+            <h1>🚨 Emergency Access</h1>
+            <p>Logging you in as <strong>{admin.username}</strong>...</p>
+            <div class="warning">
+                ⚠️ This emergency access has been logged for security audit.
+            </div>
+        </div>
+        <script>
+            localStorage.setItem('token', '{access_token}');
+            setTimeout(function() {{
+                window.location.href = '/admin';
+            }}, 1500);
+        </script>
+    </body>
+    </html>
+    """
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(content=html_response)
 
 
 @router.get("/login")
