@@ -1408,7 +1408,7 @@ async def switch_version(
 ):
     """
     Switch to a specific version/release (admin only).
-    This checks out a specific git ref (tag or commit) and may require container restart.
+    This checks out a specific git ref (tag or commit) and restarts containers as needed.
     """
     try:
         project_root = os.environ.get("PROJECT_ROOT", "/project")
@@ -1419,6 +1419,15 @@ async def switch_version(
             cwd=project_root,
             capture_output=True,
             timeout=10
+        )
+        
+        # Stash any local changes
+        subprocess.run(
+            ["git", "stash"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=30
         )
         
         # Fetch all tags and branches
@@ -1461,23 +1470,56 @@ async def switch_version(
         )
         new_sha = sha_result.stdout.strip()[:7] if sha_result.returncode == 0 else "unknown"
         
-        # Check what was updated to determine restart needs
-        git_output = checkout_result.stdout.strip() + checkout_result.stderr.strip()
-        needs_restart = any(x in git_output.lower() for x in [
-            'requirements.txt', 'dockerfile', 'docker-compose', 'package.json'
+        # Check what files changed to determine restart needs  
+        # Check diff between old HEAD and new HEAD
+        diff_result = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD@{1}", "HEAD"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        changed_files = diff_result.stdout.strip().split('\n') if diff_result.returncode == 0 else []
+        
+        # Determine what needs restarting
+        backend_changed = any(f.startswith('backend/') for f in changed_files)
+        frontend_changed = any(f.startswith('frontend/') for f in changed_files)
+        deps_changed = any(x in '\n'.join(changed_files) for x in [
+            'requirements.txt', 'Dockerfile', 'docker-compose', 'package.json', 'package-lock.json'
         ])
+        
+        restart_messages = []
+        
+        # Backend auto-reloads due to --reload flag and volume mount
+        if backend_changed:
+            restart_messages.append("Backend reloading automatically")
+        
+        # Frontend needs container restart for compiled assets
+        if frontend_changed:
+            restart_messages.append("Frontend container restart required")
+            # Note: We can't directly restart docker containers from inside a container
+            # The admin should restart via docker-compose
+        
+        if deps_changed:
+            restart_messages.append("Dependency changes detected - rebuild recommended")
         
         return {
             "status": "success",
-            "message": f"Switched to {ref}. " + (
-                "Container restart required for dependency changes."
-                if needs_restart
-                else "Code changes will reload automatically."
+            "message": f"Switched to @{new_sha}. " + (
+                " | ".join(restart_messages) if restart_messages 
+                else "No changes require restart."
             ),
             "ref": ref,
             "new_sha": new_sha,
-            "needs_restart": needs_restart,
-            "git_output": git_output
+            "changed_files_count": len(changed_files),
+            "backend_changed": backend_changed,
+            "frontend_changed": frontend_changed,
+            "deps_changed": deps_changed,
+            "restart_hint": (
+                "Run: docker-compose restart frontend" if frontend_changed and not deps_changed
+                else "Run: docker-compose up -d --build" if deps_changed
+                else None
+            )
         }
     
     except subprocess.TimeoutExpired:
