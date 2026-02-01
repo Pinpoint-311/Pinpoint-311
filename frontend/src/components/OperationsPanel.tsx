@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Server, Database, RefreshCw, Play, Trash2, HardDrive, Clock,
-    CheckCircle, XCircle, AlertCircle, Loader2, RotateCcw, Wrench, ExternalLink
+    CheckCircle, XCircle, Loader2, RotateCcw, Wrench,
+    Shield, Cloud, Languages, Sparkles, Key, Activity
 } from 'lucide-react';
 import { Card, Button } from './ui';
 import api, { HealthDashboard, RunbookResult } from '../services/api';
@@ -14,44 +15,56 @@ interface ServiceStatus {
     error?: string;
 }
 
+interface IntegrationCheck {
+    status: string;
+    message: string;
+    [key: string]: any;
+}
+
+interface IntegrationHealth {
+    overall_status: string;
+    checks: {
+        database: IntegrationCheck;
+        auth0: IntegrationCheck;
+        google_kms: IntegrationCheck;
+        google_secret_manager: IntegrationCheck;
+        vertex_ai: IntegrationCheck;
+        translation_api: IntegrationCheck;
+    };
+    timestamp: string;
+}
+
 // Resolution tips for common issues
 const RESOLUTION_TIPS: Record<string, { issue: string; steps: string[] }> = {
-    backend: {
-        issue: 'Backend API not responding',
-        steps: ['Click "Restart Backend" button', 'Check server logs for errors', 'Verify database connection']
-    },
-    frontend: {
-        issue: 'Frontend not reachable',
-        steps: ['Click "Restart Frontend" button', 'Check if Vite dev server is running', 'Review build errors']
-    },
-    db: {
-        issue: 'Database connection failed',
-        steps: ['Check PostgreSQL container status', 'Verify disk space availability', 'Review connection limits']
-    },
-    redis: {
-        issue: 'Redis cache unavailable',
-        steps: ['Click "Restart Redis" button', 'Check Redis container logs', 'Verify memory limits']
-    },
-    caddy: {
-        issue: 'Reverse proxy not routing',
-        steps: ['Click "Restart Caddy" button', 'Check Caddyfile configuration', 'Verify SSL certificates']
-    }
+    backend: { issue: 'Backend API not responding', steps: ['Click "Restart Backend"', 'Check server logs', 'Verify database'] },
+    frontend: { issue: 'Frontend not reachable', steps: ['Click "Restart Frontend"', 'Check if Vite is running', 'Review build errors'] },
+    db: { issue: 'Database connection failed', steps: ['Check PostgreSQL container', 'Verify disk space', 'Review connection limits'] },
+    redis: { issue: 'Redis cache unavailable', steps: ['Click "Restart Redis"', 'Check Redis logs', 'Verify memory limits'] },
+    caddy: { issue: 'Reverse proxy not routing', steps: ['Click "Restart Caddy"', 'Check Caddyfile', 'Verify SSL certificates'] }
 };
 
 export default function OperationsPanel() {
     const [health, setHealth] = useState<HealthDashboard | null>(null);
+    const [integrations, setIntegrations] = useState<IntegrationHealth | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [runbookLoading, setRunbookLoading] = useState<string | null>(null);
     const [lastAction, setLastAction] = useState<RunbookResult | null>(null);
     const dialog = useDialog();
 
-    const fetchHealth = async () => {
+    const fetchAll = async () => {
         setIsLoading(true);
         setError(null);
         try {
-            const data = await api.getHealthDashboard();
-            setHealth(data);
+            // Fetch both infrastructure and integrations health
+            const [healthData, integrationsData] = await Promise.all([
+                api.getHealthDashboard(),
+                fetch('/api/health/', {
+                    headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+                }).then(r => r.ok ? r.json() : null).catch(() => null)
+            ]);
+            setHealth(healthData);
+            setIntegrations(integrationsData);
         } catch (err: any) {
             setError(err.message || 'Failed to fetch system status');
         } finally {
@@ -60,8 +73,8 @@ export default function OperationsPanel() {
     };
 
     useEffect(() => {
-        fetchHealth();
-        const interval = setInterval(fetchHealth, 30000);
+        fetchAll();
+        const interval = setInterval(fetchAll, 30000);
         return () => clearInterval(interval);
     }, []);
 
@@ -79,7 +92,7 @@ export default function OperationsPanel() {
         try {
             const result = await api.executeRunbook(action);
             setLastAction(result);
-            setTimeout(fetchHealth, 2000);
+            setTimeout(fetchAll, 2000);
         } catch (err: any) {
             setLastAction({
                 action,
@@ -97,34 +110,15 @@ export default function OperationsPanel() {
         const colors: Record<string, string> = {
             running: 'bg-green-500/20 text-green-300 border-green-500/30',
             healthy: 'bg-green-500/20 text-green-300 border-green-500/30',
+            configured: 'bg-green-500/20 text-green-300 border-green-500/30',
             stopped: 'bg-red-500/20 text-red-300 border-red-500/30',
             error: 'bg-red-500/20 text-red-300 border-red-500/30',
             unknown: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30',
             not_configured: 'bg-gray-500/20 text-gray-300 border-gray-500/30',
+            disabled: 'bg-gray-500/20 text-gray-300 border-gray-500/30',
+            fallback: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30',
         };
         return colors[status] || colors.unknown;
-    };
-
-    const getIconForService = (name: string) => {
-        const icons: Record<string, typeof Server> = {
-            backend: Server,
-            frontend: Server,
-            db: Database,
-            redis: HardDrive,
-            caddy: Server,
-        };
-        return icons[name] || Server;
-    };
-
-    const getIconColor = (name: string) => {
-        const colors: Record<string, string> = {
-            backend: 'text-blue-400',
-            frontend: 'text-cyan-400',
-            db: 'text-purple-400',
-            redis: 'text-orange-400',
-            caddy: 'text-green-400',
-        };
-        return colors[name] || 'text-blue-400';
     };
 
     const canRestart = (name: string) => ['backend', 'frontend', 'redis', 'caddy'].includes(name);
@@ -136,6 +130,12 @@ export default function OperationsPanel() {
             .map(([name]) => name)
         : [];
 
+    // Count healthy integrations
+    const integrationCounts = integrations ? {
+        healthy: Object.values(integrations.checks).filter(c => c.status === 'healthy' || c.status === 'configured').length,
+        total: Object.keys(integrations.checks).length
+    } : { healthy: 0, total: 6 };
+
     if (error) {
         return (
             <Card className="bg-red-500/10 border-red-500/20">
@@ -145,7 +145,7 @@ export default function OperationsPanel() {
                         <h3 className="text-lg font-semibold text-red-300">Error Loading Dashboard</h3>
                         <p className="text-red-200/80 mt-1">{error}</p>
                     </div>
-                    <Button onClick={fetchHealth} disabled={isLoading}>
+                    <Button onClick={fetchAll} disabled={isLoading}>
                         <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
                         Retry
                     </Button>
@@ -160,163 +160,202 @@ export default function OperationsPanel() {
             <div className="flex items-center justify-between">
                 <div>
                     <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                        <Server className="w-6 h-6 text-blue-400" />
-                        Operations Dashboard
+                        <Activity className="w-6 h-6 text-blue-400" />
+                        System Dashboard
                     </h2>
                     <p className="text-gray-400 text-sm mt-1">
-                        Monitor infrastructure and execute emergency operations
+                        Infrastructure, integrations, and emergency operations
                     </p>
                 </div>
-                <Button onClick={fetchHealth} disabled={isLoading} variant="secondary">
+                <Button onClick={fetchAll} disabled={isLoading} variant="secondary">
                     <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
                     Refresh
                 </Button>
             </div>
 
-            {/* Overall Status Banner */}
+            {/* Status Summary Cards */}
             {health && (
-                <Card className={`
-                    ${health.overall_status === 'healthy' ? 'bg-green-500/10 border-green-500/30' : ''}
-                    ${health.overall_status === 'degraded' ? 'bg-yellow-500/10 border-yellow-500/30' : ''}
-                    ${health.overall_status === 'critical' ? 'bg-red-500/10 border-red-500/30' : ''}
-                `}>
-                    <div className="flex items-center gap-4">
-                        {health.overall_status === 'healthy' ? (
-                            <CheckCircle className="w-6 h-6 text-green-400" />
-                        ) : (
-                            <AlertCircle className="w-6 h-6 text-yellow-400" />
-                        )}
-                        <div className="flex-1">
-                            <span className="text-lg font-semibold text-white capitalize">
-                                System {health.overall_status}
-                            </span>
-                            <span className="text-gray-400 text-sm ml-3">
-                                Last checked: {new Date(health.timestamp).toLocaleTimeString()}
-                            </span>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {/* Infrastructure Status */}
+                    <Card className={`${health.overall_status === 'healthy' ? 'bg-green-500/10 border-green-500/30' : 'bg-yellow-500/10 border-yellow-500/30'}`}>
+                        <div className="flex items-center gap-3">
+                            <Server className="w-8 h-8 text-blue-400" />
+                            <div>
+                                <p className="text-gray-400 text-xs uppercase tracking-wide">Infrastructure</p>
+                                <p className="text-white font-semibold">
+                                    {Object.values(health.services).filter((s: any) => s.status === 'running').length}/{Object.keys(health.services).length} Running
+                                </p>
+                            </div>
+                        </div>
+                    </Card>
+
+                    {/* Integrations Status */}
+                    <Card className={`${integrationCounts.healthy === integrationCounts.total ? 'bg-green-500/10 border-green-500/30' : 'bg-yellow-500/10 border-yellow-500/30'}`}>
+                        <div className="flex items-center gap-3">
+                            <Cloud className="w-8 h-8 text-purple-400" />
+                            <div>
+                                <p className="text-gray-400 text-xs uppercase tracking-wide">Integrations</p>
+                                <p className="text-white font-semibold">
+                                    {integrationCounts.healthy}/{integrationCounts.total} Configured
+                                </p>
+                            </div>
+                        </div>
+                    </Card>
+
+                    {/* Database Status */}
+                    <Card className={`${health.database.status === 'healthy' ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+                        <div className="flex items-center gap-3">
+                            <Database className="w-8 h-8 text-purple-400" />
+                            <div>
+                                <p className="text-gray-400 text-xs uppercase tracking-wide">PostgreSQL</p>
+                                <p className="text-white font-semibold">{health.database.size || '?'}</p>
+                                <p className="text-gray-500 text-xs">{health.database.connections || 0} connections</p>
+                            </div>
+                        </div>
+                    </Card>
+
+                    {/* Cache Status */}
+                    <Card className={`${health.cache.status === 'healthy' ? 'bg-green-500/10 border-green-500/30' : 'bg-yellow-500/10 border-yellow-500/30'}`}>
+                        <div className="flex items-center gap-3">
+                            <HardDrive className="w-8 h-8 text-orange-400" />
+                            <div>
+                                <p className="text-gray-400 text-xs uppercase tracking-wide">Redis Cache</p>
+                                <p className="text-white font-semibold">{health.cache.used_memory || 'N/A'}</p>
+                            </div>
+                        </div>
+                    </Card>
+                </div>
+            )}
+
+            {/* Infrastructure Services */}
+            {health && (
+                <Card>
+                    <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                        <Server className="w-5 h-5 text-blue-400" />
+                        Infrastructure Services
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+                        {Object.entries(health.services).map(([name, service]) => {
+                            const svc = service as ServiceStatus;
+                            return (
+                                <div key={name} className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <span className="text-white font-medium capitalize">{name}</span>
+                                        <span className={`px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(svc.status)}`}>
+                                            {svc.status}
+                                        </span>
+                                    </div>
+                                    <p className="text-gray-500 text-xs truncate mb-2">{svc.uptime || 'Checking...'}</p>
+                                    {canRestart(name) && (
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="w-full text-xs"
+                                            onClick={() => executeRunbook(`restart-${name}`, `Restart ${name}`)}
+                                            disabled={runbookLoading !== null}
+                                        >
+                                            <RotateCcw className="w-3 h-3 mr-1" />
+                                            Restart
+                                        </Button>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </Card>
+            )}
+
+            {/* Cloud Integrations */}
+            {integrations && (
+                <Card>
+                    <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                        <Cloud className="w-5 h-5 text-purple-400" />
+                        Cloud Integrations
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {/* Auth0 */}
+                        <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
+                            <div className="flex items-center gap-3 mb-2">
+                                <Key className="w-5 h-5 text-orange-400" />
+                                <span className="text-white font-medium">Auth0 SSO</span>
+                                <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.auth0.status)}`}>
+                                    {integrations.checks.auth0.status}
+                                </span>
+                            </div>
+                            <p className="text-gray-400 text-xs">{integrations.checks.auth0.message}</p>
+                        </div>
+
+                        {/* Google KMS */}
+                        <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
+                            <div className="flex items-center gap-3 mb-2">
+                                <Shield className="w-5 h-5 text-blue-400" />
+                                <span className="text-white font-medium">Google KMS</span>
+                                <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.google_kms.status)}`}>
+                                    {integrations.checks.google_kms.status}
+                                </span>
+                            </div>
+                            <p className="text-gray-400 text-xs">{integrations.checks.google_kms.message}</p>
+                        </div>
+
+                        {/* Secret Manager */}
+                        <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
+                            <div className="flex items-center gap-3 mb-2">
+                                <Key className="w-5 h-5 text-green-400" />
+                                <span className="text-white font-medium">Secret Manager</span>
+                                <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.google_secret_manager.status)}`}>
+                                    {integrations.checks.google_secret_manager.status}
+                                </span>
+                            </div>
+                            <p className="text-gray-400 text-xs">{integrations.checks.google_secret_manager.message}</p>
+                        </div>
+
+                        {/* Vertex AI */}
+                        <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
+                            <div className="flex items-center gap-3 mb-2">
+                                <Sparkles className="w-5 h-5 text-purple-400" />
+                                <span className="text-white font-medium">Vertex AI</span>
+                                <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.vertex_ai.status)}`}>
+                                    {integrations.checks.vertex_ai.status}
+                                </span>
+                            </div>
+                            <p className="text-gray-400 text-xs">{integrations.checks.vertex_ai.message}</p>
+                        </div>
+
+                        {/* Translation API */}
+                        <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
+                            <div className="flex items-center gap-3 mb-2">
+                                <Languages className="w-5 h-5 text-cyan-400" />
+                                <span className="text-white font-medium">Translation API</span>
+                                <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.translation_api.status)}`}>
+                                    {integrations.checks.translation_api.status}
+                                </span>
+                            </div>
+                            <p className="text-gray-400 text-xs">{integrations.checks.translation_api.message}</p>
+                        </div>
+
+                        {/* Database */}
+                        <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
+                            <div className="flex items-center gap-3 mb-2">
+                                <Database className="w-5 h-5 text-purple-400" />
+                                <span className="text-white font-medium">PostgreSQL</span>
+                                <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.database.status)}`}>
+                                    {integrations.checks.database.status}
+                                </span>
+                            </div>
+                            <p className="text-gray-400 text-xs">{integrations.checks.database.message}</p>
                         </div>
                     </div>
                 </Card>
             )}
 
-            {/* Uniform Services Grid */}
-            {health && (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {Object.entries(health.services).map(([name, service]) => {
-                        const Icon = getIconForService(name);
-                        const svc = service as ServiceStatus;
-                        const showError = svc.status !== 'running' && svc.error;
-
-                        return (
-                            <Card key={name} className="relative">
-                                <div className="flex items-center gap-3 mb-3">
-                                    <div className="p-2 bg-slate-700/50 rounded-lg">
-                                        <Icon className={`w-5 h-5 ${getIconColor(name)}`} />
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <h3 className="font-medium text-white capitalize">{name}</h3>
-                                        <p className="text-gray-400 text-xs truncate">
-                                            {svc.uptime || 'Status check pending'}
-                                        </p>
-                                    </div>
-                                    <span className={`px-2 py-1 text-xs rounded-full border whitespace-nowrap ${getStatusBadge(svc.status)}`}>
-                                        {svc.status}
-                                    </span>
-                                </div>
-
-                                {/* Error message if any */}
-                                {showError && (
-                                    <p className="text-red-300/80 text-xs mb-3 truncate">
-                                        ⚠️ {svc.error}
-                                    </p>
-                                )}
-
-                                {/* All cards get a button for uniformity */}
-                                {canRestart(name) ? (
-                                    <Button
-                                        size="sm"
-                                        variant="secondary"
-                                        className="w-full"
-                                        onClick={() => executeRunbook(`restart-${name}`, `Restart ${name}`)}
-                                        disabled={runbookLoading !== null}
-                                    >
-                                        {runbookLoading === `restart-${name}` ? (
-                                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                        ) : (
-                                            <RotateCcw className="w-4 h-4 mr-2" />
-                                        )}
-                                        Restart {name}
-                                    </Button>
-                                ) : (
-                                    <div className="h-9 flex items-center justify-center text-gray-500 text-xs border border-slate-600/30 rounded-lg bg-slate-800/30">
-                                        Managed by Docker Compose
-                                    </div>
-                                )}
-                            </Card>
-                        );
-                    })}
-                </div>
-            )}
-
-            {/* System Metrics Row */}
-            {health && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {/* Database Metrics */}
-                    <Card className="bg-slate-800/30">
-                        <div className="flex items-center gap-3">
-                            <Database className="w-5 h-5 text-purple-400" />
-                            <div className="flex-1">
-                                <h4 className="font-medium text-white text-sm">PostgreSQL</h4>
-                                <p className="text-gray-400 text-xs">
-                                    {health.database.size || '?'} • {health.database.connections || 0} connections
-                                </p>
-                            </div>
-                            <span className={`px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(health.database.status)}`}>
-                                {health.database.status}
-                            </span>
-                        </div>
-                    </Card>
-
-                    {/* Redis Metrics */}
-                    <Card className="bg-slate-800/30">
-                        <div className="flex items-center gap-3">
-                            <HardDrive className="w-5 h-5 text-orange-400" />
-                            <div className="flex-1">
-                                <h4 className="font-medium text-white text-sm">Redis Cache</h4>
-                                <p className="text-gray-400 text-xs">
-                                    {health.cache.used_memory || 'Unknown'} used
-                                </p>
-                            </div>
-                            <span className={`px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(health.cache.status)}`}>
-                                {health.cache.status}
-                            </span>
-                        </div>
-                    </Card>
-
-                    {/* Last Backup */}
-                    <Card className="bg-slate-800/30">
-                        <div className="flex items-center gap-3">
-                            <Clock className="w-5 h-5 text-green-400" />
-                            <div className="flex-1">
-                                <h4 className="font-medium text-white text-sm">Last Backup</h4>
-                                <p className="text-gray-400 text-xs truncate">
-                                    {health.last_backup?.created
-                                        ? new Date(health.last_backup.created).toLocaleString()
-                                        : 'No backup recorded'}
-                                </p>
-                            </div>
-                        </div>
-                    </Card>
-                </div>
-            )}
-
             {/* Troubleshooting Tips - shown when degraded */}
-            {health && degradedServices.length > 0 && (
+            {degradedServices.length > 0 && (
                 <Card className="bg-amber-500/5 border-amber-500/20">
                     <h3 className="text-lg font-semibold text-amber-300 mb-3 flex items-center gap-2">
                         <Wrench className="w-5 h-5" />
                         Troubleshooting Tips
                     </h3>
-                    <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {degradedServices.map(serviceName => {
                             const tips = RESOLUTION_TIPS[serviceName];
                             if (!tips) return null;
@@ -325,7 +364,7 @@ export default function OperationsPanel() {
                                     <h4 className="font-medium text-white text-sm capitalize mb-2">
                                         {serviceName}: {tips.issue}
                                     </h4>
-                                    <ol className="list-decimal list-inside text-gray-300 text-sm space-y-1">
+                                    <ol className="list-decimal list-inside text-gray-300 text-xs space-y-1">
                                         {tips.steps.map((step, i) => (
                                             <li key={i}>{step}</li>
                                         ))}
@@ -333,15 +372,6 @@ export default function OperationsPanel() {
                                 </div>
                             );
                         })}
-                        <a
-                            href="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/blob/main/docs/DISASTER_RECOVERY.md"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-blue-400 text-sm hover:underline"
-                        >
-                            View full disaster recovery guide
-                            <ExternalLink className="w-3 h-3" />
-                        </a>
                     </div>
                 </Card>
             )}
@@ -352,20 +382,13 @@ export default function OperationsPanel() {
                     <Play className="w-5 h-5 text-green-400" />
                     Emergency Operations
                 </h3>
-                <p className="text-gray-400 text-sm mb-4">
-                    Administrative actions for troubleshooting. All actions are logged.
-                </p>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <Button
                         variant="secondary"
                         onClick={() => executeRunbook('restart-all', 'Restart All Services')}
                         disabled={runbookLoading !== null}
                     >
-                        {runbookLoading === 'restart-all' ? (
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        ) : (
-                            <RotateCcw className="w-4 h-4 mr-2" />
-                        )}
+                        {runbookLoading === 'restart-all' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RotateCcw className="w-4 h-4 mr-2" />}
                         Restart All
                     </Button>
                     <Button
@@ -373,11 +396,7 @@ export default function OperationsPanel() {
                         onClick={() => executeRunbook('clear-cache', 'Clear Cache')}
                         disabled={runbookLoading !== null}
                     >
-                        {runbookLoading === 'clear-cache' ? (
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        ) : (
-                            <Trash2 className="w-4 h-4 mr-2" />
-                        )}
+                        {runbookLoading === 'clear-cache' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
                         Clear Cache
                     </Button>
                     <Button
@@ -385,16 +404,12 @@ export default function OperationsPanel() {
                         onClick={() => executeRunbook('vacuum', 'DB Maintenance')}
                         disabled={runbookLoading !== null}
                     >
-                        {runbookLoading === 'vacuum' ? (
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        ) : (
-                            <Database className="w-4 h-4 mr-2" />
-                        )}
+                        {runbookLoading === 'vacuum' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Database className="w-4 h-4 mr-2" />}
                         DB Vacuum
                     </Button>
                     <Button
                         variant="secondary"
-                        onClick={fetchHealth}
+                        onClick={fetchAll}
                         disabled={isLoading}
                     >
                         <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
@@ -402,6 +417,21 @@ export default function OperationsPanel() {
                     </Button>
                 </div>
             </Card>
+
+            {/* Last Backup Info */}
+            {health?.last_backup?.created && (
+                <Card className="bg-slate-800/30">
+                    <div className="flex items-center gap-3">
+                        <Clock className="w-5 h-5 text-green-400" />
+                        <div>
+                            <span className="text-white font-medium">Last Backup</span>
+                            <span className="text-gray-400 text-sm ml-3">
+                                {new Date(health.last_backup.created).toLocaleString()}
+                            </span>
+                        </div>
+                    </div>
+                </Card>
+            )}
 
             {/* Last Action Result */}
             <AnimatePresence>
@@ -411,27 +441,14 @@ export default function OperationsPanel() {
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -10 }}
                     >
-                        <Card className={`
-                            ${lastAction.status === 'success' ? 'bg-green-500/10 border-green-500/30' : ''}
-                            ${lastAction.status === 'error' ? 'bg-red-500/10 border-red-500/30' : ''}
-                        `}>
+                        <Card className={`${lastAction.status === 'success' ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
                             <div className="flex items-center gap-3">
-                                {lastAction.status === 'success' ? (
-                                    <CheckCircle className="w-5 h-5 text-green-400" />
-                                ) : (
-                                    <XCircle className="w-5 h-5 text-red-400" />
-                                )}
+                                {lastAction.status === 'success' ? <CheckCircle className="w-5 h-5 text-green-400" /> : <XCircle className="w-5 h-5 text-red-400" />}
                                 <div className="flex-1">
-                                    <span className="font-medium text-white">
-                                        {lastAction.action}: {lastAction.status}
-                                    </span>
-                                    <span className="text-gray-400 text-sm ml-2">
-                                        at {new Date(lastAction.timestamp).toLocaleTimeString()}
-                                    </span>
+                                    <span className="font-medium text-white">{lastAction.action}: {lastAction.status}</span>
+                                    <span className="text-gray-400 text-sm ml-2">at {new Date(lastAction.timestamp).toLocaleTimeString()}</span>
                                 </div>
-                                <Button size="sm" variant="ghost" onClick={() => setLastAction(null)}>
-                                    Dismiss
-                                </Button>
+                                <Button size="sm" variant="ghost" onClick={() => setLastAction(null)}>Dismiss</Button>
                             </div>
                         </Card>
                     </motion.div>
@@ -442,7 +459,7 @@ export default function OperationsPanel() {
             {isLoading && !health && (
                 <div className="flex items-center justify-center py-12">
                     <RefreshCw className="w-8 h-8 text-blue-400 animate-spin" />
-                    <span className="ml-3 text-gray-400">Loading operations dashboard...</span>
+                    <span className="ml-3 text-gray-400">Loading system dashboard...</span>
                 </div>
             )}
         </div>
