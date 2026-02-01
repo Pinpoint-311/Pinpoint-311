@@ -1934,8 +1934,7 @@ export default function AdminConsole() {
 
                         {/* Maps Configuration - part of System Settings */}
                         {currentTab === 'system' && (
-                            <div className="mt-16 pt-10 border-t-2 border-white/20">
-                                <div className="w-full h-px bg-gradient-to-r from-transparent via-white/30 to-transparent mb-8" />
+                            <div className="mt-12 p-6 rounded-2xl bg-white/5 backdrop-blur-sm border border-white/10">
                                 <div>
                                     <h2 className="text-2xl font-bold text-white mb-2">Maps Configuration</h2>
                                     <p className="text-white/60">
@@ -2897,8 +2896,7 @@ export default function AdminConsole() {
 
                         {/* Audit Logs - part of Compliance */}
                         {currentTab === 'compliance' && (
-                            <div className="mt-16 pt-10 border-t-2 border-white/20">
-                                <div className="w-full h-px bg-gradient-to-r from-transparent via-white/30 to-transparent mb-8" />
+                            <div className="mt-12 p-6 rounded-2xl bg-white/5 backdrop-blur-sm border border-white/10">
                                 <AuditLogViewer />
                             </div>
                         )}
