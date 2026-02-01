@@ -376,6 +376,31 @@ async def emergency_access(
     return HTMLResponse(content=html_response)
 
 
+@router.get("/emergency")
+async def emergency_access_get(
+    request: Request,
+    emergency_token: str = Query(..., description="Emergency access token"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Emergency access magic link endpoint (GET version for browser clicks).
+    
+    Call the POST endpoint logic by forwarding the token.
+    """
+    # Reuse the POST endpoint logic by creating a mock request body
+    class MockRequest:
+        def __init__(self, original_request):
+            self.client = original_request.client
+            self.headers = original_request.headers
+            self._json_data = {"emergency_token": emergency_token}
+        
+        async def json(self):
+            return self._json_data
+    
+    mock_request = MockRequest(request)
+    return await emergency_access(mock_request, db)
+
+
 @router.get("/login")
 async def initiate_login(
     redirect_uri: str = Query(..., description="Frontend callback URL"),
