@@ -298,26 +298,28 @@ function GCPSetupForm({ form, setForm, onSubmit, onSkip, loading, success }: GCP
             </div>
 
             {/* Required Services */}
-            <div className="grid grid-cols-2 gap-3 mb-6">
+            <div className="grid grid-cols-2 gap-4 mb-8">
                 {[
                     { name: 'Secret Manager', desc: 'Credential storage', icon: Key },
                     { name: 'Cloud KMS', desc: 'PII encryption', icon: Lock },
                     { name: 'Translation API', desc: 'Multi-language', icon: Sparkles },
                     { name: 'Vertex AI', desc: 'AI analysis', icon: Database },
                 ].map(({ name, desc, icon: ItemIcon }) => (
-                    <div key={name} className="bg-white/5 rounded-lg p-3 flex items-center space-x-3">
-                        <ItemIcon className="w-5 h-5 text-white/50" />
+                    <div key={name} className="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center">
+                            <ItemIcon className="w-5 h-5 text-indigo-400" />
+                        </div>
                         <div>
-                            <p className="text-white text-sm font-medium">{name}</p>
+                            <p className="text-white text-sm font-semibold">{name}</p>
                             <p className="text-white/50 text-xs">{desc}</p>
                         </div>
                     </div>
                 ))}
             </div>
 
-            <div className="space-y-4 mb-6">
+            <div className="space-y-5 mb-8">
                 <div>
-                    <label className="block text-sm font-medium text-white/80 mb-2">
+                    <label className="block text-sm font-medium text-white/80 mb-3">
                         GCP Project ID
                     </label>
                     <input
@@ -364,7 +366,7 @@ function GCPSetupForm({ form, setForm, onSubmit, onSkip, loading, success }: GCP
                 </div>
             </div>
 
-            <div className="bg-white/5 rounded-xl p-4 mb-6">
+            <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-8">
                 <p className="text-sm font-medium text-white/70 mb-2">Need a service account?</p>
                 <a
                     href="https://console.cloud.google.com/iam-admin/serviceaccounts"
@@ -372,22 +374,22 @@ function GCPSetupForm({ form, setForm, onSubmit, onSkip, loading, success }: GCP
                     rel="noopener noreferrer"
                     className="text-sm text-indigo-400 hover:text-indigo-300 flex items-center"
                 >
-                    <ExternalLink className="w-4 h-4 mr-1" />
+                    <ExternalLink className="w-4 h-4 mr-2" />
                     Google Cloud Console → IAM → Service Accounts
                 </a>
             </div>
 
-            <div className="flex gap-4">
+            <div className="flex gap-4 pt-2">
                 <button
                     onClick={onSkip}
-                    className="flex-1 bg-white/10 hover:bg-white/20 text-white font-medium py-3 px-6 rounded-lg transition-colors"
+                    className="flex-1 bg-white/10 hover:bg-white/15 border border-white/20 text-white font-medium py-3.5 px-6 rounded-xl transition-all"
                 >
                     Skip for Now
                 </button>
                 <button
                     onClick={onSubmit}
                     disabled={loading || !form.project_id || !form.service_account_json}
-                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-white/10 disabled:cursor-not-allowed text-white font-medium py-3 px-6 rounded-lg transition-colors flex items-center justify-center"
+                    className="flex-1 bg-indigo-600 hover:bg-indigo-500 disabled:bg-white/10 disabled:text-white/40 disabled:cursor-not-allowed text-white font-semibold py-3.5 px-6 rounded-xl transition-all shadow-lg shadow-indigo-500/25 disabled:shadow-none flex items-center justify-center"
                 >
                     {loading ? (
                         <>
