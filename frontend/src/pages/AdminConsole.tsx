@@ -67,6 +67,7 @@ import { User, ServiceDefinition, SystemSettings, SystemSecret, Department } fro
 import { usePageNavigation } from '../hooks/usePageNavigation';
 import SystemHealthDashboard from '../components/SystemHealthDashboard';
 import AuditLogViewer from '../components/AuditLogViewer';
+import VersionSwitcher from '../components/VersionSwitcher';
 
 // Icon library for service categories
 const ICON_LIBRARY: { name: string; icon: LucideIcon }[] = [
@@ -930,26 +931,16 @@ export default function AdminConsole() {
                         {/* System Actions */}
                         <div className="pt-4 border-t border-white/10">
                             <p className="text-xs font-medium text-white/40 uppercase tracking-wider px-3 mb-3">
-                                Actions
+                                Version Control
                             </p>
-                            <Button
-                                variant="secondary"
-                                size="sm"
-                                className="w-full mb-2"
-                                leftIcon={<RefreshCw className={`w-4 h-4 ${isUpdating ? 'animate-spin' : ''}`} />}
-                                onClick={handleSystemUpdate}
-                                disabled={isUpdating}
-                            >
-                                {isUpdating ? 'Updating...' : 'Pull Updates'}
-                            </Button>
-                            {updateMessage && (
-                                <p className="mt-2 text-xs text-center text-white/60">{updateMessage}</p>
-                            )}
+                            <div className="px-3 mb-4">
+                                <VersionSwitcher />
+                            </div>
 
                             <Button
                                 variant="primary"
                                 size="sm"
-                                className="w-full mt-2"
+                                className="w-full"
                                 onClick={() => navigate('/staff')}
                             >
                                 Staff Dashboard →

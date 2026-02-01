@@ -1152,6 +1152,325 @@ async def update_system(_: User = Depends(get_current_admin)):
         )
 
 
+# ============ Version Switcher ============
+
+GITHUB_REPO = "WestWindsorForward/WWF-Open-Source-311-Template"
+GITHUB_API_BASE = "https://api.github.com"
+
+
+@router.get("/current-version")
+async def get_current_version(_: User = Depends(get_current_admin)):
+    """Get current git version information (admin only)."""
+    try:
+        project_root = os.environ.get("PROJECT_ROOT", "/project")
+        
+        # Get current commit SHA
+        sha_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        current_sha = sha_result.stdout.strip()[:7] if sha_result.returncode == 0 else "unknown"
+        
+        # Get current tag (if on a tag)
+        tag_result = subprocess.run(
+            ["git", "describe", "--tags", "--exact-match", "HEAD"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        current_tag = tag_result.stdout.strip() if tag_result.returncode == 0 else None
+        
+        # Get commit date
+        date_result = subprocess.run(
+            ["git", "log", "-1", "--format=%ci"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        commit_date = date_result.stdout.strip() if date_result.returncode == 0 else None
+        
+        return {
+            "sha": current_sha,
+            "tag": current_tag,
+            "commit_date": commit_date,
+            "display": current_tag or f"@{current_sha}"
+        }
+    except Exception as e:
+        logger.error(f"Failed to get current version: {e}")
+        return {"sha": "unknown", "tag": None, "commit_date": None, "display": "unknown"}
+
+
+@router.get("/releases")
+async def get_releases(_: User = Depends(get_current_admin)):
+    """Fetch available releases from GitHub (admin only)."""
+    import httpx
+    
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(
+                f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/releases",
+                headers={"Accept": "application/vnd.github.v3+json"}
+            )
+            
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"GitHub API error: {response.text}"
+                )
+            
+            releases = response.json()
+            
+            # Also get recent commits from main for unreleased versions
+            commits_response = await client.get(
+                f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/commits",
+                params={"per_page": 5},
+                headers={"Accept": "application/vnd.github.v3+json"}
+            )
+            
+            recent_commits = []
+            if commits_response.status_code == 200:
+                for commit in commits_response.json()[:5]:
+                    recent_commits.append({
+                        "sha": commit["sha"][:7],
+                        "full_sha": commit["sha"],
+                        "message": commit["commit"]["message"].split("\n")[0][:80],
+                        "date": commit["commit"]["committer"]["date"],
+                        "author": commit["commit"]["author"]["name"]
+                    })
+            
+            return {
+                "releases": [
+                    {
+                        "tag": r["tag_name"],
+                        "name": r["name"] or r["tag_name"],
+                        "body": r["body"] or "No release notes.",
+                        "published_at": r["published_at"],
+                        "author": r["author"]["login"] if r.get("author") else None,
+                        "html_url": r["html_url"],
+                        "prerelease": r["prerelease"],
+                        "target_commitish": r["target_commitish"]
+                    }
+                    for r in releases
+                ],
+                "recent_commits": recent_commits
+            }
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="GitHub API request timed out"
+        )
+    except Exception as e:
+        logger.error(f"Failed to fetch releases: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@router.get("/releases/{ref}/security")
+async def get_release_security(ref: str, _: User = Depends(get_current_admin)):
+    """
+    Fetch security verification status for a specific release/commit (admin only).
+    Returns workflow run status for security scans, CodeQL, accessibility, etc.
+    """
+    import httpx
+    
+    # Workflow names to check
+    SECURITY_WORKFLOWS = {
+        "Security Scan (OWASP ZAP)": {"icon": "🛡️", "key": "owasp_zap"},
+        "CodeQL": {"icon": "🔒", "key": "codeql"},
+        "Build and Publish Docker Images": {"icon": "📦", "key": "docker_build"},
+        "Accessibility Audit (axe-core)": {"icon": "♿", "key": "accessibility"}
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            # First, resolve the ref to a commit SHA if it's a tag
+            commit_sha = ref
+            if ref.startswith("v") or not ref.isalnum():
+                # It's likely a tag, resolve to SHA
+                tag_response = await client.get(
+                    f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/git/refs/tags/{ref}",
+                    headers={"Accept": "application/vnd.github.v3+json"}
+                )
+                if tag_response.status_code == 200:
+                    tag_data = tag_response.json()
+                    # Handle both lightweight and annotated tags
+                    if tag_data["object"]["type"] == "commit":
+                        commit_sha = tag_data["object"]["sha"]
+                    else:
+                        # Annotated tag - need to dereference
+                        annotated_response = await client.get(
+                            tag_data["object"]["url"],
+                            headers={"Accept": "application/vnd.github.v3+json"}
+                        )
+                        if annotated_response.status_code == 200:
+                            commit_sha = annotated_response.json().get("object", {}).get("sha", ref)
+            
+            # Get workflow runs for this commit
+            runs_response = await client.get(
+                f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/actions/runs",
+                params={"head_sha": commit_sha, "per_page": 50},
+                headers={"Accept": "application/vnd.github.v3+json"}
+            )
+            
+            verification = {}
+            
+            if runs_response.status_code == 200:
+                runs = runs_response.json().get("workflow_runs", [])
+                
+                for workflow_name, info in SECURITY_WORKFLOWS.items():
+                    matching_runs = [r for r in runs if r["name"] == workflow_name]
+                    
+                    if matching_runs:
+                        # Get the most recent run for this workflow
+                        latest_run = matching_runs[0]
+                        verification[info["key"]] = {
+                            "name": workflow_name,
+                            "icon": info["icon"],
+                            "status": latest_run["status"],  # queued, in_progress, completed
+                            "conclusion": latest_run.get("conclusion"),  # success, failure, neutral, cancelled, skipped, timed_out
+                            "run_url": latest_run["html_url"],
+                            "run_id": latest_run["id"],
+                            "created_at": latest_run["created_at"],
+                            "passed": latest_run.get("conclusion") == "success"
+                        }
+                    else:
+                        verification[info["key"]] = {
+                            "name": workflow_name,
+                            "icon": info["icon"],
+                            "status": "not_found",
+                            "conclusion": None,
+                            "run_url": None,
+                            "passed": None
+                        }
+            
+            # Calculate overall security score
+            checks = [v for v in verification.values() if v.get("conclusion") is not None]
+            passed_checks = len([v for v in checks if v.get("passed")])
+            total_checks = len(checks)
+            
+            return {
+                "ref": ref,
+                "commit_sha": commit_sha[:7] if len(commit_sha) > 7 else commit_sha,
+                "verification": verification,
+                "summary": {
+                    "passed": passed_checks,
+                    "total": total_checks,
+                    "all_passed": passed_checks == total_checks and total_checks > 0,
+                    "score": f"{passed_checks}/{total_checks}" if total_checks > 0 else "N/A"
+                }
+            }
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="GitHub API request timed out"
+        )
+    except Exception as e:
+        logger.error(f"Failed to fetch security status: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@router.post("/switch-version")
+async def switch_version(
+    ref: str,
+    _: User = Depends(get_current_admin)
+):
+    """
+    Switch to a specific version/release (admin only).
+    This checks out a specific git ref (tag or commit) and may require container restart.
+    """
+    try:
+        project_root = os.environ.get("PROJECT_ROOT", "/project")
+        
+        # Add safe directory config
+        subprocess.run(
+            ["git", "config", "--global", "--add", "safe.directory", project_root],
+            cwd=project_root,
+            capture_output=True,
+            timeout=10
+        )
+        
+        # Fetch all tags and branches
+        fetch_result = subprocess.run(
+            ["git", "fetch", "--all", "--tags"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        if fetch_result.returncode != 0:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Git fetch failed: {fetch_result.stderr}"
+            )
+        
+        # Checkout the specified ref
+        checkout_result = subprocess.run(
+            ["git", "checkout", ref],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        if checkout_result.returncode != 0:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Git checkout failed: {checkout_result.stderr}"
+            )
+        
+        # Get the new SHA
+        sha_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        new_sha = sha_result.stdout.strip()[:7] if sha_result.returncode == 0 else "unknown"
+        
+        # Check what was updated to determine restart needs
+        git_output = checkout_result.stdout.strip() + checkout_result.stderr.strip()
+        needs_restart = any(x in git_output.lower() for x in [
+            'requirements.txt', 'dockerfile', 'docker-compose', 'package.json'
+        ])
+        
+        return {
+            "status": "success",
+            "message": f"Switched to {ref}. " + (
+                "Container restart required for dependency changes."
+                if needs_restart
+                else "Code changes will reload automatically."
+            ),
+            "ref": ref,
+            "new_sha": new_sha,
+            "needs_restart": needs_restart,
+            "git_output": git_output
+        }
+    
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Switch operation timed out"
+        )
+    except Exception as e:
+        logger.error(f"Failed to switch version: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
 # ============ Custom Domain ============
 
 @router.post("/domain/configure")
