@@ -1,0 +1,61 @@
+name: Accessibility Audit (axe-core)
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 5 * * 1'  # Weekly on Monday at 5am UTC
+  workflow_dispatch:
+
+jobs:
+  accessibility:
+    name: WCAG 2.1 AA Audit
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install axe-core CLI
+        run: npm install -g @axe-core/cli
+
+      - name: Run Accessibility Audit - Home Page
+        run: |
+          axe https://311.westwindsorforward.org \
+            --tags wcag2a,wcag2aa,wcag21a,wcag21aa \
+            --save accessibility-home.json || true
+
+      - name: Run Accessibility Audit - Staff Login
+        run: |
+          axe https://311.westwindsorforward.org/login \
+            --tags wcag2a,wcag2aa,wcag21a,wcag21aa \
+            --save accessibility-login.json || true
+
+      - name: Generate Report Summary
+        run: |
+          echo "## Accessibility Audit Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          for file in accessibility-*.json; do
+            if [ -f "$file" ]; then
+              violations=$(cat "$file" | jq '[.[].violations | length] | add // 0')
+              passes=$(cat "$file" | jq '[.[].passes | length] | add // 0')
+              echo "### ${file%.json}" >> $GITHUB_STEP_SUMMARY
+              echo "- ✅ Passes: $passes" >> $GITHUB_STEP_SUMMARY
+              echo "- ⚠️ Violations: $violations" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+      - name: Upload Accessibility Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: accessibility-reports
+          path: accessibility-*.json
+          retention-days: 30

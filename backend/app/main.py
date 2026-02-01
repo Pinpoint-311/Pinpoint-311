@@ -138,3 +138,13 @@ async def root():
         "docs": "/api/docs",
         "health": "/api/health"
     }
+
+
+@app.get("/api/sentry-debug")
+async def sentry_debug():
+    """Test endpoint to verify Sentry integration. Raises an intentional error."""
+    if not SENTRY_DSN:
+        return {"status": "sentry_not_configured", "message": "Set SENTRY_DSN env var to enable"}
+    # Intentional error for testing
+    raise Exception("Sentry test error - this is intentional!")
+
