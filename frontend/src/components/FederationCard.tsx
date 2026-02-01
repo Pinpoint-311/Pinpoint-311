@@ -71,6 +71,26 @@ export default function FederationCard() {
         }
     };
 
+    const handleSetupFederation = async () => {
+        setActionLoading(true);
+        setError(null);
+        setSuccess(null);
+
+        try {
+            const result = await api.setupFederation();
+            if (result.status === 'success') {
+                setSuccess('Workload Identity Federation configured! You can now test it or delete the bootstrap key.');
+                fetchStatus();
+            } else {
+                setError(result.error || 'Federation setup failed');
+            }
+        } catch (err: any) {
+            setError(err.message || 'Federation setup failed');
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
     if (loading) {
         return (
             <Card className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 border-slate-700/50">
@@ -225,9 +245,24 @@ export default function FederationCard() {
                                 </div>
                             )}
                         </>
+                    ) : status?.can_setup ? (
+                        <div className="space-y-2">
+                            <p className="text-amber-300 text-sm">
+                                GCP and Auth0 are configured. Click below to enable keyless authentication.
+                            </p>
+                            <Button
+                                size="sm"
+                                variant="primary"
+                                onClick={handleSetupFederation}
+                                disabled={actionLoading}
+                            >
+                                {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
+                                <span className="ml-2">Setup Workload Identity Federation</span>
+                            </Button>
+                        </div>
                     ) : (
                         <p className="text-gray-400 text-sm">
-                            Federation will be automatically configured when Auth0 is set up.
+                            Configure Auth0 in the Setup Wizard to enable federation.
                         </p>
                     )}
                 </div>
