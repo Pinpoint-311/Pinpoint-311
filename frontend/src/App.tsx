@@ -8,6 +8,7 @@ import ResidentPortal from './pages/ResidentPortal';
 import StaffDashboard from './pages/StaffDashboard';
 import AdminConsole from './pages/AdminConsole';
 import { ResearchLab } from './pages/ResearchLab';
+import { SetupWizard } from './pages/SetupWizard';
 import Login from './pages/Login';
 
 // Protected route wrapper
@@ -62,6 +63,14 @@ function AppRoutes() {
                 element={
                     <ProtectedRoute requiredRole="admin">
                         <AdminConsole />
+                    </ProtectedRoute>
+                }
+            />
+            <Route
+                path="/setup"
+                element={
+                    <ProtectedRoute requiredRole="admin">
+                        <SetupWizard />
                     </ProtectedRoute>
                 }
             />

@@ -697,6 +697,41 @@ class ApiClient {
     async cleanupBackups(): Promise<{ status: string; deleted_count: number; deleted: string[] }> {
         return this.request('/system/backups/cleanup', { method: 'POST' });
     }
+
+    // ========== Setup Wizard ==========
+
+    async getSetupStatus(): Promise<{
+        auth0_configured: boolean;
+        gcp_configured: boolean;
+        auth0_details?: any;
+        gcp_details?: any;
+    }> {
+        return this.request('/setup/status');
+    }
+
+    async configureAuth0(data: {
+        domain: string;
+        management_client_id: string;
+        management_client_secret: string;
+        callback_url: string;
+    }): Promise<{
+        success: boolean;
+        message: string;
+        domain: string;
+        client_id: string;
+    }> {
+        return this.request('/setup/auth0/configure', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async verifySetup(): Promise<{
+        auth0: { configured: boolean; reachable: boolean; error: string | null; domain?: string };
+        gcp: { configured: boolean; reachable: boolean; error: string | null };
+    }> {
+        return this.request('/setup/verify', { method: 'POST' });
+    }
 }
 
 // Notification Preferences type
