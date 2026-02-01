@@ -2169,22 +2169,41 @@ async def get_health_dashboard(
         "uptime": "Active (responding to requests)"
     }
     
-    # Check frontend via socket connection to Docker service (Vite dev server on 5173)
-    try:
-        import socket
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2)
-        result = sock.connect_ex(('frontend', 5173))
-        sock.close()
-        if result == 0:
-            health["services"]["frontend"] = {
-                "status": "running",
-                "uptime": "Vite dev server active"
-            }
-        else:
-            health["services"]["frontend"] = {"status": "stopped", "uptime": "Port 5173 not reachable"}
-    except Exception as e:
-        health["services"]["frontend"] = {"status": "unknown", "error": str(e)[:50]}
+    # Check frontend via socket - try configured port or common ports
+    import os
+    frontend_ports = []
+    # Check env var first
+    if os.getenv("FRONTEND_PORT"):
+        frontend_ports.append(int(os.getenv("FRONTEND_PORT")))
+    # Common frontend ports (Vite default, then others)
+    frontend_ports.extend([5173, 3000, 80, 8080])
+    # Remove duplicates while preserving order
+    frontend_ports = list(dict.fromkeys(frontend_ports))
+    
+    frontend_found = False
+    for port in frontend_ports:
+        try:
+            import socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            result = sock.connect_ex(('frontend', port))
+            sock.close()
+            if result == 0:
+                health["services"]["frontend"] = {
+                    "status": "running",
+                    "uptime": f"Port {port} active"
+                }
+                frontend_found = True
+                break
+        except Exception:
+            continue
+    
+    if not frontend_found:
+        health["services"]["frontend"] = {
+            "status": "stopped", 
+            "uptime": f"Checked ports: {frontend_ports[:3]}",
+            "error": "No ports reachable"
+        }
     
     # Database - checked below via SQL
     health["services"]["db"] = {"status": "pending", "uptime": "Checking..."}
