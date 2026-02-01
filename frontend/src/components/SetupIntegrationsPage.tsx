@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { Card, Button, Input, Select, Badge } from './ui';
 import { SystemSecret } from '../types';
+import FederationCard from './FederationCard';
 
 interface SetupIntegrationsPageProps {
     secrets: SystemSecret[];
@@ -84,6 +85,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                     </Button>
                 </div>
             </Card>
+
+            {/* Workload Identity Federation */}
+            <FederationCard />
 
             {/* Required Integrations */}
             <div>
