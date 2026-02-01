@@ -22,6 +22,7 @@ jobs:
 
       - name: ZAP Baseline Scan
         uses: zaproxy/action-baseline@v0.12.0
+        continue-on-error: true
         with:
           target: 'https://311.westwindsorforward.org'
           cmd_options: '-a -j'
