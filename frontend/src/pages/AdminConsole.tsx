@@ -1358,9 +1358,20 @@ export default function AdminConsole() {
                                                 <h3 className="font-semibold text-white">🔐 Auth0 SSO (Required)</h3>
                                                 <p className="text-sm text-white/50">Staff authentication with MFA & passkeys</p>
                                             </div>
-                                            {secrets.find(s => s.key_name === 'ZITADEL_DOMAIN')?.is_configured && (
+                                            {secrets.find(s => s.key_name === 'AUTH0_DOMAIN')?.is_configured && (
                                                 <Badge variant="success">Configured</Badge>
                                             )}
+                                        </div>
+
+                                        <div className="flex items-start gap-2 mb-4">
+                                            <button
+                                                onClick={() => window.location.href = '/setup'}
+                                                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors"
+                                            >
+                                                <Sparkles className="w-4 h-4" />
+                                                Use Setup Wizard
+                                            </button>
+                                            <span className="text-sm text-white/50 self-center">or configure manually below</span>
                                         </div>
 
                                         <div className="text-sm text-blue-300 flex items-start gap-2 mb-4">
@@ -1376,9 +1387,9 @@ export default function AdminConsole() {
 
                                         <div className="grid grid-cols-1 gap-4">
                                             {[
-                                                { key: 'ZITADEL_DOMAIN', label: 'Domain', placeholder: 'yourorg-abc123.zitadel.cloud', isPassword: false },
-                                                { key: 'ZITADEL_CLIENT_ID', label: 'Client ID', placeholder: 'abc123...', isPassword: false },
-                                                { key: 'ZITADEL_CLIENT_SECRET', label: 'Client Secret', placeholder: '********', isPassword: true },
+                                                { key: 'AUTH0_DOMAIN', label: 'Domain', placeholder: 'yourorg.us.auth0.com', isPassword: false },
+                                                { key: 'AUTH0_CLIENT_ID', label: 'Client ID', placeholder: 'abc123...', isPassword: false },
+                                                { key: 'AUTH0_CLIENT_SECRET', label: 'Client Secret', placeholder: '********', isPassword: true },
                                             ].map(({ key, label, placeholder, isPassword }) => {
                                                 const secret = secrets.find(s => s.key_name === key);
                                                 const isConfigured = secret?.is_configured;

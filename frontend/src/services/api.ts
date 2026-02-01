@@ -726,6 +726,20 @@ class ApiClient {
         });
     }
 
+    async configureGCP(data: {
+        project_id: string;
+        service_account_json: string;
+    }): Promise<{
+        success: boolean;
+        message: string;
+        project_id: string;
+    }> {
+        return this.request('/setup/gcp/configure', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
     async verifySetup(): Promise<{
         auth0: { configured: boolean; reachable: boolean; error: string | null; domain?: string };
         gcp: { configured: boolean; reachable: boolean; error: string | null };

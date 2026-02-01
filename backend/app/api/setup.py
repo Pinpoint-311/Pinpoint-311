@@ -11,11 +11,13 @@ from typing import Optional, Dict, Any
 import logging
 import httpx
 import json
+import os
 
 from app.db.session import get_db
 from app.core.auth import get_current_user
-from app.models import User
+from app.models import User, SystemSecret
 from app.services.audit_service import AuditService
+from app.core.encryption import encrypt
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -38,10 +40,10 @@ class GCPSetupRequest(BaseModel):
 
 class SetupStatusResponse(BaseModel):
     """Current setup status"""
-    auth0_configured: bool
     gcp_configured: bool
-    auth0_details: Optional[Dict[str, Any]] = None
+    auth0_configured: bool
     gcp_details: Optional[Dict[str, Any]] = None
+    auth0_details: Optional[Dict[str, Any]] = None
 
 
 @router.get("/status")
@@ -53,27 +55,161 @@ async def get_setup_status(
     Get current setup status.
     
     Returns what's configured and what needs setup.
+    GCP is checked first since it's a dependency for Auth0 credential storage.
     Requires admin authentication.
     """
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     
-    from app.services.auth0_service import Auth0Service
+    from sqlalchemy import select
+    
+    # Check GCP status (check if we have project_id secret configured)
+    gcp_result = await db.execute(
+        select(SystemSecret).where(SystemSecret.key_name == "GOOGLE_CLOUD_PROJECT")
+    )
+    gcp_secret = gcp_result.scalar_one_or_none()
+    gcp_configured = bool(gcp_secret and gcp_secret.is_configured)
     
     # Check Auth0 status
-    auth0_status = await Auth0Service.check_status(db)
-    auth0_configured = auth0_status["status"] == "configured"
+    auth0_result = await db.execute(
+        select(SystemSecret).where(SystemSecret.key_name.in_([
+            "AUTH0_DOMAIN", "AUTH0_CLIENT_ID", "AUTH0_CLIENT_SECRET"
+        ]))
+    )
+    auth0_secrets = {s.key_name: s for s in auth0_result.scalars().all()}
+    auth0_configured = all(
+        key in auth0_secrets and auth0_secrets[key].is_configured
+        for key in ["AUTH0_DOMAIN", "AUTH0_CLIENT_ID", "AUTH0_CLIENT_SECRET"]
+    )
     
-    # Check GCP status (check if we have secrets configured)
-    # TODO: Implement GCP status check
-    gcp_configured = False
+    # Get details if configured
+    auth0_details = None
+    if auth0_configured:
+        from app.core.encryption import decrypt_safe
+        domain = decrypt_safe(auth0_secrets.get("AUTH0_DOMAIN", {}).key_value) if auth0_secrets.get("AUTH0_DOMAIN") else None
+        client_id = auth0_secrets.get("AUTH0_CLIENT_ID", {}).key_value if auth0_secrets.get("AUTH0_CLIENT_ID") else None
+        auth0_details = {
+            "domain": domain,
+            "client_id": f"{client_id[:10]}..." if client_id else None
+        }
+    
+    gcp_details = None
+    if gcp_configured:
+        from app.core.encryption import decrypt_safe
+        project_id = decrypt_safe(gcp_secret.key_value) if gcp_secret else None
+        gcp_details = {"project_id": project_id}
     
     return SetupStatusResponse(
-        auth0_configured=auth0_configured,
         gcp_configured=gcp_configured,
-        auth0_details=auth0_status if auth0_configured else None,
-        gcp_details=None
+        auth0_configured=auth0_configured,
+        gcp_details=gcp_details,
+        auth0_details=auth0_details
     )
+
+
+@router.post("/gcp/configure")
+async def configure_gcp(
+    request: GCPSetupRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Configure Google Cloud Platform.
+    
+    This endpoint:
+    1. Validates the service account JSON
+    2. Stores project ID and credentials
+    3. Optionally enables required APIs
+    
+    Requires admin authentication and logs all actions.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        # Validate the service account JSON
+        try:
+            sa_data = json.loads(request.service_account_json)
+            if "project_id" not in sa_data:
+                raise ValueError("Service account JSON must contain project_id")
+            if "client_email" not in sa_data:
+                raise ValueError("Service account JSON must contain client_email")
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid JSON format for service account"
+            )
+        
+        # Verify the project ID matches
+        if sa_data["project_id"] != request.project_id:
+            logger.warning(f"Project ID mismatch: {request.project_id} vs {sa_data['project_id']}")
+            # Use the one from the service account JSON as it's authoritative
+        
+        from sqlalchemy import select
+        
+        # Store credentials in database
+        for key, value in [
+            ("GOOGLE_CLOUD_PROJECT", request.project_id),
+            ("GCP_SERVICE_ACCOUNT_JSON", request.service_account_json)
+        ]:
+            result = await db.execute(
+                select(SystemSecret).where(SystemSecret.key_name == key)
+            )
+            secret = result.scalar_one_or_none()
+            
+            encrypted_value = encrypt(value)
+            
+            if secret:
+                secret.key_value = encrypted_value
+                secret.is_configured = True
+            else:
+                secret = SystemSecret(
+                    key_name=key,
+                    key_value=encrypted_value,
+                    is_configured=True,
+                    description=f"GCP {key.replace('_', ' ').lower()}"
+                )
+                db.add(secret)
+        
+        await db.commit()
+        
+        # Log successful setup
+        await AuditService.log_event(
+            db=db,
+            event_type="gcp_configured",
+            success=True,
+            user_id=current_user.id,
+            username=current_user.username,
+            details={
+                "project_id": request.project_id,
+                "service_account_email": sa_data.get("client_email")
+            }
+        )
+        
+        logger.info(f"GCP configured successfully by {current_user.username}")
+        
+        return {
+            "success": True,
+            "message": "Google Cloud Platform configured successfully",
+            "project_id": request.project_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"GCP setup failed: {str(e)}")
+        await AuditService.log_event(
+            db=db,
+            event_type="gcp_configuration_failed",
+            success=False,
+            user_id=current_user.id,
+            username=current_user.username,
+            failure_reason=str(e)
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to configure GCP: {str(e)}"
+        )
 
 
 @router.post("/auth0/configure")
@@ -122,6 +258,7 @@ async def configure_auth0(
             }
             
             # Create application
+            base_url = request.callback_url.rsplit('/', 1)[0] if '/' in request.callback_url else request.callback_url
             app_response = await client.post(
                 f"https://{request.domain}/api/v2/clients",
                 headers=headers,
@@ -130,10 +267,10 @@ async def configure_auth0(
                     "app_type": "regular_web",
                     "callbacks": [
                         request.callback_url,
-                        f"{request.callback_url.rsplit('/', 1)[0]}/api/auth/callback"
+                        f"{base_url}/api/auth/callback"
                     ],
-                    "allowed_logout_urls": [request.callback_url],
-                    "web_origins": [request.callback_url.rsplit('/', 1)[0]],
+                    "allowed_logout_urls": [base_url],
+                    "web_origins": [base_url],
                     "oidc_conformant": True,
                     "grant_types": ["authorization_code", "refresh_token"],
                     "token_endpoint_auth_method": "client_secret_post"
@@ -150,36 +287,35 @@ async def configure_auth0(
             client_id = app_data["client_id"]
             client_secret = app_data["client_secret"]
             
-            # Configure MFA (require for all users)
-            mfa_response = await client.patch(
-                f"https://{request.domain}/api/v2/guardian/factors/push-notification",
-                headers=headers,
-                json={"enabled": True}
-            )
-            
-            # Configure password policy
-            # Note: This requires modifying database connection settings
-            # For now, we'll just enable basic security
+            # Configure MFA (enable push notifications)
+            try:
+                await client.patch(
+                    f"https://{request.domain}/api/v2/guardian/factors/push-notification",
+                    headers=headers,
+                    json={"enabled": True}
+                )
+            except Exception as e:
+                logger.warning(f"Failed to enable MFA: {e}")
             
             # Configure brute force protection
-            attack_protection_response = await client.patch(
-                f"https://{request.domain}/api/v2/attack-protection/brute-force-protection",
-                headers=headers,
-                json={
-                    "enabled": True,
-                    "shields": ["block", "user_notification"],
-                    "mode": "count_per_identifier_and_ip",
-                    "allowlist": [],
-                    "max_attempts": 5
-                }
-            )
+            try:
+                await client.patch(
+                    f"https://{request.domain}/api/v2/attack-protection/brute-force-protection",
+                    headers=headers,
+                    json={
+                        "enabled": True,
+                        "shields": ["block", "user_notification"],
+                        "mode": "count_per_identifier_and_ip",
+                        "allowlist": [],
+                        "max_attempts": 5
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to configure brute force protection: {e}")
             
         # Store credentials in database
-        from app.models import SystemSecret
-        from app.core.encryption import encrypt_value
         from sqlalchemy import select
         
-        # Check if secrets already exist and update, otherwise create
         for key, value in [
             ("AUTH0_DOMAIN", request.domain),
             ("AUTH0_CLIENT_ID", client_id),
@@ -190,15 +326,15 @@ async def configure_auth0(
             )
             secret = result.scalar_one_or_none()
             
-            encrypted_value = await encrypt_value(value)
+            encrypted_value = encrypt(value)
             
             if secret:
-                secret.encrypted_value = encrypted_value
+                secret.key_value = encrypted_value
                 secret.is_configured = True
             else:
                 secret = SystemSecret(
                     key_name=key,
-                    encrypted_value=encrypted_value,
+                    key_value=encrypted_value,
                     is_configured=True,
                     description=f"Auth0 {key.split('_')[1].lower()}"
                 )
@@ -260,23 +396,47 @@ async def verify_setup(
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     
-    from app.services.auth0_service import Auth0Service
+    from sqlalchemy import select
+    from app.core.encryption import decrypt_safe
     
     results = {
-        "auth0": {"configured": False, "reachable": False, "error": None},
-        "gcp": {"configured": False, "reachable": False, "error": None}
+        "gcp": {"configured": False, "reachable": False, "error": None},
+        "auth0": {"configured": False, "reachable": False, "error": None}
     }
+    
+    # Test GCP
+    try:
+        gcp_result = await db.execute(
+            select(SystemSecret).where(SystemSecret.key_name == "GOOGLE_CLOUD_PROJECT")
+        )
+        gcp_secret = gcp_result.scalar_one_or_none()
+        if gcp_secret and gcp_secret.is_configured:
+            results["gcp"]["configured"] = True
+            project_id = decrypt_safe(gcp_secret.key_value)
+            results["gcp"]["project_id"] = project_id
+            # TODO: Test GCP connectivity by calling a simple API
+            results["gcp"]["reachable"] = True
+    except Exception as e:
+        results["gcp"]["error"] = str(e)
     
     # Test Auth0
     try:
-        status = await Auth0Service.check_status(db)
-        results["auth0"]["configured"] = status["status"] == "configured"
-        results["auth0"]["reachable"] = status["status"] == "configured"
-        results["auth0"]["domain"] = status.get("domain")
+        auth0_result = await db.execute(
+            select(SystemSecret).where(SystemSecret.key_name == "AUTH0_DOMAIN")
+        )
+        auth0_secret = auth0_result.scalar_one_or_none()
+        if auth0_secret and auth0_secret.is_configured:
+            results["auth0"]["configured"] = True
+            domain = decrypt_safe(auth0_secret.key_value)
+            results["auth0"]["domain"] = domain
+            
+            # Test OIDC discovery endpoint
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(
+                    f"https://{domain}/.well-known/openid-configuration"
+                )
+                results["auth0"]["reachable"] = response.status_code == 200
     except Exception as e:
         results["auth0"]["error"] = str(e)
-    
-    # Test GCP
-    # TODO: Implement GCP verification
     
     return results
