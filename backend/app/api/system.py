@@ -1164,6 +1164,15 @@ async def get_current_version(_: User = Depends(get_current_admin)):
     try:
         project_root = os.environ.get("PROJECT_ROOT", "/project")
         
+        # Add safe directory to fix ownership issues in Docker
+        subprocess.run(
+            ["git", "config", "--global", "--add", "safe.directory", project_root],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
         # Get current commit SHA
         sha_result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -1172,6 +1181,8 @@ async def get_current_version(_: User = Depends(get_current_admin)):
             text=True,
             timeout=10
         )
+        if sha_result.returncode != 0:
+            logger.warning(f"Git rev-parse failed: {sha_result.stderr}")
         current_sha = sha_result.stdout.strip()[:7] if sha_result.returncode == 0 else "unknown"
         
         # Get current tag (if on a tag)
@@ -1194,15 +1205,26 @@ async def get_current_version(_: User = Depends(get_current_admin)):
         )
         commit_date = date_result.stdout.strip() if date_result.returncode == 0 else None
         
+        # Get commit message (first line)
+        msg_result = subprocess.run(
+            ["git", "log", "-1", "--format=%s"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        commit_message = msg_result.stdout.strip()[:60] if msg_result.returncode == 0 else None
+        
         return {
             "sha": current_sha,
             "tag": current_tag,
             "commit_date": commit_date,
+            "commit_message": commit_message,
             "display": current_tag or f"@{current_sha}"
         }
     except Exception as e:
         logger.error(f"Failed to get current version: {e}")
-        return {"sha": "unknown", "tag": None, "commit_date": None, "display": "unknown"}
+        return {"sha": "unknown", "tag": None, "commit_date": None, "display": "@unknown"}
 
 
 @router.get("/releases")
