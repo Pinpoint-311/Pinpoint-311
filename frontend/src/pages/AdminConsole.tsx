@@ -2740,6 +2740,28 @@ export default function AdminConsole() {
                                     <p className="text-white/60 mt-2">Cloud infrastructure setup commands for your server terminal.</p>
                                 </div>
 
+                                {/* Automated Setup Wizard CTA */}
+                                <Card className="p-6 bg-gradient-to-r from-indigo-600/20 to-purple-600/20 border-indigo-500/30">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-4">
+                                            <div className="w-14 h-14 rounded-2xl bg-indigo-500/30 flex items-center justify-center">
+                                                <Sparkles className="w-7 h-7 text-indigo-400" />
+                                            </div>
+                                            <div>
+                                                <h3 className="text-xl font-bold text-white">Automated Setup Wizard</h3>
+                                                <p className="text-white/70 mt-1">Configure Auth0 and Google Cloud automatically from your browser — no SSH required!</p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={() => window.location.href = '/setup'}
+                                            className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl transition-colors shadow-lg shadow-indigo-500/25"
+                                        >
+                                            <Sparkles className="w-5 h-5" />
+                                            Launch Wizard
+                                        </button>
+                                    </div>
+                                </Card>
+
                                 {/* GCP Setup */}
                                 <Card className="p-6">
                                     <div className="flex items-center gap-3 mb-4">
