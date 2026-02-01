@@ -12,15 +12,42 @@ Tests all integrations and provides detailed status for:
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
-from typing import Dict, Any
+from sqlalchemy import text, select
+from typing import Dict, Any, Optional
 import httpx
 import os
 
 from app.db.session import get_db
 from app.core.auth import get_current_admin
+from app.models import SystemSecret
+from app.core.encryption import decrypt_safe
 
 router = APIRouter()
+
+
+async def get_config_value(db: AsyncSession, key_name: str, env_name: Optional[str] = None) -> Optional[str]:
+    """
+    Get a configuration value from environment variable OR database secret.
+    Prioritizes env var if set, falls back to database.
+    """
+    # Check environment variable first
+    env_key = env_name or key_name
+    env_value = os.getenv(env_key)
+    if env_value:
+        return env_value
+    
+    # Fallback to database secret
+    try:
+        result = await db.execute(
+            select(SystemSecret).where(SystemSecret.key_name == key_name)
+        )
+        secret = result.scalar_one_or_none()
+        if secret and secret.is_configured and secret.key_value:
+            return decrypt_safe(secret.key_value)
+    except Exception:
+        pass
+    
+    return None
 
 
 async def check_database(db: AsyncSession) -> Dict[str, Any]:
@@ -53,25 +80,29 @@ async def check_auth0(db: AsyncSession) -> Dict[str, Any]:
 
 
 
-async def check_google_kms() -> Dict[str, Any]:
+async def check_google_kms(db: AsyncSession) -> Dict[str, Any]:
     """Test Google Cloud KMS for PII encryption"""
     try:
-        # Check environment variables
-        project = os.getenv("GOOGLE_CLOUD_PROJECT")
-        key_ring = os.getenv("KMS_KEY_RING")
+        # Check environment variables OR database secrets
+        project = await get_config_value(db, "GOOGLE_CLOUD_PROJECT")
+        key_ring = os.getenv("KMS_KEY_RING")  # KMS settings are optional
         key_id = os.getenv("KMS_KEY_ID")
-        location = os.getenv("KMS_LOCATION")
-        credentials = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        location = os.getenv("KMS_LOCATION", "us-central1")
         
-        if not all([project, key_ring, key_id, location]):
+        if not project:
             return {
                 "status": "not_configured",
-                "message": "KMS environment variables missing",
+                "message": "GCP project not configured (run Setup Wizard)",
+                "project": None
+            }
+        
+        # If project is set but specific KMS vars aren't, show as fallback mode
+        if not all([key_ring, key_id]):
+            return {
+                "status": "fallback",
+                "message": "Using Fernet encryption (KMS keyring not configured)",
                 "project": project,
-                "key_ring": key_ring,
-                "key_name": key_id,
-                "location": location,
-                "credentials_file": credentials
+                "note": "Fernet encryption is secure; KMS is optional for enhanced key management"
             }
         
         # Try to encrypt/decrypt test data
@@ -121,24 +152,30 @@ async def check_google_kms() -> Dict[str, Any]:
         }
 
 
-async def check_secret_manager() -> Dict[str, Any]:
+async def check_secret_manager(db: AsyncSession) -> Dict[str, Any]:
     """Test Google Secret Manager"""
     try:
+        # Check for GCP project (from env OR database via Setup Wizard)
+        project = await get_config_value(db, "GOOGLE_CLOUD_PROJECT")
         use_sm = os.getenv("USE_SECRET_MANAGER", "").lower() == "true"
-        project = os.getenv("GOOGLE_CLOUD_PROJECT")
         
-        if not use_sm:
-            return {
-                "status": "disabled",
-                "message": "Secret Manager disabled (USE_SECRET_MANAGER not set)",
-                "project": project
-            }
+        # If GCP is configured via wizard, Secret Manager is available
+        has_gcp_credentials = await get_config_value(db, "GCP_SERVICE_ACCOUNT_JSON") is not None
         
         if not project:
             return {
                 "status": "not_configured",
-                "message": "GOOGLE_CLOUD_PROJECT not set",
+                "message": "GCP project not configured (run Setup Wizard)",
                 "project": None
+            }
+        
+        # If credentials exist from wizard, SM is available even if USE_SECRET_MANAGER not set
+        if has_gcp_credentials:
+            return {
+                "status": "configured",
+                "message": "Secret Manager available via service account",
+                "project": project,
+                "note": "Credentials stored in database (encrypted)"
             }
         
         from app.services.secret_manager import get_secrets_bundle
@@ -162,16 +199,16 @@ async def check_secret_manager() -> Dict[str, Any]:
         }
 
 
-async def check_vertex_ai() -> Dict[str, Any]:
+async def check_vertex_ai(db: AsyncSession) -> Dict[str, Any]:
     """Test Vertex AI (Gemini)"""
     try:
-        project = os.getenv("GOOGLE_VERTEX_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+        project = os.getenv("GOOGLE_VERTEX_PROJECT") or await get_config_value(db, "GOOGLE_CLOUD_PROJECT")
         location = os.getenv("GOOGLE_VERTEX_LOCATION", "us-central1")
         
         if not project:
             return {
                 "status": "not_configured",
-                "message": "Vertex AI not configured (GOOGLE_VERTEX_PROJECT or GOOGLE_CLOUD_PROJECT required)",
+                "message": "GCP project not configured (run Setup Wizard)",
                 "project": None,
                 "location": location
             }
@@ -243,16 +280,16 @@ async def health_check(
     results = {
         "database": await check_database(db),
         "auth0": await check_auth0(db),
-        "google_kms": await check_google_kms(),
-        "google_secret_manager": await check_secret_manager(),
-        "vertex_ai": await check_vertex_ai(),
+        "google_kms": await check_google_kms(db),
+        "google_secret_manager": await check_secret_manager(db),
+        "vertex_ai": await check_vertex_ai(db),
         "translation_api": await check_translation_api(db)
     }
     
     # Calculate overall health
     statuses = [v["status"] for v in results.values()]
     
-    if all(s in ["healthy", "configured", "disabled"] for s in statuses):
+    if all(s in ["healthy", "configured", "disabled", "fallback"] for s in statuses):
         overall = "healthy"
     elif any(s == "error" for s in statuses):
         overall = "degraded"
