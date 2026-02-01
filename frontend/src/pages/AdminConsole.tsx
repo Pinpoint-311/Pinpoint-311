@@ -56,6 +56,7 @@ import {
     Terminal,
     Copy,
     ExternalLink,
+    ChevronDown,
     type LucideIcon,
 } from 'lucide-react';
 import { Button, Card, Modal, Input, Select, Badge } from '../components/ui';
@@ -101,6 +102,82 @@ const ICON_LIBRARY: { name: string; icon: LucideIcon }[] = [
 ];
 
 type Tab = 'branding' | 'users' | 'departments' | 'services' | 'integration' | 'system' | 'health' | 'compliance';
+
+// Sidebar accordion components
+interface SidebarGroupProps {
+    title: string;
+    icon: LucideIcon;
+    isActive: boolean;
+    defaultOpen?: boolean;
+    children: React.ReactNode;
+}
+
+function SidebarGroup({ title, icon: Icon, isActive, defaultOpen = false, children }: SidebarGroupProps) {
+    const [isOpen, setIsOpen] = useState(defaultOpen);
+
+    // Auto-open when active
+    React.useEffect(() => {
+        if (isActive && !isOpen) {
+            setIsOpen(true);
+        }
+    }, [isActive]);
+
+    return (
+        <div className="rounded-xl overflow-hidden">
+            <button
+                onClick={() => setIsOpen(!isOpen)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors ${isActive ? 'bg-white/10 text-white' : 'text-white/60 hover:bg-white/5 hover:text-white'
+                    }`}
+            >
+                <Icon className="w-5 h-5" />
+                <span className="font-medium flex-1 text-left">{title}</span>
+                <motion.div
+                    animate={{ rotate: isOpen ? 180 : 0 }}
+                    transition={{ duration: 0.2 }}
+                >
+                    <ChevronDown className="w-4 h-4 opacity-50" />
+                </motion.div>
+            </button>
+            <AnimatePresence initial={false}>
+                {isOpen && (
+                    <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.2, ease: 'easeInOut' }}
+                        className="overflow-hidden"
+                    >
+                        <div className="pl-4 py-1 space-y-1">
+                            {children}
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </div>
+    );
+}
+
+interface SidebarItemProps {
+    icon: LucideIcon;
+    label: string;
+    isActive: boolean;
+    onClick: () => void;
+}
+
+function SidebarItem({ icon: Icon, label, isActive, onClick }: SidebarItemProps) {
+    return (
+        <button
+            onClick={onClick}
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm ${isActive
+                ? 'bg-primary-500/20 text-white'
+                : 'text-white/50 hover:bg-white/5 hover:text-white'
+                }`}
+        >
+            <Icon className="w-4 h-4" />
+            <span className="font-medium">{label}</span>
+        </button>
+    );
+}
 
 export default function AdminConsole() {
     const navigate = useNavigate();
@@ -782,32 +859,87 @@ export default function AdminConsole() {
                         </div>
                     </div>
 
-                    {/* Menu */}
-                    <nav className="flex-1 p-4 space-y-2" aria-label="Admin configuration">
-                        <p className="text-xs font-medium text-white/40 uppercase tracking-wider px-3 mb-3">
-                            Configuration
-                        </p>
-                        {tabs.map((tab) => (
-                            <button
-                                key={tab.id}
-                                onClick={() => {
-                                    setCurrentTab(tab.id as Tab);
-                                    setSidebarOpen(false);
-                                }}
-                                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors ${currentTab === tab.id
-                                    ? 'bg-primary-500/20 text-white'
-                                    : 'text-white/60 hover:bg-white/5 hover:text-white'
-                                    }`}
-                            >
-                                <tab.icon className="w-5 h-5" />
-                                <span className="font-medium">{tab.label}</span>
-                            </button>
-                        ))}
+                    {/* Menu - Grouped Accordion Navigation */}
+                    <nav className="flex-1 p-4 space-y-3 overflow-y-auto" aria-label="Admin configuration">
+                        {/* Branding & Setup Group */}
+                        <SidebarGroup
+                            title="Branding & Setup"
+                            icon={Palette}
+                            isActive={currentTab === 'branding' || currentTab === 'integration'}
+                            defaultOpen={currentTab === 'branding' || currentTab === 'integration'}
+                        >
+                            <SidebarItem
+                                icon={Palette}
+                                label="Branding"
+                                isActive={currentTab === 'branding'}
+                                onClick={() => { setCurrentTab('branding'); setSidebarOpen(false); }}
+                            />
+                            <SidebarItem
+                                icon={Terminal}
+                                label="Setup & Integration"
+                                isActive={currentTab === 'integration'}
+                                onClick={() => { setCurrentTab('integration'); setSidebarOpen(false); }}
+                            />
+                        </SidebarGroup>
 
-                        {/* System Update Button */}
-                        <div className="pt-6">
+                        {/* Organization Group */}
+                        <SidebarGroup
+                            title="Organization"
+                            icon={Users}
+                            isActive={currentTab === 'users' || currentTab === 'departments' || currentTab === 'services'}
+                            defaultOpen={currentTab === 'users' || currentTab === 'departments' || currentTab === 'services'}
+                        >
+                            <SidebarItem
+                                icon={Users}
+                                label="Users"
+                                isActive={currentTab === 'users'}
+                                onClick={() => { setCurrentTab('users'); setSidebarOpen(false); }}
+                            />
+                            <SidebarItem
+                                icon={Building2}
+                                label="Departments"
+                                isActive={currentTab === 'departments'}
+                                onClick={() => { setCurrentTab('departments'); setSidebarOpen(false); }}
+                            />
+                            <SidebarItem
+                                icon={Grid3X3}
+                                label="Service Categories"
+                                isActive={currentTab === 'services'}
+                                onClick={() => { setCurrentTab('services'); setSidebarOpen(false); }}
+                            />
+                        </SidebarGroup>
+
+                        {/* System Group */}
+                        <SidebarGroup
+                            title="System & Compliance"
+                            icon={Settings}
+                            isActive={currentTab === 'system' || currentTab === 'health' || currentTab === 'compliance'}
+                            defaultOpen={currentTab === 'system' || currentTab === 'health' || currentTab === 'compliance'}
+                        >
+                            <SidebarItem
+                                icon={Settings}
+                                label="System Settings"
+                                isActive={currentTab === 'system'}
+                                onClick={() => { setCurrentTab('system'); setSidebarOpen(false); }}
+                            />
+                            <SidebarItem
+                                icon={BarChart3}
+                                label="System Health"
+                                isActive={currentTab === 'health'}
+                                onClick={() => { setCurrentTab('health'); setSidebarOpen(false); }}
+                            />
+                            <SidebarItem
+                                icon={Shield}
+                                label="Compliance"
+                                isActive={currentTab === 'compliance'}
+                                onClick={() => { setCurrentTab('compliance'); setSidebarOpen(false); }}
+                            />
+                        </SidebarGroup>
+
+                        {/* System Actions */}
+                        <div className="pt-4 border-t border-white/10">
                             <p className="text-xs font-medium text-white/40 uppercase tracking-wider px-3 mb-3">
-                                System
+                                Actions
                             </p>
                             <Button
                                 variant="secondary"
@@ -823,13 +955,10 @@ export default function AdminConsole() {
                                 <p className="mt-2 text-xs text-center text-white/60">{updateMessage}</p>
                             )}
 
-                            <p className="text-xs font-medium text-white/40 uppercase tracking-wider px-3 mt-4 mb-3">
-                                Quick Access
-                            </p>
                             <Button
                                 variant="primary"
                                 size="sm"
-                                className="w-full"
+                                className="w-full mt-2"
                                 onClick={() => navigate('/staff')}
                             >
                                 Staff Dashboard →
