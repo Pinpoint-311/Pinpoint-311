@@ -23,6 +23,67 @@ logger = logging.getLogger(__name__)
 # Cache for secrets (they don't change often)
 _secret_cache: Dict[str, Dict[str, str]] = {}
 _use_gcp: Optional[bool] = None
+_sm_client = None
+
+
+def _get_project_from_db() -> Optional[str]:
+    """Get GCP project ID from database."""
+    try:
+        from app.db.session import sync_engine
+        from sqlalchemy import text
+        
+        with sync_engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT key_value FROM system_secrets WHERE key_name = 'GOOGLE_CLOUD_PROJECT'")
+            )
+            row = result.fetchone()
+            if row and row[0]:
+                from app.core.encryption import decrypt
+                return decrypt(row[0])
+    except Exception:
+        pass
+    return None
+
+
+def _get_sm_client():
+    """Get Secret Manager client with database credentials."""
+    global _sm_client
+    
+    if _sm_client:
+        return _sm_client
+    
+    try:
+        from google.cloud import secretmanager
+        from google.oauth2 import service_account
+        import json as json_lib
+        
+        # Try to load service account from database (Setup Wizard storage)
+        try:
+            from app.db.session import sync_engine
+            from sqlalchemy import text
+            
+            with sync_engine.connect() as conn:
+                result = conn.execute(
+                    text("SELECT key_value FROM system_secrets WHERE key_name = 'GCP_SERVICE_ACCOUNT_JSON'")
+                )
+                row = result.fetchone()
+                if row and row[0]:
+                    from app.core.encryption import decrypt
+                    sa_json = decrypt(row[0])
+                    sa_data = json_lib.loads(sa_json)
+                    credentials = service_account.Credentials.from_service_account_info(sa_data)
+                    _sm_client = secretmanager.SecretManagerServiceClient(credentials=credentials)
+                    logger.info("Secret Manager client initialized with database credentials")
+                    return _sm_client
+        except Exception as db_err:
+            logger.debug(f"Could not load SM credentials from database: {db_err}")
+        
+        # Fall back to default credentials
+        _sm_client = secretmanager.SecretManagerServiceClient()
+        return _sm_client
+    except Exception as e:
+        logger.warning(f"Failed to initialize Secret Manager client: {e}")
+        return None
 
 
 def _is_gcp_available() -> bool:
@@ -32,23 +93,22 @@ def _is_gcp_available() -> bool:
     if _use_gcp is not None:
         return _use_gcp
     
-    try:
-        from google.cloud import secretmanager
-        project = os.getenv("GOOGLE_CLOUD_PROJECT")
-        if not project:
-            _use_gcp = False
-            logger.info("Google Cloud Project not set, using database for secrets")
-            return False
-        
-        # Try to access the service
-        client = secretmanager.SecretManagerServiceClient()
+    # Check for project ID in env or database
+    project = os.getenv("GOOGLE_CLOUD_PROJECT") or _get_project_from_db()
+    if not project:
+        _use_gcp = False
+        logger.info("Google Cloud Project not set, using database for secrets")
+        return False
+    
+    # Try to get a client
+    client = _get_sm_client()
+    if client:
         _use_gcp = True
         logger.info(f"Using Google Secret Manager for project: {project}")
         return True
-    except Exception as e:
-        _use_gcp = False
-        logger.info(f"Google Secret Manager not available: {e}")
-        return False
+    
+    _use_gcp = False
+    return False
 
 
 def _get_secret_from_gcp(secret_name: str) -> Optional[Dict[str, str]]:
@@ -57,10 +117,11 @@ def _get_secret_from_gcp(secret_name: str) -> Optional[Dict[str, str]]:
         return _secret_cache[secret_name]
     
     try:
-        from google.cloud import secretmanager
+        project = os.getenv("GOOGLE_CLOUD_PROJECT") or _get_project_from_db()
+        client = _get_sm_client()
         
-        project = os.getenv("GOOGLE_CLOUD_PROJECT")
-        client = secretmanager.SecretManagerServiceClient()
+        if not client or not project:
+            return None
         
         name = f"projects/{project}/secrets/{secret_name}/versions/latest"
         response = client.access_secret_version(request={"name": name})

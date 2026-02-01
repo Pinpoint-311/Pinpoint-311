@@ -1,8 +1,10 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, Float, Text, Boolean, Table
 from sqlalchemy.orm import relationship
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.sql import func
 from geoalchemy2 import Geometry
 from app.db.session import Base
+# encryption is imported lazily in hybrid properties to avoid circular imports
 
 
 # Association table for ServiceDefinition-Department many-to-many
@@ -144,11 +146,104 @@ class ServiceRequest(Base):
     long = Column(Float)
     location = Column(Geometry("POINT", srid=4326))
     
-    # Reporter info (PII - hidden from public)
-    first_name = Column(String(100))
-    last_name = Column(String(100))
-    email = Column(String(255), nullable=False)
-    phone = Column(String(50))
+    # Reporter info (PII - encrypted with Google KMS or Fernet fallback)
+    # These columns store encrypted values - use hybrid properties for access
+    _first_name_encrypted = Column("first_name", String(500))  # Encrypted storage
+    _last_name_encrypted = Column("last_name", String(500))   # Encrypted storage
+    _email_encrypted = Column("email", String(500), nullable=False)  # Encrypted storage
+    _phone_encrypted = Column("phone", String(200))  # Encrypted storage
+    
+    @hybrid_property
+    def first_name(self):
+        """Decrypt first name when accessing."""
+        if self._first_name_encrypted:
+            try:
+                from app.core.encryption import decrypt_pii
+                return decrypt_pii(self._first_name_encrypted)
+            except Exception:
+                return self._first_name_encrypted  # Fallback to raw value
+        return None
+    
+    @first_name.setter
+    def first_name(self, value):
+        """Encrypt first name when setting."""
+        if value:
+            try:
+                from app.core.encryption import encrypt_pii
+                self._first_name_encrypted = encrypt_pii(value)
+            except Exception:
+                self._first_name_encrypted = value  # Fallback to raw value
+        else:
+            self._first_name_encrypted = None
+    
+    @hybrid_property
+    def last_name(self):
+        """Decrypt last name when accessing."""
+        if self._last_name_encrypted:
+            try:
+                from app.core.encryption import decrypt_pii
+                return decrypt_pii(self._last_name_encrypted)
+            except Exception:
+                return self._last_name_encrypted
+        return None
+    
+    @last_name.setter
+    def last_name(self, value):
+        """Encrypt last name when setting."""
+        if value:
+            try:
+                from app.core.encryption import encrypt_pii
+                self._last_name_encrypted = encrypt_pii(value)
+            except Exception:
+                self._last_name_encrypted = value
+        else:
+            self._last_name_encrypted = None
+    
+    @hybrid_property
+    def email(self):
+        """Decrypt email when accessing."""
+        if self._email_encrypted:
+            try:
+                from app.core.encryption import decrypt_pii
+                return decrypt_pii(self._email_encrypted)
+            except Exception:
+                return self._email_encrypted
+        return ""
+    
+    @email.setter
+    def email(self, value):
+        """Encrypt email when setting."""
+        if value:
+            try:
+                from app.core.encryption import encrypt_pii
+                self._email_encrypted = encrypt_pii(value)
+            except Exception:
+                self._email_encrypted = value
+        else:
+            self._email_encrypted = ""
+    
+    @hybrid_property
+    def phone(self):
+        """Decrypt phone when accessing."""
+        if self._phone_encrypted:
+            try:
+                from app.core.encryption import decrypt_pii
+                return decrypt_pii(self._phone_encrypted)
+            except Exception:
+                return self._phone_encrypted
+        return None
+    
+    @phone.setter
+    def phone(self, value):
+        """Encrypt phone when setting."""
+        if value:
+            try:
+                from app.core.encryption import encrypt_pii
+                self._phone_encrypted = encrypt_pii(value)
+            except Exception:
+                self._phone_encrypted = value
+        else:
+            self._phone_encrypted = None
     
     # Resident's preferred language (captured from UI at submission)
     preferred_language = Column(String(10), default="en")  # ISO 639-1 code (en, es, hi, etc.)

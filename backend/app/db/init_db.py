@@ -117,11 +117,48 @@ DEFAULT_SECRETS = [
 ]
 
 
+async def _run_pii_migrations():
+    """
+    Run one-time migrations for PII encryption.
+    Increases column sizes to accommodate encrypted values.
+    Safe to run multiple times (idempotent).
+    """
+    from app.db.session import sync_engine
+    from sqlalchemy import text
+    
+    migrations = [
+        # Increase PII column sizes for encrypted storage (KMS or Fernet)
+        # Encrypted values are ~1.5x larger than plaintext
+        "ALTER TABLE service_requests ALTER COLUMN first_name TYPE VARCHAR(500)",
+        "ALTER TABLE service_requests ALTER COLUMN last_name TYPE VARCHAR(500)",
+        "ALTER TABLE service_requests ALTER COLUMN email TYPE VARCHAR(500)",
+        "ALTER TABLE service_requests ALTER COLUMN phone TYPE VARCHAR(200)",
+    ]
+    
+    try:
+        with sync_engine.connect() as conn:
+            for sql in migrations:
+                try:
+                    conn.execute(text(sql))
+                    conn.commit()
+                except Exception as e:
+                    # Ignore if column already has this type
+                    if "already" not in str(e).lower():
+                        logger.debug(f"Migration note: {e}")
+                    conn.rollback()
+        logger.info("PII encryption migrations completed")
+    except Exception as e:
+        logger.warning(f"Could not run PII migrations (may not exist yet): {e}")
+
+
 async def seed_database():
     """Initialize database with default data"""
     
     # Create tables
     await init_db()
+    
+    # Run migrations for PII encryption (increase column sizes)
+    await _run_pii_migrations()
     
     async with SessionLocal() as db:
         # Check if already seeded
