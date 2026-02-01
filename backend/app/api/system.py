@@ -2154,21 +2154,43 @@ async def get_health_dashboard(
         "overall_status": "healthy"
     }
     
-    # Check container statuses via docker
-    containers = ["backend", "frontend", "db", "redis", "caddy"]
-    for container in containers:
-        try:
-            result = subprocess.run(
-                ["docker", "ps", "--filter", f"name={container}", "--format", "{{.Status}}"],
-                capture_output=True, text=True, timeout=5
-            )
-            status = result.stdout.strip()
-            health["services"][container] = {
-                "status": "running" if "Up" in status else "stopped",
-                "uptime": status if "Up" in status else None
+    # Check service health via network (works from inside containers)
+    import httpx
+    
+    service_checks = {
+        "backend": {"url": "http://localhost:8000/api/health", "name": "Backend API"},
+        "frontend": {"url": "http://frontend:80", "name": "Frontend"},
+        "caddy": {"url": None, "name": "Caddy Proxy"},  # We're responding, so it works
+    }
+    
+    # Backend is running if we're responding to this request
+    health["services"]["backend"] = {
+        "status": "running",
+        "uptime": "Active (responding to requests)"
+    }
+    
+    # Check frontend via internal Docker network
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get("http://frontend:80")
+            health["services"]["frontend"] = {
+                "status": "running" if resp.status_code < 500 else "error",
+                "uptime": f"HTTP {resp.status_code}"
             }
-        except Exception as e:
-            health["services"][container] = {"status": "unknown", "error": str(e)}
+    except Exception as e:
+        health["services"]["frontend"] = {"status": "unknown", "error": str(e)[:50]}
+    
+    # Database - checked below via SQL
+    health["services"]["db"] = {"status": "pending", "uptime": "Checking..."}
+    
+    # Redis - checked via redis_client
+    health["services"]["redis"] = {"status": "pending", "uptime": "Checking..."}
+    
+    # Caddy - if we're receiving requests, it's working
+    health["services"]["caddy"] = {
+        "status": "running",
+        "uptime": "Active (routing requests)"
+    }
     
     # Database size and connection count
     try:
@@ -2182,10 +2204,16 @@ async def get_health_dashboard(
         ))
         health["database"]["connections"] = conn_result.scalar()
         health["database"]["status"] = "healthy"
+        # Update service status
+        health["services"]["db"] = {
+            "status": "running",
+            "uptime": f"{health['database']['size']} • {health['database']['connections']} conns"
+        }
     except Exception as e:
         health["database"]["status"] = "error"
         health["database"]["error"] = str(e)
         health["overall_status"] = "degraded"
+        health["services"]["db"] = {"status": "error", "error": str(e)[:50]}
     
     # Redis health check
     try:
@@ -2194,12 +2222,19 @@ async def get_health_dashboard(
             health["cache"]["status"] = "healthy"
             health["cache"]["used_memory"] = info.get("used_memory_human", "unknown")
             health["cache"]["connected_clients"] = info.get("connected_clients", 0)
+            # Update service status
+            health["services"]["redis"] = {
+                "status": "running",
+                "uptime": f"{health['cache']['used_memory']} memory"
+            }
         else:
             health["cache"]["status"] = "not_configured"
+            health["services"]["redis"] = {"status": "not_configured", "uptime": "Not configured"}
     except Exception as e:
         health["cache"]["status"] = "error"
         health["cache"]["error"] = str(e)
         health["overall_status"] = "degraded"
+        health["services"]["redis"] = {"status": "error", "error": str(e)[:50]}
     
     # Last backup info
     try:
