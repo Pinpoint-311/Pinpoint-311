@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     Server, Database, RefreshCw, Play, Trash2, HardDrive, Clock,
     CheckCircle, XCircle, Loader2, RotateCcw, Wrench,
-    Shield, Cloud, Languages, Sparkles, Key, Activity
+    Shield, Cloud, Languages, Sparkles, Key, Activity, Link2
 } from 'lucide-react';
 import { Card, Button } from './ui';
 import api, { HealthDashboard, RunbookResult } from '../services/api';
@@ -26,6 +26,7 @@ interface IntegrationHealth {
     checks: {
         database: IntegrationCheck;
         auth0: IntegrationCheck;
+        workload_identity?: IntegrationCheck;
         google_kms: IntegrationCheck;
         google_secret_manager: IntegrationCheck;
         vertex_ai: IntegrationCheck;
@@ -284,6 +285,20 @@ export default function OperationsPanel() {
                             </div>
                             <p className="text-gray-300 text-xs">{integrations.checks.auth0.message}</p>
                         </div>
+
+                        {/* Workload Identity Federation */}
+                        {integrations.checks.workload_identity && (
+                            <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
+                                <div className="flex items-center gap-3 mb-2">
+                                    <Link2 className="w-5 h-5 text-emerald-400" />
+                                    <span className="text-white font-medium">WIF</span>
+                                    <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.workload_identity.status)}`}>
+                                        {integrations.checks.workload_identity.status}
+                                    </span>
+                                </div>
+                                <p className="text-gray-300 text-xs">{integrations.checks.workload_identity.message}</p>
+                            </div>
+                        )}
 
                         {/* Google KMS */}
                         <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
