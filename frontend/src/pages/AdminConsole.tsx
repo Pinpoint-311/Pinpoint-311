@@ -1932,9 +1932,9 @@ export default function AdminConsole() {
                             </div>
                         )}
 
-                        {/* Maps Tab */}
+                        {/* Maps Configuration - part of System Settings */}
                         {currentTab === 'system' && (
-                            <div className="space-y-6">
+                            <div className="space-y-6 mt-12 pt-8 border-t border-white/10">
                                 <div>
                                     <h2 className="text-2xl font-bold text-white mb-2">Maps Configuration</h2>
                                     <p className="text-white/60">
@@ -2894,9 +2894,12 @@ export default function AdminConsole() {
                             <SystemHealthDashboard />
                         )}
 
-                        {/* Audit Logs Tab */}
+                        {/* Audit Logs - part of Compliance */}
                         {currentTab === 'compliance' && (
-                            <AuditLogViewer />
+                            <div className="mt-12 pt-8 border-t border-white/10">
+                                <h2 className="text-2xl font-bold text-white mb-6">Audit Logs</h2>
+                                <AuditLogViewer />
+                            </div>
                         )}
 
                     </div>
