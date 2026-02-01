@@ -2240,10 +2240,22 @@ async def get_health_dashboard(
         health["overall_status"] = "degraded"
         health["services"]["db"] = {"status": "error", "error": str(e)[:50]}
     
-    # Redis health check - use direct connection to docker service
+    # Redis health check - use dynamic port from environment
     try:
         import redis
-        redis_direct = redis.Redis(host="redis", port=6379, socket_timeout=3)
+        import os
+        redis_port = 6379  # default
+        # Check for explicit port
+        if os.getenv("REDIS_PORT"):
+            redis_port = int(os.getenv("REDIS_PORT"))
+        # Or parse from REDIS_URL if available
+        elif os.getenv("REDIS_URL"):
+            import re
+            match = re.search(r':(\d+)', os.getenv("REDIS_URL", ""))
+            if match:
+                redis_port = int(match.group(1))
+        
+        redis_direct = redis.Redis(host="redis", port=redis_port, socket_timeout=3)
         info = redis_direct.info()
         health["cache"]["status"] = "healthy"
         health["cache"]["used_memory"] = info.get("used_memory_human", "unknown")
@@ -2251,7 +2263,7 @@ async def get_health_dashboard(
         # Update service status
         health["services"]["redis"] = {
             "status": "running",
-            "uptime": f"{health['cache']['used_memory']} memory"
+            "uptime": f"Port {redis_port} • {health['cache']['used_memory']} memory"
         }
     except redis.ConnectionError:
         health["cache"]["status"] = "not_configured"
