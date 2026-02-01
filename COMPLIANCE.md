@@ -102,6 +102,30 @@ Automatic security patching via Watchtower:
 | Containers | PostgreSQL, Redis, Caddy, Backend |
 | Cleanup | Old images automatically removed |
 
+### Safe Version Deployment (Admin Console)
+
+The Version Switcher in the Admin Console implements a production-grade, fault-tolerant deployment mechanism:
+
+| Step | Action | Rollback Protection |
+|------|--------|---------------------|
+| 1 | **Database Backup** | `pg_dump` creates timestamped backup |
+| 2 | **Git Checkout** | Stashes local changes, checks out version |
+| 3 | **Database Migrations** | Forward-only Alembic migrations (non-destructive) |
+| 4 | **Container Rebuild** | Docker builds new backend/frontend images |
+| 5 | **Health Check** | 30-second timeout verification |
+| 6 | **Audit Log** | Records deployment or failure with details |
+
+**Automatic Rollback**: If any step fails, the system:
+- Reverts to the original git commit
+- Restarts containers with original code
+- Logs the failure with rollback details
+
+**Security Controls**:
+- **Admin-only**: Requires admin authentication
+- **Audit Trail**: All deployments logged with timestamp, version, and outcome
+- **Backup Retention**: Database backups preserved for disaster recovery
+- **Health Verification**: Ensures system is responsive before completion
+
 ### Legacy Encryption (Local Development)
 
 For environments without GCP, Fernet encryption provides fallback:

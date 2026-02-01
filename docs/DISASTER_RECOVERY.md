@@ -26,6 +26,17 @@ This document outlines procedures for backup, recovery, and disaster response fo
 | Configuration | ✅ | Environment variables in Secret Manager |
 | Docker Images | ✅ | GHCR (versioned with SHA) |
 
+### Deployment-Triggered Backups
+
+The **Version Switcher** in the Admin Console automatically creates a database backup before every deployment:
+
+| Trigger | Location | Retention |
+|---------|----------|-----------|
+| Version deployment | `/project/backups/` | Preserved for recovery |
+| Format | `pg_dump` compressed SQL | Timestamped filename |
+
+These backups provide an additional recovery point specifically tied to version changes, enabling rollback to the exact database state before a deployment.
+
 ### What's NOT Backed Up (Ephemeral)
 - Redis cache (rebuilds automatically)
 - Session tokens (users re-login)
