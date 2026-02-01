@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Cloud, Check, AlertCircle, Loader2, ExternalLink, Lock, Upload, Database, Key, Sparkles } from 'lucide-react';
+import { Shield, Cloud, Check, AlertCircle, Loader2, ExternalLink, Lock, Upload, Database, Key, Sparkles, RefreshCw } from 'lucide-react';
 import { api } from '../services/api';
 
 interface SetupStatus {
@@ -14,6 +14,10 @@ export function SetupWizard() {
     const [status, setStatus] = useState<SetupStatus | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+
+    // Reconfigure mode - allows re-running even if already configured
+    const [gcpReconfigureMode, setGcpReconfigureMode] = useState(false);
+    const [auth0ReconfigureMode, setAuth0ReconfigureMode] = useState(false);
 
     // GCP form state
     const [gcpForm, setGcpForm] = useState({
@@ -178,6 +182,8 @@ export function SetupWizard() {
                             onSkip={skipGCP}
                             loading={gcpLoading}
                             success={gcpSuccess}
+                            alreadyConfigured={status?.gcp_configured && !gcpReconfigureMode}
+                            onReconfigure={() => setGcpReconfigureMode(true)}
                         />
                     )}
 
@@ -193,7 +199,19 @@ export function SetupWizard() {
                     )}
 
                     {currentStep === 'complete' && (
-                        <CompletionScreen status={status} />
+                        <CompletionScreen
+                            status={status}
+                            onReconfigureGCP={() => {
+                                setGcpReconfigureMode(true);
+                                setGcpSuccess(false);
+                                setCurrentStep('gcp');
+                            }}
+                            onReconfigureAuth0={() => {
+                                setAuth0ReconfigureMode(true);
+                                setAuth0Success(false);
+                                setCurrentStep('auth0');
+                            }}
+                        />
                     )}
                 </div>
             </div>
@@ -233,10 +251,14 @@ interface GCPSetupFormProps {
     onSkip: () => void;
     loading: boolean;
     success: boolean;
+    alreadyConfigured?: boolean;
+    onReconfigure?: () => void;
 }
 
-function GCPSetupForm({ form, setForm, onSubmit, onSkip, loading, success }: GCPSetupFormProps) {
+
+function GCPSetupForm({ form, setForm, onSubmit, onSkip, loading, success, alreadyConfigured, onReconfigure }: GCPSetupFormProps) {
     const [fileUploaded, setFileUploaded] = useState(false);
+    const [reconfiguring, setReconfiguring] = useState(false);
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -260,14 +282,37 @@ function GCPSetupForm({ form, setForm, onSubmit, onSkip, loading, success }: GCP
         }
     };
 
-    if (success) {
+    if (success && !alreadyConfigured) {
         return (
             <div className="text-center py-12">
                 <div className="inline-flex items-center justify-center w-16 h-16 bg-green-500/30 rounded-full mb-4">
                     <Check className="w-8 h-8 text-green-400" />
                 </div>
                 <h2 className="text-2xl font-bold text-white mb-2">Google Cloud Configured!</h2>
-                <p className="text-white/60">Secret Manager and APIs have been set up.</p>
+                <p className="text-white/60">Secret Manager and KMS have been set up.</p>
+            </div>
+        );
+    }
+
+    // Show reconfigure option if already configured
+    if (alreadyConfigured && !reconfiguring) {
+        return (
+            <div className="text-center py-8">
+                <div className="inline-flex items-center justify-center w-16 h-16 bg-green-500/30 rounded-full mb-4">
+                    <Check className="w-8 h-8 text-green-400" />
+                </div>
+                <h2 className="text-2xl font-bold text-white mb-2">Google Cloud Already Configured</h2>
+                <p className="text-white/60 mb-6">Your GCP credentials are already set up. You can update them if needed.</p>
+                <button
+                    onClick={() => {
+                        setReconfiguring(true);
+                        if (onReconfigure) onReconfigure();
+                    }}
+                    className="inline-flex items-center px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-all"
+                >
+                    <RefreshCw className="w-5 h-5 mr-2" />
+                    Reconfigure GCP
+                </button>
             </div>
         );
     }
@@ -547,9 +592,11 @@ function Auth0SetupForm({ form, setForm, onSubmit, loading, success, gcpConfigur
 // Completion Screen
 interface CompletionScreenProps {
     status: SetupStatus | null;
+    onReconfigureGCP?: () => void;
+    onReconfigureAuth0?: () => void;
 }
 
-function CompletionScreen({ status }: CompletionScreenProps) {
+function CompletionScreen({ status, onReconfigureGCP, onReconfigureAuth0 }: CompletionScreenProps) {
     return (
         <div className="text-center py-12">
             <div className="inline-flex items-center justify-center w-20 h-20 bg-green-500/30 rounded-full mb-6">
@@ -561,20 +608,32 @@ function CompletionScreen({ status }: CompletionScreenProps) {
             </p>
 
             <div className="grid grid-cols-2 gap-4 max-w-md mx-auto mb-8">
-                <div className={`${status?.gcp_configured ? 'bg-green-500/20 border-green-400/30' : 'bg-white/10 border-white/20'} border rounded-lg p-4`}>
+                <button
+                    onClick={onReconfigureGCP}
+                    className={`${status?.gcp_configured ? 'bg-green-500/20 border-green-400/30 hover:bg-green-500/30' : 'bg-white/10 border-white/20 hover:bg-white/20'} border rounded-lg p-4 transition-all cursor-pointer`}
+                >
                     <Cloud className={`w-8 h-8 ${status?.gcp_configured ? 'text-green-400' : 'text-white/40'} mx-auto mb-2`} />
                     <p className={`text-sm font-medium ${status?.gcp_configured ? 'text-green-200' : 'text-white/60'}`}>Google Cloud</p>
                     <p className={`text-xs ${status?.gcp_configured ? 'text-green-400' : 'text-white/40'}`}>
                         {status?.gcp_configured ? 'Configured' : 'Skipped'}
                     </p>
-                </div>
-                <div className={`${status?.auth0_configured ? 'bg-green-500/20 border-green-400/30' : 'bg-white/10 border-white/20'} border rounded-lg p-4`}>
+                    <p className="text-xs text-indigo-300 mt-2 flex items-center justify-center">
+                        <RefreshCw className="w-3 h-3 mr-1" /> Reconfigure
+                    </p>
+                </button>
+                <button
+                    onClick={onReconfigureAuth0}
+                    className={`${status?.auth0_configured ? 'bg-green-500/20 border-green-400/30 hover:bg-green-500/30' : 'bg-white/10 border-white/20 hover:bg-white/20'} border rounded-lg p-4 transition-all cursor-pointer`}
+                >
                     <Shield className={`w-8 h-8 ${status?.auth0_configured ? 'text-green-400' : 'text-white/40'} mx-auto mb-2`} />
                     <p className={`text-sm font-medium ${status?.auth0_configured ? 'text-green-200' : 'text-white/60'}`}>Auth0 SSO</p>
                     <p className={`text-xs ${status?.auth0_configured ? 'text-green-400' : 'text-white/40'}`}>
                         {status?.auth0_configured ? 'Configured' : 'Not Configured'}
                     </p>
-                </div>
+                    <p className="text-xs text-indigo-300 mt-2 flex items-center justify-center">
+                        <RefreshCw className="w-3 h-3 mr-1" /> Reconfigure
+                    </p>
+                </button>
             </div>
 
             <a
