@@ -57,6 +57,8 @@ import {
     Copy,
     ExternalLink,
     ChevronDown,
+    User,
+    Users,
     type LucideIcon,
 } from 'lucide-react';
 import { Button, Card, Modal, Input, Select, Badge, AccordionSection } from '../components/ui';
@@ -1352,8 +1354,8 @@ export default function AdminConsole() {
                                                     {/* User Info */}
                                                     <div className="col-span-4 flex items-center gap-4">
                                                         <div className={`relative w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg shadow-lg ${u.role === 'admin'
-                                                                ? 'bg-gradient-to-br from-amber-400 to-orange-500 text-white'
-                                                                : 'bg-gradient-to-br from-primary-400 to-primary-600 text-white'
+                                                            ? 'bg-gradient-to-br from-amber-400 to-orange-500 text-white'
+                                                            : 'bg-gradient-to-br from-primary-400 to-primary-600 text-white'
                                                             }`}>
                                                             {u.full_name ? u.full_name.charAt(0).toUpperCase() : u.username.charAt(0).toUpperCase()}
                                                             {/* Online indicator */}
@@ -1415,8 +1417,8 @@ export default function AdminConsole() {
                                                                 onClick={() => handleDeleteUser(u.id)}
                                                                 disabled={u.id === user?.id}
                                                                 className={`p-2 rounded-lg transition-all ${u.id === user?.id
-                                                                        ? 'text-white/20 cursor-not-allowed'
-                                                                        : 'hover:bg-red-500/20 text-white/40 hover:text-red-400'
+                                                                    ? 'text-white/20 cursor-not-allowed'
+                                                                    : 'hover:bg-red-500/20 text-white/40 hover:text-red-400'
                                                                     }`}
                                                                 title={u.id === user?.id ? "Cannot delete yourself" : "Delete user"}
                                                             >
