@@ -272,14 +272,15 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                                 if (modules && onUpdateModules && wasEnabled !== isEnabled) {
                                                     await onUpdateModules({ ...modules, sms_alerts: isEnabled });
                                                 }
-
-                                                onRefresh();
+                                                // Note: Don't call onRefresh() here as it would reset localSmsProvider
+                                                // via the useEffect that syncs with smsProviderFromSecrets
                                             } catch (err) {
                                                 console.error('Failed to save SMS provider:', err);
                                                 setLocalSmsProvider(previousValue); // Use saved value
                                             }
                                         }}
                                     />
+
                                 </div>
 
                                 {/* Twilio Configuration Fields */}
