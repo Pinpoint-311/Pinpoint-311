@@ -5,21 +5,33 @@ import {
     AlertCircle, ChevronDown, ChevronUp, Copy, Check, Terminal,
     ExternalLink, AlertTriangle, Database
 } from 'lucide-react';
+
 import { Card, Button, Input, Select, Badge } from './ui';
 import { SystemSecret } from '../types';
+
+interface ModulesState {
+    ai_analysis: boolean;
+    sms_alerts: boolean;
+    email_notifications: boolean;
+    research_portal: boolean;
+}
 
 interface SetupIntegrationsPageProps {
     secrets: SystemSecret[];
     onSaveSecret: (key: string, value: string) => Promise<void>;
     onRefresh: () => void;
+    modules?: ModulesState;
+    onUpdateModules?: (modules: ModulesState) => Promise<void>;
 }
 
-export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh }: SetupIntegrationsPageProps) {
+
+export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh, modules, onUpdateModules }: SetupIntegrationsPageProps) {
     const [secretValues, setSecretValues] = useState<Record<string, string>>({});
     const [savingKey, setSavingKey] = useState<string | null>(null);
     const [showTerminal, setShowTerminal] = useState(false);
     const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
     const [localSmsProvider, setLocalSmsProvider] = useState<string>('none');
+
 
     const isConfigured = (key: string) => secrets.find(s => s.key_name === key)?.is_configured;
 
@@ -186,204 +198,352 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 </div>
             </div>
 
-            {/* Optional Integrations */}
+            {/* Optional Integrations - Premium Design */}
             <div>
                 <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
                     <Cloud className="w-5 h-5 text-blue-400" />
                     Optional Integrations
                 </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {/* Google Cloud */}
-                    <Card>
-                        <div className="flex items-start justify-between mb-3">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                                    <Cloud className="w-5 h-5 text-blue-400" />
-                                </div>
-                                <div>
-                                    <h3 className="font-semibold text-white">Google Cloud</h3>
-                                    <p className="text-gray-300 text-xs">KMS, AI, Secrets, Translation</p>
-                                </div>
-                            </div>
-                        </div>
-                        <p className="text-gray-300 text-sm mb-3">
-                            Set up via environment variables or the Setup Wizard.
-                        </p>
-                        <Button
-                            size="sm"
-                            variant="secondary"
-                            className="w-full"
-                            onClick={() => window.location.href = '/setup'}
-                        >
-                            <Sparkles className="w-4 h-4 mr-2" />
-                            Configure with Wizard
-                        </Button>
-                    </Card>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* SMS Notifications - Premium Card */}
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.1 }}
+                        className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${localSmsProvider && localSmsProvider !== 'none'
+                            ? 'bg-gradient-to-br from-emerald-500/10 via-green-500/5 to-teal-500/10 border-emerald-500/30 shadow-lg shadow-emerald-500/10'
+                            : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'
+                            }`}
+                    >
+                        {/* Glow effect when configured */}
+                        {localSmsProvider && localSmsProvider !== 'none' && (
+                            <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/5 via-transparent to-teal-500/5 pointer-events-none" />
+                        )}
 
-                    {/* SMS Notifications */}
-                    <Card>
-                        <div className="flex items-start justify-between mb-3">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-lg bg-green-500/20 flex items-center justify-center">
-                                    <MessageSquare className="w-5 h-5 text-green-400" />
+                        <div className="relative">
+                            <div className="flex items-start justify-between mb-4">
+                                <div className="flex items-center gap-4">
+                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${localSmsProvider && localSmsProvider !== 'none'
+                                        ? 'bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg shadow-emerald-500/30'
+                                        : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'
+                                        }`}>
+                                        <MessageSquare className="w-7 h-7 text-white" />
+                                    </div>
+                                    <div>
+                                        <h3 className="font-bold text-lg text-white">SMS Notifications</h3>
+                                        <p className="text-white/50 text-sm">Text alerts to residents</p>
+                                    </div>
                                 </div>
-                                <div>
-                                    <h3 className="font-semibold text-white">SMS Notifications</h3>
-                                    <p className="text-gray-300 text-xs">Twilio or custom HTTP</p>
-                                </div>
+                                {localSmsProvider && localSmsProvider !== 'none' ? (
+                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-emerald-500/20 to-teal-500/20 text-emerald-300 border border-emerald-500/30 shadow-lg shadow-emerald-500/10">
+                                        <CheckCircle className="w-3.5 h-3.5" />
+                                        Active
+                                    </span>
+                                ) : (
+                                    <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 text-white/50 border border-white/10">
+                                        Disabled
+                                    </span>
+                                )}
                             </div>
-                            {getStatusBadge(!!(localSmsProvider && localSmsProvider !== 'none'))}
-                        </div>
-                        <Select
-                            options={[
-                                { value: 'none', label: 'Disabled' },
-                                { value: 'twilio', label: 'Twilio' },
-                                { value: 'http', label: 'Custom HTTP API' },
-                            ]}
-                            value={localSmsProvider}
-                            onChange={async (e) => {
-                                const newValue = e.target.value;
-                                // Update local state immediately for instant feedback
-                                setLocalSmsProvider(newValue);
-                                try {
-                                    await onSaveSecret('SMS_PROVIDER', newValue);
-                                    onRefresh();
-                                } catch (err) {
-                                    console.error('Failed to save SMS provider:', err);
-                                    // Revert on error
-                                    setLocalSmsProvider(localSmsProvider);
-                                }
-                            }}
-                        />
-                    </Card>
 
-                    {/* Email SMTP */}
-                    <Card>
-                        <div className="flex items-start justify-between mb-3">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center">
-                                    <Mail className="w-5 h-5 text-purple-400" />
-                                </div>
+                            {/* SMS Provider Selection */}
+                            <div className="space-y-4">
                                 <div>
-                                    <h3 className="font-semibold text-white">Email (SMTP)</h3>
-                                    <p className="text-gray-300 text-xs">Outgoing notifications</p>
-                                </div>
-                            </div>
-                            {getStatusBadge(smtpConfigured)}
-                        </div>
-                        {!smtpConfigured || secretValues['SMTP_HOST'] !== undefined ? (
-                            <div className="space-y-2">
-                                <div className="flex gap-2">
-                                    <Input
-                                        type="text"
-                                        placeholder="SMTP Host (e.g., smtp.gmail.com)"
-                                        value={secretValues['SMTP_HOST'] || ''}
-                                        onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_HOST': e.target.value }))}
-                                        className="flex-1 text-sm"
-                                    />
-                                    <Input
-                                        type="text"
-                                        placeholder="Port"
-                                        value={secretValues['SMTP_PORT'] || ''}
-                                        onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_PORT': e.target.value }))}
-                                        className="w-20 text-sm"
+                                    <label className="text-sm text-white/60 mb-2 block">Provider</label>
+                                    <Select
+                                        options={[
+                                            { value: 'none', label: 'Disabled' },
+                                            { value: 'twilio', label: 'Twilio' },
+                                            { value: 'http', label: 'Custom HTTP API' },
+                                        ]}
+                                        value={localSmsProvider}
+                                        onChange={async (e) => {
+                                            const newValue = e.target.value;
+                                            const wasEnabled = localSmsProvider !== 'none';
+                                            const isEnabled = newValue !== 'none';
+
+                                            setLocalSmsProvider(newValue);
+                                            try {
+                                                await onSaveSecret('SMS_PROVIDER', newValue);
+
+                                                // Sync with modules if available
+                                                if (modules && onUpdateModules && wasEnabled !== isEnabled) {
+                                                    await onUpdateModules({ ...modules, sms_alerts: isEnabled });
+                                                }
+
+                                                onRefresh();
+                                            } catch (err) {
+                                                console.error('Failed to save SMS provider:', err);
+                                                setLocalSmsProvider(localSmsProvider);
+                                            }
+                                        }}
                                     />
                                 </div>
-                                <div className="flex gap-2">
+
+                                {/* Module sync indicator */}
+                                {modules && (
+                                    <div className={`flex items-center gap-2 text-xs ${modules.sms_alerts ? 'text-emerald-400' : 'text-white/40'}`}>
+                                        {modules.sms_alerts ? (
+                                            <>
+                                                <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                                                Module enabled in Feature Settings
+                                            </>
+                                        ) : (
+                                            <>
+                                                <div className="w-2 h-2 rounded-full bg-white/30" />
+                                                Module disabled in Feature Settings
+                                            </>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </motion.div>
+
+                    {/* Email SMTP - Premium Card */}
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.2 }}
+                        className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${smtpConfigured
+                            ? 'bg-gradient-to-br from-violet-500/10 via-purple-500/5 to-fuchsia-500/10 border-violet-500/30 shadow-lg shadow-violet-500/10'
+                            : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'
+                            }`}
+                    >
+                        {smtpConfigured && (
+                            <div className="absolute inset-0 bg-gradient-to-r from-violet-500/5 via-transparent to-fuchsia-500/5 pointer-events-none" />
+                        )}
+
+                        <div className="relative">
+                            <div className="flex items-start justify-between mb-4">
+                                <div className="flex items-center gap-4">
+                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${smtpConfigured
+                                        ? 'bg-gradient-to-br from-violet-400 to-purple-500 shadow-lg shadow-violet-500/30'
+                                        : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'
+                                        }`}>
+                                        <Mail className="w-7 h-7 text-white" />
+                                    </div>
+                                    <div>
+                                        <h3 className="font-bold text-lg text-white">Email (SMTP)</h3>
+                                        <p className="text-white/50 text-sm">Outgoing notifications</p>
+                                    </div>
+                                </div>
+                                {smtpConfigured ? (
+                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-violet-500/20 to-purple-500/20 text-violet-300 border border-violet-500/30 shadow-lg shadow-violet-500/10">
+                                        <CheckCircle className="w-3.5 h-3.5" />
+                                        Configured
+                                    </span>
+                                ) : (
+                                    <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                        <AlertCircle className="w-3.5 h-3.5 mr-1" />
+                                        Setup Required
+                                    </span>
+                                )}
+                            </div>
+
+                            {!smtpConfigured || secretValues['SMTP_HOST'] !== undefined ? (
+                                <div className="space-y-3">
+                                    <div className="flex gap-2">
+                                        <Input
+                                            type="text"
+                                            placeholder="SMTP Host (e.g., smtp.gmail.com)"
+                                            value={secretValues['SMTP_HOST'] || ''}
+                                            onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_HOST': e.target.value }))}
+                                            className="flex-1 text-sm"
+                                        />
+                                        <Input
+                                            type="text"
+                                            placeholder="Port"
+                                            value={secretValues['SMTP_PORT'] || ''}
+                                            onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_PORT': e.target.value }))}
+                                            className="w-20 text-sm"
+                                        />
+                                    </div>
                                     <Input
                                         type="text"
-                                        placeholder="From Email"
+                                        placeholder="From Email Address"
                                         value={secretValues['SMTP_FROM_EMAIL'] || ''}
                                         onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_FROM_EMAIL': e.target.value }))}
-                                        className="flex-1 text-sm"
+                                        className="text-sm"
                                     />
+                                    <div className="flex gap-2">
+                                        <Input
+                                            type="text"
+                                            placeholder="Username"
+                                            value={secretValues['SMTP_USERNAME'] || ''}
+                                            onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_USERNAME': e.target.value }))}
+                                            className="flex-1 text-sm"
+                                        />
+                                        <Input
+                                            type="password"
+                                            placeholder="Password"
+                                            value={secretValues['SMTP_PASSWORD'] || ''}
+                                            onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_PASSWORD': e.target.value }))}
+                                            className="flex-1 text-sm"
+                                        />
+                                    </div>
+                                    <Button
+                                        size="sm"
+                                        className="w-full bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700"
+                                        onClick={async () => {
+                                            if (secretValues['SMTP_HOST']) await handleSave('SMTP_HOST');
+                                            if (secretValues['SMTP_PORT']) await handleSave('SMTP_PORT');
+                                            if (secretValues['SMTP_FROM_EMAIL']) await handleSave('SMTP_FROM_EMAIL');
+                                            if (secretValues['SMTP_USERNAME']) await handleSave('SMTP_USERNAME');
+                                            if (secretValues['SMTP_PASSWORD']) await handleSave('SMTP_PASSWORD');
+
+                                            // Auto-enable email module when SMTP is configured
+                                            if (modules && onUpdateModules && secretValues['SMTP_HOST']) {
+                                                await onUpdateModules({ ...modules, email_notifications: true });
+                                            }
+                                        }}
+                                        disabled={!secretValues['SMTP_HOST'] || savingKey !== null}
+                                    >
+                                        {savingKey ? 'Saving...' : 'Save SMTP Settings'}
+                                    </Button>
                                 </div>
+                            ) : (
+                                <div className="space-y-3">
+                                    <div className="flex items-center gap-2">
+                                        <div className="flex-1 h-10 rounded-xl bg-violet-500/20 border border-violet-500/30 flex items-center px-4">
+                                            <CheckCircle className="w-4 h-4 text-violet-400 mr-2" />
+                                            <span className="text-violet-200 text-sm">SMTP configured and ready</span>
+                                        </div>
+                                        <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, 'SMTP_HOST': '' }))}>
+                                            Change
+                                        </Button>
+                                    </div>
+
+                                    {/* Module sync indicator */}
+                                    {modules && (
+                                        <div className={`flex items-center gap-2 text-xs ${modules.email_notifications ? 'text-violet-400' : 'text-white/40'}`}>
+                                            {modules.email_notifications ? (
+                                                <>
+                                                    <div className="w-2 h-2 rounded-full bg-violet-400 animate-pulse" />
+                                                    Module enabled in Feature Settings
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <div className="w-2 h-2 rounded-full bg-white/30" />
+                                                    Module disabled in Feature Settings
+                                                </>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </motion.div>
+
+                    {/* Google Cloud - Premium Card */}
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.3 }}
+                        className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-blue-500/10 via-cyan-500/5 to-sky-500/10 border-blue-500/20 backdrop-blur-xl p-6 hover:border-blue-500/40 transition-all duration-300"
+                    >
+                        <div className="absolute inset-0 bg-gradient-to-r from-blue-500/5 via-transparent to-cyan-500/5 pointer-events-none" />
+
+                        <div className="relative">
+                            <div className="flex items-start justify-between mb-4">
+                                <div className="flex items-center gap-4">
+                                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-400 to-cyan-500 shadow-lg shadow-blue-500/30 flex items-center justify-center">
+                                        <Cloud className="w-7 h-7 text-white" />
+                                    </div>
+                                    <div>
+                                        <h3 className="font-bold text-lg text-white">Google Cloud</h3>
+                                        <p className="text-white/50 text-sm">AI, KMS, Secrets, Translation</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <p className="text-white/60 text-sm mb-4">
+                                Set up via environment variables or use the guided Setup Wizard.
+                            </p>
+                            <Button
+                                size="sm"
+                                className="w-full bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700"
+                                onClick={() => window.location.href = '/setup'}
+                            >
+                                <Sparkles className="w-4 h-4 mr-2" />
+                                Configure with Wizard
+                            </Button>
+                        </div>
+                    </motion.div>
+
+                    {/* Sentry Error Tracking - Premium Card */}
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.4 }}
+                        className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${sentryConfigured
+                            ? 'bg-gradient-to-br from-rose-500/10 via-red-500/5 to-orange-500/10 border-rose-500/30 shadow-lg shadow-rose-500/10'
+                            : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'
+                            }`}
+                    >
+                        {sentryConfigured && (
+                            <div className="absolute inset-0 bg-gradient-to-r from-rose-500/5 via-transparent to-orange-500/5 pointer-events-none" />
+                        )}
+
+                        <div className="relative">
+                            <div className="flex items-start justify-between mb-4">
+                                <div className="flex items-center gap-4">
+                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${sentryConfigured
+                                        ? 'bg-gradient-to-br from-rose-400 to-orange-500 shadow-lg shadow-rose-500/30'
+                                        : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'
+                                        }`}>
+                                        <AlertTriangle className="w-7 h-7 text-white" />
+                                    </div>
+                                    <div>
+                                        <h3 className="font-bold text-lg text-white">Sentry</h3>
+                                        <p className="text-white/50 text-sm">Error monitoring</p>
+                                    </div>
+                                </div>
+                                {sentryConfigured ? (
+                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-rose-500/20 to-orange-500/20 text-rose-300 border border-rose-500/30 shadow-lg shadow-rose-500/10">
+                                        <CheckCircle className="w-3.5 h-3.5" />
+                                        Active
+                                    </span>
+                                ) : (
+                                    <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 text-white/50 border border-white/10">
+                                        Optional
+                                    </span>
+                                )}
+                            </div>
+
+                            {!sentryConfigured || secretValues['SENTRY_DSN'] !== undefined ? (
                                 <div className="flex gap-2">
                                     <Input
                                         type="text"
-                                        placeholder="Username"
-                                        value={secretValues['SMTP_USERNAME'] || ''}
-                                        onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_USERNAME': e.target.value }))}
+                                        placeholder="https://xxx@sentry.io/xxx"
+                                        value={secretValues['SENTRY_DSN'] || ''}
+                                        onChange={(e) => setSecretValues(p => ({ ...p, 'SENTRY_DSN': e.target.value }))}
                                         className="flex-1 text-sm"
                                     />
-                                    <Input
-                                        type="password"
-                                        placeholder="Password"
-                                        value={secretValues['SMTP_PASSWORD'] || ''}
-                                        onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_PASSWORD': e.target.value }))}
-                                        className="flex-1 text-sm"
-                                    />
+                                    <Button
+                                        size="sm"
+                                        className="bg-gradient-to-r from-rose-500 to-orange-500 hover:from-rose-600 hover:to-orange-600"
+                                        onClick={() => handleSave('SENTRY_DSN')}
+                                        disabled={!secretValues['SENTRY_DSN'] || savingKey === 'SENTRY_DSN'}
+                                    >
+                                        Save
+                                    </Button>
                                 </div>
-                                <Button
-                                    size="sm"
-                                    onClick={async () => {
-                                        if (secretValues['SMTP_HOST']) await handleSave('SMTP_HOST');
-                                        if (secretValues['SMTP_PORT']) await handleSave('SMTP_PORT');
-                                        if (secretValues['SMTP_FROM_EMAIL']) await handleSave('SMTP_FROM_EMAIL');
-                                        if (secretValues['SMTP_USERNAME']) await handleSave('SMTP_USERNAME');
-                                        if (secretValues['SMTP_PASSWORD']) await handleSave('SMTP_PASSWORD');
-                                    }}
-                                    disabled={!secretValues['SMTP_HOST'] || savingKey !== null}
-                                >
-                                    Save SMTP Settings
-                                </Button>
-                            </div>
-                        ) : (
-                            <div className="flex items-center gap-2">
-                                <div className="flex-1 h-9 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center px-3">
-                                    <span className="text-green-300 text-xs">✓ Configured</span>
+                            ) : (
+                                <div className="flex items-center gap-2">
+                                    <div className="flex-1 h-10 rounded-xl bg-rose-500/20 border border-rose-500/30 flex items-center px-4">
+                                        <CheckCircle className="w-4 h-4 text-rose-400 mr-2" />
+                                        <span className="text-rose-200 text-sm">Monitoring active</span>
+                                    </div>
+                                    <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, 'SENTRY_DSN': '' }))}>
+                                        Change
+                                    </Button>
                                 </div>
-                                <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, 'SMTP_HOST': '' }))}>
-                                    Change
-                                </Button>
-                            </div>
-                        )}
-                    </Card>
-
-                    {/* Sentry Error Tracking */}
-                    <Card>
-                        <div className="flex items-start justify-between mb-3">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-lg bg-red-500/20 flex items-center justify-center">
-                                    <AlertTriangle className="w-5 h-5 text-red-400" />
-                                </div>
-                                <div>
-                                    <h3 className="font-semibold text-white">Sentry</h3>
-                                    <p className="text-gray-300 text-xs">Error monitoring</p>
-                                </div>
-                            </div>
-                            {getStatusBadge(sentryConfigured)}
+                            )}
                         </div>
-                        {!sentryConfigured || secretValues['SENTRY_DSN'] !== undefined ? (
-                            <div className="flex gap-2">
-                                <Input
-                                    type="text"
-                                    placeholder="https://xxx@sentry.io/xxx"
-                                    value={secretValues['SENTRY_DSN'] || ''}
-                                    onChange={(e) => setSecretValues(p => ({ ...p, 'SENTRY_DSN': e.target.value }))}
-                                    className="flex-1 text-sm"
-                                />
-                                <Button
-                                    size="sm"
-                                    onClick={() => handleSave('SENTRY_DSN')}
-                                    disabled={!secretValues['SENTRY_DSN'] || savingKey === 'SENTRY_DSN'}
-                                >
-                                    Save
-                                </Button>
-                            </div>
-                        ) : (
-                            <div className="flex items-center gap-2">
-                                <div className="flex-1 h-9 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center px-3">
-                                    <span className="text-green-300 text-xs">✓ Configured</span>
-                                </div>
-                                <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, 'SENTRY_DSN': '' }))}>
-                                    Change
-                                </Button>
-                            </div>
-                        )}
-                    </Card>
+                    </motion.div>
                 </div>
             </div>
+
 
             {/* Terminal Commands (Collapsible) */}
             <Card className="bg-slate-900/50">

@@ -1566,8 +1566,15 @@ export default function AdminConsole() {
                                 secrets={secrets}
                                 onSaveSecret={handleSaveSecretDirect}
                                 onRefresh={loadTabData}
+                                modules={modules}
+                                onUpdateModules={async (newModules) => {
+                                    setModules(newModules);
+                                    await api.updateSettings({ modules: newModules });
+                                    await refreshSettings();
+                                }}
                             />
                         )}
+
 
                         {/* Modules Tab */}
                         {currentTab === 'system' && (
