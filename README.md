@@ -652,8 +652,21 @@ Pinpoint 311 uses GitHub Actions for automated builds and security scanning:
 | **Build & Publish** | Push to main | Multi-arch Docker images to GHCR |
 | **CodeQL** | Push/PR + weekly | Static security analysis (Python/JS) |
 | **Security Scan** | Push + weekly | OWASP ZAP + Trivy vulnerability scanning |
-| **Uptime Monitor** | Every 15 min | Health checks with auto-alerting |
+| **Uptime Monitor** | Every 15 min | Health checks with auto-restart |
 | **Dependabot** | Weekly | Automatic dependency updates |
+
+### Self-Healing Infrastructure
+
+The system automatically recovers from common failures without developer intervention:
+
+| Layer | Protection | Config Required |
+|-------|------------|-----------------|
+| **Docker Healthchecks** | Backend, Worker, Frontend auto-restart if unresponsive | None ✅ |
+| **Container Restart** | Containers restart after crash (`unless-stopped`) | None ✅ |
+| **Watchtower** | Auto-pulls security updates at 3am daily | None ✅ |
+| **SSH Auto-Restart** | Force restart via SSH when uptime check fails | Optional* |
+
+*To enable SSH auto-restart, add `PROD_HOST` and `PROD_SSH_KEY` secrets to your GitHub repository.
 
 ### Docker Images
 
