@@ -40,7 +40,8 @@ class ApiClient {
         }
 
         // Add Accept-Language header for automatic backend translation
-        const preferredLanguage = localStorage.getItem('preferredLanguage') || 'en';
+        // Must match the LANGUAGE_STORAGE_KEY in TranslationContext.tsx
+        const preferredLanguage = localStorage.getItem('preferred_language') || 'en';
         headers['Accept-Language'] = preferredLanguage;
 
         const response = await fetch(`${API_BASE}${endpoint}`, {
