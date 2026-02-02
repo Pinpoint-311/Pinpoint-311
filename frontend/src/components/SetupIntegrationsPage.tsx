@@ -260,7 +260,8 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                         value={localSmsProvider}
                                         onChange={async (e) => {
                                             const newValue = e.target.value;
-                                            const wasEnabled = localSmsProvider !== 'none';
+                                            const previousValue = localSmsProvider; // Save before updating
+                                            const wasEnabled = previousValue !== 'none';
                                             const isEnabled = newValue !== 'none';
 
                                             setLocalSmsProvider(newValue);
@@ -275,11 +276,98 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                                 onRefresh();
                                             } catch (err) {
                                                 console.error('Failed to save SMS provider:', err);
-                                                setLocalSmsProvider(localSmsProvider);
+                                                setLocalSmsProvider(previousValue); // Use saved value
                                             }
                                         }}
                                     />
                                 </div>
+
+                                {/* Twilio Configuration Fields */}
+                                {localSmsProvider === 'twilio' && (
+                                    <div className="space-y-3 pt-2 border-t border-white/10">
+                                        <div>
+                                            <label className="text-sm text-white/60 mb-1.5 block">Account SID</label>
+                                            <div className="flex gap-2">
+                                                <Input
+                                                    type="text"
+                                                    placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                                                    value={secretValues['TWILIO_ACCOUNT_SID'] || ''}
+                                                    onChange={(e) => setSecretValues(p => ({ ...p, 'TWILIO_ACCOUNT_SID': e.target.value }))}
+                                                    className="flex-1 text-sm"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="text-sm text-white/60 mb-1.5 block">Auth Token</label>
+                                            <Input
+                                                type="password"
+                                                placeholder="Your Twilio auth token"
+                                                value={secretValues['TWILIO_AUTH_TOKEN'] || ''}
+                                                onChange={(e) => setSecretValues(p => ({ ...p, 'TWILIO_AUTH_TOKEN': e.target.value }))}
+                                                className="text-sm"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-sm text-white/60 mb-1.5 block">From Phone Number</label>
+                                            <Input
+                                                type="text"
+                                                placeholder="+1234567890"
+                                                value={secretValues['TWILIO_FROM_NUMBER'] || ''}
+                                                onChange={(e) => setSecretValues(p => ({ ...p, 'TWILIO_FROM_NUMBER': e.target.value }))}
+                                                className="text-sm"
+                                            />
+                                        </div>
+                                        <Button
+                                            size="sm"
+                                            className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700"
+                                            onClick={async () => {
+                                                if (secretValues['TWILIO_ACCOUNT_SID']) await handleSave('TWILIO_ACCOUNT_SID');
+                                                if (secretValues['TWILIO_AUTH_TOKEN']) await handleSave('TWILIO_AUTH_TOKEN');
+                                                if (secretValues['TWILIO_FROM_NUMBER']) await handleSave('TWILIO_FROM_NUMBER');
+                                            }}
+                                            disabled={!secretValues['TWILIO_ACCOUNT_SID'] || savingKey !== null}
+                                        >
+                                            {savingKey ? 'Saving...' : 'Save Twilio Credentials'}
+                                        </Button>
+                                    </div>
+                                )}
+
+                                {/* Custom HTTP Configuration Fields */}
+                                {localSmsProvider === 'http' && (
+                                    <div className="space-y-3 pt-2 border-t border-white/10">
+                                        <div>
+                                            <label className="text-sm text-white/60 mb-1.5 block">API Endpoint URL</label>
+                                            <Input
+                                                type="text"
+                                                placeholder="https://your-sms-api.com/send"
+                                                value={secretValues['SMS_HTTP_ENDPOINT'] || ''}
+                                                onChange={(e) => setSecretValues(p => ({ ...p, 'SMS_HTTP_ENDPOINT': e.target.value }))}
+                                                className="text-sm"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-sm text-white/60 mb-1.5 block">API Key (optional)</label>
+                                            <Input
+                                                type="password"
+                                                placeholder="Your API key"
+                                                value={secretValues['SMS_HTTP_API_KEY'] || ''}
+                                                onChange={(e) => setSecretValues(p => ({ ...p, 'SMS_HTTP_API_KEY': e.target.value }))}
+                                                className="text-sm"
+                                            />
+                                        </div>
+                                        <Button
+                                            size="sm"
+                                            className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700"
+                                            onClick={async () => {
+                                                if (secretValues['SMS_HTTP_ENDPOINT']) await handleSave('SMS_HTTP_ENDPOINT');
+                                                if (secretValues['SMS_HTTP_API_KEY']) await handleSave('SMS_HTTP_API_KEY');
+                                            }}
+                                            disabled={!secretValues['SMS_HTTP_ENDPOINT'] || savingKey !== null}
+                                        >
+                                            {savingKey ? 'Saving...' : 'Save HTTP Settings'}
+                                        </Button>
+                                    </div>
+                                )}
 
                                 {/* Module sync indicator */}
                                 {modules && (
@@ -300,6 +388,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                             </div>
                         </div>
                     </motion.div>
+
 
                     {/* Email SMTP - Premium Card */}
                     <motion.div
