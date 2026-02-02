@@ -21,6 +21,12 @@ import {
     Phone,
     ExternalLink,
     ClipboardList,
+    Globe,
+    Facebook,
+    Instagram,
+    Youtube,
+    Twitter,
+    Linkedin,
 } from 'lucide-react';
 import { Button, Input, Textarea, Card } from '../components/ui';
 import GoogleMapsLocationPicker from '../components/GoogleMapsLocationPicker';
@@ -1204,6 +1210,28 @@ export default function ResidentPortal() {
                         © {new Date().getFullYear()} {settings?.township_name || 'Township 311'}. {"All rights reserved"}
                     </p>
                     <div className="flex items-center gap-6 text-sm">
+                        {/* Social Links */}
+                        {settings?.social_links && settings.social_links.length > 0 && (
+                            <div className="flex items-center gap-3">
+                                {settings.social_links.map((link, index) => (
+                                    <a
+                                        key={index}
+                                        href={link.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition-all hover:scale-110"
+                                        title={link.platform.charAt(0).toUpperCase() + link.platform.slice(1)}
+                                    >
+                                        {link.icon === 'Globe' && <Globe className="w-4 h-4 text-white/70" />}
+                                        {link.icon === 'Facebook' && <Facebook className="w-4 h-4 text-blue-400" />}
+                                        {link.icon === 'Instagram' && <Instagram className="w-4 h-4 text-pink-400" />}
+                                        {link.icon === 'Youtube' && <Youtube className="w-4 h-4 text-red-400" />}
+                                        {link.icon === 'Twitter' && <Twitter className="w-4 h-4 text-sky-400" />}
+                                        {link.icon === 'Linkedin' && <Linkedin className="w-4 h-4 text-blue-500" />}
+                                    </a>
+                                ))}
+                            </div>
+                        )}
                         <a href="#" className="text-white/40 hover:text-white/80 transition-colors">
                             {"Privacy Policy"}
                         </a>

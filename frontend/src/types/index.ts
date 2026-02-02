@@ -221,6 +221,12 @@ export interface ManualIntakeCreate {
 }
 
 // System Settings types
+export interface SocialLink {
+    platform: string;  // website, facebook, instagram, youtube, twitter, linkedin, tiktok, nextdoor
+    url: string;
+    icon: string;      // Lucide icon name
+}
+
 export interface SystemSettings {
     id: number;
     township_name: string;
@@ -234,6 +240,7 @@ export interface SystemSettings {
         email_notifications?: boolean;
         research_portal?: boolean;
     };
+    social_links?: SocialLink[];
     updated_at: string | null;
 }
 

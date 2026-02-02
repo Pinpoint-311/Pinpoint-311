@@ -303,6 +303,7 @@ class SystemSettingsBase(BaseModel):
     hero_text: str = "How can we help?"
     primary_color: str = "#6366f1"
     modules: Dict[str, bool] = {"ai_analysis": False, "sms_alerts": False}
+    social_links: Optional[List[Dict[str, str]]] = []
 
 
 class SystemSettingsResponse(SystemSettingsBase):

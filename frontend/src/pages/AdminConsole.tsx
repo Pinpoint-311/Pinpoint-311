@@ -58,6 +58,12 @@ import {
     ExternalLink,
     ChevronDown,
     User as UserIcon,
+    Globe,
+    Facebook,
+    Instagram,
+    Youtube,
+    Twitter,
+    Linkedin,
     type LucideIcon,
 } from 'lucide-react';
 import { Button, Card, Modal, Input, Select, Badge, AccordionSection } from '../components/ui';
@@ -405,6 +411,7 @@ export default function AdminConsole() {
                 favicon_url: settings.favicon_url || '',
                 hero_text: settings.hero_text,
                 primary_color: settings.primary_color,
+                social_links: settings.social_links || [],
             });
             setModules({
                 ai_analysis: settings.modules?.ai_analysis || false,
@@ -1266,6 +1273,102 @@ export default function AdminConsole() {
                                                 </tbody>
                                             </table>
                                         </div>
+                                    </div>
+                                </Card>
+
+                                {/* Social Links */}
+                                <Card className="mt-6">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <div>
+                                            <h3 className="text-lg font-semibold text-white">Social Links</h3>
+                                            <p className="text-sm text-white/50">Add links to display in the resident portal footer</p>
+                                        </div>
+                                        <Button
+                                            size="sm"
+                                            leftIcon={<Plus className="w-4 h-4" />}
+                                            onClick={() => {
+                                                const currentLinks = (brandingForm as any).social_links || [];
+                                                setBrandingForm(p => ({
+                                                    ...p,
+                                                    social_links: [...currentLinks, { platform: 'website', url: '', icon: 'Globe' }]
+                                                }));
+                                            }}
+                                        >
+                                            Add Link
+                                        </Button>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        {((brandingForm as any).social_links || []).map((link: { platform: string; url: string; icon: string }, index: number) => (
+                                            <div key={index} className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/10">
+                                                {/* Platform/Icon selector */}
+                                                <div className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center">
+                                                    {link.icon === 'Globe' && <Globe className="w-5 h-5 text-blue-400" />}
+                                                    {link.icon === 'Facebook' && <Facebook className="w-5 h-5 text-blue-500" />}
+                                                    {link.icon === 'Instagram' && <Instagram className="w-5 h-5 text-pink-500" />}
+                                                    {link.icon === 'Youtube' && <Youtube className="w-5 h-5 text-red-500" />}
+                                                    {link.icon === 'Twitter' && <Twitter className="w-5 h-5 text-sky-400" />}
+                                                    {link.icon === 'Linkedin' && <Linkedin className="w-5 h-5 text-blue-600" />}
+                                                </div>
+                                                <Select
+                                                    value={link.platform}
+                                                    onChange={(e) => {
+                                                        const currentLinks = [...((brandingForm as any).social_links || [])];
+                                                        const iconMap: Record<string, string> = {
+                                                            website: 'Globe',
+                                                            facebook: 'Facebook',
+                                                            instagram: 'Instagram',
+                                                            youtube: 'Youtube',
+                                                            twitter: 'Twitter',
+                                                            linkedin: 'Linkedin',
+                                                        };
+                                                        currentLinks[index] = {
+                                                            ...currentLinks[index],
+                                                            platform: e.target.value,
+                                                            icon: iconMap[e.target.value] || 'Globe'
+                                                        };
+                                                        setBrandingForm(p => ({ ...p, social_links: currentLinks }));
+                                                    }}
+                                                    className="w-36"
+                                                    options={[
+                                                        { value: 'website', label: 'Website' },
+                                                        { value: 'facebook', label: 'Facebook' },
+                                                        { value: 'instagram', label: 'Instagram' },
+                                                        { value: 'youtube', label: 'YouTube' },
+                                                        { value: 'twitter', label: 'X (Twitter)' },
+                                                        { value: 'linkedin', label: 'LinkedIn' },
+                                                    ]}
+                                                />
+                                                <Input
+                                                    placeholder="https://..."
+                                                    value={link.url}
+                                                    onChange={(e) => {
+                                                        const currentLinks = [...((brandingForm as any).social_links || [])];
+                                                        currentLinks[index] = { ...currentLinks[index], url: e.target.value };
+                                                        setBrandingForm(p => ({ ...p, social_links: currentLinks }));
+                                                    }}
+                                                    className="flex-1"
+                                                />
+                                                <button
+                                                    onClick={() => {
+                                                        const currentLinks = [...((brandingForm as any).social_links || [])];
+                                                        currentLinks.splice(index, 1);
+                                                        setBrandingForm(p => ({ ...p, social_links: currentLinks }));
+                                                    }}
+                                                    className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                                                    title="Remove link"
+                                                >
+                                                    <X className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {((brandingForm as any).social_links || []).length === 0 && (
+                                            <div className="text-center py-8 text-white/40">
+                                                <Globe className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                                                <p className="text-sm">No social links configured</p>
+                                                <p className="text-xs mt-1">Click "Add Link" to add your social media profiles</p>
+                                            </div>
+                                        )}
                                     </div>
                                 </Card>
                             </div>

@@ -367,6 +367,10 @@ class SystemSettings(Base):
     translations = Column(JSON, default={})
     # Format: {"en": {"township_name": "...", "hero_text": "..."}, "es": {...}}
     
+    # Social media links for resident portal footer
+    social_links = Column(JSON, default=[])
+    # Format: [{"platform": "facebook", "url": "https://...", "icon": "Facebook"}, ...]
+    
     # Document retention configuration
     retention_state_code = Column(String(2), default="NJ")  # State for retention rules
     retention_days_override = Column(Integer)  # Custom override (null = use state default)
