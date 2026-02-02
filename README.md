@@ -566,6 +566,23 @@ State-specific record retention with legal hold protection:
 - **Admin-configurable**: Select state or custom period
 - **Automatic enforcement**: Daily Celery task archives expired records
 
+#### Legal Holds
+When litigation or investigation is anticipated, records can be placed on **legal hold** to prevent automatic deletion:
+- **Per-request holds**: Staff can flag individual requests as "Legal Hold" from the detail view
+- **Bulk holds**: Admin can apply holds to all requests matching specific criteria (date range, category, location)
+- **Hold expiration**: Optional expiration date, or indefinite hold until manually released
+- **Audit trail**: All hold/release actions are logged with timestamp and user
+
+#### Compliance Features
+| Requirement | Implementation |
+|-------------|----------------|
+| **OPRA (NJ) / FOIA** | Export any request's full audit trail on demand |
+| **CJIS** | PII encryption at rest (AES-256) and in transit (TLS 1.3) |
+| **NIST 800-53** | Immutable audit logs with tamper detection |
+| **GDPR/CCPA** | PII anonymization option for closed records |
+| **Records Officer** | Designated admin role for retention policy management |
+
+
 ### ♿ Accessibility (WCAG 2.2 AA)
 
 Full keyboard navigation, 4.5:1 contrast ratio, proper aria-labels on all interactive elements. See [COMPLIANCE.md](./COMPLIANCE.md) for details.
