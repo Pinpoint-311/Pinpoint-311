@@ -228,30 +228,37 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
 
         // Process text nodes
         textNodes.forEach(node => {
-            const text = node.textContent?.trim();
-            if (!text) return;
+            // Get the original text or current content if first time
+            let originalText = originalTextsRef.current.get(node);
 
-            // Store original text if not already stored
-            if (!originalTextsRef.current.has(node)) {
-                originalTextsRef.current.set(node, text);
+            // If we don't have original stored, store current (first capture)
+            if (!originalText) {
+                const currentText = node.textContent?.trim();
+                if (!currentText) return;
+                originalTextsRef.current.set(node, currentText);
+                originalText = currentText;
             }
 
-            // Check if already translated
-            const cached = getCachedTranslation(text, 'en', language);
+            // Always use the stored ORIGINAL English text for translation
+            const textToTranslate = originalText;
+
+            // Check if already translated (using original text, not current)
+            const cached = getCachedTranslation(textToTranslate, 'en', language);
             if (cached) {
                 node.textContent = cached;
                 return;
             }
 
             // Group nodes by text for batch translation
-            if (!nodeTextMap.has(text)) {
-                nodeTextMap.set(text, []);
-                if (!attributeTextMap.has(text)) {
-                    textsToTranslate.push(text);
+            if (!nodeTextMap.has(textToTranslate)) {
+                nodeTextMap.set(textToTranslate, []);
+                if (!attributeTextMap.has(textToTranslate)) {
+                    textsToTranslate.push(textToTranslate);
                 }
             }
-            nodeTextMap.get(text)!.push(node);
+            nodeTextMap.get(textToTranslate)!.push(node);
         });
+
 
         // Process attributes
         attributeItems.forEach(({ element, attribute, value }) => {
