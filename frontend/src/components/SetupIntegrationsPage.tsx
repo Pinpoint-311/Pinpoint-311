@@ -328,8 +328,8 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                             <Input
                                                 type="text"
                                                 placeholder="+1234567890"
-                                                value={secretValues['TWILIO_FROM_NUMBER'] || ''}
-                                                onChange={(e) => setSecretValues(p => ({ ...p, 'TWILIO_FROM_NUMBER': e.target.value }))}
+                                                value={secretValues['TWILIO_PHONE_NUMBER'] || ''}
+                                                onChange={(e) => setSecretValues(p => ({ ...p, 'TWILIO_PHONE_NUMBER': e.target.value }))}
                                                 className="text-sm"
                                             />
                                         </div>
@@ -339,9 +339,10 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                             onClick={async () => {
                                                 if (secretValues['TWILIO_ACCOUNT_SID']) await handleSave('TWILIO_ACCOUNT_SID');
                                                 if (secretValues['TWILIO_AUTH_TOKEN']) await handleSave('TWILIO_AUTH_TOKEN');
-                                                if (secretValues['TWILIO_FROM_NUMBER']) await handleSave('TWILIO_FROM_NUMBER');
+                                                if (secretValues['TWILIO_PHONE_NUMBER']) await handleSave('TWILIO_PHONE_NUMBER');
                                             }}
                                             disabled={!secretValues['TWILIO_ACCOUNT_SID'] || savingKey !== null}
+
                                         >
                                             {savingKey ? 'Saving...' : 'Save Twilio Credentials'}
                                         </Button>
