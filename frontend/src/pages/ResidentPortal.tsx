@@ -644,9 +644,9 @@ export default function ResidentPortal() {
                                         transition={{ delay: 0.1 }}
                                         className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary-500/20 border border-primary-500/30"
                                     >
-                                        <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                                        <span className="w-2 h-2 rounded-full bg-primary-400" />
                                         <span className="text-sm font-medium text-primary-200">
-                                            Community Support Active
+                                            Non-Emergency Services
                                         </span>
                                     </motion.div>
 
@@ -675,9 +675,13 @@ export default function ResidentPortal() {
                                         transition={{ delay: 0.4 }}
                                         className="max-w-md mx-auto"
                                     >
-                                        <div className="relative">
+                                        <div className="relative" data-no-translate>
                                             <label htmlFor="service-search" className="sr-only">{"Search services..."}</label>
-                                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" aria-hidden="true" />
+                                            <Search
+                                                className="absolute top-1/2 -translate-y-1/2 w-5 h-5 text-white/70 pointer-events-none"
+                                                style={{ left: '1rem' }}
+                                                aria-hidden="true"
+                                            />
                                             <input
                                                 id="service-search"
                                                 type="text"
