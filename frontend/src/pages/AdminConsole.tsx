@@ -1371,6 +1371,61 @@ export default function AdminConsole() {
                                         )}
                                     </div>
                                 </Card>
+
+                                {/* Legal Documents */}
+                                <Card className="mt-6">
+                                    <div className="mb-4">
+                                        <h3 className="text-lg font-semibold text-white">Legal Documents</h3>
+                                        <p className="text-sm text-white/50">Customize your Privacy Policy, Terms of Service, and Accessibility Statement</p>
+                                    </div>
+
+                                    <div className="space-y-6">
+                                        {/* Privacy Policy */}
+                                        <div>
+                                            <div className="flex items-center justify-between mb-2">
+                                                <label className="text-sm font-medium text-white/70">Privacy Policy</label>
+                                                <a href="/privacy" target="_blank" className="text-xs text-primary-400 hover:text-primary-300">Preview →</a>
+                                            </div>
+                                            <textarea
+                                                value={(brandingForm as any).privacy_policy || ''}
+                                                onChange={(e) => setBrandingForm(p => ({ ...p, privacy_policy: e.target.value || null }))}
+                                                placeholder="Leave blank to use default privacy policy with 311 best practices..."
+                                                className="w-full h-32 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-500/50 font-mono text-sm resize-y"
+                                            />
+                                            <p className="text-xs text-white/40 mt-1">Supports Markdown formatting. Leave blank for sensible defaults.</p>
+                                        </div>
+
+                                        {/* Terms of Service */}
+                                        <div>
+                                            <div className="flex items-center justify-between mb-2">
+                                                <label className="text-sm font-medium text-white/70">Terms of Service</label>
+                                                <a href="/terms" target="_blank" className="text-xs text-primary-400 hover:text-primary-300">Preview →</a>
+                                            </div>
+                                            <textarea
+                                                value={(brandingForm as any).terms_of_service || ''}
+                                                onChange={(e) => setBrandingForm(p => ({ ...p, terms_of_service: e.target.value || null }))}
+                                                placeholder="Leave blank to use default terms with non-emergency disclaimer..."
+                                                className="w-full h-32 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-500/50 font-mono text-sm resize-y"
+                                            />
+                                            <p className="text-xs text-white/40 mt-1">Default includes prominent non-emergency disclaimer. Supports Markdown.</p>
+                                        </div>
+
+                                        {/* Accessibility Statement */}
+                                        <div>
+                                            <div className="flex items-center justify-between mb-2">
+                                                <label className="text-sm font-medium text-white/70">Accessibility Statement</label>
+                                                <a href="/accessibility" target="_blank" className="text-xs text-primary-400 hover:text-primary-300">Preview →</a>
+                                            </div>
+                                            <textarea
+                                                value={(brandingForm as any).accessibility_statement || ''}
+                                                onChange={(e) => setBrandingForm(p => ({ ...p, accessibility_statement: e.target.value || null }))}
+                                                placeholder="Leave blank to use default WCAG/ADA compliant accessibility statement..."
+                                                className="w-full h-32 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-500/50 font-mono text-sm resize-y"
+                                            />
+                                            <p className="text-xs text-white/40 mt-1">Default covers WCAG 2.1 AA, Section 508, and ADA requirements.</p>
+                                        </div>
+                                    </div>
+                                </Card>
                             </div>
                         )}
 

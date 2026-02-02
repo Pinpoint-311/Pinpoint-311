@@ -1239,9 +1239,9 @@ export default function ResidentPortal() {
                         <Link to="/privacy" className="text-white/40 hover:text-white/80 transition-colors">
                             {"Privacy Policy"}
                         </Link>
-                        <a href="#" className="text-white/40 hover:text-white/80 transition-colors">
+                        <Link to="/accessibility" className="text-white/40 hover:text-white/80 transition-colors">
                             {"Accessibility"}
-                        </a>
+                        </Link>
                         <Link to="/terms" className="text-white/40 hover:text-white/80 transition-colors">
                             {"Terms of Service"}
                         </Link>

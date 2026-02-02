@@ -9,17 +9,18 @@ const DEFAULT_PRIVACY_POLICY = `
 
 When you submit a service request, we collect only the information necessary to process and respond to your request:
 
-- **Contact Information**: Name, email address, and/or phone number (optional for anonymous submissions)
+- **Contact Information**: Name, email address, and/or phone number (email is required for all submissions)
 - **Location Data**: Address or geographic coordinates related to your service request
 - **Request Details**: Description of the issue, photos, and any additional context you provide
 - **Technical Data**: Browser type, device information, and IP address for security purposes
 
-### Anonymous Submissions
+### Why Email is Required
 
-For most request types, you may submit anonymously. However, providing contact information allows us to:
+An email address is required for all service requests to:
 - Send you status updates on your request
 - Request additional information if needed
 - Notify you when your issue has been resolved
+- Maintain accountability and prevent abuse of the system
 
 ## How We Use Your Information
 

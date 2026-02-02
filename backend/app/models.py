@@ -374,6 +374,7 @@ class SystemSettings(Base):
     # Customizable legal documents (Markdown, null = use default)
     privacy_policy = Column(Text)  # Custom privacy policy content
     terms_of_service = Column(Text)  # Custom terms of service content
+    accessibility_statement = Column(Text)  # Custom accessibility statement
     
     # Document retention configuration
     retention_state_code = Column(String(2), default="NJ")  # State for retention rules

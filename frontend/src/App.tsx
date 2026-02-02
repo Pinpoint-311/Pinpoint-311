@@ -13,6 +13,7 @@ import { SetupWizard } from './pages/SetupWizard';
 import Login from './pages/Login';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
+import AccessibilityPage from './pages/AccessibilityPage';
 
 // Protected route wrapper
 function ProtectedRoute({
@@ -95,6 +96,7 @@ function AppRoutes() {
             />
             <Route path="/privacy" element={<PrivacyPolicy />} />
             <Route path="/terms" element={<TermsOfService />} />
+            <Route path="/accessibility" element={<AccessibilityPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
     );

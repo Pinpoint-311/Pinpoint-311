@@ -243,6 +243,7 @@ export interface SystemSettings {
     social_links?: SocialLink[];
     privacy_policy?: string | null;  // Custom privacy policy (Markdown)
     terms_of_service?: string | null;  // Custom terms of service (Markdown)
+    accessibility_statement?: string | null;  // Custom accessibility statement
     updated_at: string | null;
 }
 

@@ -306,6 +306,7 @@ class SystemSettingsBase(BaseModel):
     social_links: Optional[List[Dict[str, str]]] = []
     privacy_policy: Optional[str] = None  # Custom privacy policy (Markdown)
     terms_of_service: Optional[str] = None  # Custom terms of service (Markdown)
+    accessibility_statement: Optional[str] = None  # Custom accessibility statement
 
 
 class SystemSettingsResponse(SystemSettingsBase):
