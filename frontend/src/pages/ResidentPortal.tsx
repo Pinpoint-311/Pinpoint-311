@@ -677,9 +677,14 @@ export default function ResidentPortal() {
                                     >
                                         <div className="relative" data-no-translate>
                                             <label htmlFor="service-search" className="sr-only">{"Search services..."}</label>
-                                            <Search
-                                                className="absolute top-1/2 -translate-y-1/2 w-5 h-5 text-white/70 pointer-events-none"
-                                                style={{ left: '1rem' }}
+                                            <div
+                                                className="absolute top-1/2 -translate-y-1/2 w-5 h-5 pointer-events-none"
+                                                style={{
+                                                    left: '1rem',
+                                                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.7)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'%3E%3C/circle%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'%3E%3C/line%3E%3C/svg%3E")`,
+                                                    backgroundSize: 'contain',
+                                                    backgroundRepeat: 'no-repeat'
+                                                }}
                                                 aria-hidden="true"
                                             />
                                             <input
