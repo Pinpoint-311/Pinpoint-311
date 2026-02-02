@@ -304,6 +304,8 @@ class SystemSettingsBase(BaseModel):
     primary_color: str = "#6366f1"
     modules: Dict[str, bool] = {"ai_analysis": False, "sms_alerts": False}
     social_links: Optional[List[Dict[str, str]]] = []
+    privacy_policy: Optional[str] = None  # Custom privacy policy (Markdown)
+    terms_of_service: Optional[str] = None  # Custom terms of service (Markdown)
 
 
 class SystemSettingsResponse(SystemSettingsBase):

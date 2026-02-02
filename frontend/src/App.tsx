@@ -11,6 +11,8 @@ import AdminConsole from './pages/AdminConsole';
 import { ResearchLab } from './pages/ResearchLab';
 import { SetupWizard } from './pages/SetupWizard';
 import Login from './pages/Login';
+import PrivacyPolicy from './pages/PrivacyPolicy';
+import TermsOfService from './pages/TermsOfService';
 
 // Protected route wrapper
 function ProtectedRoute({
@@ -91,6 +93,8 @@ function AppRoutes() {
                     </ProtectedRoute>
                 }
             />
+            <Route path="/privacy" element={<PrivacyPolicy />} />
+            <Route path="/terms" element={<TermsOfService />} />
             <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
     );

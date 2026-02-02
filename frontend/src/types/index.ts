@@ -241,6 +241,8 @@ export interface SystemSettings {
         research_portal?: boolean;
     };
     social_links?: SocialLink[];
+    privacy_policy?: string | null;  // Custom privacy policy (Markdown)
+    terms_of_service?: string | null;  // Custom terms of service (Markdown)
     updated_at: string | null;
 }
 

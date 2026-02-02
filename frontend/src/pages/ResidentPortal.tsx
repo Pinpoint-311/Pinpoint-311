@@ -1236,15 +1236,15 @@ export default function ResidentPortal() {
                                 })}
                             </div>
                         )}
-                        <a href="#" className="text-white/40 hover:text-white/80 transition-colors">
+                        <Link to="/privacy" className="text-white/40 hover:text-white/80 transition-colors">
                             {"Privacy Policy"}
-                        </a>
+                        </Link>
                         <a href="#" className="text-white/40 hover:text-white/80 transition-colors">
                             {"Accessibility"}
                         </a>
-                        <a href="#" className="text-white/40 hover:text-white/80 transition-colors">
+                        <Link to="/terms" className="text-white/40 hover:text-white/80 transition-colors">
                             {"Terms of Service"}
-                        </a>
+                        </Link>
                     </div>
                 </div>
                 {/* Powered by Pinpoint 311 */}

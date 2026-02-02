@@ -371,6 +371,10 @@ class SystemSettings(Base):
     social_links = Column(JSON, default=[])
     # Format: [{"platform": "facebook", "url": "https://...", "icon": "Facebook"}, ...]
     
+    # Customizable legal documents (Markdown, null = use default)
+    privacy_policy = Column(Text)  # Custom privacy policy content
+    terms_of_service = Column(Text)  # Custom terms of service content
+    
     # Document retention configuration
     retention_state_code = Column(String(2), default="NJ")  # State for retention rules
     retention_days_override = Column(Integer)  # Custom override (null = use state default)
