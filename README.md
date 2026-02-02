@@ -739,16 +739,46 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 ### Initial Setup & Authentication
 
-Pinpoint 311 uses **Auth0 SSO** for all staff authentication. Before Auth0 is configured:
+Pinpoint 311 uses **Auth0 SSO** for all staff authentication.
 
-1. **First Launch**: Access the staff portal at `/staff`
-2. **Bootstrap Access**: The system provides a one-time bootstrap link via the API:
-   ```bash
-   curl -X POST http://localhost/api/auth/bootstrap
-   ```
-   This returns a magic link that logs you into the Admin Console.
-3. **Configure Auth0**: Use the Setup Wizard in Admin Console to connect your Auth0 tenant
-4. **Create Staff Users**: Add staff members via Admin Console → User Management
+#### Step 1: Configure Environment
+```bash
+cp .env.example .env
+# Edit .env:
+#   - DB_PASSWORD: Set a secure database password
+#   - SECRET_KEY: Generate with `openssl rand -base64 32`
+#   - DOMAIN: Your production domain (e.g., 311.yourtown.gov)
+```
+
+#### Step 2: Start Services
+```bash
+docker compose up -d
+```
+
+#### Step 3: Get Bootstrap Access
+Before Auth0 is configured, use the bootstrap endpoint:
+```bash
+curl -X POST http://localhost/api/auth/bootstrap
+```
+Click the returned magic link → logs you into Admin Console.
+
+#### Step 4: Configure Auth0 via Setup Wizard
+In Admin Console → Setup Wizard:
+1. Enter Auth0 domain, client ID, client secret
+2. System encrypts and stores credentials securely
+3. Bootstrap access is automatically disabled
+
+#### Step 5: (Optional) Enable Google Secret Manager
+For enterprise-grade secret storage, configure GCP in the Setup Wizard. Secrets will be migrated from the database to Google Secret Manager.
+
+### Security Storage
+
+| Secret | Default Storage | Enterprise Storage |
+|--------|-----------------|-------------------|
+| DB Password | `.env` file | `.env` file |
+| JWT Secret Key | `.env` file | `.env` file |
+| Auth0 Credentials | Database (Fernet encrypted) | Google Secret Manager |
+| API Keys | Database (Fernet encrypted) | Google Secret Manager |
 
 > [!NOTE]
 > Bootstrap access is automatically disabled once Auth0 is configured. All future logins use SSO.
