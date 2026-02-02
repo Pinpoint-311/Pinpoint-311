@@ -2202,16 +2202,20 @@ async def list_releases(
                 params={"per_page": 10}
             )
             if releases_resp.status_code == 200:
-                for r in releases_resp.json():
-                    releases.append({
-                        "tag": r["tag_name"],
-                        "name": r["name"] or r["tag_name"],
-                        "body": r.get("body") or "",
-                        "published_at": r["published_at"],
-                        "author": r["author"]["login"] if r.get("author") else None,
-                        "html_url": r["html_url"],
-                        "prerelease": r["prerelease"]
-                    })
+                data = releases_resp.json()
+                if isinstance(data, list):
+                    for r in data:
+                        releases.append({
+                            "tag": r.get("tag_name", "unknown"),
+                            "name": r.get("name") or r.get("tag_name", "unknown"),
+                            "body": r.get("body") or "",
+                            "published_at": r.get("published_at"),
+                            "author": r.get("author", {}).get("login") if r.get("author") else None,
+                            "html_url": r.get("html_url", ""),
+                            "prerelease": r.get("prerelease", False)
+                        })
+            else:
+                logger.warning(f"GitHub releases API returned {releases_resp.status_code}")
         except Exception as e:
             logger.warning(f"Failed to fetch releases: {e}")
         
@@ -2223,14 +2227,19 @@ async def list_releases(
                 params={"per_page": 15, "sha": "main"}
             )
             if commits_resp.status_code == 200:
-                for c in commits_resp.json():
-                    recent_commits.append({
-                        "sha": c["sha"][:7],
-                        "full_sha": c["sha"],
-                        "message": c["commit"]["message"].split("\n")[0],
-                        "date": c["commit"]["committer"]["date"],
-                        "author": c["commit"]["author"]["name"]
-                    })
+                data = commits_resp.json()
+                if isinstance(data, list):
+                    for c in data:
+                        commit = c.get("commit", {})
+                        recent_commits.append({
+                            "sha": c.get("sha", "")[:7],
+                            "full_sha": c.get("sha", ""),
+                            "message": commit.get("message", "").split("\n")[0],
+                            "date": commit.get("committer", {}).get("date", ""),
+                            "author": commit.get("author", {}).get("name", "Unknown")
+                        })
+            else:
+                logger.warning(f"GitHub commits API returned {commits_resp.status_code}")
         except Exception as e:
             logger.warning(f"Failed to fetch commits: {e}")
     
