@@ -18,10 +18,7 @@ class Settings(BaseSettings):
     # Initial Admin
     initial_admin_user: str = "admin"
     initial_admin_email: str = "admin@example.com"
-    initial_admin_password: str = "admin123"
-    
-    # Emergency Access (secure backdoor)
-    emergency_access_token: Optional[str] = None
+    initial_admin_password: str = "admin123"  # Only used for legacy bootstrap, not a login password
     
     # Google Vertex AI
     google_vertex_project: Optional[str] = None

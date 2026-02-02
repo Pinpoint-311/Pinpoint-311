@@ -709,10 +709,21 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 - **Research Lab**: `http://localhost/research` *(requires researcher role)*
 - **API Documentation**: `http://localhost/api/docs`
 
-### Default Credentials
-user: `admin` | password: `admin123`
+### Initial Setup & Authentication
 
-*(You will be prompted to change this immediately upon login)*
+Pinpoint 311 uses **Auth0 SSO** for all staff authentication. Before Auth0 is configured:
+
+1. **First Launch**: Access the staff portal at `/staff`
+2. **Bootstrap Access**: The system provides a one-time bootstrap link via the API:
+   ```bash
+   curl -X POST http://localhost/api/auth/bootstrap
+   ```
+   This returns a magic link that logs you into the Admin Console.
+3. **Configure Auth0**: Use the Setup Wizard in Admin Console to connect your Auth0 tenant
+4. **Create Staff Users**: Add staff members via Admin Console → User Management
+
+> [!NOTE]
+> Bootstrap access is automatically disabled once Auth0 is configured. All future logins use SSO.
 
 <p align="center">
   Built by Pinpoint 311 for Civic Engagement
