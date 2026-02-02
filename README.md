@@ -668,6 +668,21 @@ The system automatically recovers from common failures without developer interve
 
 *To enable SSH auto-restart, add `PROD_HOST` and `PROD_SSH_KEY` secrets to your GitHub repository.
 
+### Resource Isolation
+
+Prevents the 311 system from affecting other server systems:
+
+| Service | CPU | Memory | Log Limit |
+|---------|-----|--------|-----------|
+| Database | 1 core | 1GB | 150MB |
+| Backend | 1 core | 1GB | 150MB |
+| Worker | 0.5 core | 512MB | 60MB |
+| Frontend | 0.5 core | 256MB | 30MB |
+| Redis | 0.25 core | 256MB | 30MB |
+| Caddy | 0.25 core | 128MB | 60MB |
+
+**Safety features:** `no-new-privileges` on all containers, Redis memory eviction, process limits on database.
+
 ### Docker Images
 
 Pre-built images available on GitHub Container Registry:
