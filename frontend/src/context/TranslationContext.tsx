@@ -46,6 +46,21 @@ export function TranslationProvider({ children }: TranslationProviderProps) {
 
     // Wrapper to persist language to localStorage
     const setLanguage = (lang: string) => {
+        // Clear translation cache when changing languages
+        try {
+            localStorage.removeItem('auto_translate_cache');
+        } catch (err) {
+            console.error('Failed to clear translation cache:', err);
+        }
+        
+        // If switching to English, clear cache and reload to get fresh content
+        // This ensures we don't show cached translated text as "originals"
+        if (lang === 'en' && language !== 'en') {
+            localStorage.setItem(LANGUAGE_STORAGE_KEY, 'en');
+            window.location.reload();
+            return;
+        }
+        
         setLanguageState(lang);
         try {
             localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
