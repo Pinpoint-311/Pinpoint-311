@@ -21,6 +21,12 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     # Celery Beat Schedule
     beat_schedule={
+        # Daily retention enforcement at 1:00 AM UTC (before backup)
+        "daily-retention-enforcement": {
+            "task": "app.tasks.service_requests.enforce_retention_policy",
+            "schedule": 60 * 60 * 24,  # Every 24 hours
+            "options": {"queue": "default"}
+        },
         # Daily database backup at 2:00 AM UTC
         "daily-database-backup": {
             "task": "app.tasks.service_requests.backup_database",
