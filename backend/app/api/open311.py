@@ -346,11 +346,21 @@ async def create_request(
     await db.commit()
     
     # Trigger Celery task for AI analysis
-    from app.tasks.service_requests import analyze_request, send_branded_notification
+    from app.tasks.service_requests import analyze_request, send_branded_notification, send_department_notification
     analyze_request.delay(service_request.id)
     
     # Send branded confirmation email to resident
     send_branded_notification.delay(service_request.id, "confirmation")
+    
+    # Notify department staff based on their notification preferences
+    if assigned_department_id:
+        # Get department routing email for the notification
+        dept_result = await db.execute(
+            select(Department).where(Department.id == assigned_department_id)
+        )
+        dept = dept_result.scalar_one_or_none()
+        if dept and dept.routing_email:
+            send_department_notification.delay(service_request.id, dept.routing_email)
     
     return service_request
 

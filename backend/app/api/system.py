@@ -2171,6 +2171,33 @@ async def delete_backup_endpoint(
     return result
 
 
+@router.post("/backups/{backup_name}/restore")
+async def restore_backup_endpoint(
+    backup_name: str,
+    confirm: bool = Query(False, description="Must be true to confirm restore - this will overwrite the database!"),
+    _: User = Depends(get_current_admin)
+):
+    """
+    Restore database from a backup.
+    
+    WARNING: This will overwrite the current database!
+    You must pass confirm=true to proceed.
+    """
+    if not confirm:
+        raise HTTPException(
+            status_code=400, 
+            detail="You must pass confirm=true to restore. WARNING: This will overwrite the current database!"
+        )
+    
+    from app.services.backup_service import restore_backup
+    
+    result = await restore_backup(backup_name)
+    if result["status"] == "error":
+        raise HTTPException(status_code=500, detail=result.get("message", "Restore failed"))
+    
+    return result
+
+
 # ============ Health Dashboard (Bus Factor Mitigation) ============
 
 @router.get("/health-dashboard")

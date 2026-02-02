@@ -39,5 +39,11 @@ celery_app.conf.update(
             "schedule": 60 * 60 * 24 * 7,  # Every 7 days
             "options": {"queue": "default"}
         },
+        # Weekly staff digest emails on Mondays at 8:00 AM UTC
+        "weekly-staff-digest": {
+            "task": "app.tasks.service_requests.send_weekly_digest",
+            "schedule": 60 * 60 * 24 * 7,  # Every 7 days
+            "options": {"queue": "default"}
+        },
     }
 )

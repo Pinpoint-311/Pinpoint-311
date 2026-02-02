@@ -416,3 +416,132 @@ async def get_backup_status() -> Dict[str, Any]:
         "total_backups": backups_result.get("count", 0),
         "next_scheduled": "Daily at 02:00 UTC"
     }
+
+
+async def download_backup(backup_name: str, output_path: str) -> bool:
+    """Download a backup file from S3."""
+    config = await get_backup_config()
+    if not config:
+        return False
+    
+    try:
+        s3 = get_s3_client(config)
+        s3.download_file(
+            config["BACKUP_S3_BUCKET"],
+            backup_name,
+            output_path
+        )
+        logger.info(f"Downloaded backup: {backup_name}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to download backup: {e}")
+        return False
+
+
+def restore_database_dump(dump_path: str) -> bool:
+    """Restore a PostgreSQL dump file to the database."""
+    try:
+        db_url = os.environ.get("DATABASE_URL", "")
+        
+        if "postgresql" not in db_url:
+            logger.error("Invalid database URL format")
+            return False
+        
+        # Convert async driver URL to standard format
+        clean_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
+        
+        # Run pg_restore
+        result = subprocess.run(
+            [
+                "pg_restore",
+                "--clean",  # Drop existing objects before restore
+                "--if-exists",  # Don't error if objects don't exist
+                "-d", clean_url,
+                dump_path
+            ],
+            capture_output=True,
+            text=True,
+            timeout=1800  # 30 minute timeout for large databases
+        )
+        
+        # pg_restore may return non-zero even on successful restore due to warnings
+        if result.returncode != 0 and "error" in result.stderr.lower():
+            logger.error(f"pg_restore failed: {result.stderr}")
+            return False
+        
+        logger.info("Database restored successfully")
+        return True
+        
+    except subprocess.TimeoutExpired:
+        logger.error("pg_restore timed out after 30 minutes")
+        return False
+    except Exception as e:
+        logger.error(f"Failed to restore database: {e}")
+        return False
+
+
+async def restore_backup(backup_name: str) -> Dict[str, Any]:
+    """
+    Restore database from an encrypted backup.
+    
+    1. Downloads backup from S3
+    2. Decrypts with GPG
+    3. Restores to database with pg_restore
+    4. Cleans up temp files
+    
+    WARNING: This will overwrite the current database!
+    
+    Returns dict with status and details.
+    """
+    config = await get_backup_config()
+    if not config:
+        return {"status": "error", "message": "Backup not configured"}
+    
+    # Verify backup exists
+    backups = await list_backups()
+    if backups["status"] != "success":
+        return {"status": "error", "message": "Could not list backups"}
+    
+    backup_exists = any(b["name"] == backup_name for b in backups.get("backups", []))
+    if not backup_exists:
+        return {"status": "error", "message": f"Backup not found: {backup_name}"}
+    
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            encrypted_path = os.path.join(tmpdir, backup_name)
+            decrypted_path = os.path.join(tmpdir, "backup.sql")
+            
+            # Step 1: Download from S3
+            logger.info(f"Downloading backup: {backup_name}...")
+            if not await download_backup(backup_name, encrypted_path):
+                return {"status": "error", "message": "Failed to download backup from S3"}
+            
+            encrypted_size = os.path.getsize(encrypted_path)
+            
+            # Step 2: Decrypt
+            logger.info("Decrypting backup...")
+            if not decrypt_file(encrypted_path, decrypted_path, config["BACKUP_ENCRYPTION_KEY"]):
+                return {"status": "error", "message": "Failed to decrypt backup - check encryption key"}
+            
+            decrypted_size = os.path.getsize(decrypted_path)
+            
+            # Step 3: Restore to database
+            logger.info("Restoring database...")
+            if not restore_database_dump(decrypted_path):
+                return {"status": "error", "message": "Failed to restore database - check pg_restore logs"}
+            
+            logger.info(f"Database restored from backup: {backup_name}")
+            
+            return {
+                "status": "success",
+                "backup_name": backup_name,
+                "encrypted_size_bytes": encrypted_size,
+                "decrypted_size_bytes": decrypted_size,
+                "restored_at": datetime.utcnow().isoformat(),
+                "warning": "Database has been restored. You may need to restart the application."
+            }
+            
+    except Exception as e:
+        logger.error(f"Restore failed: {e}")
+        return {"status": "error", "message": str(e)}
+

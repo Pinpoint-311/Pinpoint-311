@@ -786,3 +786,238 @@ def cleanup_expired_backups():
     except Exception as e:
         logger.error(f"[Backup Cleanup] Task failed: {e}")
         return {"status": "error", "error": str(e)}
+
+
+@celery_app.task
+def send_weekly_digest():
+    """
+    Send weekly digest email to staff with summary of open requests.
+    
+    Should be scheduled to run weekly via Celery Beat (Monday mornings).
+    Respects individual staff notification preferences.
+    """
+    import logging
+    from datetime import datetime, timedelta
+    from sqlalchemy import func, and_
+    logger = logging.getLogger(__name__)
+    
+    async def _send_digest():
+        from app.models import User, SystemSettings, Department, user_departments
+        
+        async with SessionLocal() as db:
+            await configure_notifications(db)
+            
+            # Get system settings for branding
+            settings_result = await db.execute(select(SystemSettings).limit(1))
+            settings = settings_result.scalar_one_or_none()
+            
+            township_name = settings.township_name if settings else "Your Township"
+            logo_url = settings.logo_url if settings else None
+            primary_color = settings.primary_color if settings else "#6366f1"
+            custom_domain = settings.custom_domain if settings else None
+            portal_url = f"https://{custom_domain}" if custom_domain else "http://localhost:5173"
+            
+            # Check if email notifications are enabled
+            modules = settings.modules if settings else {}
+            if not modules.get('email_notifications', True):
+                logger.info("[Weekly Digest] Skipping - email notifications disabled")
+                return {"status": "skipped", "reason": "email notifications disabled"}
+            
+            # Get all active staff members
+            staff_result = await db.execute(
+                select(User).where(
+                    and_(
+                        User.is_active == True,
+                        User.role.in_(["staff", "admin"])
+                    )
+                )
+            )
+            staff_members = staff_result.scalars().all()
+            
+            sent_count = 0
+            skipped_count = 0
+            
+            for staff in staff_members:
+                # Check notification preferences
+                prefs = staff.notification_preferences or {}
+                # Weekly digest is controlled by email_new_requests (or add dedicated pref later)
+                if not prefs.get('email_new_requests', True):
+                    skipped_count += 1
+                    continue
+                
+                if not staff.email:
+                    skipped_count += 1
+                    continue
+                
+                # Get staff's departments
+                dept_query = await db.execute(
+                    select(Department)
+                    .join(user_departments)
+                    .where(user_departments.c.user_id == staff.id)
+                )
+                departments = dept_query.scalars().all()
+                dept_ids = [d.id for d in departments]
+                
+                # Get request statistics for staff's departments (or all if admin)
+                from sqlalchemy import case
+                if staff.role == "admin" or not dept_ids:
+                    # Admins see all departments
+                    stats_query = select(
+                        func.count(ServiceRequest.id).label('total'),
+                        func.sum(case((ServiceRequest.status == 'open', 1), else_=0)).label('open_count'),
+                        func.sum(case((ServiceRequest.status == 'in_progress', 1), else_=0)).label('in_progress'),
+                        func.sum(case((and_(
+                            ServiceRequest.status.in_(['open', 'in_progress']),
+                            ServiceRequest.requested_datetime < datetime.utcnow() - timedelta(days=7)
+                        ), 1), else_=0)).label('overdue')
+                    ).where(
+                        and_(
+                            ServiceRequest.deleted_at.is_(None),
+                            ServiceRequest.status.in_(['open', 'in_progress'])
+                        )
+                    )
+                else:
+                    stats_query = select(
+                        func.count(ServiceRequest.id).label('total'),
+                        func.sum(case((ServiceRequest.status == 'open', 1), else_=0)).label('open_count'),
+                        func.sum(case((ServiceRequest.status == 'in_progress', 1), else_=0)).label('in_progress'),
+                        func.sum(case((and_(
+                            ServiceRequest.status.in_(['open', 'in_progress']),
+                            ServiceRequest.requested_datetime < datetime.utcnow() - timedelta(days=7)
+                        ), 1), else_=0)).label('overdue')
+                    ).where(
+                        and_(
+                            ServiceRequest.deleted_at.is_(None),
+                            ServiceRequest.status.in_(['open', 'in_progress']),
+                            ServiceRequest.assigned_department_id.in_(dept_ids)
+                        )
+                    )
+                
+                stats_result = await db.execute(stats_query)
+                stats = stats_result.first()
+                
+                total = stats.total or 0
+                open_count = int(stats.open_count or 0)
+                in_progress = int(stats.in_progress or 0)
+                overdue = int(stats.overdue or 0)
+                
+                # Skip if no open requests
+                if total == 0:
+                    skipped_count += 1
+                    continue
+                
+                # Get top 5 oldest open requests
+                oldest_query = select(ServiceRequest).where(
+                    and_(
+                        ServiceRequest.deleted_at.is_(None),
+                        ServiceRequest.status.in_(['open', 'in_progress'])
+                    )
+                )
+                if dept_ids and staff.role != "admin":
+                    oldest_query = oldest_query.where(ServiceRequest.assigned_department_id.in_(dept_ids))
+                oldest_query = oldest_query.order_by(ServiceRequest.requested_datetime.asc()).limit(5)
+                
+                oldest_result = await db.execute(oldest_query)
+                oldest_requests = oldest_result.scalars().all()
+                
+                # Build request list HTML
+                requests_html = ""
+                for req in oldest_requests:
+                    age_days = (datetime.utcnow() - req.requested_datetime).days if req.requested_datetime else 0
+                    age_str = f"{age_days}d" if age_days > 0 else "Today"
+                    status_color = "#22c55e" if req.status == "in_progress" else "#f59e0b"
+                    requests_html += f"""
+                    <tr>
+                        <td style="padding: 12px; border-bottom: 1px solid #e2e8f0;">
+                            <a href="{portal_url}/staff#request/{req.service_request_id}" style="color: #6366f1; text-decoration: none; font-weight: 500;">{req.service_request_id}</a>
+                        </td>
+                        <td style="padding: 12px; border-bottom: 1px solid #e2e8f0;">{req.service_name}</td>
+                        <td style="padding: 12px; border-bottom: 1px solid #e2e8f0;">
+                            <span style="background: {status_color}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px;">{req.status}</span>
+                        </td>
+                        <td style="padding: 12px; border-bottom: 1px solid #e2e8f0;">{age_str}</td>
+                    </tr>
+                    """
+                
+                # Build digest email
+                subject = f"📊 Weekly Digest: {total} Open Requests - {township_name} 311"
+                body_html = f"""
+                <html>
+                <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f1f5f9;">
+                    <div style="background: linear-gradient(135deg, {primary_color} 0%, #8b5cf6 100%); color: white; padding: 24px; border-radius: 12px 12px 0 0;">
+                        {"<img src='" + logo_url + "' style='height: 40px; margin-bottom: 12px;' />" if logo_url else ""}
+                        <h2 style="margin: 0;">📊 Weekly Digest</h2>
+                        <p style="margin: 8px 0 0 0; opacity: 0.9;">{township_name} 311 System</p>
+                    </div>
+                    
+                    <div style="background: white; padding: 24px; border: 1px solid #e2e8f0; border-top: none;">
+                        <p style="margin: 0 0 16px 0;">Hi <strong>{staff.full_name or staff.username}</strong>,</p>
+                        <p style="margin: 0 0 24px 0;">Here's your weekly summary of open service requests:</p>
+                        
+                        <div style="display: flex; gap: 12px; margin-bottom: 24px;">
+                            <div style="flex: 1; background: #fef3c7; padding: 16px; border-radius: 8px; text-align: center;">
+                                <p style="margin: 0; font-size: 24px; font-weight: bold; color: #d97706;">{open_count}</p>
+                                <p style="margin: 4px 0 0 0; font-size: 12px; color: #92400e;">Open</p>
+                            </div>
+                            <div style="flex: 1; background: #dbeafe; padding: 16px; border-radius: 8px; text-align: center;">
+                                <p style="margin: 0; font-size: 24px; font-weight: bold; color: #2563eb;">{in_progress}</p>
+                                <p style="margin: 4px 0 0 0; font-size: 12px; color: #1e40af;">In Progress</p>
+                            </div>
+                            <div style="flex: 1; background: #fee2e2; padding: 16px; border-radius: 8px; text-align: center;">
+                                <p style="margin: 0; font-size: 24px; font-weight: bold; color: #dc2626;">{overdue}</p>
+                                <p style="margin: 4px 0 0 0; font-size: 12px; color: #991b1b;">Overdue (7+ days)</p>
+                            </div>
+                        </div>
+                        
+                        <h3 style="margin: 0 0 12px 0; color: #1e293b;">📋 Oldest Open Requests</h3>
+                        <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
+                            <thead>
+                                <tr style="background: #f8fafc;">
+                                    <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e2e8f0;">ID</th>
+                                    <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e2e8f0;">Category</th>
+                                    <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e2e8f0;">Status</th>
+                                    <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e2e8f0;">Age</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {requests_html}
+                            </tbody>
+                        </table>
+                        
+                        <a href="{portal_url}/staff" style="display: inline-block; background: {primary_color}; color: white; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: 500;">View All Requests →</a>
+                    </div>
+                    
+                    <div style="background: #f8fafc; padding: 16px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 12px 12px; text-align: center;">
+                        <p style="margin: 0; font-size: 12px; color: #64748b;">
+                            You're receiving this because you're staff at {township_name}.<br>
+                            <a href="{portal_url}/staff/settings" style="color: #6366f1;">Manage notification preferences</a>
+                        </p>
+                    </div>
+                </body>
+                </html>
+                """
+                
+                # Send email
+                notification_service.send_email(
+                    to=staff.email,
+                    subject=subject,
+                    body_html=body_html
+                )
+                sent_count += 1
+                logger.info(f"[Weekly Digest] Sent to {staff.email}")
+            
+            return {
+                "status": "success",
+                "sent": sent_count,
+                "skipped": skipped_count
+            }
+    
+    try:
+        logger.info("[Weekly Digest] Starting weekly digest emails...")
+        result = run_async(_send_digest())
+        logger.info(f"[Weekly Digest] Completed: {result}")
+        return result
+    except Exception as e:
+        logger.error(f"[Weekly Digest] Task failed: {e}")
+        return {"status": "error", "error": str(e)}
+
