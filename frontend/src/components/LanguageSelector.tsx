@@ -176,7 +176,7 @@ export default function LanguageSelector() {
                             animate={{ opacity: 1, y: 0, scale: 1 }}
                             exit={{ opacity: 0, y: -10, scale: 0.95 }}
                             transition={{ duration: 0.15 }}
-                            className="absolute right-0 mt-2 w-80 rounded-xl bg-slate-800 border border-white/20 shadow-2xl z-50"
+                            className="fixed sm:absolute right-2 left-2 sm:left-auto sm:right-0 top-16 sm:top-auto sm:mt-2 w-auto sm:w-80 max-w-[calc(100vw-1rem)] rounded-xl bg-slate-800 border border-white/20 shadow-2xl z-50"
                             style={{
                                 boxShadow: '0 20px 50px rgba(0,0,0,0.5), 0 0 20px rgba(0,0,0,0.3)'
                             }}

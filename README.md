@@ -303,6 +303,58 @@ A full CMS for managing the municipality's presence without touching code.
     - `ENABLE_SMS_ALERTS`: Toggle text message notifications (Twilio or Generic).
 - **Database Maintenance**: Tools to seed default data or flush test records.
 
+### 3. Legal Documents & Compliance
+Fully customizable legal pages with sensible defaults based on municipal 311 best practices:
+
+- **Privacy Policy**: Customizable Markdown content explaining data collection, usage, and retention. Default covers:
+  - What information is collected (email required, optional phone)
+  - How data is used (service request processing and communication)
+  - Data sharing with relevant departments and third parties
+  - Resident rights (access, correction, deletion)
+  
+- **Terms of Service**: Customizable Markdown with prominent non-emergency disclaimer. Default emphasizes:
+  - Non-emergency use only (911 for emergencies)
+  - Acceptable use policy
+  - Response time expectations
+  - Liability limitations
+  
+- **Accessibility Statement**: Customizable Markdown covering ADA/WCAG compliance. Default includes:
+  - WCAG 2.1 Level AA commitment
+  - Section 508 compliance
+  - Alternative submission methods (phone, email, in-person)
+  - Contact information for accessibility concerns
+
+All legal pages are editable via **Admin Console → Branding → Legal Documents**.
+
+---
+
+## ⚠️ Non-Emergency Disclaimer System
+
+Built-in legal protection ensuring residents understand 311 is for non-emergency municipal services only.
+
+### One-Time Acknowledgment Modal
+- **Premium Design**: Glassmorphism modal matching portal aesthetic
+- **Checkbox Confirmation**: Users must actively acknowledge before accessing portal
+- **Emergency Examples**: Lists when to call 911 (medical, fire, crimes, threats, downed lines)
+- **localStorage Persistence**: Shows once per browser, doesn't repeatedly annoy returning users
+
+### Persistent Warning Banner
+- **Always Visible**: Amber gradient banner at top of resident portal
+- **Clear Messaging**: "**Non-Emergency Only** — For police, fire, or medical emergencies, call **911**"
+
+### Legal Audit Logging
+Every acknowledgment is logged to the `disclaimer_acknowledgments` table:
+
+| Field | Description |
+|-------|-------------|
+| `session_id` | Unique browser session identifier |
+| `ip_address` | Client IP (supports IPv4/IPv6, handles proxies) |
+| `user_agent` | Browser/device information |
+| `acknowledged_at` | Timestamp with timezone |
+| `disclaimer_version` | Version string for tracking policy updates |
+
+This creates a complete paper trail for legal protection if any user claims they weren't aware of the non-emergency nature of the service.
+
 ---
 
 ## 📊 Research Suite (University Lab Integration)

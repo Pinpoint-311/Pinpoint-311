@@ -1339,45 +1339,51 @@ export default function ResidentPortal() {
 
             {/* Footer */}
             <footer className="glass-sidebar py-6 px-4 mt-auto">
-                <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
-                    <p className="text-white/40 text-sm">
+                <div className="max-w-6xl mx-auto flex flex-col items-center gap-4">
+                    {/* Copyright */}
+                    <p className="text-white/40 text-sm text-center">
                         © {new Date().getFullYear()} {settings?.township_name || 'Township 311'}. {"All rights reserved"}
                     </p>
-                    <div className="flex items-center gap-6 text-sm">
-                        {/* Social Links */}
-                        {settings?.social_links && settings.social_links.length > 0 && (
-                            <div className="flex items-center gap-3">
-                                {settings.social_links.map((link, index) => {
-                                    // Ensure URL is absolute
-                                    const url = link.url.startsWith('http') ? link.url : `https://${link.url}`;
-                                    return (
-                                        <a
-                                            key={index}
-                                            href={url}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition-all hover:scale-110"
-                                            title={link.platform.charAt(0).toUpperCase() + link.platform.slice(1)}
-                                        >
-                                            {link.icon === 'Globe' && <Globe className="w-4 h-4 text-white/70" />}
-                                            {link.icon === 'Facebook' && <Facebook className="w-4 h-4 text-blue-400" />}
-                                            {link.icon === 'Instagram' && <Instagram className="w-4 h-4 text-pink-400" />}
-                                            {link.icon === 'Youtube' && <Youtube className="w-4 h-4 text-red-400" />}
-                                            {link.icon === 'Twitter' && <Twitter className="w-4 h-4 text-sky-400" />}
-                                            {link.icon === 'Linkedin' && <Linkedin className="w-4 h-4 text-blue-500" />}
-                                        </a>
-                                    );
-                                })}
-                            </div>
-                        )}
+
+                    {/* Social Links */}
+                    {settings?.social_links && settings.social_links.length > 0 && (
+                        <div className="flex items-center justify-center flex-wrap gap-2">
+                            {settings.social_links.map((link, index) => {
+                                // Ensure URL is absolute
+                                const url = link.url.startsWith('http') ? link.url : `https://${link.url}`;
+                                return (
+                                    <a
+                                        key={index}
+                                        href={url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="w-9 h-9 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition-all hover:scale-110"
+                                        title={link.platform.charAt(0).toUpperCase() + link.platform.slice(1)}
+                                    >
+                                        {link.icon === 'Globe' && <Globe className="w-4 h-4 text-white/70" />}
+                                        {link.icon === 'Facebook' && <Facebook className="w-4 h-4 text-blue-400" />}
+                                        {link.icon === 'Instagram' && <Instagram className="w-4 h-4 text-pink-400" />}
+                                        {link.icon === 'Youtube' && <Youtube className="w-4 h-4 text-red-400" />}
+                                        {link.icon === 'Twitter' && <Twitter className="w-4 h-4 text-sky-400" />}
+                                        {link.icon === 'Linkedin' && <Linkedin className="w-4 h-4 text-blue-500" />}
+                                    </a>
+                                );
+                            })}
+                        </div>
+                    )}
+
+                    {/* Legal Links */}
+                    <div className="flex items-center justify-center flex-wrap gap-x-4 gap-y-2 text-sm">
                         <Link to="/privacy" className="text-white/40 hover:text-white/80 transition-colors">
-                            {"Privacy Policy"}
+                            {"Privacy"}
                         </Link>
+                        <span className="text-white/20 hidden sm:inline">•</span>
                         <Link to="/accessibility" className="text-white/40 hover:text-white/80 transition-colors">
                             {"Accessibility"}
                         </Link>
+                        <span className="text-white/20 hidden sm:inline">•</span>
                         <Link to="/terms" className="text-white/40 hover:text-white/80 transition-colors">
-                            {"Terms of Service"}
+                            {"Terms"}
                         </Link>
                     </div>
                 </div>
