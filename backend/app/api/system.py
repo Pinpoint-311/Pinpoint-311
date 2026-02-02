@@ -1272,16 +1272,22 @@ async def get_releases(_: User = Depends(get_current_admin)):
     """Fetch available releases from GitHub (admin only)."""
     import httpx
     
+    logger.info(f"[Releases] Starting fetch from GitHub API")
+    logger.info(f"[Releases] GITHUB_API_BASE={GITHUB_API_BASE}, GITHUB_REPO={GITHUB_REPO}")
+    
     try:
         releases = []
         recent_commits = []
         
         async with httpx.AsyncClient(timeout=15.0) as client:
             # Fetch releases
+            releases_url = f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/releases"
+            logger.info(f"[Releases] Fetching releases from: {releases_url}")
             response = await client.get(
-                f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/releases",
+                releases_url,
                 headers={"Accept": "application/vnd.github.v3+json"}
             )
+            logger.info(f"[Releases] Releases response status: {response.status_code}")
             
             if response.status_code == 200:
                 data = response.json()
