@@ -1273,81 +1273,173 @@ export default function AdminConsole() {
                         {/* Users Tab */}
                         {currentTab === 'users' && (
                             <div className="space-y-6">
+                                {/* Premium Header */}
                                 <div className="flex items-center justify-between">
-                                    <h1 className="text-2xl font-bold text-white">User Management</h1>
-                                    <Button leftIcon={<Plus className="w-4 h-4" />} onClick={() => setShowUserModal(true)}>
+                                    <div>
+                                        <h1 className="text-2xl font-bold text-white">User Management</h1>
+                                        <p className="text-sm text-white/50 mt-1">Manage staff and administrator accounts</p>
+                                    </div>
+                                    <Button
+                                        leftIcon={<Plus className="w-4 h-4" />}
+                                        onClick={() => setShowUserModal(true)}
+                                        className="bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-500/25"
+                                    >
                                         Add User
                                     </Button>
                                 </div>
 
-                                <Card className="p-0 overflow-hidden border-white/10">
-                                    <table className="w-full">
-                                        <thead className="border-b border-white/10 bg-white/5">
-                                            <tr>
-                                                <th className="text-left p-4 text-white/60 font-medium text-sm uppercase tracking-wider">User</th>
-                                                <th className="text-left p-4 text-white/60 font-medium text-sm uppercase tracking-wider">Email</th>
-                                                <th className="text-left p-4 text-white/60 font-medium text-sm uppercase tracking-wider">Role</th>
-                                                <th className="text-left p-4 text-white/60 font-medium text-sm uppercase tracking-wider">Department</th>
-                                                <th className="text-right p-4 text-white/60 font-medium text-sm uppercase tracking-wider">Actions</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-white/5">
-                                            {users.map((u) => (
-                                                <tr key={u.id} className="hover:bg-white/5 transition-colors group">
-                                                    <td className="p-4">
-                                                        <div className="flex items-center gap-3">
-                                                            <div className="w-10 h-10 rounded-full bg-primary-500/20 flex items-center justify-center text-primary-300 font-semibold">
-                                                                {u.full_name ? u.full_name.charAt(0).toUpperCase() : u.username.charAt(0).toUpperCase()}
-                                                            </div>
-                                                            <div>
-                                                                <p className="font-medium text-white">{u.full_name || u.username}</p>
-                                                                <p className="text-sm text-white/40">@{u.username}</p>
-                                                            </div>
+                                {/* Stats Cards */}
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-500/10 to-blue-600/5 border border-blue-500/20 backdrop-blur-sm">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
+                                                <User className="w-5 h-5 text-blue-400" />
+                                            </div>
+                                            <div>
+                                                <p className="text-2xl font-bold text-white">{users.length}</p>
+                                                <p className="text-xs text-blue-300/70">Total Users</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-500/10 to-amber-600/5 border border-amber-500/20 backdrop-blur-sm">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center">
+                                                <Shield className="w-5 h-5 text-amber-400" />
+                                            </div>
+                                            <div>
+                                                <p className="text-2xl font-bold text-white">{users.filter(u => u.role === 'admin').length}</p>
+                                                <p className="text-xs text-amber-300/70">Administrators</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border border-emerald-500/20 backdrop-blur-sm">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center">
+                                                <Users className="w-5 h-5 text-emerald-400" />
+                                            </div>
+                                            <div>
+                                                <p className="text-2xl font-bold text-white">{users.filter(u => u.role === 'staff').length}</p>
+                                                <p className="text-xs text-emerald-300/70">Staff Members</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Premium Table */}
+                                <div className="rounded-2xl bg-white/[0.03] backdrop-blur-xl border border-white/10 overflow-hidden shadow-2xl">
+                                    {/* Table Header */}
+                                    <div className="px-6 py-4 border-b border-white/10 bg-gradient-to-r from-white/[0.05] to-transparent">
+                                        <div className="grid grid-cols-12 gap-4 items-center">
+                                            <div className="col-span-4 text-xs font-semibold text-white/50 uppercase tracking-wider">User</div>
+                                            <div className="col-span-3 text-xs font-semibold text-white/50 uppercase tracking-wider">Email</div>
+                                            <div className="col-span-2 text-xs font-semibold text-white/50 uppercase tracking-wider text-center">Role</div>
+                                            <div className="col-span-2 text-xs font-semibold text-white/50 uppercase tracking-wider">Department</div>
+                                            <div className="col-span-1 text-xs font-semibold text-white/50 uppercase tracking-wider text-right">Actions</div>
+                                        </div>
+                                    </div>
+
+                                    {/* Table Body */}
+                                    <div className="divide-y divide-white/5">
+                                        {users.map((u, index) => (
+                                            <motion.div
+                                                key={u.id}
+                                                initial={{ opacity: 0, y: 10 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                transition={{ delay: index * 0.05 }}
+                                                className="px-6 py-4 hover:bg-white/[0.03] transition-all duration-200 group"
+                                            >
+                                                <div className="grid grid-cols-12 gap-4 items-center">
+                                                    {/* User Info */}
+                                                    <div className="col-span-4 flex items-center gap-4">
+                                                        <div className={`relative w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg shadow-lg ${u.role === 'admin'
+                                                                ? 'bg-gradient-to-br from-amber-400 to-orange-500 text-white'
+                                                                : 'bg-gradient-to-br from-primary-400 to-primary-600 text-white'
+                                                            }`}>
+                                                            {u.full_name ? u.full_name.charAt(0).toUpperCase() : u.username.charAt(0).toUpperCase()}
+                                                            {/* Online indicator */}
+                                                            <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-slate-900" />
                                                         </div>
-                                                    </td>
-                                                    <td className="p-4">
-                                                        <span className="text-white/70 text-sm">{u.email}</span>
-                                                    </td>
-                                                    <td className="p-4">
-                                                        <Badge variant={u.role === 'admin' ? 'warning' : 'info'}>
-                                                            {u.role === 'admin' ? 'Admin' : 'Staff'}
-                                                        </Badge>
-                                                    </td>
-                                                    <td className="p-4">
+                                                        <div>
+                                                            <p className="font-semibold text-white group-hover:text-primary-300 transition-colors">{u.full_name || u.username}</p>
+                                                            <p className="text-sm text-white/40">@{u.username}</p>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Email */}
+                                                    <div className="col-span-3">
+                                                        <p className="text-sm text-white/60 truncate">{u.email}</p>
+                                                    </div>
+
+                                                    {/* Role Badge */}
+                                                    <div className="col-span-2 flex justify-center">
+                                                        {u.role === 'admin' ? (
+                                                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30 shadow-lg shadow-amber-500/10">
+                                                                <Shield className="w-3 h-3" />
+                                                                Admin
+                                                            </span>
+                                                        ) : (
+                                                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-blue-500/20 to-cyan-500/20 text-blue-300 border border-blue-500/30 shadow-lg shadow-blue-500/10">
+                                                                <User className="w-3 h-3" />
+                                                                Staff
+                                                            </span>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Departments */}
+                                                    <div className="col-span-2">
                                                         {u.departments && u.departments.length > 0 ? (
                                                             <div className="flex flex-wrap gap-1.5">
-                                                                {u.departments.map((dept) => (
+                                                                {u.departments.slice(0, 2).map((dept) => (
                                                                     <span
                                                                         key={dept.id}
-                                                                        className="px-2 py-1 text-xs font-medium rounded-md bg-primary-500/15 text-primary-300 border border-primary-500/20"
+                                                                        className="px-2.5 py-1 text-xs font-medium rounded-lg bg-white/5 text-white/70 border border-white/10"
                                                                     >
                                                                         {dept.name}
                                                                     </span>
                                                                 ))}
+                                                                {u.departments.length > 2 && (
+                                                                    <span className="px-2 py-1 text-xs text-white/40">
+                                                                        +{u.departments.length - 2}
+                                                                    </span>
+                                                                )}
                                                             </div>
                                                         ) : (
-                                                            <span className="text-white/30 text-sm italic">No department</span>
+                                                            <span className="text-sm text-white/25 italic">No department</span>
                                                         )}
-                                                    </td>
-                                                    <td className="p-4 text-right">
-                                                        <div className="flex items-center justify-end gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
-                                                            <Button
-                                                                variant="ghost"
-                                                                size="sm"
+                                                    </div>
+
+                                                    {/* Actions */}
+                                                    <div className="col-span-1 flex justify-end">
+                                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                            <button
                                                                 onClick={() => handleDeleteUser(u.id)}
                                                                 disabled={u.id === user?.id}
-                                                                title="Delete user"
-                                                                className="hover:bg-red-500/20 hover:text-red-400"
+                                                                className={`p-2 rounded-lg transition-all ${u.id === user?.id
+                                                                        ? 'text-white/20 cursor-not-allowed'
+                                                                        : 'hover:bg-red-500/20 text-white/40 hover:text-red-400'
+                                                                    }`}
+                                                                title={u.id === user?.id ? "Cannot delete yourself" : "Delete user"}
                                                             >
                                                                 <Trash2 className="w-4 h-4" />
-                                                            </Button>
+                                                            </button>
                                                         </div>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </Card>
+                                                    </div>
+                                                </div>
+                                            </motion.div>
+                                        ))}
+                                    </div>
+
+                                    {/* Empty State */}
+                                    {users.length === 0 && (
+                                        <div className="px-6 py-16 text-center">
+                                            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-white/5 flex items-center justify-center">
+                                                <Users className="w-8 h-8 text-white/20" />
+                                            </div>
+                                            <p className="text-white/50 mb-2">No users found</p>
+                                            <p className="text-sm text-white/30">Add your first user to get started</p>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         )}
                         {/* Departments Tab */}
