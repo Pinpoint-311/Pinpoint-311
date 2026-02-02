@@ -774,7 +774,7 @@ class ApiClient {
         reason?: string;
         error?: string;
     }> {
-        return this.request('/system/migrate-secrets', { method: 'POST' });
+        return this.request('/system/secrets/migrate-to-secret-manager', { method: 'POST' });
     }
 
 }
