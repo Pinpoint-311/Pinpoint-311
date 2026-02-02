@@ -84,6 +84,10 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
     const [isTranslating, setIsTranslating] = useState(false);
     const isTranslatingRef = useRef(false); // Ref to prevent re-triggering
 
+    // Dynamic banner message translation
+    const [bannerMessage, setBannerMessage] = useState('Translated by Google Translate. Translations may not be 100% accurate.');
+    const BANNER_BASE_TEXT = 'Translated by Google Translate. Translations may not be 100% accurate.';
+
     // Load cache on mount
     useEffect(() => {
         loadCacheFromStorage();
@@ -389,9 +393,10 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
         processTranslation();
     }, [language, processTranslation]);
 
-    // Get pre-translated banner message for each language
-    const getBannerMessage = (code: string) => {
-        const messages: Record<string, string> = {
+    // Translate banner message when language changes
+    useEffect(() => {
+        // Pre-translated messages for common languages (instant display)
+        const preTranslatedMessages: Record<string, string> = {
             es: 'Traducido por Google Translate. Las traducciones pueden no ser 100% precisas.',
             zh: '由 Google 翻译翻译。翻译可能不是 100% 准确。',
             hi: 'Google Translate द्वारा अनुवादित। अनुवाद 100% सटीक नहीं हो सकते।',
@@ -408,8 +413,41 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
             vi: 'Được dịch bởi Google Dịch. Bản dịch có thể không chính xác 100%.',
             tl: 'Isinalin ng Google Translate. Ang mga pagsasalin ay maaaring hindi 100% tumpak.',
         };
-        return messages[code] || 'Translated by Google Translate. Translations may not be 100% accurate.';
-    };
+
+        if (language === 'en') {
+            setBannerMessage(BANNER_BASE_TEXT);
+            return;
+        }
+
+        // Use pre-translated if available (instant)
+        if (preTranslatedMessages[language]) {
+            setBannerMessage(preTranslatedMessages[language]);
+            return;
+        }
+
+        // For other languages, fetch translation from API
+        const fetchTranslation = async () => {
+            // Check localStorage cache first
+            const cached = getCachedTranslation(BANNER_BASE_TEXT, 'en', language);
+            if (cached) {
+                setBannerMessage(cached);
+                return;
+            }
+
+            try {
+                const result = await translateTexts([BANNER_BASE_TEXT], language);
+                const translated = result.get(BANNER_BASE_TEXT);
+                if (translated) {
+                    setBannerMessage(translated);
+                }
+            } catch (err) {
+                // Fallback to English if translation fails
+                setBannerMessage(BANNER_BASE_TEXT);
+            }
+        };
+
+        fetchTranslation();
+    }, [language, translateTexts]);
 
     return (
         <>
@@ -445,7 +483,7 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
                                     </svg>
-                                    <span>{getBannerMessage(language)}</span>
+                                    <span>{bannerMessage}</span>
                                 </>
                             )}
                         </div>
