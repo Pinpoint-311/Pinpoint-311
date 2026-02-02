@@ -459,10 +459,34 @@ All research fields are computed on-the-fly using real APIs:
 | **Styling** | Tailwind CSS + Framer Motion | Fluid animations and glassmorphism themes |
 | **Backend** | FastAPI (Python 3.11) | High-performance async REST API |
 | **Database** | PostgreSQL 15 + PostGIS | Relational data with advanced spatial queries |
+| **Migrations** | Alembic | Version-controlled database schema changes |
 | **Caching** | Redis | High-speed caching for public request feeds (60s TTL) |
 | **AI** | Vertex AI (Gemini Flash) | Multimodal model for image/text analysis |
 | **Queue** | Celery + Redis | Background processing for emails and reports |
 | **Reverse Proxy** | Caddy | Automatic HTTPS and SSL termination |
+
+### 🗄️ Database Migrations (Alembic)
+
+Pinpoint 311 uses **Alembic** for database schema versioning:
+
+```bash
+# Inside the backend container
+cd /app
+
+# Create a new migration after model changes
+alembic revision --autogenerate -m "Add new column to requests"
+
+# Apply pending migrations
+alembic upgrade head
+
+# View current migration state
+alembic current
+```
+
+**Configuration Notes:**
+- PostGIS/Tiger geocoder tables are **excluded** from autogenerate to prevent false positives
+- Migrations are stored in `backend/alembic/versions/`
+- Use `alembic stamp head` to mark an existing database as up-to-date without running migrations
 
 ### 🔒 Security Standards
 
@@ -492,34 +516,29 @@ Two-tier security for credentials:
 | Resident PII (email, phone, name) | PostgreSQL | Google Cloud KMS (AES-256) |
 | Local Development | Encrypted Database | Fernet (AES-128-CBC) |
 
-#### Workload Identity Federation (Keyless GCP Access)
-Pinpoint 311 supports **keyless authentication** to Google Cloud using Auth0 as the identity provider:
+
+#### GCP Service Account Authentication
+Pinpoint 311 uses **encrypted service account keys** for Google Cloud access:
 
 ```
-┌─────────────┐    OIDC Token    ┌──────────────────┐    Short-lived    ┌─────────────┐
-│   Backend   │ ───────────────▶ │ GCP Workload     │ ────────────────▶ │ GCP APIs    │
-│   (FastAPI) │                  │ Identity Pool    │   Credentials     │ SM, KMS, AI │
-└─────────────┘                  └──────────────────┘                   └─────────────┘
+┌─────────────┐    Fernet Encrypted    ┌──────────────────┐    Direct Auth    ┌─────────────┐
+│   Backend   │ ─────────────────────▶ │ PostgreSQL DB    │ ────────────────▶ │ GCP APIs    │
+│   (FastAPI) │                        │ (system_secrets) │                   │ SM, KMS, AI │
+└─────────────┘                        └──────────────────┘                   └─────────────┘
 ```
 
 **How it works:**
-1. Upload service account JSON during initial setup (temporary)
-2. System automatically creates Workload Identity Pool + OIDC provider
-3. After verification, the service account key **self-destructs**
-4. All future GCP access uses Auth0 tokens (no stored keys!)
+1. Upload service account JSON during initial setup
+2. Key is encrypted with Fernet (AES-128-CBC) using `SECRET_KEY`
+3. Stored securely in the `system_secrets` database table
+4. Decrypted at runtime when accessing GCP services
 
-**Benefits:**
-- **No long-lived keys**: Service account key is deleted after federation setup
-- **Automatic rotation**: Auth0 tokens expire hourly, auto-refresh
-- **Centralized access control**: Revoke GCP access by disabling Auth0 app
-- **Audit trail**: All federation events logged to audit system
+**Bootstrap Keys:**
+Two keys must remain in the local database (not migrated to Secret Manager):
+- `GCP_SERVICE_ACCOUNT_JSON`: The encrypted service account key
+- `GOOGLE_CLOUD_PROJECT`: The GCP project ID
 
-**Setup via API:**
-```bash
-POST /api/setup/federation/setup    # Create pool + provider
-POST /api/setup/federation/test     # Verify federation works  
-POST /api/setup/federation/complete # Delete service account key
-```
+These "bootstrap keys" are needed to *access* Secret Manager itself, so they must be stored locally.
 
 
 #### API & Infrastructure Security
