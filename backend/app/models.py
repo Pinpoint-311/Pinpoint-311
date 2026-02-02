@@ -494,3 +494,34 @@ class AuditLog(Base):
     # Relationship
     user = relationship("User", backref="audit_logs")
 
+
+class Translation(Base):
+    """Database-cached translations to minimize API calls.
+    
+    Flow:
+    1. Check database first for cached translation
+    2. If not found, call Google Translate API
+    3. Store result in database for future use
+    """
+    __tablename__ = "translations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Source text (original English text)
+    source_text = Column(Text, nullable=False, index=True)
+    source_lang = Column(String(10), default="en", nullable=False)
+    
+    # Target language and translation
+    target_lang = Column(String(10), nullable=False, index=True)
+    translated_text = Column(Text, nullable=False)
+    
+    # Metadata
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Ensure unique translation per source/target combo
+    __table_args__ = (
+        # Create unique constraint on hash of source_text + target_lang combo
+        # Using a generated column or application-level enforcement
+        {"sqlite_autoincrement": True},
+    )
+

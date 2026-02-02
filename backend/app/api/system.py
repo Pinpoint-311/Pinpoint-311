@@ -2099,8 +2099,9 @@ async def batch_translate(
     """
     Batch translate multiple UI strings (public endpoint).
     Used by frontend to translate static UI text.
+    Uses database caching - first call hits Google API, subsequent calls use DB.
     """
-    from app.services.translation import translate_text
+    from app.services.translation import translate_batch
     
     data = await request.json()
     texts = data.get("texts", [])
@@ -2109,13 +2110,14 @@ async def batch_translate(
     if not texts:
         return {"translations": []}
     
-    # Translate all texts
-    translations = []
-    for text in texts:
-        translated = await translate_text(text, "en", target_lang)
-        translations.append(translated or text)
+    # Use batch translation with database caching
+    results = await translate_batch(texts, "en", target_lang)
+    
+    # Return translations in order
+    translations = [results.get(text, text) for text in texts]
     
     return {"translations": translations}
+
 
 
 # ============ Database Backups ============
