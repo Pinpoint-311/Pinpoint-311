@@ -684,7 +684,7 @@ docker compose up --build -d
 - Docker & Docker Compose
 - A Google Cloud Project (for Maps & Vertex AI)
 
-### Quick Start
+### Quick Start (Using Prebuilt Images)
 ```bash
 # 1. Clone the repository
 git clone https://github.com/WestWindsorForward/WWF-Open-Source-311-Template.git
@@ -694,8 +694,12 @@ cd WWF-Open-Source-311-Template
 cp .env.example .env
 # Edit .env and set your secrets (DB_PASSWORD, SECRET_KEY, etc.)
 
-# 3. Launch
-docker-compose up --build -d
+# 3. Pull prebuilt images and launch (recommended - fastest)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+# OR build locally (slower, for development/modifications)
+# docker compose up --build -d
 ```
 
 ### Access Points
