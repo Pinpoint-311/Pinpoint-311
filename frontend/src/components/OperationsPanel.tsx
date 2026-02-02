@@ -26,7 +26,7 @@ interface IntegrationHealth {
     checks: {
         database: IntegrationCheck;
         auth0: IntegrationCheck;
-        workload_identity?: IntegrationCheck;
+        gcp_auth?: IntegrationCheck;
         google_kms: IntegrationCheck;
         google_secret_manager: IntegrationCheck;
         vertex_ai: IntegrationCheck;
@@ -286,17 +286,17 @@ export default function OperationsPanel() {
                             <p className="text-gray-300 text-xs">{integrations.checks.auth0.message}</p>
                         </div>
 
-                        {/* Workload Identity Federation */}
-                        {integrations.checks.workload_identity && (
+                        {/* GCP Authentication */}
+                        {integrations.checks.gcp_auth && (
                             <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
                                 <div className="flex items-center gap-3 mb-2">
                                     <Link2 className="w-5 h-5 text-emerald-400" />
-                                    <span className="text-white font-medium">WIF</span>
-                                    <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.workload_identity.status)}`}>
-                                        {integrations.checks.workload_identity.status}
+                                    <span className="text-white font-medium">GCP Auth</span>
+                                    <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.gcp_auth.status)}`}>
+                                        {integrations.checks.gcp_auth.status}
                                     </span>
                                 </div>
-                                <p className="text-gray-300 text-xs">{integrations.checks.workload_identity.message}</p>
+                                <p className="text-gray-300 text-xs">{integrations.checks.gcp_auth.message}</p>
                             </div>
                         )}
 

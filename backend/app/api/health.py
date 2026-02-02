@@ -265,24 +265,10 @@ async def check_translation_api(db: AsyncSession) -> Dict[str, Any]:
         }
 
 
-async def check_workload_identity(db: AsyncSession) -> Dict[str, Any]:
-    """Test Workload Identity Federation status"""
+async def check_gcp_auth(db: AsyncSession) -> Dict[str, Any]:
+    """Test GCP authentication status using encrypted service account key"""
     try:
-        from app.services.workload_identity import is_federation_available, _get_federation_config
-        
-        # Check if federation is configured
-        config = await _get_federation_config()
-        
-        if config:
-            # Federation is set up
-            return {
-                "status": "healthy",
-                "message": "Federation active — using Auth0 for GCP access",
-                "pool_id": config.get("pool_id"),
-                "provider_id": config.get("provider_id")
-            }
-        
-        # Check if there's a service account key (bootstrap mode)
+        # Check if there's an encrypted service account key
         result = await db.execute(
             select(SystemSecret).where(SystemSecret.key_name == "GCP_SERVICE_ACCOUNT_JSON")
         )
@@ -290,9 +276,9 @@ async def check_workload_identity(db: AsyncSession) -> Dict[str, Any]:
         
         if sa_secret and sa_secret.is_configured:
             return {
-                "status": "fallback",
-                "message": "Using service account key — federation not yet configured",
-                "bootstrap_mode": True
+                "status": "healthy",
+                "message": "GCP service account configured (encrypted)",
+                "storage": "Fernet encrypted in database"
             }
         
         return {
@@ -303,7 +289,7 @@ async def check_workload_identity(db: AsyncSession) -> Dict[str, Any]:
     except Exception as e:
         return {
             "status": "error",
-            "message": f"Federation check failed: {str(e)}"
+            "message": f"GCP auth check failed: {str(e)}"
         }
 
 @router.get("/")
@@ -321,7 +307,7 @@ async def health_check(
     results = {
         "database": await check_database(db),
         "auth0": await check_auth0(db),
-        "workload_identity": await check_workload_identity(db),
+        "gcp_auth": await check_gcp_auth(db),
         "google_kms": await check_google_kms(db),
         "google_secret_manager": await check_secret_manager(db),
         "vertex_ai": await check_vertex_ai(db),

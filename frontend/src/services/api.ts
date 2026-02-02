@@ -758,24 +758,8 @@ class ApiClient {
         return this.request<RunbookResult>(`/system/runbook/${action}${params}`, { method: 'POST' });
     }
 
-    // ========== Workload Identity Federation ==========
-
-    async getFederationStatus(): Promise<FederationStatus> {
-        return this.request<FederationStatus>('/setup/federation/status');
-    }
-
-    async setupFederation(): Promise<FederationResult> {
-        return this.request<FederationResult>('/setup/federation/setup', { method: 'POST' });
-    }
-
-    async testFederation(): Promise<FederationResult> {
-        return this.request<FederationResult>('/setup/federation/test', { method: 'POST' });
-    }
-
-    async completeFederation(): Promise<FederationResult> {
-        return this.request<FederationResult>('/setup/federation/complete', { method: 'POST' });
-    }
 }
+
 
 // Notification Preferences type
 export interface NotificationPreferences {
@@ -950,19 +934,3 @@ export interface RunbookResult {
     details: Record<string, unknown>;
 }
 
-// Workload Identity Federation types
-export interface FederationStatus {
-    federation_available: boolean;
-    bootstrap_key_present: boolean;
-    pool_name: string | null;
-    provider_name: string | null;
-    can_setup: boolean;
-    can_complete: boolean;
-}
-
-export interface FederationResult {
-    status: 'success' | 'error' | 'skipped';
-    error?: string;
-    message?: string;
-    federation_active?: boolean;
-}

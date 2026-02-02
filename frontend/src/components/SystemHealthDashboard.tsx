@@ -13,7 +13,7 @@ interface HealthCheckResponse {
     checks: {
         database: HealthCheckResult;
         auth0: HealthCheckResult;
-        workload_identity: HealthCheckResult;
+        gcp_auth: HealthCheckResult;
         google_kms: HealthCheckResult;
         google_secret_manager: HealthCheckResult;
         vertex_ai: HealthCheckResult;
@@ -201,18 +201,18 @@ export default function SystemHealthDashboard() {
                         </div>
                     </Card>
 
-                    {/* Workload Identity Federation */}
-                    {health.checks.workload_identity && (
+                    {/* GCP Authentication */}
+                    {health.checks.gcp_auth && (
                         <Card>
                             <div className="flex items-start gap-3">
-                                {getStatusIcon(health.checks.workload_identity.status)}
+                                {getStatusIcon(health.checks.gcp_auth.status)}
                                 <div className="flex-1">
-                                    <h3 className="font-semibold text-white">Workload Identity Federation</h3>
-                                    <p className="text-xs text-gray-500 mb-1">Keyless GCP Auth</p>
-                                    <p className={`text-sm ${getStatusColor(health.checks.workload_identity.status)}`}>
-                                        {health.checks.workload_identity.message}
+                                    <h3 className="font-semibold text-white">GCP Authentication</h3>
+                                    <p className="text-xs text-gray-500 mb-1">Encrypted Service Account</p>
+                                    <p className={`text-sm ${getStatusColor(health.checks.gcp_auth.status)}`}>
+                                        {health.checks.gcp_auth.message}
                                     </p>
-                                    {renderCheckDetails(health.checks.workload_identity)}
+                                    {renderCheckDetails(health.checks.gcp_auth)}
                                 </div>
                             </div>
                         </Card>
