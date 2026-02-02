@@ -15,10 +15,28 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          memory: 256M
+    ulimits:
+      nproc: 1024
+      nofile:
+        soft: 65536
+        hard: 65536
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    command: redis-server --maxmemory 200mb --maxmemory-policy allkeys-lru
     ports:
       - "${REDIS_PORT:-6379}:6379"
     healthcheck:
@@ -26,6 +44,20 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          memory: 64M
+    security_opt:
+      - no-new-privileges:true
 
   # Watchtower - Automatic container updates for security
   watchtower:
@@ -40,6 +72,16 @@ services:
       WATCHTOWER_INCLUDE_STOPPED: "false"
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 128M
 
   backend:
     build: ./backend
@@ -75,9 +117,17 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '1.0'
           memory: 1G
         reservations:
           memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    security_opt:
+      - no-new-privileges:true
 
   worker:
     build: ./backend
@@ -107,7 +157,17 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '0.5'
           memory: 512M
+        reservations:
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    security_opt:
+      - no-new-privileges:true
 
   frontend:
     build: ./frontend
@@ -124,6 +184,20 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          memory: 64M
+    security_opt:
+      - no-new-privileges:true
 
   caddy:
     image: caddy:2-alpine
@@ -141,6 +215,20 @@ services:
     depends_on:
       - backend
       - frontend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          memory: 32M
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   postgres_data:
