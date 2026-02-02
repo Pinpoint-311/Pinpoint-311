@@ -1273,65 +1273,65 @@ async def get_releases(_: User = Depends(get_current_admin)):
     import httpx
     
     try:
+        releases = []
+        recent_commits = []
+        
         async with httpx.AsyncClient(timeout=15.0) as client:
+            # Fetch releases
             response = await client.get(
                 f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/releases",
                 headers={"Accept": "application/vnd.github.v3+json"}
             )
             
-            if response.status_code != 200:
-                raise HTTPException(
-                    status_code=response.status_code,
-                    detail=f"GitHub API error: {response.text}"
-                )
-            
-            releases = response.json()
+            if response.status_code == 200:
+                data = response.json()
+                if isinstance(data, list):
+                    for r in data:
+                        releases.append({
+                            "tag": r.get("tag_name", "unknown"),
+                            "name": r.get("name") or r.get("tag_name", "unknown"),
+                            "body": r.get("body") or "No release notes.",
+                            "published_at": r.get("published_at"),
+                            "author": r.get("author", {}).get("login") if r.get("author") else None,
+                            "html_url": r.get("html_url", ""),
+                            "prerelease": r.get("prerelease", False),
+                            "target_commitish": r.get("target_commitish")
+                        })
+            else:
+                logger.warning(f"GitHub releases API returned {response.status_code}")
             
             # Also get recent commits from main for unreleased versions
             commits_response = await client.get(
                 f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/commits",
-                params={"per_page": 5},
+                params={"per_page": 15, "sha": "main"},
                 headers={"Accept": "application/vnd.github.v3+json"}
             )
             
-            recent_commits = []
             if commits_response.status_code == 200:
-                for commit in commits_response.json()[:5]:
-                    recent_commits.append({
-                        "sha": commit["sha"][:7],
-                        "full_sha": commit["sha"],
-                        "message": commit["commit"]["message"].split("\n")[0][:80],
-                        "date": commit["commit"]["committer"]["date"],
-                        "author": commit["commit"]["author"]["name"]
-                    })
+                data = commits_response.json()
+                if isinstance(data, list):
+                    for commit in data:
+                        c = commit.get("commit", {})
+                        recent_commits.append({
+                            "sha": commit.get("sha", "")[:7],
+                            "full_sha": commit.get("sha", ""),
+                            "message": c.get("message", "").split("\n")[0][:80],
+                            "date": c.get("committer", {}).get("date", ""),
+                            "author": c.get("author", {}).get("name", "Unknown")
+                        })
+            else:
+                logger.warning(f"GitHub commits API returned {commits_response.status_code}")
             
             return {
-                "releases": [
-                    {
-                        "tag": r["tag_name"],
-                        "name": r["name"] or r["tag_name"],
-                        "body": r["body"] or "No release notes.",
-                        "published_at": r["published_at"],
-                        "author": r["author"]["login"] if r.get("author") else None,
-                        "html_url": r["html_url"],
-                        "prerelease": r["prerelease"],
-                        "target_commitish": r["target_commitish"]
-                    }
-                    for r in releases
-                ],
+                "releases": releases,
                 "recent_commits": recent_commits
             }
     except httpx.TimeoutException:
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="GitHub API request timed out"
-        )
+        logger.warning("GitHub API request timed out")
+        return {"releases": [], "recent_commits": []}
     except Exception as e:
         logger.error(f"Failed to fetch releases: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
+        return {"releases": [], "recent_commits": []}
 
 
 @router.get("/releases/{ref}/security")
