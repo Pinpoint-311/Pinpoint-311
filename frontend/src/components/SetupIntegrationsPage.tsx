@@ -210,11 +210,12 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.1 }}
-                        className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${localSmsProvider && localSmsProvider !== 'none'
+                        className={`relative rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${localSmsProvider && localSmsProvider !== 'none'
                             ? 'bg-gradient-to-br from-emerald-500/10 via-green-500/5 to-teal-500/10 border-emerald-500/30 shadow-lg shadow-emerald-500/10'
                             : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'
                             }`}
                     >
+
                         {/* Glow effect when configured */}
                         {localSmsProvider && localSmsProvider !== 'none' && (
                             <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/5 via-transparent to-teal-500/5 pointer-events-none" />

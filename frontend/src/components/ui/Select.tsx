@@ -36,11 +36,11 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
                         {required && <span className="sr-only">(required)</span>}
                     </label>
                 )}
-                <div className="relative z-10">
+                <div className="relative z-50">
                     <select
                         ref={ref}
                         id={selectId}
-                        className={`glass-input appearance-none pr-10 cursor-pointer ${error ? 'border-red-400/50 focus:border-red-400' : ''
+                        className={`glass-input appearance-none pr-10 cursor-pointer w-full ${error ? 'border-red-400/50 focus:border-red-400' : ''
                             } ${className}`}
                         aria-required={required}
                         aria-invalid={error ? 'true' : undefined}
@@ -58,6 +58,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
                         aria-hidden="true"
                     />
                 </div>
+
                 {helperText && !error && (
                     <p id={helperId} className="mt-1.5 text-sm text-white/50">
                         {helperText}
