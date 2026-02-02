@@ -644,9 +644,9 @@ export default function ResidentPortal() {
                                         transition={{ delay: 0.1 }}
                                         className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary-500/20 border border-primary-500/30"
                                     >
-                                        <span className="w-2 h-2 rounded-full bg-primary-400" />
+                                        <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
                                         <span className="text-sm font-medium text-primary-200">
-                                            130+ Languages Available
+                                            Report Requests Online
                                         </span>
                                     </motion.div>
 
