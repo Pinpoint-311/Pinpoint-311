@@ -57,8 +57,7 @@ import {
     Copy,
     ExternalLink,
     ChevronDown,
-    User,
-    Users,
+    User as UserIcon,
     type LucideIcon,
 } from 'lucide-react';
 import { Button, Card, Modal, Input, Select, Badge, AccordionSection } from '../components/ui';
@@ -1295,7 +1294,7 @@ export default function AdminConsole() {
                                     <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-500/10 to-blue-600/5 border border-blue-500/20 backdrop-blur-sm">
                                         <div className="flex items-center gap-3">
                                             <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
-                                                <User className="w-5 h-5 text-blue-400" />
+                                                <UserIcon className="w-5 h-5 text-blue-400" />
                                             </div>
                                             <div>
                                                 <p className="text-2xl font-bold text-white">{users.length}</p>
@@ -1381,7 +1380,7 @@ export default function AdminConsole() {
                                                             </span>
                                                         ) : (
                                                             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-blue-500/20 to-cyan-500/20 text-blue-300 border border-blue-500/30 shadow-lg shadow-blue-500/10">
-                                                                <User className="w-3 h-3" />
+                                                                <UserIcon className="w-3 h-3" />
                                                                 Staff
                                                             </span>
                                                         )}
