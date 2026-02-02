@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Key, Shield, Cloud, MessageSquare, Mail, Sparkles, CheckCircle,
@@ -31,6 +32,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [showTerminal, setShowTerminal] = useState(false);
     const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
     const [localSmsProvider, setLocalSmsProvider] = useState<string>('none');
+    const [savingSmsProvider, setSavingSmsProvider] = useState(false);
+    const userModifiedSms = useRef(false); // Flag to prevent useEffect from overwriting user changes
+
 
 
     const isConfigured = (key: string) => secrets.find(s => s.key_name === key)?.is_configured;
@@ -67,13 +71,14 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const smsProviderFromSecrets = secrets.find(s => s.key_name === 'SMS_PROVIDER')?.key_value;
     const smtpConfigured = isConfigured('SMTP_HOST') && isConfigured('SMTP_FROM_EMAIL');
 
-    // Sync local SMS provider state with secrets
+    // Sync local SMS provider state with secrets (only if user hasn't modified)
     useEffect(() => {
-        if (smsProviderFromSecrets) {
+        if (smsProviderFromSecrets && !userModifiedSms.current) {
             setLocalSmsProvider(smsProviderFromSecrets);
         }
     }, [smsProviderFromSecrets]);
     const sentryConfigured = isConfigured('SENTRY_DSN');
+
 
     return (
         <div className="space-y-6">
@@ -251,37 +256,47 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                             <div className="space-y-4">
                                 <div>
                                     <label className="text-sm text-white/60 mb-2 block">Provider</label>
-                                    <Select
-                                        options={[
-                                            { value: 'none', label: 'Disabled' },
-                                            { value: 'twilio', label: 'Twilio' },
-                                            { value: 'http', label: 'Custom HTTP API' },
-                                        ]}
-                                        value={localSmsProvider}
-                                        onChange={async (e) => {
-                                            const newValue = e.target.value;
-                                            const previousValue = localSmsProvider; // Save before updating
-                                            const wasEnabled = previousValue !== 'none';
-                                            const isEnabled = newValue !== 'none';
+                                    <div className="flex gap-2">
+                                        <Select
+                                            options={[
+                                                { value: 'none', label: 'Disabled' },
+                                                { value: 'twilio', label: 'Twilio' },
+                                                { value: 'http', label: 'Custom HTTP API' },
+                                            ]}
+                                            value={localSmsProvider}
+                                            onChange={(e) => {
+                                                userModifiedSms.current = true; // Mark as user-modified
+                                                setLocalSmsProvider(e.target.value);
+                                            }}
+                                        />
+                                        <Button
+                                            size="sm"
+                                            disabled={savingSmsProvider || localSmsProvider === (smsProviderFromSecrets || 'none')}
+                                            onClick={async () => {
+                                                setSavingSmsProvider(true);
+                                                try {
+                                                    await onSaveSecret('SMS_PROVIDER', localSmsProvider);
 
-                                            setLocalSmsProvider(newValue);
-                                            try {
-                                                await onSaveSecret('SMS_PROVIDER', newValue);
+                                                    // Sync with modules if available
+                                                    const wasEnabled = (smsProviderFromSecrets || 'none') !== 'none';
+                                                    const isEnabled = localSmsProvider !== 'none';
+                                                    if (modules && onUpdateModules && wasEnabled !== isEnabled) {
+                                                        await onUpdateModules({ ...modules, sms_alerts: isEnabled });
+                                                    }
 
-                                                // Sync with modules if available
-                                                if (modules && onUpdateModules && wasEnabled !== isEnabled) {
-                                                    await onUpdateModules({ ...modules, sms_alerts: isEnabled });
+                                                    userModifiedSms.current = false; // Reset flag after successful save
+                                                } catch (err) {
+                                                    console.error('Failed to save SMS provider:', err);
                                                 }
-                                                // Note: Don't call onRefresh() here as it would reset localSmsProvider
-                                                // via the useEffect that syncs with smsProviderFromSecrets
-                                            } catch (err) {
-                                                console.error('Failed to save SMS provider:', err);
-                                                setLocalSmsProvider(previousValue); // Use saved value
-                                            }
-                                        }}
-                                    />
-
+                                                setSavingSmsProvider(false);
+                                            }}
+                                            className="bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 whitespace-nowrap"
+                                        >
+                                            {savingSmsProvider ? 'Saving...' : 'Save'}
+                                        </Button>
+                                    </div>
                                 </div>
+
 
                                 {/* Twilio Configuration Fields */}
                                 {localSmsProvider === 'twilio' && (
