@@ -759,6 +759,24 @@ class ApiClient {
         return this.request<RunbookResult>(`/system/runbook/${action}${params}`, { method: 'POST' });
     }
 
+    // ========== Secret Manager Migration ==========
+
+    async migrateToSecretManager(): Promise<{
+        status: string;
+        migrated: number;
+        migrated_keys: string[];
+        scrubbed: number;
+        scrubbed_keys: string[];
+        skipped: number;
+        skipped_keys: string[];
+        failed: number;
+        failed_keys: Array<{ key: string; error: string }>;
+        reason?: string;
+        error?: string;
+    }> {
+        return this.request('/system/migrate-secrets', { method: 'POST' });
+    }
+
 }
 
 

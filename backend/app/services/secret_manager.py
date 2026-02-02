@@ -372,6 +372,9 @@ async def migrate_to_secret_manager() -> Dict[str, Any]:
     """
     Migrate all secrets from database to Google Secret Manager.
     
+    After successful migration, scrubs the encrypted values from the database
+    to ensure secrets only exist in one place.
+    
     Returns a summary of migrated secrets.
     """
     from app.db.session import SessionLocal
@@ -389,6 +392,7 @@ async def migrate_to_secret_manager() -> Dict[str, Any]:
     migrated = []
     failed = []
     skipped = []
+    scrubbed = []
     
     # Keys that should NOT be migrated (they're needed to access Secret Manager itself)
     bootstrap_keys = {
@@ -429,11 +433,24 @@ async def migrate_to_secret_manager() -> Dict[str, Any]:
                     migrated.append(secret.key_name)
                 else:
                     failed.append({"key": secret.key_name, "error": "write failed"})
+            
+            # Scrub successfully migrated secrets from database
+            if migrated:
+                for secret in secrets:
+                    if secret.key_name in migrated:
+                        # Clear the encrypted value but keep the record
+                        secret.key_value = None
+                        scrubbed.append(secret.key_name)
+                
+                await db.commit()
+                logger.info(f"Scrubbed {len(scrubbed)} secrets from database after migration")
         
         return {
             "status": "success",
             "migrated": len(migrated),
             "migrated_keys": migrated,
+            "scrubbed": len(scrubbed),
+            "scrubbed_keys": scrubbed,
             "skipped": len(skipped),
             "skipped_keys": skipped,
             "failed": len(failed),

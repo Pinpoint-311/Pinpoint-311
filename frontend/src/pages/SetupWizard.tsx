@@ -786,6 +786,35 @@ interface CompletionScreenProps {
 }
 
 function CompletionScreen({ status, onReconfigureGCP, onReconfigureAuth0 }: CompletionScreenProps) {
+    const [migrating, setMigrating] = useState(false);
+    const [migrationResult, setMigrationResult] = useState<{
+        status: string;
+        migrated: number;
+        scrubbed: number;
+        failed: number;
+        error?: string;
+        reason?: string;
+    } | null>(null);
+
+    const handleMigration = async () => {
+        try {
+            setMigrating(true);
+            setMigrationResult(null);
+            const result = await api.migrateToSecretManager();
+            setMigrationResult(result);
+        } catch (err: any) {
+            setMigrationResult({
+                status: 'error',
+                migrated: 0,
+                scrubbed: 0,
+                failed: 0,
+                error: err.message || 'Migration failed'
+            });
+        } finally {
+            setMigrating(false);
+        }
+    };
+
     return (
         <div className="text-center py-12">
             <div className="inline-flex items-center justify-center w-20 h-20 bg-green-500/30 rounded-full mb-6">
@@ -825,6 +854,68 @@ function CompletionScreen({ status, onReconfigureGCP, onReconfigureAuth0 }: Comp
                 </button>
             </div>
 
+            {/* Secret Manager Migration Section */}
+            {status?.gcp_configured && (
+                <div className="max-w-md mx-auto mb-8">
+                    <div className="bg-indigo-500/20 border border-indigo-400/30 rounded-xl p-4">
+                        <div className="flex items-center justify-center mb-3">
+                            <Database className="w-5 h-5 text-indigo-400 mr-2" />
+                            <span className="text-indigo-200 font-medium">Migrate Secrets to Google Cloud</span>
+                        </div>
+                        <p className="text-sm text-indigo-300/70 mb-4">
+                            Move all secrets from the database to Google Secret Manager for enterprise-grade security.
+                            Secrets will be scrubbed from the database after migration.
+                        </p>
+
+                        {migrationResult && (
+                            <div className={`mb-4 p-3 rounded-lg text-sm ${migrationResult.status === 'success'
+                                    ? 'bg-green-500/20 border border-green-400/30'
+                                    : migrationResult.status === 'skipped'
+                                        ? 'bg-amber-500/20 border border-amber-400/30'
+                                        : 'bg-red-500/20 border border-red-400/30'
+                                }`}>
+                                {migrationResult.status === 'success' ? (
+                                    <div className="text-green-200">
+                                        <Check className="w-4 h-4 inline mr-1" />
+                                        Migrated {migrationResult.migrated} secrets, scrubbed {migrationResult.scrubbed} from database
+                                        {migrationResult.failed > 0 && (
+                                            <span className="text-amber-300"> ({migrationResult.failed} failed)</span>
+                                        )}
+                                    </div>
+                                ) : migrationResult.status === 'skipped' ? (
+                                    <div className="text-amber-200">
+                                        {migrationResult.reason || 'Migration skipped'}
+                                    </div>
+                                ) : (
+                                    <div className="text-red-200">
+                                        <AlertCircle className="w-4 h-4 inline mr-1" />
+                                        {migrationResult.error || 'Migration failed'}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        <button
+                            onClick={handleMigration}
+                            disabled={migrating}
+                            className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-600/50 text-white font-medium py-2.5 px-4 rounded-lg transition-all flex items-center justify-center"
+                        >
+                            {migrating ? (
+                                <>
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                    Migrating...
+                                </>
+                            ) : (
+                                <>
+                                    <Database className="w-4 h-4 mr-2" />
+                                    Migrate to Secret Manager
+                                </>
+                            )}
+                        </button>
+                    </div>
+                </div>
+            )}
+
             <a
                 href="/admin"
                 className="inline-flex items-center bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 px-8 rounded-lg transition-colors"
@@ -834,3 +925,4 @@ function CompletionScreen({ status, onReconfigureGCP, onReconfigureAuth0 }: Comp
         </div>
     );
 }
+
