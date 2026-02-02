@@ -11,7 +11,7 @@ import aiofiles
 logger = logging.getLogger(__name__)
 
 from app.db.session import get_db
-from app.models import SystemSettings, SystemSecret, ServiceRequest, User
+from app.models import SystemSettings, SystemSecret, ServiceRequest, User, DisclaimerAcknowledgment
 from app.schemas import (
     SystemSettingsBase, SystemSettingsResponse,
     SecretCreate, SecretUpdate, SecretResponse,
@@ -49,15 +49,54 @@ async def update_settings(
     settings = result.scalar_one_or_none()
     
     if not settings:
-        settings = SystemSettings()
+        settings = SystemSettings(**settings_data.model_dump())
         db.add(settings)
-    
-    for field, value in settings_data.model_dump().items():
-        setattr(settings, field, value)
+    else:
+        for key, value in settings_data.model_dump().items():
+            setattr(settings, key, value)
     
     await db.commit()
     await db.refresh(settings)
     return settings
+
+
+# ============ Disclaimer Acknowledgment ============
+
+@router.post("/disclaimer/acknowledge")
+async def log_disclaimer_acknowledgment(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """Log that a user has acknowledged the non-emergency disclaimer.
+    This is stored for legal protection and audit purposes.
+    Public endpoint - no authentication required."""
+    
+    # Get client info for logging
+    body = await request.json()
+    session_id = body.get("session_id", "unknown")
+    
+    # Get real IP (handle proxies)
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        ip_address = forwarded_for.split(",")[0].strip()
+    else:
+        ip_address = request.client.host if request.client else "unknown"
+    
+    user_agent = request.headers.get("User-Agent", "unknown")[:500]
+    
+    # Create log entry
+    acknowledgment = DisclaimerAcknowledgment(
+        session_id=session_id,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        disclaimer_version="1.0"
+    )
+    db.add(acknowledgment)
+    await db.commit()
+    
+    logger.info(f"Disclaimer acknowledged: session={session_id}, ip={ip_address}")
+    
+    return {"status": "acknowledged", "session_id": session_id}
 
 
 # ============ Secrets ============

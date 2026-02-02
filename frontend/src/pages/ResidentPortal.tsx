@@ -27,6 +27,8 @@ import {
     Youtube,
     Twitter,
     Linkedin,
+    AlertTriangle,
+    Shield,
 } from 'lucide-react';
 import { Button, Input, Textarea, Card } from '../components/ui';
 import GoogleMapsLocationPicker from '../components/GoogleMapsLocationPicker';
@@ -73,6 +75,48 @@ export default function ResidentPortal() {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [submittedId, setSubmittedId] = useState<string | null>(null);
     const contentRef = useRef<HTMLDivElement>(null);
+
+    // Non-emergency disclaimer modal state
+    const [showDisclaimerModal, setShowDisclaimerModal] = useState(false);
+    const [disclaimerChecked, setDisclaimerChecked] = useState(false);
+    const [hasAcknowledgedDisclaimer, setHasAcknowledgedDisclaimer] = useState(() => {
+        // Check localStorage on initial load
+        return localStorage.getItem('disclaimer_acknowledged_v1') === 'true';
+    });
+
+    // Show disclaimer modal if not acknowledged
+    useEffect(() => {
+        if (!hasAcknowledgedDisclaimer) {
+            setShowDisclaimerModal(true);
+        }
+    }, [hasAcknowledgedDisclaimer]);
+
+    // Handle disclaimer acknowledgment
+    const handleDisclaimerAcknowledge = async () => {
+        if (!disclaimerChecked) return;
+
+        // Generate session ID for logging
+        const sessionId = localStorage.getItem('session_id') ||
+            `sess_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        localStorage.setItem('session_id', sessionId);
+
+        // Log acknowledgment to backend
+        try {
+            await fetch('/api/system/disclaimer/acknowledge', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId })
+            });
+        } catch (e) {
+            // Non-critical - proceed even if logging fails
+            console.warn('Failed to log disclaimer acknowledgment:', e);
+        }
+
+        // Store acknowledgment locally
+        localStorage.setItem('disclaimer_acknowledged_v1', 'true');
+        setHasAcknowledgedDisclaimer(true);
+        setShowDisclaimerModal(false);
+    };
 
     // Handle browser back/forward navigation
     const handleHashChange = useCallback((hash: string) => {
@@ -459,6 +503,96 @@ export default function ResidentPortal() {
                     </Link>
                 </div>
             </nav>
+
+            {/* Non-Emergency Disclaimer Modal */}
+            <AnimatePresence>
+                {showDisclaimerModal && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+                    >
+                        <motion.div
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.9, opacity: 0 }}
+                            className="glass-card rounded-2xl max-w-lg w-full p-6 border border-white/20 shadow-2xl"
+                        >
+                            {/* Header */}
+                            <div className="flex items-center gap-4 mb-6">
+                                <div className="w-14 h-14 rounded-xl bg-red-500/20 flex items-center justify-center flex-shrink-0">
+                                    <AlertTriangle className="w-7 h-7 text-red-400" />
+                                </div>
+                                <div>
+                                    <h2 className="text-xl font-bold text-white">Important Notice</h2>
+                                    <p className="text-white/60 text-sm">Please read before continuing</p>
+                                </div>
+                            </div>
+
+                            {/* Warning Content */}
+                            <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 mb-6">
+                                <h3 className="text-red-400 font-semibold text-lg mb-2 flex items-center gap-2">
+                                    <Phone className="w-5 h-5" />
+                                    This is NOT for Emergencies
+                                </h3>
+                                <p className="text-white/80 text-sm leading-relaxed mb-3">
+                                    This 311 portal is for <strong>non-emergency municipal service requests only</strong>.
+                                    It should not be used for situations requiring immediate response.
+                                </p>
+                                <div className="text-white/70 text-sm space-y-1">
+                                    <p className="font-medium text-red-300">For emergencies, call 911 immediately:</p>
+                                    <ul className="list-disc list-inside space-y-0.5 text-white/60">
+                                        <li>Medical emergencies</li>
+                                        <li>Fires</li>
+                                        <li>Crimes in progress</li>
+                                        <li>Immediate threats to life or property</li>
+                                        <li>Downed power lines or gas leaks</li>
+                                    </ul>
+                                </div>
+                            </div>
+
+                            {/* Checkbox */}
+                            <label className="flex items-start gap-3 mb-6 cursor-pointer group">
+                                <input
+                                    type="checkbox"
+                                    checked={disclaimerChecked}
+                                    onChange={(e) => setDisclaimerChecked(e.target.checked)}
+                                    className="mt-1 w-5 h-5 rounded border-white/30 bg-white/10 text-primary-500 focus:ring-primary-500/50 focus:ring-offset-0 cursor-pointer"
+                                />
+                                <span className="text-white/80 text-sm leading-relaxed group-hover:text-white transition-colors">
+                                    I understand that this portal is for <strong>non-emergency requests only</strong> and
+                                    that I should call <strong>911</strong> for any emergency situations.
+                                </span>
+                            </label>
+
+                            {/* Continue Button */}
+                            <Button
+                                onClick={handleDisclaimerAcknowledge}
+                                disabled={!disclaimerChecked}
+                                className={`w-full ${!disclaimerChecked ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                leftIcon={<Shield className="w-4 h-4" />}
+                            >
+                                I Understand - Continue to Portal
+                            </Button>
+
+                            <p className="text-center text-white/40 text-xs mt-4">
+                                Your acknowledgment will be recorded for your protection.
+                            </p>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* Persistent Non-Emergency Warning Banner */}
+            <div className="bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-red-500/20 border-b border-amber-500/30">
+                <div className="max-w-6xl mx-auto px-4 py-2 flex items-center justify-center gap-2 text-center">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                    <p className="text-amber-200 text-sm">
+                        <strong>Non-Emergency Only</strong> — For police, fire, or medical emergencies, call <strong className="text-white">911</strong>
+                    </p>
+                </div>
+            </div>
 
             {/* Main Content */}
             <main id="main-content" className="flex-1 px-4 py-8 md:px-8 max-w-6xl mx-auto w-full">

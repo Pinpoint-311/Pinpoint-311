@@ -384,6 +384,18 @@ class SystemSettings(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
+class DisclaimerAcknowledgment(Base):
+    """Log of user acknowledgments that 311 is for non-emergency use only.
+    Stored for legal protection and audit purposes."""
+    __tablename__ = "disclaimer_acknowledgments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String(64), index=True, nullable=False)  # Browser session/fingerprint
+    ip_address = Column(String(45))  # IPv4 or IPv6
+    user_agent = Column(String(500))
+    acknowledged_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    disclaimer_version = Column(String(10), default="1.0")  # Track disclaimer version for updates
+
 
 class SystemSecret(Base):
     __tablename__ = "system_secrets"
