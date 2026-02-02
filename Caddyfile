@@ -1,13 +1,19 @@
 # Dynamic domain from DOMAIN environment variable
 # Set DOMAIN=your.domain.com in .env or docker-compose
 {$DOMAIN:localhost} {
+    # Rate limiting for DDoS protection
+    # API: 100 requests per second per IP (generous for legitimate use)
+    # Frontend: 200 requests per second per IP (assets, pages)
+    
     # API routes - must come first for proper matching
     handle /api/* {
+        rate_limit {client.ip} 100r/s
         reverse_proxy backend:8000
     }
 
     # Frontend - SPA routing
     handle {
+        rate_limit {client.ip} 200r/s
         reverse_proxy frontend:5173
     }
 
@@ -19,5 +25,8 @@
         X-Content-Type-Options nosniff
         X-Frame-Options DENY
         Referrer-Policy strict-origin-when-cross-origin
+        # Additional security headers
+        X-XSS-Protection "1; mode=block"
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
     }
 }
