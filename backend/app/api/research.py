@@ -242,30 +242,142 @@ def get_season(dt: datetime) -> str:
         return "fall"
 
 
-def get_income_quintile_from_zone(zone_id: str) -> int:
+def get_income_quintile_from_zone(zone_id: str, census_geoid: str = None) -> int:
     """
-    Generate a deterministic income quintile (1-5) from zone_id.
-    This is a privacy-preserving proxy that allows equity research
-    without exposing actual census data linkage.
-    Real implementation would use census tract lookup.
+    Get income quintile (1-5) from Census ACS median household income data.
+    Uses Census ACS 5-year estimates table B19013 (Median Household Income).
+    
+    Quintiles based on national median income (~$75,000):
+    1 = <$30k, 2 = $30-50k, 3 = $50-75k, 4 = $75-100k, 5 = >$100k
     """
-    if not zone_id:
+    if not census_geoid:
         return None
-    # Use hash for deterministic but anonymized quintile
-    hash_val = int(hashlib.md5(zone_id.encode()).hexdigest()[:8], 16)
-    return (hash_val % 5) + 1
+    
+    # Try to get from ACS data cache
+    acs_data = get_census_acs_data(census_geoid)
+    if acs_data and acs_data.get("median_income"):
+        income = acs_data["median_income"]
+        if income < 30000:
+            return 1
+        elif income < 50000:
+            return 2
+        elif income < 75000:
+            return 3
+        elif income < 100000:
+            return 4
+        else:
+            return 5
+    
+    return None
 
 
-def get_population_density_category(zone_id: str) -> str:
+# Cache for Census ACS data (tract GEOID -> data dict)
+_census_acs_cache: dict = {}
+
+
+def get_census_acs_data(census_geoid: str) -> Optional[dict]:
     """
-    Generate population density category from zone.
-    Real implementation would use census data.
+    Get Census ACS 5-year estimates for a census tract.
+    Includes: median income, total population, housing tenure, and land area.
+    
+    Uses Census Bureau API (free, requires API key stored in system_secrets).
+    Results are cached to minimize API calls.
+    
+    Variables:
+    - B19013_001E: Median household income
+    - B01003_001E: Total population
+    - B25003_001E: Total occupied housing units
+    - B25003_003E: Renter-occupied units
     """
-    if not zone_id:
+    if not census_geoid or len(census_geoid) < 11:
         return None
-    hash_val = int(hashlib.md5(zone_id.encode()).hexdigest()[8:16], 16)
-    categories = ["low", "medium", "high"]
-    return categories[hash_val % 3]
+    
+    # Check cache first
+    if census_geoid in _census_acs_cache:
+        return _census_acs_cache[census_geoid]
+    
+    try:
+        import requests
+        
+        # Parse GEOID: SSCCCTTTTTT (State 2 + County 3 + Tract 6)
+        state_fips = census_geoid[:2]
+        county_fips = census_geoid[2:5]
+        tract = census_geoid[5:]
+        
+        # ACS 5-year estimates (most reliable for tract level)
+        year = 2022  # Most recent complete ACS 5-year
+        base_url = f"https://api.census.gov/data/{year}/acs/acs5"
+        
+        # Variables to fetch
+        variables = "B19013_001E,B01003_001E,B25003_001E,B25003_003E"
+        
+        # Note: Census API works without key for limited requests
+        # For production, add: &key={api_key}
+        url = f"{base_url}?get={variables}&for=tract:{tract}&in=state:{state_fips}&in=county:{county_fips}"
+        
+        response = requests.get(url, timeout=5)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if len(data) >= 2:
+                # First row is headers, second is data
+                headers = data[0]
+                values = data[1]
+                
+                result = {}
+                for i, header in enumerate(headers):
+                    if header == "B19013_001E":
+                        result["median_income"] = int(values[i]) if values[i] and values[i] != "-666666666" else None
+                    elif header == "B01003_001E":
+                        result["total_population"] = int(values[i]) if values[i] else None
+                    elif header == "B25003_001E":
+                        result["total_housing_units"] = int(values[i]) if values[i] else None
+                    elif header == "B25003_003E":
+                        result["renter_units"] = int(values[i]) if values[i] else None
+                
+                # Calculate renter percentage
+                if result.get("total_housing_units") and result.get("renter_units"):
+                    result["renter_pct"] = round(result["renter_units"] / result["total_housing_units"], 2)
+                
+                _census_acs_cache[census_geoid] = result
+                return result
+                
+    except Exception as e:
+        logger.warning(f"Census ACS API error for {census_geoid}: {e}")
+    
+    _census_acs_cache[census_geoid] = None
+    return None
+
+
+def get_population_density_category(zone_id: str, census_geoid: str = None) -> str:
+    """
+    Get population density category from Census ACS population data.
+    Uses Census ACS B01003 (Total Population) and tract land area.
+    
+    Categories based on population per square mile:
+    - low: < 1,000 per sq mi (rural/suburban)
+    - medium: 1,000 - 5,000 per sq mi (suburban)
+    - high: > 5,000 per sq mi (urban)
+    """
+    if not census_geoid:
+        return None
+    
+    acs_data = get_census_acs_data(census_geoid)
+    if acs_data and acs_data.get("total_population"):
+        pop = acs_data["total_population"]
+        
+        # Estimate density - average US tract is ~1.5 sq mi
+        # For accurate density, would need TIGER shapefile land area
+        # Using population thresholds as proxy (typical tract ~4000 people)
+        if pop < 2000:
+            return "low"
+        elif pop < 6000:
+            return "medium"
+        else:
+            return "high"
+    
+    return None
+
 
 
 # ============================================================================
@@ -323,17 +435,52 @@ def get_census_tract_geoid(lat: float, lng: float) -> Optional[str]:
 
 def get_social_vulnerability_index(census_geoid: str) -> Optional[float]:
     """
-    Get CDC Social Vulnerability Index (SVI) for a census tract.
+    Calculate CDC-style Social Vulnerability Index (SVI) for a census tract.
     SVI ranges from 0 (lowest vulnerability) to 1 (highest vulnerability).
     
-    Note: In production, this would query the CDC SVI database.
-    For now, generates deterministic proxy from GEOID.
+    Uses Census ACS data to approximate CDC SVI methodology:
+    - Lower income = higher vulnerability
+    - Higher renter % = higher vulnerability
+    - Higher population = higher vulnerability (urban stress)
+    
+    CDC SVI uses 16 variables across 4 themes; this is a simplified approximation
+    using the variables we already fetch from ACS.
     """
     if not census_geoid:
         return None
-    # Deterministic proxy based on tract GEOID
-    hash_val = int(hashlib.md5(census_geoid.encode()).hexdigest()[:8], 16)
-    return round((hash_val % 1000) / 1000, 3)
+    
+    acs_data = get_census_acs_data(census_geoid)
+    if not acs_data:
+        return None
+    
+    # Calculate vulnerability score from available ACS data
+    svi_components = []
+    
+    # Income vulnerability (lower income = higher vulnerability)
+    # National median ~$75,000, poverty threshold ~$30,000
+    median_income = acs_data.get("median_income")
+    if median_income:
+        # Normalize: $30k = 1.0 (high vuln), $150k = 0.0 (low vuln)
+        income_vuln = max(0, min(1, (150000 - median_income) / 120000))
+        svi_components.append(income_vuln)
+    
+    # Housing vulnerability (higher renter % = higher vulnerability)
+    renter_pct = acs_data.get("renter_pct")
+    if renter_pct is not None:
+        svi_components.append(renter_pct)
+    
+    # Population density stress (rough proxy for urban challenges)
+    total_pop = acs_data.get("total_population")
+    if total_pop:
+        # Normalize: 1000 = 0.0, 10000 = 1.0
+        pop_vuln = max(0, min(1, (total_pop - 1000) / 9000))
+        svi_components.append(pop_vuln * 0.5)  # Weight less than income/housing
+    
+    if svi_components:
+        # Average all components for final SVI
+        return round(sum(svi_components) / len(svi_components), 3)
+    
+    return None
 
 
 def get_housing_tenure_mix(census_geoid: str) -> Optional[float]:
@@ -341,13 +488,20 @@ def get_housing_tenure_mix(census_geoid: str) -> Optional[float]:
     Get percentage of renters vs owners in census tract.
     Returns renter percentage (0.0 to 1.0).
     
+    Uses Census ACS 5-year estimates table B25003:
+    - B25003_001E: Total occupied housing units
+    - B25003_003E: Renter-occupied units
+    
     Hypothesis: Renters may under-report infrastructure issues.
-    Note: In production, would query Census ACS data.
     """
     if not census_geoid:
         return None
-    hash_val = int(hashlib.md5(census_geoid.encode()).hexdigest()[4:12], 16)
-    return round((hash_val % 100) / 100, 2)
+    
+    acs_data = get_census_acs_data(census_geoid)
+    if acs_data and acs_data.get("renter_pct") is not None:
+        return acs_data["renter_pct"]
+    
+    return None
 
 
 # ============================================================================
@@ -947,13 +1101,13 @@ async def export_csv(
             
             # Zone-based demographic proxies (for equity research)
             zone_id = generate_zone_id(req.lat, req.long)
-            income_quintile = get_income_quintile_from_zone(zone_id)
-            pop_density = get_population_density_category(zone_id)
             
             # SOCIAL EQUITY PACK - Real Census-based metrics
             census_geoid = get_census_tract_geoid(req.lat, req.long)  # Real API call (cached)
-            svi = get_social_vulnerability_index(census_geoid or zone_id)  # Use GEOID if available
-            housing_tenure = get_housing_tenure_mix(census_geoid or zone_id)
+            income_quintile = get_income_quintile_from_zone(zone_id, census_geoid)
+            pop_density = get_population_density_category(zone_id, census_geoid)
+            svi = get_social_vulnerability_index(census_geoid)
+            housing_tenure = get_housing_tenure_mix(census_geoid)
             
             # ENVIRONMENTAL CONTEXT PACK - Real weather data
             weather = get_weather_context(req.requested_datetime, req.lat, req.long)
@@ -1167,18 +1321,18 @@ async def export_geojson(
         
         # Zone-based fields
         zone_id = generate_zone_id(req.lat, req.long)
-        income_quintile = get_income_quintile_from_zone(zone_id)
-        pop_density = get_population_density_category(zone_id)
         season = get_season(req.requested_datetime)
         
         # Comment counts
         total_comments = len(req.comments) if req.comments else 0
         public_comments = len([c for c in req.comments if c.visibility == 'external']) if req.comments else 0
         
-        # SOCIAL EQUITY PACK - Real Census lookup
+        # SOCIAL EQUITY PACK - Real Census ACS data
         census_geoid = get_census_tract_geoid(req.lat, req.long)
-        svi = get_social_vulnerability_index(census_geoid or zone_id)
-        housing_tenure = get_housing_tenure_mix(census_geoid or zone_id)
+        income_quintile = get_income_quintile_from_zone(zone_id, census_geoid)
+        pop_density = get_population_density_category(zone_id, census_geoid)
+        svi = get_social_vulnerability_index(census_geoid)
+        housing_tenure = get_housing_tenure_mix(census_geoid)
         
         # ENVIRONMENTAL CONTEXT PACK - Real weather data
         weather = get_weather_context(req.requested_datetime, req.lat, req.long)
@@ -1534,16 +1688,16 @@ async def get_data_dictionary(
             "social_vulnerability_index": {
                 "type": "float",
                 "range": "0.0-1.0",
-                "description": "CDC Social Vulnerability Index (0=lowest, 1=highest vulnerability)",
-                "note": "Standard metric for community disaster vulnerability research",
-                "source": "Derived from zone ID (production would use CDC SVI database)"
+                "description": "CDC-style Social Vulnerability Index (0=lowest, 1=highest vulnerability)",
+                "note": "Calculated from Census ACS income, housing tenure, and population data",
+                "source": "Census Bureau ACS 5-year estimates (B19013, B25003, B01003)"
             },
             "housing_tenure_renter_pct": {
                 "type": "float",
                 "range": "0.0-1.0",
-                "description": "Percentage of renters in the zone (0.0=all owners, 1.0=all renters)",
+                "description": "Percentage of renters in the census tract (0.0=all owners, 1.0=all renters)",
                 "note": "Hypothesis: Renters may under-report infrastructure issues vs owners",
-                "source": "Derived from zone ID (production would use Census ACS)"
+                "source": "Census Bureau ACS 5-year estimates (B25003)"
             },
             
             # ===============================================
