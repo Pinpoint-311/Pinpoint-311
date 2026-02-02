@@ -1707,19 +1707,19 @@ async def get_data_dictionary(
                 "type": "float",
                 "description": "Precipitation in 24 hours before report (millimeters)",
                 "note": "Correlates with flooding, pothole formation, drainage issues",
-                "source": "Seasonal estimate (production would use historical weather API)"
+                "source": "Open-Meteo API (free, no key required) with seasonal fallback"
             },
             "weather_temp_max_c": {
                 "type": "float",
                 "description": "Maximum temperature on report day (Celsius)",
                 "note": "Freeze-thaw cycles cause road damage",
-                "source": "Seasonal estimate (production would use historical weather API)"
+                "source": "Open-Meteo API (free, no key required) with seasonal fallback"
             },
             "weather_temp_min_c": {
                 "type": "float",
                 "description": "Minimum temperature on report day (Celsius)",
                 "note": "Sub-freezing temperatures indicate potential pothole conditions",
-                "source": "Seasonal estimate"
+                "source": "Open-Meteo API (free, no key required) with seasonal fallback"
             },
             "nearby_asset_age_years": {
                 "type": "float",

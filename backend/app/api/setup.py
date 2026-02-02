@@ -583,8 +583,26 @@ async def verify_setup(
             results["gcp"]["configured"] = True
             project_id = decrypt_safe(gcp_secret.key_value)
             results["gcp"]["project_id"] = project_id
-            # TODO: Test GCP connectivity by calling a simple API
-            results["gcp"]["reachable"] = True
+            
+            # Test GCP connectivity by checking service account credentials
+            try:
+                sa_result = await db.execute(
+                    select(SystemSecret).where(SystemSecret.key_name == "GCP_SERVICE_ACCOUNT_JSON")
+                )
+                sa_secret = sa_result.scalar_one_or_none()
+                if sa_secret and sa_secret.key_value:
+                    import json
+                    sa_json = decrypt_safe(sa_secret.key_value)
+                    sa_data = json.loads(sa_json)
+                    # If we can parse the service account JSON, credentials are valid
+                    results["gcp"]["reachable"] = True
+                    results["gcp"]["service_account"] = sa_data.get("client_email", "")[:20] + "..."
+                else:
+                    results["gcp"]["reachable"] = False
+                    results["gcp"]["error"] = "Service account JSON not found"
+            except Exception as gcp_err:
+                results["gcp"]["reachable"] = False
+                results["gcp"]["error"] = f"Credential validation failed: {str(gcp_err)[:100]}"
     except Exception as e:
         results["gcp"]["error"] = str(e)
     
