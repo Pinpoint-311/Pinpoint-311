@@ -646,7 +646,7 @@ export default function ResidentPortal() {
                                     >
                                         <span className="w-2 h-2 rounded-full bg-primary-400" />
                                         <span className="text-sm font-medium text-primary-200">
-                                            Non-Emergency Services
+                                            130+ Languages Available
                                         </span>
                                     </motion.div>
 
