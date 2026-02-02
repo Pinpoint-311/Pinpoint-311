@@ -710,19 +710,6 @@ user: `admin` | password: `admin123`
 
 *(You will be prompted to change this immediately upon login)*
 
----
-
-## 🤝 Contributing
-
-We welcome contributions from developers and public servants!
-1.  Fork the repo
-2.  Create a feature branch (`git checkout -b feature/AmazingFeature`)
-3.  Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4.  Push to the branch (`git push origin feature/AmazingFeature`)
-5.  Open a Pull Request
-
----
-
 <p align="center">
-  Built with ❤️ for Civic Engagement
+  Built by Pinpoint 311 for Civic Engagement
 </p>
