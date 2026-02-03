@@ -1550,15 +1550,15 @@ export default function StaffDashboard() {
                             {selectedRequest ? (
                                 <div className="flex-1 flex flex-col">
                                     {/* Sticky Header with Actions & Assignment - Premium Glass Style */}
-                                    <div className="sticky top-0 z-10 bg-gradient-to-b from-slate-900/95 via-slate-800/95 to-slate-800/90 backdrop-blur-md border-b border-white/10 p-4 space-y-3">
-                                        {/* Row 1: Title and ID */}
-                                        <div className="flex items-center justify-between gap-4">
+                                    <div className="sticky top-0 z-10 bg-gradient-to-b from-slate-900/95 via-slate-800/95 to-slate-800/90 backdrop-blur-md border-b border-white/10 p-3 sm:p-4 space-y-2 sm:space-y-3">
+                                        {/* Row 1: Title, ID, Status and Print */}
+                                        <div className="flex items-start justify-between gap-2">
                                             <div className="min-w-0 flex-1">
-                                                <div className="flex items-center gap-2 mb-1">
-                                                    <span className="font-mono text-xs text-white/50 bg-white/5 px-2 py-0.5 rounded">{selectedRequest.service_request_id}</span>
+                                                <div className="flex items-center gap-1.5 sm:gap-2 mb-0.5 sm:mb-1 flex-wrap">
+                                                    <span className="font-mono text-[10px] sm:text-xs text-white/50 bg-white/5 px-1.5 sm:px-2 py-0.5 rounded">{selectedRequest.service_request_id}</span>
                                                     <StatusBadge status={selectedRequest.status} />
                                                 </div>
-                                                <h1 className="text-lg font-semibold text-white truncate">{selectedRequest.service_name}</h1>
+                                                <h1 className="text-base sm:text-lg font-semibold text-white truncate">{selectedRequest.service_name}</h1>
                                             </div>
                                             <PrintWorkOrder
                                                 request={selectedRequest}
@@ -1569,30 +1569,37 @@ export default function StaffDashboard() {
                                             />
                                         </div>
 
-                                        {/* Row 2: Assignment Dropdowns */}
-                                        <div className="flex flex-wrap items-center gap-2">
+                                        {/* Row 2: Status Actions - Compact on mobile */}
+                                        <div className="flex gap-1.5 sm:gap-2">
+                                            <button onClick={() => handleStatusChange('open')} className={`flex-1 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg text-xs sm:text-sm font-medium transition-all ${selectedRequest.status === 'open' ? 'bg-gradient-to-r from-purple-500 to-violet-600 text-white shadow-lg shadow-purple-500/30 ring-2 ring-white/20' : 'bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 hover:text-white'}`}>Open</button>
+                                            <button onClick={() => handleStatusChange('in_progress')} className={`flex-1 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg text-xs sm:text-sm font-medium transition-all ${selectedRequest.status === 'in_progress' ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-lg shadow-blue-500/30 ring-2 ring-white/20' : 'bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 hover:text-white'}`}><span className="hidden sm:inline">In Progress</span><span className="sm:hidden">Progress</span></button>
+                                            <button onClick={() => handleStatusChange('closed')} className={`flex-1 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg text-xs sm:text-sm font-medium transition-all ${selectedRequest.status === 'closed' ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-500/30 ring-2 ring-white/20' : 'bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 hover:text-white'}`}>Closed</button>
+                                        </div>
+
+                                        {/* Row 3: Assignment Dropdowns - More compact on mobile */}
+                                        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                                             <select
                                                 value={editAssignment?.departmentId ?? selectedRequest.assigned_department_id ?? ''}
                                                 onChange={(e) => { const val = e.target.value ? Number(e.target.value) : null; setEditAssignment(prev => ({ departmentId: val, assignedTo: prev?.assignedTo ?? selectedRequest.assigned_to ?? null })); }}
-                                                className="flex-1 min-w-0 w-full sm:w-auto py-2 px-3 rounded-lg bg-white/5 border border-white/10 text-white text-sm focus:border-primary-500/50 focus:ring-1 focus:ring-primary-500/25 transition-all [&>option]:bg-slate-800 [&>option]:text-white"
+                                                className="flex-1 min-w-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg bg-white/5 border border-white/10 text-white text-xs sm:text-sm focus:border-primary-500/50 focus:ring-1 focus:ring-primary-500/25 transition-all [&>option]:bg-slate-800 [&>option]:text-white"
                                                 aria-label="Assign to department"
                                             >
-                                                <option value="" className="text-white/50">Select a department...</option>
+                                                <option value="" className="text-white/50">Department...</option>
                                                 {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                                             </select>
                                             <select
                                                 value={editAssignment?.assignedTo ?? selectedRequest.assigned_to ?? ''}
                                                 onChange={(e) => { const val = e.target.value; setEditAssignment(prev => ({ departmentId: prev?.departmentId ?? selectedRequest.assigned_department_id ?? null, assignedTo: val })); }}
-                                                className="flex-1 min-w-0 w-full sm:w-auto py-2 px-3 rounded-lg bg-white/5 border border-white/10 text-white text-sm focus:border-primary-500/50 focus:ring-1 focus:ring-primary-500/25 transition-all [&>option]:bg-slate-800 [&>option]:text-white"
+                                                className="flex-1 min-w-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg bg-white/5 border border-white/10 text-white text-xs sm:text-sm focus:border-primary-500/50 focus:ring-1 focus:ring-primary-500/25 transition-all [&>option]:bg-slate-800 [&>option]:text-white"
                                                 aria-label="Assign to staff member"
                                             >
-                                                <option value="">All staff in department</option>
+                                                <option value="">Assignee...</option>
                                                 {(() => {
                                                     const deptId = editAssignment?.departmentId ?? selectedRequest.assigned_department_id;
                                                     const filteredUsers = deptId ? users.filter(u => u.departments?.some(d => d.id === deptId)) : users;
                                                     return filteredUsers.map(u => (
                                                         <option key={u.id} value={u.username}>
-                                                            {u.full_name || u.username} (@{u.username})
+                                                            {u.full_name || u.username}
                                                         </option>
                                                     ));
                                                 })()}
@@ -1616,60 +1623,52 @@ export default function StaffDashboard() {
                                                     } finally {
                                                         setIsSavingAssignment(false);
                                                     }
-                                                }} disabled={isSavingAssignment} className="px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium disabled:opacity-50 transition-all shadow-lg shadow-primary-500/20">{isSavingAssignment ? 'Saving...' : 'Save'}</button>
+                                                }} disabled={isSavingAssignment} className="px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-xs sm:text-sm font-medium disabled:opacity-50 transition-all shadow-lg shadow-primary-500/20">{isSavingAssignment ? '...' : 'Save'}</button>
                                             )}
                                         </div>
 
-                                        {/* Row 3: Status Actions */}
-                                        <div className="flex gap-2">
-                                            <button onClick={() => handleStatusChange('open')} className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${selectedRequest.status === 'open' ? 'bg-gradient-to-r from-purple-500 to-violet-600 text-white shadow-lg shadow-purple-500/30 ring-2 ring-white/20' : 'bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 hover:text-white'}`}>Open</button>
-                                            <button onClick={() => handleStatusChange('in_progress')} className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${selectedRequest.status === 'in_progress' ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-lg shadow-blue-500/30 ring-2 ring-white/20' : 'bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 hover:text-white'}`}>In Progress</button>
-                                            <button onClick={() => handleStatusChange('closed')} className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${selectedRequest.status === 'closed' ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-500/30 ring-2 ring-white/20' : 'bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 hover:text-white'}`}>Closed</button>
-                                        </div>
-
-                                        {/* Row 4: Legal Hold Toggle (Admin Only) */}
+                                        {/* Row 4: Legal Hold Toggle (Admin Only) - Hidden on mobile, shown in menu */}
                                         {user?.role === 'admin' && (
-                                            <>
-                                                <button
-                                                    onClick={async () => {
-                                                        if (selectedRequest.flagged !== true) {
-                                                            // Show confirmation before placing on legal hold
-                                                            if (window.confirm('Place this request under Legal Hold?\n\nThis will prevent the record from being archived or deleted by the retention policy.\n\nContinue?')) {
-                                                                try {
-                                                                    const updated = await api.updateRequest(selectedRequest.service_request_id, {
-                                                                        flagged: true
-                                                                    });
-                                                                    setSelectedRequest(updated);
-                                                                    setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
-                                                                } catch (err) {
-                                                                    console.error('Failed to enable legal hold:', err);
-                                                                }
-                                                            }
-                                                        } else {
-                                                            // Allow direct removal without confirmation
+                                            <button
+                                                onClick={async () => {
+                                                    if (selectedRequest.flagged !== true) {
+                                                        // Show confirmation before placing on legal hold
+                                                        if (window.confirm('Place this request under Legal Hold?\n\nThis will prevent the record from being archived or deleted by the retention policy.\n\nContinue?')) {
                                                             try {
                                                                 const updated = await api.updateRequest(selectedRequest.service_request_id, {
-                                                                    flagged: false
+                                                                    flagged: true
                                                                 });
                                                                 setSelectedRequest(updated);
                                                                 setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
                                                             } catch (err) {
-                                                                console.error('Failed to remove legal hold:', err);
+                                                                console.error('Failed to enable legal hold:', err);
                                                             }
                                                         }
-                                                    }}
-                                                    className={`w-full py-2 px-4 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${selectedRequest.flagged === true
-                                                        ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-lg shadow-amber-500/30 ring-2 ring-white/20'
-                                                        : 'bg-white/5 border border-white/10 text-white/70 hover:bg-amber-500/20 hover:text-amber-400 hover:border-amber-500/30'
-                                                        }`}
-                                                    aria-label={selectedRequest.flagged === true ? 'Remove legal hold' : 'Place on legal hold'}
-                                                >
-                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9" />
-                                                    </svg>
-                                                    {selectedRequest.flagged === true ? 'Under Legal Hold (Click to Remove)' : 'Place on Legal Hold'}
-                                                </button>
-                                            </>
+                                                    } else {
+                                                        // Allow direct removal without confirmation
+                                                        try {
+                                                            const updated = await api.updateRequest(selectedRequest.service_request_id, {
+                                                                flagged: false
+                                                            });
+                                                            setSelectedRequest(updated);
+                                                            setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
+                                                        } catch (err) {
+                                                            console.error('Failed to remove legal hold:', err);
+                                                        }
+                                                    }
+                                                }}
+                                                className={`w-full py-1.5 sm:py-2 px-3 sm:px-4 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center justify-center gap-1.5 sm:gap-2 ${selectedRequest.flagged === true
+                                                    ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-lg shadow-amber-500/30 ring-2 ring-white/20'
+                                                    : 'bg-white/5 border border-white/10 text-white/70 hover:bg-amber-500/20 hover:text-amber-400 hover:border-amber-500/30'
+                                                    }`}
+                                                aria-label={selectedRequest.flagged === true ? 'Remove legal hold' : 'Place on legal hold'}
+                                            >
+                                                <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9" />
+                                                </svg>
+                                                <span className="hidden sm:inline">{selectedRequest.flagged === true ? 'Under Legal Hold (Click to Remove)' : 'Place on Legal Hold'}</span>
+                                                <span className="sm:hidden">{selectedRequest.flagged === true ? 'Legal Hold ✓' : 'Legal Hold'}</span>
+                                            </button>
                                         )}
                                     </div>
 
