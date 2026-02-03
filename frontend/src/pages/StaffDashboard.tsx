@@ -1560,6 +1560,13 @@ export default function StaffDashboard() {
                                                 </div>
                                                 <h1 className="text-lg font-semibold text-white truncate">{selectedRequest.service_name}</h1>
                                             </div>
+                                            <PrintWorkOrder
+                                                request={selectedRequest}
+                                                auditLog={auditLog}
+                                                townshipName={settings?.township_name}
+                                                logoUrl={settings?.logo_url || undefined}
+                                                mapsApiKey={mapsConfig?.google_maps_api_key}
+                                            />
                                         </div>
 
                                         {/* Row 2: Assignment Dropdowns */}
@@ -1664,15 +1671,6 @@ export default function StaffDashboard() {
                                                 </button>
                                             </>
                                         )}
-
-                                        {/* Row 5: Print Work Order */}
-                                        <PrintWorkOrder
-                                            request={selectedRequest}
-                                            auditLog={auditLog}
-                                            townshipName={settings?.township_name}
-                                            logoUrl={settings?.logo_url || undefined}
-                                            mapsApiKey={mapsConfig?.google_maps_api_key}
-                                        />
                                     </div>
 
                                     {/* Scrollable Content - Professional Government Styling */}
