@@ -33,6 +33,10 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
         };
         const priority = getPriorityLabel(priorityScore);
 
+        // Determine if priority is AI suggested or staff confirmed
+        const isManualPriority = request.manual_priority_score !== null && request.manual_priority_score !== undefined;
+        const prioritySource = isManualPriority ? 'Staff Confirmed' : (ai?.priority_score ? 'AI Suggested' : 'Default');
+
         // Status label
         const getStatusLabel = (status: string, substatus: string | null) => {
             if (status === 'closed') {
@@ -77,17 +81,34 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
             </div>
         ` : '';
 
-        // Build AI analysis HTML - use correct field names
+        // Build AI analysis HTML - use correct field names with improved tag styling
         const qualitativeText = ai?.qualitative_analysis ?? request.vertex_ai_summary ?? null;
+        const safetyFlagsHtml = ai?.safety_flags?.length ? `
+            <div class="ai-tags safety-tags">
+                <strong>Safety Flags:</strong>
+                ${ai.safety_flags.map((flag: string) => `<span class="tag tag-danger">${flag}</span>`).join('')}
+            </div>
+        ` : '';
+
         const aiHtml = (ai || qualitativeText) && !ai?.error && !ai?._error ? `
             <div class="section ai-analysis">
                 <h3>${icons.brain} AI Analysis</h3>
                 ${qualitativeText ? `<p><strong>Summary:</strong> ${qualitativeText}</p>` : ''}
-                ${ai?.classification || request.vertex_ai_classification ? `<p><strong>Classification:</strong> ${ai?.classification || request.vertex_ai_classification}</p>` : ''}
+                ${ai?.classification || request.vertex_ai_classification ? `
+                    <div class="ai-tags">
+                        <strong>Classification:</strong>
+                        <span class="tag tag-purple">${ai?.classification || request.vertex_ai_classification}</span>
+                    </div>
+                ` : ''}
                 ${ai?.root_cause ? `<p><strong>Root Cause:</strong> ${ai.root_cause}</p>` : ''}
                 ${ai?.recommended_action ? `<p><strong>Recommended Action:</strong> ${ai.recommended_action}</p>` : ''}
-                ${ai?.similar_reports?.length ? `<p><strong>Similar Reports:</strong> ${ai.similar_reports.map((r: any) => r.service_request_id).join(', ')}</p>` : ''}
-                ${ai?.safety_flags?.length ? `<p class="safety-flags"><strong>${icons.alert} Safety Flags:</strong> ${ai.safety_flags.join(', ')}</p>` : ''}
+                ${ai?.similar_reports?.length ? `
+                    <div class="ai-tags">
+                        <strong>Similar Reports:</strong>
+                        ${ai.similar_reports.map((r: any) => `<span class="tag tag-gray">#${r.service_request_id}</span>`).join('')}
+                    </div>
+                ` : ''}
+                ${safetyFlagsHtml}
             </div>
         ` : '';
 
@@ -278,11 +299,43 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         border-left: 4px solid #7c3aed;
                     }
                     .ai-analysis p { margin-bottom: 5px; }
-                    .safety-flags { 
-                        color: #dc2626; 
+                    .ai-tags {
+                        margin-bottom: 8px;
                         display: flex;
                         align-items: center;
+                        flex-wrap: wrap;
                         gap: 6px;
+                    }
+                    .ai-tags strong {
+                        margin-right: 4px;
+                    }
+                    .tag {
+                        display: inline-block;
+                        padding: 2px 8px;
+                        border-radius: 4px;
+                        font-size: 10px;
+                        font-weight: 500;
+                    }
+                    .tag-purple {
+                        background: #ede9fe;
+                        color: #6d28d9;
+                        border: 1px solid #c4b5fd;
+                    }
+                    .tag-gray {
+                        background: #f3f4f6;
+                        color: #374151;
+                        border: 1px solid #d1d5db;
+                    }
+                    .tag-danger {
+                        background: #fef2f2;
+                        color: #dc2626;
+                        border: 1px solid #fecaca;
+                    }
+                    .priority-source {
+                        font-size: 9px;
+                        color: #6b7280;
+                        font-weight: normal;
+                        margin-left: 3px;
                     }
                     .asset {
                         background: #ecfdf5;
@@ -366,7 +419,7 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                     <div class="header-right">
                         <div class="request-id">#${request.service_request_id}</div>
                         <span class="status-badge status-${request.status}">${getStatusLabel(request.status, request.closed_substatus)}</span>
-                        <span class="priority-badge" style="background: ${priority.color}">${priority.label} (${priorityScore}/10)</span>
+                        <span class="priority-badge" style="background: ${priority.color}">${priority.label} (${priorityScore}/10) <span class="priority-source">• ${prioritySource}</span></span>
                     </div>
                 </div>
 
