@@ -446,6 +446,69 @@ async def configure_auth0(
             except Exception as e:
                 logger.warning(f"Failed to configure brute force protection: {e}")
             
+            # Configure branding to match township branding
+            branding_configured = False
+            try:
+                # Get current system settings for branding
+                from app.models import SystemSettings
+                settings_result = await db.execute(select(SystemSettings).limit(1))
+                settings = settings_result.scalar_one_or_none()
+                
+                primary_color = settings.primary_color if settings else "#6366f1"
+                logo_url = settings.logo_url if settings else None
+                township_name = settings.township_name if settings else "Pinpoint 311"
+                
+                # Configure Auth0 branding
+                branding_payload = {
+                    "colors": {
+                        "primary": primary_color,
+                        "page_background": "#0f172a"  # Dark slate background matching our UI
+                    },
+                    "favicon_url": logo_url if logo_url else None
+                }
+                
+                # Remove None values
+                branding_payload = {k: v for k, v in branding_payload.items() if v is not None}
+                if "colors" in branding_payload:
+                    branding_payload["colors"] = {k: v for k, v in branding_payload["colors"].items() if v is not None}
+                
+                await client.patch(
+                    f"https://{request.domain}/api/v2/branding",
+                    headers=headers,
+                    json=branding_payload
+                )
+                
+                # Configure Universal Login branding (New Universal Login)
+                universal_login_payload = {
+                    "identifier_first": True
+                }
+                await client.put(
+                    f"https://{request.domain}/api/v2/prompts",
+                    headers=headers,
+                    json=universal_login_payload
+                )
+                
+                # Set up custom login page text if possible
+                try:
+                    await client.patch(
+                        f"https://{request.domain}/api/v2/prompts/login/custom-text/en",
+                        headers=headers,
+                        json={
+                            "login": {
+                                "title": f"{township_name} Staff Portal",
+                                "description": "Sign in to access the staff dashboard"
+                            }
+                        }
+                    )
+                except Exception:
+                    pass  # Custom text may require specific plan
+                
+                branding_configured = True
+                logger.info(f"Auth0 branding configured with primary color {primary_color}")
+                
+            except Exception as e:
+                logger.warning(f"Failed to configure Auth0 branding: {e}")
+            
         # Store credentials in database
         from sqlalchemy import select
         
