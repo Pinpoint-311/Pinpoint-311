@@ -468,8 +468,8 @@ export default function ResidentPortal() {
 
     return (
         <div className="min-h-screen flex flex-col">
-            {/* Navigation - Hidden on mobile, shown on desktop */}
-            <nav className="hidden md:flex glass-sidebar py-4 px-6 items-center justify-between sticky top-0 z-40" aria-label="Main navigation">
+            {/* Navigation - Clean Mobile Header */}
+            <nav className="glass-sidebar py-3 md:py-4 px-4 md:px-6 flex items-center justify-between sticky top-0 z-40" aria-label="Main navigation">
                 <button
                     onClick={() => {
                         setShowTrackingView(false);
@@ -478,28 +478,32 @@ export default function ResidentPortal() {
                         updateHash('');
                         scrollToTop('instant');
                     }}
-                    className="flex items-center gap-3 hover:opacity-80 transition-opacity cursor-pointer"
+                    className="flex items-center gap-2 md:gap-3 hover:opacity-80 transition-opacity cursor-pointer"
                     aria-label="Go to home page"
                 >
                     {settings?.logo_url ? (
-                        <img src={settings.logo_url} alt="Logo" className="h-10 w-auto" />
+                        <img src={settings.logo_url} alt="Logo" className="h-8 md:h-10 w-auto" />
                     ) : (
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
-                            <Sparkles className="w-6 h-6 text-white" />
+                        <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
+                            <Sparkles className="w-4 h-4 md:w-6 md:h-6 text-white" />
                         </div>
                     )}
-                    <h1 className="text-xl font-semibold text-white" data-no-translate>
+                    <h1 className="text-lg md:text-xl font-semibold text-white hidden sm:block" data-no-translate>
                         {settings?.township_name || 'Township 311'}
                     </h1>
                 </button>
 
-                <div className="flex items-center gap-4">
-                    <LanguageSelector />
+                <div className="flex items-center gap-2 md:gap-4">
+                    {/* Language selector - compact on mobile */}
+                    <div className="scale-90 md:scale-100 origin-right">
+                        <LanguageSelector />
+                    </div>
                     <Link
                         to="/login"
-                        className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white/70 hover:text-white text-sm font-medium transition-all border border-white/10 hover:border-white/20 no-underline"
+                        className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white/70 hover:text-white text-xs md:text-sm font-medium transition-all border border-white/10 hover:border-white/20"
                     >
-                        Staff Login
+                        <span className="hidden sm:inline">Staff Login</span>
+                        <span className="sm:hidden">Staff</span>
                     </Link>
                 </div>
             </nav>
@@ -514,126 +518,95 @@ export default function ResidentPortal() {
                         className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
                     >
                         <motion.div
-                            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                            animate={{ opacity: 1, scale: 1, y: 0 }}
-                            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                            className="w-full max-w-md"
+                            initial={{ scale: 0.95, opacity: 0, y: 20 }}
+                            animate={{ scale: 1, opacity: 1, y: 0 }}
+                            exit={{ scale: 0.95, opacity: 0, y: 20 }}
+                            transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                            className="bg-gradient-to-br from-slate-800 via-slate-800 to-slate-900 rounded-2xl max-w-lg w-full p-6 border border-white/10 shadow-2xl"
                         >
-                            <Card className="p-6 bg-gradient-to-b from-slate-800/95 to-slate-900/95 backdrop-blur-xl border-white/10">
-                                {/* Friendly Icon */}
-                                <div className="flex justify-center mb-4">
-                                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
+                            {/* Friendly Welcome Header */}
+                            <div className="text-center mb-6">
+                                {settings?.logo_url ? (
+                                    <img
+                                        src={settings.logo_url}
+                                        alt={settings?.township_name || "Township"}
+                                        className="h-12 mx-auto mb-4 object-contain"
+                                    />
+                                ) : (
+                                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-purple-600 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-primary-500/25">
                                         <Sparkles className="w-8 h-8 text-white" />
                                     </div>
-                                </div>
-
-                                <h2 className="text-2xl font-bold text-white text-center mb-2">
-                                    Welcome to {settings?.township_name || 'Demo Township'}!
+                                )}
+                                <h2 className="text-2xl font-bold text-white mb-1">
+                                    Welcome to {settings?.township_name || "311 Services"}!
                                 </h2>
-                                <p className="text-white/60 text-center text-sm mb-6">
-                                    Your community service request portal
-                                </p>
+                                <p className="text-white/60 text-sm">Your community service request portal</p>
+                            </div>
 
-                                {/* Info Box with Warm Colors */}
-                                <div className="bg-gradient-to-br from-blue-500/10 to-indigo-500/10 border border-blue-500/20 rounded-xl p-4 mb-6">
-                                    <div className="flex items-start gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0">
-                                            <Phone className="w-5 h-5 text-blue-400" />
-                                        </div>
-                                        <div>
-                                            <h3 className="text-blue-300 font-semibold mb-1">Quick Reminder</h3>
-                                            <p className="text-white/70 text-sm leading-relaxed">
-                                                This portal is for <strong className="text-white">non-emergency requests</strong> like
-                                                potholes, streetlights, trash pickup, and general municipal services.
-                                            </p>
-                                        </div>
+                            {/* Helpful Info Card - Not scary! */}
+                            <div className="bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-purple-500/10 border border-blue-400/20 rounded-xl p-4 mb-6">
+                                <div className="flex items-start gap-3">
+                                    <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                                        <Phone className="w-5 h-5 text-blue-400" />
                                     </div>
-
-                                    <div className="mt-3 pt-3 border-t border-white/10">
-                                        <p className="text-white/60 text-sm flex items-start gap-2">
-                                            <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 flex-shrink-0" />
-                                            <span>For emergencies (police, fire, medical), please dial <strong className="text-white whitespace-nowrap">911</strong></span>
+                                    <div>
+                                        <h3 className="text-blue-300 font-semibold mb-1">Quick Reminder</h3>
+                                        <p className="text-white/70 text-sm leading-relaxed">
+                                            This portal is for <strong className="text-white">non-emergency requests</strong> like
+                                            potholes, streetlights, trash pickup, and general municipal services.
                                         </p>
                                     </div>
                                 </div>
 
-                                {/* Friendly Checkbox */}
-                                <label className="flex items-center gap-3 mb-6 cursor-pointer group p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors border border-transparent hover:border-white/10">
-                                    <div className="relative">
-                                        <input
-                                            type="checkbox"
-                                            checked={disclaimerChecked}
-                                            onChange={(e) => setDisclaimerChecked(e.target.checked)}
-                                            className="sr-only peer"
-                                        />
-                                        <div className="w-6 h-6 rounded-lg border-2 border-white/30 peer-checked:border-primary-500 peer-checked:bg-primary-500 transition-all flex items-center justify-center">
-                                            {disclaimerChecked && (
-                                                <CheckCircle2 className="w-4 h-4 text-white" />
-                                            )}
-                                        </div>
-                                    </div>
-                                    <span className="text-white/80 text-sm leading-relaxed group-hover:text-white transition-colors">
-                                        Got it! I'll use this for non-emergency requests and call 911 for emergencies.
-                                    </span>
-                                </label>
+                                <div className="mt-3 pt-3 border-t border-white/10">
+                                    <p className="text-white/60 text-sm flex items-start gap-2">
+                                        <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 flex-shrink-0" />
+                                        <span>For emergencies (police, fire, medical), please dial <strong className="text-white whitespace-nowrap">911</strong></span>
+                                    </p>
+                                </div>
+                            </div>
 
-                                {/* Welcoming Continue Button */}
-                                <Button
-                                    onClick={handleDisclaimerAcknowledge}
-                                    disabled={!disclaimerChecked}
-                                    className={`w-full py-3 text-base font-medium ${!disclaimerChecked ? 'opacity-50 cursor-not-allowed' : 'bg-gradient-to-r from-primary-500 to-purple-600 hover:from-primary-600 hover:to-purple-700'}`}
-                                >
-                                    {disclaimerChecked ? "Let's Get Started! →" : "Check the box above to continue"}
-                                </Button>
-                            </Card>
+                            {/* Friendly Checkbox */}
+                            <label className="flex items-center gap-3 mb-6 cursor-pointer group p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors border border-transparent hover:border-white/10">
+                                <div className="relative">
+                                    <input
+                                        type="checkbox"
+                                        checked={disclaimerChecked}
+                                        onChange={(e) => setDisclaimerChecked(e.target.checked)}
+                                        className="sr-only peer"
+                                    />
+                                    <div className="w-6 h-6 rounded-lg border-2 border-white/30 peer-checked:border-primary-500 peer-checked:bg-primary-500 transition-all flex items-center justify-center">
+                                        {disclaimerChecked && (
+                                            <CheckCircle2 className="w-4 h-4 text-white" />
+                                        )}
+                                    </div>
+                                </div>
+                                <span className="text-white/80 text-sm leading-relaxed group-hover:text-white transition-colors">
+                                    Got it! I'll use this for non-emergency requests and call 911 for emergencies.
+                                </span>
+                            </label>
+
+                            {/* Welcoming Continue Button */}
+                            <Button
+                                onClick={handleDisclaimerAcknowledge}
+                                disabled={!disclaimerChecked}
+                                className={`w-full py-3 text-base font-medium ${!disclaimerChecked ? 'opacity-50 cursor-not-allowed' : 'bg-gradient-to-r from-primary-500 to-purple-600 hover:from-primary-600 hover:to-purple-700'}`}
+                            >
+                                {disclaimerChecked ? "Let's Get Started! →" : "Check the box above to continue"}
+                            </Button>
                         </motion.div>
                     </motion.div>
                 )}
             </AnimatePresence>
 
 
-            {/* Persistent Non-Emergency Warning Banner - Primary header on mobile with controls */}
-            <div className="bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-red-500/20 border-b border-amber-500/30 sticky top-0 z-40 md:relative md:z-auto">
-                <div className="max-w-6xl mx-auto px-4 py-2">
-                    {/* Mobile: Two rows - controls on top, warning below */}
-                    <div className="flex md:hidden items-center justify-between mb-2">
-                        <button
-                            onClick={() => {
-                                setShowTrackingView(false);
-                                setStep('categories');
-                                setSelectedService(null);
-                                updateHash('');
-                                scrollToTop('instant');
-                            }}
-                            className="flex items-center gap-2"
-                        >
-                            {settings?.logo_url ? (
-                                <img src={settings.logo_url} alt="Logo" className="h-7 w-auto" />
-                            ) : (
-                                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
-                                    <Sparkles className="w-4 h-4 text-white" />
-                                </div>
-                            )}
-                        </button>
-                        <div className="flex items-center gap-2">
-                            <div className="scale-85 origin-right">
-                                <LanguageSelector />
-                            </div>
-                            <Link
-                                to="/login"
-                                className="px-2 py-1 rounded-md bg-white/10 text-white/70 text-xs font-medium no-underline"
-                            >
-                                Staff
-                            </Link>
-                        </div>
-                    </div>
-                    {/* Warning message - centered on desktop, left-aligned on mobile */}
-                    <div className="flex items-center justify-center md:justify-center gap-2 text-center">
-                        <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                        <p className="text-amber-200 text-xs md:text-sm">
-                            <strong>Non-Emergency Only</strong> — For emergencies, call <strong className="text-white">911</strong>
-                        </p>
-                    </div>
+            {/* Persistent Non-Emergency Warning Banner */}
+            <div className="bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-red-500/20 border-b border-amber-500/30">
+                <div className="max-w-6xl mx-auto px-4 py-2 flex items-center justify-center gap-2 text-center">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                    <p className="text-amber-200 text-sm">
+                        <strong>Non-Emergency Only</strong> — For police, fire, or medical emergencies, call <strong className="text-white">911</strong>
+                    </p>
                 </div>
             </div>
 
