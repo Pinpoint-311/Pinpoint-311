@@ -67,7 +67,7 @@ export default function RequestDetailMap({
     }, [apiKey]);
 
     const initMap = useCallback(() => {
-        if (!mapRef.current || !window.google) return;
+        if (!mapRef.current || !window.google?.maps?.MapTypeControlStyle) return;
 
         const map = new window.google.maps.Map(mapRef.current, {
             center: { lat, lng },
@@ -250,7 +250,7 @@ export default function RequestDetailMap({
     }
 
     return (
-        <div className="relative h-full rounded-lg overflow-hidden">
+        <div className="relative h-full rounded-lg overflow-hidden z-0">
             {/* Map Container */}
             {isLoading && (
                 <div className="absolute inset-0 flex items-center justify-center bg-slate-900 z-10">

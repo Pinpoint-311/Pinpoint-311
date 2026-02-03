@@ -1726,7 +1726,7 @@ export default function StaffDashboard() {
 
                                                             {/* Priority Actions - Large, Easy to Tap Buttons */}
                                                             {(priorityScore || selectedRequest.manual_priority_score) && !hasError && (
-                                                                <div className="space-y-3">
+                                                                <div className="space-y-4">
                                                                     {/* Priority Display */}
                                                                     <div className={`flex items-center justify-between p-3 rounded-xl ${(selectedRequest.manual_priority_score ?? priorityScore) >= 8 ? 'bg-red-500/10 border border-red-500/20' :
                                                                         (selectedRequest.manual_priority_score ?? priorityScore) >= 6 ? 'bg-amber-500/10 border border-amber-500/20' :
