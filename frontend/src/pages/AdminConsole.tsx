@@ -1017,7 +1017,7 @@ export default function AdminConsole() {
                 </header>
 
                 {/* Content */}
-                <div className="flex-1 p-6 overflow-auto">
+                <div className="flex-1 p-4 md:p-6 overflow-auto">
                     <div className="max-w-4xl mx-auto">
                         {/* Save message */}
                         <AnimatePresence>
@@ -1037,14 +1037,14 @@ export default function AdminConsole() {
                         {/* Branding Tab */}
                         {currentTab === 'branding' && (
                             <div className="space-y-6">
-                                <div className="flex items-center justify-between">
-                                    <h1 className="text-2xl font-bold text-white">Branding Settings</h1>
-                                    <Button leftIcon={<Save className="w-4 h-4" />} onClick={handleSaveBranding} isLoading={isLoading}>
+                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                    <h1 className="text-xl sm:text-2xl font-bold text-white">Branding Settings</h1>
+                                    <Button className="w-full sm:w-auto" leftIcon={<Save className="w-4 h-4" />} onClick={handleSaveBranding} isLoading={isLoading}>
                                         Save Changes
                                     </Button>
                                 </div>
 
-                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
                                     <Card>
                                         <div className="space-y-4">
                                             <Input
@@ -1433,15 +1433,15 @@ export default function AdminConsole() {
                         {currentTab === 'users' && (
                             <div className="space-y-6">
                                 {/* Premium Header */}
-                                <div className="flex items-center justify-between">
+                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                                     <div>
-                                        <h1 className="text-2xl font-bold text-white">User Management</h1>
+                                        <h1 className="text-xl sm:text-2xl font-bold text-white">User Management</h1>
                                         <p className="text-sm text-white/50 mt-1">Manage staff and administrator accounts</p>
                                     </div>
                                     <Button
                                         leftIcon={<Plus className="w-4 h-4" />}
                                         onClick={() => setShowUserModal(true)}
-                                        className="bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-500/25"
+                                        className="w-full sm:w-auto bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-500/25"
                                     >
                                         Add User
                                     </Button>
@@ -1604,9 +1604,10 @@ export default function AdminConsole() {
                         {/* Departments Tab */}
                         {currentTab === 'departments' && (
                             <div className="space-y-6">
-                                <div className="flex items-center justify-between">
-                                    <h1 className="text-2xl font-bold text-white">Departments</h1>
+                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                    <h1 className="text-xl sm:text-2xl font-bold text-white">Departments</h1>
                                     <Button
+                                        className="w-full sm:w-auto"
                                         leftIcon={<Plus className="w-4 h-4" />}
                                         onClick={() => {
                                             setEditingDepartment(null);
@@ -1665,9 +1666,9 @@ export default function AdminConsole() {
                         {/* Services Tab */}
                         {currentTab === 'services' && (
                             <div className="space-y-6">
-                                <div className="flex items-center justify-between">
-                                    <h1 className="text-2xl font-bold text-white">Service Categories</h1>
-                                    <Button leftIcon={<Plus className="w-4 h-4" />} onClick={() => setShowServiceModal(true)}>
+                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                    <h1 className="text-xl sm:text-2xl font-bold text-white">Service Categories</h1>
+                                    <Button className="w-full sm:w-auto" leftIcon={<Plus className="w-4 h-4" />} onClick={() => setShowServiceModal(true)}>
                                         Add Category
                                     </Button>
                                 </div>
@@ -1737,16 +1738,16 @@ export default function AdminConsole() {
                         {/* Modules Tab */}
                         {currentTab === 'system' && (
                             <div className="space-y-6">
-                                <div className="flex items-center justify-between">
-                                    <h1 className="text-2xl font-bold text-white">Feature Modules</h1>
-                                    <Button leftIcon={<Save className="w-4 h-4" />} onClick={handleSaveModules} isLoading={isLoading}>
+                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                    <h1 className="text-xl sm:text-2xl font-bold text-white">Feature Modules</h1>
+                                    <Button className="w-full sm:w-auto" leftIcon={<Save className="w-4 h-4" />} onClick={handleSaveModules} isLoading={isLoading}>
                                         Save Changes
                                     </Button>
                                 </div>
 
                                 <div className="space-y-4">
                                     <Card>
-                                        <div className="flex items-center justify-between">
+                                        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
                                             <div className="flex items-center gap-4">
                                                 <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center">
                                                     <Sparkles className="w-6 h-6 text-blue-400" />
@@ -1774,7 +1775,7 @@ export default function AdminConsole() {
                                     </Card>
 
                                     <Card>
-                                        <div className="flex items-center justify-between">
+                                        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
                                             <div className="flex items-center gap-4">
                                                 <div className="w-12 h-12 rounded-xl bg-green-500/20 flex items-center justify-center">
                                                     <MessageSquare className="w-6 h-6 text-green-400" />
@@ -1802,7 +1803,7 @@ export default function AdminConsole() {
                                     </Card>
 
                                     <Card>
-                                        <div className="flex items-center justify-between">
+                                        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
                                             <div className="flex items-center gap-4">
                                                 <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center">
                                                     <Mail className="w-6 h-6 text-blue-400" />
@@ -1830,7 +1831,7 @@ export default function AdminConsole() {
                                     </Card>
 
                                     <Card>
-                                        <div className="flex items-center justify-between">
+                                        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
                                             <div className="flex items-center gap-4">
                                                 <div className="w-12 h-12 rounded-xl bg-amber-500/20 flex items-center justify-center">
                                                     <BarChart3 className="w-6 h-6 text-amber-400" />
