@@ -567,11 +567,11 @@ function Auth0SetupForm({ form, setForm, onSubmit, loading, success, gcpConfigur
         },
         {
             num: 4,
-            title: "Enable Management API (Required for GCP Federation)",
+            title: "Enable Management API (Optional - For Branding)",
             content: (
                 <div className="space-y-3 text-sm text-white/70">
-                    <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 mb-3">
-                        <p className="text-amber-300 text-xs">⚠️ This step enables automatic M2M app creation for Workload Identity Federation</p>
+                    <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 mb-3">
+                        <p className="text-blue-300 text-xs">💡 This step enables automatic branding configuration on your Auth0 login page</p>
                     </div>
                     <p>1. Go to <strong className="text-white">Applications → APIs</strong></p>
                     <p>2. Click on <strong className="text-white">"Auth0 Management API"</strong></p>
@@ -580,11 +580,8 @@ function Auth0SetupForm({ form, setForm, onSubmit, loading, success, gcpConfigur
                     <p>5. Click the <strong className="text-white">dropdown arrow</strong> to expand permissions</p>
                     <p>6. Select these scopes:</p>
                     <div className="bg-white/5 rounded-lg p-3 space-y-1">
-                        <code className="block text-purple-400 text-xs">✓ create:clients</code>
-                        <code className="block text-purple-400 text-xs">✓ create:resource_servers</code>
-                        <code className="block text-purple-400 text-xs">✓ create:client_grants</code>
-                        <code className="block text-purple-400 text-xs">✓ read:clients</code>
-                        <code className="block text-purple-400 text-xs">✓ read:resource_servers</code>
+                        <code className="block text-purple-400 text-xs">✓ read:branding</code>
+                        <code className="block text-purple-400 text-xs">✓ update:branding</code>
                     </div>
                     <p>7. Click <strong className="text-white">Update</strong></p>
                 </div>
@@ -869,10 +866,10 @@ function CompletionScreen({ status, onReconfigureGCP, onReconfigureAuth0 }: Comp
 
                         {migrationResult && (
                             <div className={`mb-4 p-3 rounded-lg text-sm ${migrationResult.status === 'success'
-                                    ? 'bg-green-500/20 border border-green-400/30'
-                                    : migrationResult.status === 'skipped'
-                                        ? 'bg-amber-500/20 border border-amber-400/30'
-                                        : 'bg-red-500/20 border border-red-400/30'
+                                ? 'bg-green-500/20 border border-green-400/30'
+                                : migrationResult.status === 'skipped'
+                                    ? 'bg-amber-500/20 border border-amber-400/30'
+                                    : 'bg-red-500/20 border border-red-400/30'
                                 }`}>
                                 {migrationResult.status === 'success' ? (
                                     <div className="text-green-200">

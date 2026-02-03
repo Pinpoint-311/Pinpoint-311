@@ -834,8 +834,6 @@ For enterprise-grade secret storage, configure GCP in the Setup Wizard. Secrets 
 - [x] AI Triage & Gemini 3.0 Integration
 - [x] PostGIS Asset Snapping & Geofencing
 - [x] Multi-Language Support (130+ languages)
-- [x] Research Suite with Census Integration
-- [x] Workload Identity Federation (Zero-Trust GCP)
 - [ ] iOS/Android Native App Wrappers (Capacitor)
 - [ ] 3rd Party CRM Integrations (Salesforce, GovPilot)
 - [ ] Offline Mode for Field Staff

@@ -278,44 +278,6 @@ async def configure_gcp(
         
         logger.info(f"GCP configured successfully by {current_user.username}")
         
-        # Auto-trigger Workload Identity Federation if Auth0 is also configured
-        federation_result = None
-        try:
-            # Check if Auth0 is configured (required for federation)
-            auth0_result = await db.execute(
-                select(SystemSecret).where(
-                    SystemSecret.key_name.in_(["AUTH0_DOMAIN", "AUTH0_CLIENT_ID", "AUTH0_CLIENT_SECRET"])
-                )
-            )
-            auth0_secrets = auth0_result.scalars().all()
-            auth0_configured = len(auth0_secrets) == 3 and all(s.is_configured for s in auth0_secrets)
-            
-            if auth0_configured:
-                from app.services.workload_identity import setup_federation, is_federation_available
-                
-                # Only set up if not already configured
-                if not await is_federation_available():
-                    logger.info("Auto-triggering Workload Identity Federation setup...")
-                    federation_result = await setup_federation()
-                    
-                    if federation_result.get("status") == "success":
-                        await AuditService.log_event(
-                            db=db,
-                            event_type="federation_auto_setup",
-                            success=True,
-                            user_id=current_user.id,
-                            username=current_user.username,
-                            details=federation_result
-                        )
-                        logger.info("Workload Identity Federation auto-configured successfully")
-                    else:
-                        logger.warning(f"Federation auto-setup failed: {federation_result.get('error')}")
-                else:
-                    federation_result = {"status": "skipped", "reason": "Federation already configured"}
-        except Exception as fed_err:
-            logger.warning(f"Federation auto-setup skipped: {fed_err}")
-            federation_result = {"status": "skipped", "reason": str(fed_err)}
-        
         return {
             "success": True,
             "message": "Google Cloud Platform configured successfully",
@@ -323,8 +285,7 @@ async def configure_gcp(
             "kms_configured": kms_created,
             "kms_keyring": kms_keyring if kms_created else None,
             "kms_key": kms_key if kms_created else None,
-            "kms_note": None if kms_created else f"KMS not auto-created ({kms_error}), using Fernet encryption",
-            "federation": federation_result
+            "kms_note": None if kms_created else f"KMS not auto-created ({kms_error}), using Fernet encryption"
         }
         
     except HTTPException:
@@ -554,47 +515,11 @@ async def configure_auth0(
         
         logger.info(f"Auth0 configured successfully by {current_user.username}")
         
-        # Auto-trigger Workload Identity Federation if GCP is also configured
-        federation_result = None
-        try:
-            # Check if GCP is configured (required for federation)
-            gcp_result = await db.execute(
-                select(SystemSecret).where(SystemSecret.key_name == "GCP_SERVICE_ACCOUNT_JSON")
-            )
-            gcp_secret = gcp_result.scalar_one_or_none()
-            
-            if gcp_secret and gcp_secret.is_configured and gcp_secret.key_value:
-                from app.services.workload_identity import setup_federation, is_federation_available
-                
-                # Only set up if not already configured
-                if not await is_federation_available():
-                    logger.info("Auto-triggering Workload Identity Federation setup...")
-                    federation_result = await setup_federation()
-                    
-                    if federation_result.get("status") == "success":
-                        await AuditService.log_event(
-                            db=db,
-                            event_type="federation_auto_setup",
-                            success=True,
-                            user_id=current_user.id,
-                            username=current_user.username,
-                            details=federation_result
-                        )
-                        logger.info("Workload Identity Federation auto-configured successfully")
-                    else:
-                        logger.warning(f"Federation auto-setup failed: {federation_result.get('error')}")
-                else:
-                    federation_result = {"status": "skipped", "reason": "Federation already configured"}
-        except Exception as fed_err:
-            logger.warning(f"Federation auto-setup skipped: {fed_err}")
-            federation_result = {"status": "skipped", "reason": str(fed_err)}
-        
         return {
             "success": True,
             "message": "Auth0 configured successfully",
             "domain": request.domain,
-            "client_id": client_id,
-            "federation": federation_result
+            "client_id": client_id
         }
         
     except HTTPException:
