@@ -53,7 +53,7 @@ Beyond the UI, it features a sophisticated **AI & Geospatial Engine** that autom
 | **Mobile Experience** | Non-responsive | Native apps | **PWA (No App Store)** |
 | **AI Triage** | ❌ Manual | ❌ Basic rules | **✅ Gemini 3.0 Flash** |
 | **Photo Analysis** | ❌ None | ❌ None | **✅ Vision AI** |
-| **Multilingual** | ❌ English | ~10 languages | **✅ 130+ languages** |
+| **Multilingual** | ❌ English | ~10 languages | **✅ 109 languages** |
 | **Resident Login** | Required | Required | **✅ No account needed** |
 | **Live Tracking** | ❌ None | ✅ Email only | **✅ SMS + Email + Magic Link** |
 | **Location Accuracy** | Text address | GPS pin | **✅ GPS + Asset Snapping** |
@@ -79,7 +79,7 @@ Beyond the UI, it features a sophisticated **AI & Geospatial Engine** that autom
 **Report issues in 60 seconds**
 
 ✅ No account needed<br>
-✅ 130+ languages<br>
+✅ 109 languages<br>
 ✅ Track via magic link<br>
 ✅ Photo uploads
 
@@ -232,7 +232,7 @@ graph LR
 ### 🎨 User Experience First
 - **Premium Glassmorphism Design**: A modern, translucent UI that builds trust and engagement.
 - **Mobile-First Architecture**: Fully responsive web app that behaves natively on iOS/Android.
-- **130+ Language Support**: Powered by Google Translate API with intelligent caching. **Complete translation coverage**: UI strings, service categories, status labels, filter buttons, priority levels, search placeholders, and user-submitted content are automatically translated. **Automatic notification translation**: All confirmation emails and SMS messages are sent in the resident's selected language—no additional configuration needed.
+- **109 Language Support**: Powered by Google Translate API with intelligent caching. **Complete translation coverage**: UI strings, service categories, status labels, filter buttons, priority levels, search placeholders, and user-submitted content are automatically translated. **Automatic notification translation**: All confirmation emails and SMS messages are sent in the resident's selected language—no additional configuration needed.
 - **No-Login Submission**: Removes friction for residents while maintaining security via email magic links.
 
 ### 🧠 Advanced Intelligence
@@ -851,7 +851,7 @@ For enterprise-grade secret storage, configure GCP in the Setup Wizard. Secrets 
 
 - [x] AI Triage & Gemini 3.0 Integration
 - [x] PostGIS Asset Snapping & Geofencing
-- [x] Multi-Language Support (130+ languages)
+- [x] Multi-Language Support (109 languages)
 - [ ] iOS/Android Native App Wrappers (Capacitor)
 - [ ] 3rd Party CRM Integrations (Salesforce, GovPilot)
 - [ ] Offline Mode for Field Staff
