@@ -1189,7 +1189,7 @@ export default function AdminConsole() {
                                     <div className="space-y-4">
                                         <div className="p-4 rounded-xl bg-white/5 border border-white/10">
                                             <p className="text-sm font-medium text-white mb-2">Current URL</p>
-                                            <code className="text-primary-300 text-sm bg-black/30 px-2 py-1 rounded">
+                                            <code className="text-primary-300 text-sm bg-black/30 px-2 py-1 rounded break-all">
                                                 {window.location.origin}
                                             </code>
                                         </div>
