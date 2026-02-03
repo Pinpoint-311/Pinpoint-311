@@ -106,7 +106,7 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                 ${ai?.similar_reports?.length ? `
                     <div class="ai-tags">
                         <strong>Similar Reports:</strong>
-                        ${ai.similar_reports.map((r: any) => `<span class="tag tag-gray">#${r.service_request_id}</span>`).join('')}
+                        <span class="tag tag-gray">${ai.similar_reports.length} similar ${ai.similar_reports.length === 1 ? 'report' : 'reports'} found</span>
                     </div>
                 ` : ''}
                 ${safetyFlagsHtml}
@@ -406,11 +406,35 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         align-items: flex-start;
                         gap: 15px;
                     }
-                    .location-map iframe {
-                        flex-shrink: 0;
+                    .location-info {
+                        flex: 1;
+                    }
+                    .qr-codes {
+                        display: flex;
+                        gap: 12px;
+                    }
+                    .qr-item {
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                        text-align: center;
+                    }
+                    .qr-item img {
+                        width: 80px;
+                        height: 80px;
+                        border: 1px solid #e5e7eb;
+                        border-radius: 4px;
+                    }
+                    .qr-item span {
+                        font-size: 8px;
+                        color: #6b7280;
+                        margin-top: 3px;
+                    }
+                    .map-embed iframe {
+                        display: block;
                     }
                     @media print {
-                        .location-map iframe {
+                        .qr-item img, .map-embed iframe {
                             -webkit-print-color-adjust: exact;
                             print-color-adjust: exact;
                         }
@@ -521,26 +545,33 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                             <p><strong>${request.address || 'No address'}</strong></p>
                             ${request.lat && request.long ? `
                                 <p style="color: #6b7280; font-size: 10px;">GPS: ${request.lat.toFixed(6)}, ${request.long.toFixed(6)}</p>
-                                <p style="color: #1e40af; font-size: 9px; margin-top: 4px;">
-                                    <a href="https://www.google.com/maps?q=${request.lat},${request.long}" style="color: #1e40af; text-decoration: none;">
-                                        maps.google.com/?q=${request.lat.toFixed(5)},${request.long.toFixed(5)}
-                                    </a>
-                                </p>
                             ` : ''}
                         </div>
-                        ${request.lat && request.long && mapsApiKey ? `
-                            <div class="location-map">
-                                <iframe
-                                    src="https://www.google.com/maps/embed/v1/place?key=${mapsApiKey}&q=${request.lat},${request.long}&zoom=17&maptype=satellite"
-                                    width="200"
-                                    height="120"
-                                    style="border: 1px solid #e5e7eb; border-radius: 6px;"
-                                    loading="lazy"
-                                    referrerpolicy="no-referrer-when-downgrade"
-                                ></iframe>
+                        ${request.lat && request.long ? `
+                            <div class="qr-codes">
+                                <div class="qr-item">
+                                    <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(`https://www.google.com/maps?q=${request.lat},${request.long}`)}" alt="Maps QR" />
+                                    <span>Scan for Maps</span>
+                                </div>
+                                <div class="qr-item">
+                                    <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(`${window.location.origin}/#track/${request.service_request_id}`)}" alt="Request QR" />
+                                    <span>Track Request</span>
+                                </div>
                             </div>
                         ` : ''}
                     </div>
+                    ${request.lat && request.long && mapsApiKey ? `
+                        <div class="map-embed">
+                            <iframe
+                                src="https://www.google.com/maps/embed/v1/place?key=${mapsApiKey}&q=${request.lat},${request.long}&zoom=17&maptype=satellite"
+                                width="100%"
+                                height="150"
+                                style="border: 1px solid #e5e7eb; border-radius: 6px; margin-top: 10px;"
+                                loading="lazy"
+                                referrerpolicy="no-referrer-when-downgrade"
+                            ></iframe>
+                        </div>
+                    ` : ''}
                 </div>
 
                 <div class="section">
