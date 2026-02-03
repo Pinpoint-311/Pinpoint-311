@@ -6,9 +6,10 @@ interface PrintWorkOrderProps {
     auditLog?: AuditLogEntry[];
     townshipName?: string;
     logoUrl?: string;
+    mapsApiKey?: string | null;
 }
 
-export default function PrintWorkOrder({ request, auditLog, townshipName, logoUrl }: PrintWorkOrderProps) {
+export default function PrintWorkOrder({ request, auditLog, townshipName, logoUrl, mapsApiKey }: PrintWorkOrderProps) {
     const handlePrint = () => {
         // Create a new window for printing
         const printWindow = window.open('', '_blank', 'width=800,height=600');
@@ -405,24 +406,14 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         align-items: flex-start;
                         gap: 15px;
                     }
-                    .location-info {
-                        flex: 1;
+                    .location-map iframe {
+                        flex-shrink: 0;
                     }
-                    .map-link {
-                        display: inline-flex;
-                        align-items: center;
-                        gap: 4px;
-                        margin-top: 6px;
-                        padding: 4px 10px;
-                        background: #1e40af;
-                        color: white;
-                        text-decoration: none;
-                        border-radius: 4px;
-                        font-size: 10px;
-                        font-weight: 500;
-                    }
-                    .map-link:hover {
-                        background: #1d4ed8;
+                    @media print {
+                        .location-map iframe {
+                            -webkit-print-color-adjust: exact;
+                            print-color-adjust: exact;
+                        }
                     }
                     .custom-fields {
                         background: #fffbeb;
@@ -530,11 +521,25 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                             <p><strong>${request.address || 'No address'}</strong></p>
                             ${request.lat && request.long ? `
                                 <p style="color: #6b7280; font-size: 10px;">GPS: ${request.lat.toFixed(6)}, ${request.long.toFixed(6)}</p>
-                                <a href="https://www.google.com/maps?q=${request.lat},${request.long}" target="_blank" class="map-link">
-                                    ${icons.location} Open in Google Maps
-                                </a>
+                                <p style="color: #1e40af; font-size: 9px; margin-top: 4px;">
+                                    <a href="https://www.google.com/maps?q=${request.lat},${request.long}" style="color: #1e40af; text-decoration: none;">
+                                        maps.google.com/?q=${request.lat.toFixed(5)},${request.long.toFixed(5)}
+                                    </a>
+                                </p>
                             ` : ''}
                         </div>
+                        ${request.lat && request.long && mapsApiKey ? `
+                            <div class="location-map">
+                                <iframe
+                                    src="https://www.google.com/maps/embed/v1/place?key=${mapsApiKey}&q=${request.lat},${request.long}&zoom=17&maptype=satellite"
+                                    width="200"
+                                    height="120"
+                                    style="border: 1px solid #e5e7eb; border-radius: 6px;"
+                                    loading="lazy"
+                                    referrerpolicy="no-referrer-when-downgrade"
+                                ></iframe>
+                            </div>
+                        ` : ''}
                     </div>
                 </div>
 

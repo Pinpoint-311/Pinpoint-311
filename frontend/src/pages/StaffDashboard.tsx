@@ -1671,6 +1671,7 @@ export default function StaffDashboard() {
                                             auditLog={auditLog}
                                             townshipName={settings?.township_name}
                                             logoUrl={settings?.logo_url || undefined}
+                                            mapsApiKey={mapsConfig?.google_maps_api_key}
                                         />
                                     </div>
 
