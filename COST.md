@@ -185,5 +185,5 @@ All variable costs are based on actual usage. Here's what a typical municipality
 - **Discussions**: [Ask questions](https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/discussions)
 
 <p align="center">
-  <i>Built for municipalities, by a nonprofit. No vendor lock-in.</i>
+  <i>Built for municipalities, by Pinpoint 311. No vendor lock-in.</i>
 </p>
