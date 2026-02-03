@@ -559,9 +559,9 @@ export default function ResidentPortal() {
                                 </div>
 
                                 <div className="mt-3 pt-3 border-t border-white/10">
-                                    <p className="text-white/60 text-sm flex items-center gap-2">
-                                        <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 text-xs">✓</span>
-                                        For emergencies (police, fire, medical), please dial <strong className="text-white">911</strong>
+                                    <p className="text-white/60 text-sm flex items-start gap-2">
+                                        <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 flex-shrink-0" />
+                                        <span>For emergencies (police, fire, medical), please dial <strong className="text-white whitespace-nowrap">911</strong></span>
                                     </p>
                                 </div>
                             </div>
