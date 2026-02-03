@@ -470,6 +470,66 @@ async def configure_auth0(
             except Exception as e:
                 logger.warning(f"Failed to configure Auth0 branding: {e}")
             
+            # Enable social connections (Google and Microsoft)
+            social_connections_enabled = []
+            social_connections_errors = []
+            
+            for conn_name, conn_strategy in [
+                ("google-oauth2", "google-oauth2"),
+                ("windowslive", "windowslive")  # Microsoft
+            ]:
+                try:
+                    # Check if connection already exists
+                    conn_list_response = await client.get(
+                        f"https://{request.domain}/api/v2/connections",
+                        headers=headers,
+                        params={"name": conn_name}
+                    )
+                    
+                    existing_conns = conn_list_response.json() if conn_list_response.status_code == 200 else []
+                    
+                    if existing_conns:
+                        # Connection exists, enable it for this app
+                        conn_id = existing_conns[0]["id"]
+                        enabled_clients = existing_conns[0].get("enabled_clients", [])
+                        
+                        if client_id not in enabled_clients:
+                            enabled_clients.append(client_id)
+                            await client.patch(
+                                f"https://{request.domain}/api/v2/connections/{conn_id}",
+                                headers=headers,
+                                json={"enabled_clients": enabled_clients}
+                            )
+                        
+                        social_connections_enabled.append(conn_name)
+                        logger.info(f"Enabled existing {conn_name} connection for client {client_id}")
+                    else:
+                        # Connection doesn't exist - create with placeholder
+                        # Note: Actual credentials must be configured in Auth0 dashboard
+                        create_response = await client.post(
+                            f"https://{request.domain}/api/v2/connections",
+                            headers=headers,
+                            json={
+                                "name": conn_name,
+                                "strategy": conn_strategy,
+                                "enabled_clients": [client_id],
+                                "options": {}  # Placeholder - user needs to add OAuth credentials in Auth0 dashboard
+                            }
+                        )
+                        
+                        if create_response.status_code in [200, 201]:
+                            social_connections_enabled.append(conn_name)
+                            logger.info(f"Created and enabled {conn_name} social connection")
+                        else:
+                            # Some strategies require developer keys configured first
+                            error_detail = create_response.text[:100]
+                            social_connections_errors.append(f"{conn_name}: {error_detail}")
+                            logger.warning(f"Could not create {conn_name} connection: {error_detail}")
+                            
+                except Exception as conn_err:
+                    social_connections_errors.append(f"{conn_name}: {str(conn_err)[:50]}")
+                    logger.warning(f"Failed to enable {conn_name} social connection: {conn_err}")
+            
         # Store credentials in database
         from sqlalchemy import select
         
@@ -509,7 +569,9 @@ async def configure_auth0(
             details={
                 "domain": request.domain,
                 "client_id": client_id,
-                "callback_url": request.callback_url
+                "callback_url": request.callback_url,
+                "social_connections": social_connections_enabled,
+                "social_connection_errors": social_connections_errors if social_connections_errors else None
             }
         )
         
@@ -519,7 +581,10 @@ async def configure_auth0(
             "success": True,
             "message": "Auth0 configured successfully",
             "domain": request.domain,
-            "client_id": client_id
+            "client_id": client_id,
+            "social_connections_enabled": social_connections_enabled,
+            "social_connections_note": "Configure OAuth credentials in Auth0 dashboard for Google and Microsoft" if social_connections_enabled else None,
+            "social_connections_errors": social_connections_errors if social_connections_errors else None
         }
         
     except HTTPException:
