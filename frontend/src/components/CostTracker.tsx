@@ -179,7 +179,7 @@ export default function CostTracker() {
                 <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-700 p-5 text-white shadow-lg"
+                    className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-700 to-teal-800 p-5 text-white shadow-lg"
                 >
                     <div className="absolute top-0 right-0 w-24 h-24 bg-black/10 rounded-full -mr-8 -mt-8" />
                     <div className="relative">
@@ -201,7 +201,7 @@ export default function CostTracker() {
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 }}
-                    className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 p-5 text-white shadow-lg"
+                    className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-blue-700 to-indigo-800 p-5 text-white shadow-lg"
                 >
                     <div className="absolute top-0 right-0 w-24 h-24 bg-black/10 rounded-full -mr-8 -mt-8" />
                     <div className="relative">
@@ -223,7 +223,7 @@ export default function CostTracker() {
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.2 }}
-                    className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-purple-600 to-fuchsia-700 p-5 text-white shadow-lg"
+                    className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-purple-700 to-fuchsia-800 p-5 text-white shadow-lg"
                 >
                     <div className="absolute top-0 right-0 w-24 h-24 bg-black/10 rounded-full -mr-8 -mt-8" />
                     <div className="relative">
@@ -245,7 +245,7 @@ export default function CostTracker() {
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.3 }}
-                    className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-amber-600 to-orange-700 p-5 text-white shadow-lg"
+                    className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-amber-700 to-orange-800 p-5 text-white shadow-lg"
                 >
                     <div className="absolute top-0 right-0 w-24 h-24 bg-black/10 rounded-full -mr-8 -mt-8" />
                     <div className="relative">
