@@ -98,7 +98,21 @@ async def lifespan(app: FastAPI):
                         
                         await record_uptime_check(db, service_name, status, response_time, error)
                     
-                    print(f"[Uptime Monitor] Health check complete at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+                    # Cleanup: Delete records older than 30 days
+                    from datetime import datetime, timedelta
+                    from sqlalchemy import delete
+                    from app.models import UptimeRecord
+                    cutoff = datetime.utcnow() - timedelta(days=30)
+                    result = await db.execute(
+                        delete(UptimeRecord).where(UptimeRecord.checked_at < cutoff)
+                    )
+                    await db.commit()
+                    deleted = result.rowcount
+                    
+                    if deleted > 0:
+                        print(f"[Uptime Monitor] Health check complete, cleaned up {deleted} old records")
+                    else:
+                        print(f"[Uptime Monitor] Health check complete at {time.strftime('%Y-%m-%d %H:%M:%S')}")
             except Exception as e:
                 print(f"[Uptime Monitor] Error: {e}")
             
