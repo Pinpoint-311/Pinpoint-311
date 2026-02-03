@@ -1699,29 +1699,29 @@ export default function StaffDashboard() {
                                                         {/* Professional accent line */}
                                                         <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-primary-500/50 via-purple-500/50 to-primary-500/50" />
 
-                                                        <div className="p-5">
-                                                            {/* Header Row - Clickable to toggle expand */}
-                                                            <div className="flex items-center justify-between mb-2">
+                                                        <div className="p-4 md:p-5">
+                                                            {/* Header Row - Stack on mobile, side-by-side on larger screens */}
+                                                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-2">
                                                                 <button
                                                                     onClick={() => setIsAIExpanded(!isAIExpanded)}
                                                                     className="flex items-center gap-2.5 text-left hover:opacity-80 transition-opacity"
                                                                 >
-                                                                    <div className="p-2 rounded-lg bg-white/5 ring-1 ring-white/10">
+                                                                    <div className="p-1.5 sm:p-2 rounded-lg bg-white/5 ring-1 ring-white/10">
                                                                         <Brain className="w-4 h-4 text-primary-400" />
                                                                     </div>
-                                                                    <div>
-                                                                        <span className="text-sm font-bold text-white tracking-wide uppercase">Actionable Intelligence</span>
+                                                                    <div className="min-w-0">
+                                                                        <span className="text-xs sm:text-sm font-bold text-white tracking-wide uppercase">Actionable Intelligence</span>
                                                                         <div className="flex items-center gap-1.5">
-                                                                            <p className="text-[10px] text-white/40">Powered by Gemini 3 Flash</p>
-                                                                            <span className="px-1 py-0.5 rounded-sm bg-primary-500/20 text-primary-400 text-[8px] font-bold uppercase tracking-widest border border-primary-500/30">Preview</span>
+                                                                            <p className="text-[9px] sm:text-[10px] text-white/40 truncate">Powered by Gemini 3 Flash</p>
+                                                                            <span className="px-1 py-0.5 rounded-sm bg-primary-500/20 text-primary-400 text-[7px] sm:text-[8px] font-bold uppercase tracking-widest border border-primary-500/30 flex-shrink-0">Preview</span>
                                                                         </div>
                                                                     </div>
-                                                                    <ChevronDown className={`w-4 h-4 text-white/40 transition-transform ${isAIExpanded ? 'rotate-180' : ''}`} />
+                                                                    <ChevronDown className={`w-4 h-4 text-white/40 transition-transform flex-shrink-0 ${isAIExpanded ? 'rotate-180' : ''}`} />
                                                                 </button>
 
                                                                 {/* Priority Score Badge - Editable */}
                                                                 {(priorityScore || selectedRequest.manual_priority_score) && !hasError && (
-                                                                    <div className="relative flex items-center gap-2">
+                                                                    <div className="relative flex flex-wrap items-center gap-2">
                                                                         {/* Accept AI button - only shows when AI score exists but no manual override */}
                                                                         {priorityScore && !selectedRequest.manual_priority_score && (
                                                                             <button
@@ -1742,7 +1742,7 @@ export default function StaffDashboard() {
                                                                                     }
                                                                                 }}
                                                                                 disabled={isUpdatingPriority}
-                                                                                className="px-2 py-1 rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-medium hover:bg-emerald-500/30 disabled:opacity-50 transition-colors flex items-center gap-1 border border-emerald-500/30"
+                                                                                className="px-2 py-1 rounded-lg bg-emerald-500/20 text-emerald-400 text-[10px] sm:text-xs font-medium hover:bg-emerald-500/30 disabled:opacity-50 transition-colors flex items-center gap-1 border border-emerald-500/30"
                                                                             >
                                                                                 <Check className="w-3 h-3" />
                                                                                 Accept
@@ -1753,17 +1753,17 @@ export default function StaffDashboard() {
                                                                                 setShowPriorityEditor(!showPriorityEditor);
                                                                                 setPendingPriority(selectedRequest.manual_priority_score ?? priorityScore ?? 5);
                                                                             }}
-                                                                            className={`px-3 py-1.5 rounded-lg font-bold text-sm ring-1 flex items-center gap-2 transition-all hover:scale-105 cursor-pointer ${(selectedRequest.manual_priority_score ?? priorityScore) >= 8 ? 'bg-red-500/10 text-red-400 ring-red-500/20 hover:ring-red-500/40' :
+                                                                            className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg font-bold text-xs sm:text-sm ring-1 flex items-center gap-1.5 sm:gap-2 transition-all hover:scale-105 cursor-pointer ${(selectedRequest.manual_priority_score ?? priorityScore) >= 8 ? 'bg-red-500/10 text-red-400 ring-red-500/20 hover:ring-red-500/40' :
                                                                                 (selectedRequest.manual_priority_score ?? priorityScore) >= 6 ? 'bg-amber-500/10 text-amber-400 ring-amber-500/20 hover:ring-amber-500/40' :
                                                                                     (selectedRequest.manual_priority_score ?? priorityScore) >= 4 ? 'bg-blue-500/10 text-blue-400 ring-blue-500/20 hover:ring-blue-500/40' :
                                                                                         'bg-green-500/10 text-green-400 ring-green-500/20 hover:ring-green-500/40'
                                                                                 }`}
                                                                         >
-                                                                            <span className="text-[10px] uppercase tracking-wider opacity-60 font-medium">
-                                                                                {selectedRequest.manual_priority_score ? 'Priority' : 'AI Suggested'}
+                                                                            <span className="text-[8px] sm:text-[10px] uppercase tracking-wider opacity-60 font-medium">
+                                                                                {selectedRequest.manual_priority_score ? 'Priority' : 'AI'}
                                                                             </span>
-                                                                            <span className="text-base">{Number(selectedRequest.manual_priority_score ?? priorityScore).toFixed(1)}</span>
-                                                                            <Edit3 className="w-3 h-3 opacity-50" />
+                                                                            <span className="text-sm sm:text-base">{Number(selectedRequest.manual_priority_score ?? priorityScore).toFixed(1)}</span>
+                                                                            <Edit3 className="w-2.5 h-2.5 sm:w-3 sm:h-3 opacity-50" />
                                                                         </button>
                                                                         {/* Priority Editor Dropdown */}
                                                                         {showPriorityEditor && (
