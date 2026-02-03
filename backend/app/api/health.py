@@ -12,7 +12,7 @@ Tests all integrations and provides detailed status for:
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text, select
+from sqlalchemy import text, select, Integer
 from typing import Dict, Any, Optional
 import httpx
 import os
@@ -342,3 +342,153 @@ async def quick_health_check():
         "status": "ok",
         "timestamp": __import__("datetime").datetime.now().isoformat()
     }
+
+
+# ==================== UPTIME MONITORING ====================
+
+from datetime import datetime, timedelta
+from sqlalchemy import desc, and_
+from app.models import UptimeRecord
+
+
+@router.get("/uptime/history")
+async def get_uptime_history(
+    db: AsyncSession = Depends(get_db),
+    _: Any = Depends(get_current_admin),
+    hours: int = 24
+):
+    """
+    Get uptime history for all services over the specified time period.
+    
+    Args:
+        hours: Number of hours to look back (default 24, max 168 = 7 days)
+    """
+    hours = min(hours, 168)  # Cap at 7 days
+    since = datetime.utcnow() - timedelta(hours=hours)
+    
+    result = await db.execute(
+        select(UptimeRecord)
+        .where(UptimeRecord.checked_at >= since)
+        .order_by(desc(UptimeRecord.checked_at))
+    )
+    records = result.scalars().all()
+    
+    # Group by service
+    history = {}
+    for record in records:
+        if record.service_name not in history:
+            history[record.service_name] = []
+        history[record.service_name].append({
+            "status": record.status,
+            "response_time_ms": record.response_time_ms,
+            "error": record.error_message,
+            "checked_at": record.checked_at.isoformat() if record.checked_at else None
+        })
+    
+    return {
+        "period_hours": hours,
+        "since": since.isoformat(),
+        "services": history
+    }
+
+
+@router.get("/uptime/stats")
+async def get_uptime_stats(
+    db: AsyncSession = Depends(get_db),
+    _: Any = Depends(get_current_admin)
+):
+    """
+    Get aggregated uptime statistics (24h, 7d, 30d percentages).
+    """
+    from sqlalchemy import func as sql_func
+    
+    stats = {}
+    periods = {"24h": 24, "7d": 168, "30d": 720}
+    
+    for period_name, hours in periods.items():
+        since = datetime.utcnow() - timedelta(hours=hours)
+        
+        # Get total checks and healthy checks per service
+        result = await db.execute(
+            select(
+                UptimeRecord.service_name,
+                sql_func.count(UptimeRecord.id).label("total"),
+                sql_func.sum(
+                    sql_func.cast(UptimeRecord.status == "healthy", Integer)
+                ).label("healthy_count")
+            )
+            .where(UptimeRecord.checked_at >= since)
+            .group_by(UptimeRecord.service_name)
+        )
+        rows = result.all()
+        
+        for service_name, total, healthy_count in rows:
+            if service_name not in stats:
+                stats[service_name] = {}
+            uptime_pct = (healthy_count / total * 100) if total > 0 else 0
+            stats[service_name][period_name] = {
+                "uptime_percent": round(uptime_pct, 2),
+                "checks": total,
+                "healthy": healthy_count or 0
+            }
+    
+    return {"services": stats}
+
+
+async def record_uptime_check(
+    db: AsyncSession,
+    service_name: str,
+    status: str,
+    response_time_ms: Optional[int] = None,
+    error_message: Optional[str] = None
+):
+    """
+    Record a health check result for a service.
+    Called internally after health checks.
+    """
+    record = UptimeRecord(
+        service_name=service_name,
+        status=status,
+        response_time_ms=response_time_ms,
+        error_message=error_message[:500] if error_message else None
+    )
+    db.add(record)
+    await db.commit()
+
+
+@router.post("/uptime/check-now")
+async def trigger_uptime_check(
+    db: AsyncSession = Depends(get_db),
+    _: Any = Depends(get_current_admin)
+):
+    """
+    Manually trigger an uptime check for all services and record results.
+    """
+    import time
+    
+    services_to_check = [
+        ("database", check_database),
+        ("auth0", check_auth0),
+        ("google_kms", check_google_kms),
+        ("secret_manager", check_secret_manager),
+        ("vertex_ai", check_vertex_ai),
+        ("translation_api", check_translation_api),
+    ]
+    
+    results = {}
+    for service_name, check_func in services_to_check:
+        start = time.time()
+        try:
+            check_result = await check_func(db)
+            response_time = int((time.time() - start) * 1000)
+            status = "healthy" if check_result["status"] in ["healthy", "configured", "fallback"] else "down"
+            error = None if status == "healthy" else check_result.get("message")
+        except Exception as e:
+            response_time = int((time.time() - start) * 1000)
+            status = "down"
+            error = str(e)
+        
+        await record_uptime_check(db, service_name, status, response_time, error)
+        results[service_name] = {"status": status, "response_time_ms": response_time}
+    
+    return {"checked": len(results), "results": results}

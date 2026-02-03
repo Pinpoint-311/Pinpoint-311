@@ -777,6 +777,23 @@ class ApiClient {
         return this.request('/system/secrets/migrate-to-secret-manager', { method: 'POST' });
     }
 
+    // ========== Uptime Monitoring ==========
+
+    async getUptimeHistory(hours: number = 24): Promise<UptimeHistory> {
+        return this.request<UptimeHistory>(`/health/uptime/history?hours=${hours}`);
+    }
+
+    async getUptimeStats(): Promise<UptimeStats> {
+        return this.request<UptimeStats>('/health/uptime/stats');
+    }
+
+    async triggerUptimeCheck(): Promise<{
+        checked: number;
+        results: Record<string, { status: string; response_time_ms: number }>;
+    }> {
+        return this.request('/health/uptime/check-now', { method: 'POST' });
+    }
+
 }
 
 
@@ -953,3 +970,22 @@ export interface RunbookResult {
     details: Record<string, unknown>;
 }
 
+// Uptime Monitoring types
+export interface UptimeHistory {
+    period_hours: number;
+    since: string;
+    services: Record<string, Array<{
+        status: string;
+        response_time_ms: number | null;
+        error: string | null;
+        checked_at: string;
+    }>>;
+}
+
+export interface UptimeStats {
+    services: Record<string, {
+        '24h'?: { uptime_percent: number; checks: number; healthy: number };
+        '7d'?: { uptime_percent: number; checks: number; healthy: number };
+        '30d'?: { uptime_percent: number; checks: number; healthy: number };
+    }>;
+}

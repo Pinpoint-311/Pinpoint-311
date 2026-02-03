@@ -546,3 +546,15 @@ class Translation(Base):
         {"sqlite_autoincrement": True},
     )
 
+
+class UptimeRecord(Base):
+    """Records health check results over time for uptime monitoring dashboard."""
+    __tablename__ = "uptime_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    service_name = Column(String(50), nullable=False, index=True)  # backend, frontend, db, auth0, etc.
+    status = Column(String(20), nullable=False)  # healthy, degraded, down
+    response_time_ms = Column(Integer)  # Response time in milliseconds
+    error_message = Column(String(500))  # Error details if status is not healthy
+    checked_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
