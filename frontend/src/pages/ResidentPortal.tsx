@@ -500,10 +500,9 @@ export default function ResidentPortal() {
                     </div>
                     <Link
                         to="/login"
-                        className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white/70 hover:text-white text-xs md:text-sm font-medium transition-all border border-white/10 hover:border-white/20"
+                        className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white/70 hover:text-white text-xs md:text-sm font-medium transition-all border border-white/10 hover:border-white/20 no-underline decoration-transparent"
                     >
-                        <span className="hidden sm:inline">Staff Login</span>
-                        <span className="sm:hidden">Staff</span>
+                        Staff Login
                     </Link>
                 </div>
             </nav>
