@@ -815,6 +815,46 @@ class ApiClient {
         return this.request<Record<string, any>>('/system/api-usage/pricing');
     }
 
+    // ========== Social Connections ==========
+
+    async getSocialConnectionStatus(): Promise<{
+        google: boolean;
+        microsoft: boolean;
+        google_error?: string;
+        microsoft_error?: string;
+    }> {
+        return this.request('/setup/social-connections/status');
+    }
+
+    async configureGoogleOAuth(clientId: string, clientSecret: string): Promise<{
+        success: boolean;
+        message: string;
+        provider: string;
+    }> {
+        return this.request('/setup/social-connections/google', {
+            method: 'POST',
+            body: JSON.stringify({
+                client_id: clientId,
+                client_secret: clientSecret
+            })
+        });
+    }
+
+    async configureMicrosoftOAuth(clientId: string, clientSecret: string, tenantId?: string): Promise<{
+        success: boolean;
+        message: string;
+        provider: string;
+    }> {
+        return this.request('/setup/social-connections/microsoft', {
+            method: 'POST',
+            body: JSON.stringify({
+                client_id: clientId,
+                client_secret: clientSecret,
+                tenant_id: tenantId || 'common'
+            })
+        });
+    }
+
 }
 
 

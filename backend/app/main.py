@@ -18,7 +18,7 @@ if SENTRY_DSN:
         send_default_pii=False,  # Don't send personally identifiable info
     )
 
-from app.api import auth, users, departments, services, system, open311, gis, map_layers, comments, research, health, audit, setup, api_usage
+from app.api import auth, users, departments, services, system, open311, gis, map_layers, comments, research, health, audit, setup, api_usage, social_connections
 from app.db.init_db import seed_database
 
 # Rate limiting setup
@@ -191,6 +191,7 @@ app.include_router(health.router, prefix="/api/health", tags=["Health Check"])
 app.include_router(audit.router, prefix="/api/audit", tags=["Audit Logs"])
 app.include_router(setup.router, prefix="/api/setup", tags=["Setup Wizard"])
 app.include_router(api_usage.router, prefix="/api/system/api-usage", tags=["API Usage"])
+app.include_router(social_connections.router, prefix="/api/setup/social-connections", tags=["Social Login"])
 
 # Mount uploads directory for serving uploaded files
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/project/uploads")

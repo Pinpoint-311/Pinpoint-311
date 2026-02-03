@@ -9,6 +9,7 @@ import {
 
 import { Card, Button, Input, Select, Badge } from './ui';
 import { SystemSecret } from '../types';
+import SocialLoginConfig from './SocialLoginConfig';
 
 interface ModulesState {
     ai_analysis: boolean;
@@ -202,6 +203,19 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                     </Card>
                 </div>
             </div>
+
+            {/* Social Login Configuration */}
+            {auth0Configured && (
+                <div>
+                    <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                        <Key className="w-5 h-5 text-purple-400" />
+                        Social Login (Optional)
+                    </h2>
+                    <Card>
+                        <SocialLoginConfig />
+                    </Card>
+                </div>
+            )}
 
             {/* Optional Integrations - Premium Design */}
             <div>
