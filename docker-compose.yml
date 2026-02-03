@@ -61,7 +61,7 @@ services:
 
   # Watchtower - Automatic container updates for security
   watchtower:
-    image: containrrr/watchtower
+    image: containrrr/watchtower:latest
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -70,6 +70,7 @@ services:
       WATCHTOWER_SCHEDULE: "0 0 3 * * *" # Update at 3am daily
       WATCHTOWER_ROLLING_RESTART: "true"
       WATCHTOWER_INCLUDE_STOPPED: "false"
+      DOCKER_API_VERSION: "1.44"
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     logging:
