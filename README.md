@@ -43,14 +43,29 @@ Beyond the UI, it features a sophisticated **AI & Geospatial Engine** that autom
 
 ## ⚡ Why Pinpoint?
 
-| Feature | Legacy 311 Forms | Pinpoint 311 |
-| :--- | :---: | :---: |
-| **Mobile Experience** | Non-responsive PDF/Webform | Native-feel PWA |
-| **Triage** | Manual sorting (Hours/day) | AI Auto-Routing (Instant) |
-| **Updates** | "Black hole" (No feedback) | SMS/Email + Live Tracker |
-| **Location** | Text address only | GPS Pin + Asset Snapping |
-| **Privacy** | Public spreadsheets | Auto-Redacted PII |
-| **Languages** | English only | 130+ via Google Translate |
+### Feature Comparison
+
+| Feature | Legacy Forms | SeeClickFix / Commercial | **Pinpoint 311** |
+| :--- | :---: | :---: | :---: |
+| **Pricing** | Free (DIY) | $5-20K/year | **Free & Open Source** |
+| **Data Ownership** | ✅ You own | ❌ Vendor-hosted | **✅ Self-hosted** |
+| **Source Code** | N/A | ❌ Proprietary | **✅ MIT License** |
+| **Mobile Experience** | Non-responsive | Native apps | **PWA (No App Store)** |
+| **AI Triage** | ❌ Manual | ❌ Basic rules | **✅ Gemini 3.0 Flash** |
+| **Photo Analysis** | ❌ None | ❌ None | **✅ Vision AI** |
+| **Multilingual** | ❌ English | ~10 languages | **✅ 130+ languages** |
+| **Resident Login** | Required | Required | **✅ No account needed** |
+| **Live Tracking** | ❌ None | ✅ Email only | **✅ SMS + Email + Magic Link** |
+| **Location Accuracy** | Text address | GPS pin | **✅ GPS + Asset Snapping** |
+| **PII Protection** | ❌ None | ⚠️ Basic | **✅ Auto-Redacted + KMS** |
+| **Geofencing** | ❌ None | ⚠️ Limited | **✅ PostGIS Boundaries** |
+| **Research Export** | ❌ None | ⚠️ Extra cost | **✅ 60+ fields, free** |
+| **Custom Branding** | DIY | ⚠️ Limited | **✅ Full white-label** |
+| **Self-Healing** | ❌ None | ❌ Managed | **✅ Auto-restart + Watchtower** |
+
+### The Bottom Line
+
+> **SeeClickFix and similar platforms charge $5,000-20,000/year**, lock you into their cloud, and own your data. Pinpoint 311 gives you **the same (or better) features for free**, with full data sovereignty and no vendor lock-in.
 
 ---
 
