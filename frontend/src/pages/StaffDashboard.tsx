@@ -49,6 +49,7 @@ import RequestDetailMap from '../components/RequestDetailMap';
 import { usePageNavigation } from '../hooks/usePageNavigation';
 import NotificationSettings from '../components/NotificationSettings';
 import ActivityFeed from '../components/ActivityFeed';
+import PrintWorkOrder from '../components/PrintWorkOrder';
 
 type View = 'dashboard' | 'active' | 'in_progress' | 'resolved' | 'statistics';
 
@@ -1663,6 +1664,14 @@ export default function StaffDashboard() {
                                                 </button>
                                             </>
                                         )}
+
+                                        {/* Row 5: Print Work Order */}
+                                        <PrintWorkOrder
+                                            request={selectedRequest}
+                                            auditLog={auditLog}
+                                            townshipName={settings?.township_name}
+                                            logoUrl={settings?.logo_url || undefined}
+                                        />
                                     </div>
 
                                     {/* Scrollable Content - Professional Government Styling */}
