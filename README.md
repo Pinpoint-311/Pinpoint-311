@@ -24,6 +24,36 @@ Beyond the UI, it features a sophisticated **AI & Geospatial Engine** that autom
 
 ---
 
+## 📑 Table of Contents
+
+- [Why Pinpoint?](#-why-pinpoint)
+- [Choose Your Experience](#-choose-your-experience)
+- [Core Features Overview](#-core-features-overview)
+- [Resident Portal Features](#-resident-portal-features)
+- [Staff Dashboard Features](#-staff-dashboard-features)
+- [Admin Console Features](#️-admin-console-features)
+- [Research Suite](#-research-suite-university-lab-integration)
+- [Technical Architecture](#-technical-architecture)
+- [Deployment & Setup](#-deployment--setup)
+- [Roadmap](#️-roadmap)
+- [Security & Governance](#-security--governance)
+- [License](#-license)
+
+---
+
+## ⚡ Why Pinpoint?
+
+| Feature | Legacy 311 Forms | Pinpoint 311 |
+| :--- | :---: | :---: |
+| **Mobile Experience** | Non-responsive PDF/Webform | Native-feel PWA |
+| **Triage** | Manual sorting (Hours/day) | AI Auto-Routing (Instant) |
+| **Updates** | "Black hole" (No feedback) | SMS/Email + Live Tracker |
+| **Location** | Text address only | GPS Pin + Asset Snapping |
+| **Privacy** | Public spreadsheets | Auto-Redacted PII |
+| **Languages** | English only | 130+ via Google Translate |
+
+---
+
 ## 🎭 Choose Your Experience
 
 <table>
@@ -125,7 +155,7 @@ graph TB
     
     API --> GM
     API --> GT
-    API --> ZT
+    API --> A0
 ```
 
 </details>
@@ -175,7 +205,7 @@ graph LR
         CD[Caddy HTTPS]
     end
 
-    ZT --> MFA
+    A0 --> MFA
     GSM --> KMS
     WT --> CD
 ```
@@ -781,6 +811,71 @@ For enterprise-grade secret storage, configure GCP in the Setup Wizard. Secrets 
 
 > [!NOTE]
 > Bootstrap access is automatically disabled once Auth0 is configured. All future logins use SSO.
+
+---
+
+## 🗺️ Roadmap
+
+- [x] AI Triage & Gemini 3.0 Integration
+- [x] PostGIS Asset Snapping & Geofencing
+- [x] Multi-Language Support (130+ languages)
+- [x] Research Suite with Census Integration
+- [x] Workload Identity Federation (Zero-Trust GCP)
+- [ ] iOS/Android Native App Wrappers (Capacitor)
+- [ ] 3rd Party CRM Integrations (Salesforce, GovPilot)
+- [ ] Offline Mode for Field Staff
+- [ ] Push Notifications for Mobile
+
+---
+
+## 🛡️ Security & Governance
+
+Pinpoint 311 is designed for municipal government use, handling sensitive resident data. We take security, privacy, and supply-chain integrity seriously.
+
+### 🔒 Reporting Vulnerabilities
+
+**DO NOT** file a public issue for security vulnerabilities. Publicly disclosing a vulnerability puts live deployments at risk.
+
+We use GitHub's **Private Vulnerability Reporting** to handle disclosures securely:
+
+1. Go to the [**Security** tab](https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/security) in this repository.
+2. Click on **"Report a vulnerability"** to open a private advisory.
+3. Describe the vulnerability. This opens a private communication channel visible *only* to the project maintainers.
+
+We aim to acknowledge all reports within 48 hours.
+
+### 🏗️ Zero-Trust Governance Model
+
+To maintain the integrity required for government software:
+
+| Access Type | Policy |
+|-------------|--------|
+| **Read Access** | Code is open-source and auditable by anyone |
+| **Write Access** | Merge rights restricted to Core Maintainers only |
+| **Review Process** | All PRs undergo mandatory security review before merging |
+| **Dependencies** | All dependencies pinned to specific versions to prevent supply-chain attacks |
+
+### ✅ Supported Versions
+
+| Version | Supported | Notes |
+| :--- | :---: | :--- |
+| **Latest Stable** | ✅ | Current production release |
+| **Main Branch** | ⚠️ | Development builds (unstable) |
+| **< 1.0.0** | ❌ | Legacy versions |
+
+### 🛑 Out of Scope
+
+The following are generally considered out of scope for security reports:
+- Attacks requiring physical access to the user's device
+- Social engineering attacks against staff
+- Clickjacking on pages with no sensitive actions
+- Reports from automated scanners without validated proof of concept
+
+---
+
+## 📄 License
+
+Pinpoint 311 is open-source software licensed under the [MIT License](LICENSE).
 
 <p align="center">
   Built by Pinpoint 311 for Civic Engagement
