@@ -721,7 +721,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
 
             {/* Status Filter Tabs - Horizontal Scroll on Mobile */}
             <div className="mb-4 overflow-x-auto scrollbar-hide -mx-4 px-4 md:mx-0 md:px-0">
-                <div className="flex gap-2 min-w-max md:flex-wrap">
+                <div className="flex gap-2 min-w-max pr-4 md:pr-0 md:flex-wrap">
                     {(['all', 'open', 'in_progress', 'closed'] as StatusFilter[]).map((filterStatus) => {
                         const colors = statusColors[filterStatus];
                         const isActive = statusFilter === filterStatus;
