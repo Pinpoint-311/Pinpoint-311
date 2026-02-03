@@ -1809,14 +1809,14 @@ export default function StaffDashboard() {
 
                                                                     {/* Priority Editor - Full Width Inline */}
                                                                     {showPriorityEditor && (
-                                                                        <div className="p-4 rounded-xl bg-slate-800/80 border border-white/10 space-y-4">
+                                                                        <div className="p-4 rounded-xl bg-slate-800/80 border border-white/10 space-y-4 max-w-md">
                                                                             <p className="text-sm text-white/70 font-medium">Set Priority Level</p>
                                                                             <div className="grid grid-cols-5 gap-2">
                                                                                 {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(p => (
                                                                                     <button
                                                                                         key={p}
                                                                                         onClick={() => setPendingPriority(p)}
-                                                                                        className={`aspect-square rounded-xl text-base font-bold transition-all active:scale-95 ${pendingPriority === p
+                                                                                        className={`aspect-square md:aspect-auto md:h-10 rounded-xl text-sm md:text-base font-bold transition-all active:scale-95 ${pendingPriority === p
                                                                                             ? 'bg-primary-500 text-white ring-2 ring-primary-400 ring-offset-2 ring-offset-slate-800'
                                                                                             : p >= 8 ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
                                                                                                 : p >= 6 ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'
@@ -1910,12 +1910,7 @@ export default function StaffDashboard() {
                                                                         </div>
                                                                     )}
 
-                                                                    {/* Main Analysis Text */}
-                                                                    {qualitativeText && (
-                                                                        <p className={`text-sm leading-relaxed mb-4 ${hasError ? 'text-amber-300/80' : 'text-white/80 font-medium'}`}>
-                                                                            {qualitativeText}
-                                                                        </p>
-                                                                    )}
+
 
                                                                     {/* Priority Justification Quote */}
                                                                     {ai?.priority_justification && !hasError && (
