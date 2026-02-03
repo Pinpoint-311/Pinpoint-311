@@ -23,46 +23,37 @@ BACKUP_EXTENSION = ".sql.gpg"
 
 
 async def get_backup_config() -> Optional[Dict[str, str]]:
-    """Get backup configuration from SystemSecrets."""
+    """Get backup configuration from Secret Manager."""
     try:
-        from app.db.session import SessionLocal
-        from app.models import SystemSecret
-        from app.core.encryption import decrypt_safe
-        from sqlalchemy import select
+        from app.services.secret_manager import get_secret
         
-        async with SessionLocal() as db:
-            # Fetch all backup-related secrets
-            result = await db.execute(
-                select(SystemSecret).where(
-                    SystemSecret.key_name.in_([
-                        "BACKUP_S3_ENDPOINT",
-                        "BACKUP_S3_BUCKET",
-                        "BACKUP_S3_ACCESS_KEY",
-                        "BACKUP_S3_SECRET_KEY",
-                        "BACKUP_ENCRYPTION_KEY",
-                        "BACKUP_S3_REGION"
-                    ])
-                )
-            )
-            secrets = result.scalars().all()
-            
-            config = {}
-            for secret in secrets:
-                if secret.key_value:
-                    decrypted = decrypt_safe(secret.key_value)
-                    if decrypted:
-                        config[secret.key_name] = decrypted
-            
-            # Check required keys
-            required = ["BACKUP_S3_BUCKET", "BACKUP_S3_ACCESS_KEY", "BACKUP_S3_SECRET_KEY", "BACKUP_ENCRYPTION_KEY"]
-            if not all(k in config for k in required):
-                logger.warning("Backup configuration incomplete - missing required secrets")
-                return None
-            
-            return config
+        # Get all backup-related secrets from Secret Manager
+        config = {}
+        secret_keys = [
+            "BACKUP_S3_ENDPOINT",
+            "BACKUP_S3_BUCKET",
+            "BACKUP_S3_ACCESS_KEY",
+            "BACKUP_S3_SECRET_KEY",
+            "BACKUP_ENCRYPTION_KEY",
+            "BACKUP_S3_REGION"
+        ]
+        
+        for key in secret_keys:
+            value = await get_secret(key)
+            if value:
+                config[key] = value
+        
+        # Check required keys
+        required = ["BACKUP_S3_BUCKET", "BACKUP_S3_ACCESS_KEY", "BACKUP_S3_SECRET_KEY", "BACKUP_ENCRYPTION_KEY"]
+        if not all(k in config for k in required):
+            logger.warning("Backup configuration incomplete - missing required secrets")
+            return None
+        
+        return config
     except Exception as e:
         logger.error(f"Failed to get backup config: {e}")
         return None
+
 
 
 def get_s3_client(config: Dict[str, str]):

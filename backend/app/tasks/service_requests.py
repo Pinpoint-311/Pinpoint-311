@@ -23,18 +23,14 @@ def run_async(coro):
 
 
 async def get_secret(db, key_name: str) -> str:
-    """Get a secret value from database (decrypts automatically)"""
-    from app.core.encryption import decrypt_safe
-    
-    result = await db.execute(
-        select(SystemSecret).where(SystemSecret.key_name == key_name)
-    )
-    secret = result.scalar_one_or_none()
-    if not secret or not secret.is_configured:
+    """Get a secret value from Secret Manager (checks GCP first, then DB)"""
+    try:
+        from app.services.secret_manager import get_secret as sm_get_secret
+        value = await sm_get_secret(key_name)
+        return value if value else ""
+    except Exception:
         return ""
-    
-    # Decrypt the stored value (handles both encrypted and legacy plain text)
-    return decrypt_safe(secret.key_value) if secret.key_value else ""
+
 
 
 

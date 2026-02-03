@@ -21,15 +21,13 @@ router = APIRouter()
 
 
 async def get_google_api_key(db: AsyncSession) -> Optional[str]:
-    """Get Google Maps API key from secrets (decrypted)"""
-    result = await db.execute(
-        select(SystemSecret).where(SystemSecret.key_name == "GOOGLE_MAPS_API_KEY")
-    )
-    secret = result.scalar_one_or_none()
-    if secret and secret.is_configured and secret.key_value:
-        # Decrypt the key if it's encrypted
-        return decrypt_safe(secret.key_value)
-    return None
+    """Get Google Maps API key from Secret Manager (decrypted)"""
+    try:
+        from app.services.secret_manager import get_secret
+        return await get_secret("GOOGLE_MAPS_API_KEY")
+    except Exception:
+        return None
+
 
 
 @router.get("/geocode")

@@ -23,39 +23,30 @@ MICROSOFT_USERINFO_URL = "https://graph.microsoft.com/v1.0/me"
 
 
 async def get_oauth_config(provider: str) -> Optional[Dict[str, str]]:
-    """Get OAuth configuration from SystemSecrets."""
-    from app.db.session import SessionLocal
-    from app.models import SystemSecret
-    from app.core.encryption import decrypt_safe
-    from sqlalchemy import select
+    """Get OAuth configuration from Secret Manager."""
+    from app.services.secret_manager import get_secret
     
     provider_upper = provider.upper()
     
-    async with SessionLocal() as db:
-        result = await db.execute(
-            select(SystemSecret).where(
-                SystemSecret.key_name.in_([
-                    f"OAUTH_{provider_upper}_CLIENT_ID",
-                    f"OAUTH_{provider_upper}_CLIENT_SECRET",
-                    f"OAUTH_{provider_upper}_REDIRECT_URI",
-                ])
-            )
-        )
-        secrets = result.scalars().all()
-        
-        config = {}
-        for secret in secrets:
-            if secret.key_value and secret.is_configured:
-                key = secret.key_name.replace(f"OAUTH_{provider_upper}_", "").lower()
-                config[key] = decrypt_safe(secret.key_value)
-        
-        # Check required keys
-        required = ["client_id", "client_secret"]
-        if not all(k in config for k in required):
-            logger.warning(f"{provider} OAuth not configured - missing required secrets")
-            return None
-        
-        return config
+    # Get secrets from Secret Manager (checks GCP first, then DB)
+    client_id = await get_secret(f"OAUTH_{provider_upper}_CLIENT_ID")
+    client_secret = await get_secret(f"OAUTH_{provider_upper}_CLIENT_SECRET")
+    redirect_uri = await get_secret(f"OAUTH_{provider_upper}_REDIRECT_URI")
+    
+    # Check required keys
+    if not client_id or not client_secret:
+        logger.warning(f"{provider} OAuth not configured - missing required secrets")
+        return None
+    
+    config = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+    }
+    if redirect_uri:
+        config["redirect_uri"] = redirect_uri
+    
+    return config
+
 
 
 def get_google_auth_url(redirect_uri: str, state: str) -> Optional[str]:
