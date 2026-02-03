@@ -61,7 +61,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI):
     """Application lifecycle manager"""
     import asyncio
-    from app.db.session import AsyncSessionLocal
+    from app.db.session import SessionLocal
     from app.api.health import (
         check_database, check_auth0, check_google_kms,
         check_secret_manager, check_vertex_ai, check_translation_api,
@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI):
         """Run health checks every 5 minutes and record results."""
         while True:
             try:
-                async with AsyncSessionLocal() as db:
+                async with SessionLocal() as db:
                     services_to_check = [
                         ("database", check_database),
                         ("auth0", check_auth0),
