@@ -213,9 +213,9 @@ class NotificationService:
         # Track SMS usage if successful
         if success:
             try:
-                from app.db.session import async_session_maker
+                from app.db.session import SessionLocal
                 from app.services.api_usage import track_api_usage
-                async with async_session_maker() as db:
+                async with SessionLocal() as db:
                     await track_api_usage(
                         db,
                         service_name="sms",
@@ -244,11 +244,11 @@ class NotificationService:
         if success:
             try:
                 import asyncio
-                from app.db.session import async_session_maker
+                from app.db.session import SessionLocal
                 from app.services.api_usage import track_api_usage
                 
                 async def _track():
-                    async with async_session_maker() as db:
+                    async with SessionLocal() as db:
                         await track_api_usage(
                             db,
                             service_name="email",

@@ -133,9 +133,9 @@ def _get_secret_from_gcp(secret_name: str) -> Optional[Dict[str, str]]:
             import asyncio
             
             async def _track():
-                from app.db.session import async_session_maker
+                from app.db.session import SessionLocal
                 from app.services.api_usage import track_api_usage
-                async with async_session_maker() as db:
+                async with SessionLocal() as db:
                     await track_api_usage(
                         db,
                         service_name="secret_manager",
