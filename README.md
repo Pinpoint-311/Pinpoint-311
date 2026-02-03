@@ -335,7 +335,6 @@ Built-in legal protection ensuring residents understand 311 is for non-emergency
 ### One-Time Acknowledgment Modal
 - **Premium Design**: Glassmorphism modal matching portal aesthetic
 - **Checkbox Confirmation**: Users must actively acknowledge before accessing portal
-- **Emergency Examples**: Lists when to call 911 (medical, fire, crimes, threats, downed lines)
 - **localStorage Persistence**: Shows once per browser, doesn't repeatedly annoy returning users
 
 ### Persistent Warning Banner
