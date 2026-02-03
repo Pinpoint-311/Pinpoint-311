@@ -504,85 +504,97 @@ export default function ResidentPortal() {
                 </div>
             </nav>
 
-            {/* Non-Emergency Disclaimer Modal */}
+            {/* Non-Emergency Disclaimer Modal - Friendly Welcome Design */}
             <AnimatePresence>
                 {showDisclaimerModal && (
                     <motion.div
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
-                        className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+                        className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
                     >
                         <motion.div
-                            initial={{ scale: 0.9, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.9, opacity: 0 }}
-                            className="glass-card rounded-2xl max-w-lg w-full p-6 border border-white/20 shadow-2xl"
+                            initial={{ scale: 0.95, opacity: 0, y: 20 }}
+                            animate={{ scale: 1, opacity: 1, y: 0 }}
+                            exit={{ scale: 0.95, opacity: 0, y: 20 }}
+                            transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                            className="bg-gradient-to-br from-slate-800 via-slate-800 to-slate-900 rounded-2xl max-w-lg w-full p-6 border border-white/10 shadow-2xl"
                         >
-                            {/* Header */}
-                            <div className="flex items-center gap-4 mb-6">
-                                <div className="w-14 h-14 rounded-xl bg-red-500/20 flex items-center justify-center flex-shrink-0">
-                                    <AlertTriangle className="w-7 h-7 text-red-400" />
+                            {/* Friendly Welcome Header */}
+                            <div className="text-center mb-6">
+                                {settings?.logo_url ? (
+                                    <img
+                                        src={settings.logo_url}
+                                        alt={settings?.township_name || "Township"}
+                                        className="h-12 mx-auto mb-4 object-contain"
+                                    />
+                                ) : (
+                                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-purple-600 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-primary-500/25">
+                                        <Sparkles className="w-8 h-8 text-white" />
+                                    </div>
+                                )}
+                                <h2 className="text-2xl font-bold text-white mb-1">
+                                    Welcome to {settings?.township_name || "311 Services"}!
+                                </h2>
+                                <p className="text-white/60 text-sm">Your community service request portal</p>
+                            </div>
+
+                            {/* Helpful Info Card - Not scary! */}
+                            <div className="bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-purple-500/10 border border-blue-400/20 rounded-xl p-4 mb-6">
+                                <div className="flex items-start gap-3">
+                                    <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                                        <Phone className="w-5 h-5 text-blue-400" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-blue-300 font-semibold mb-1">Quick Reminder</h3>
+                                        <p className="text-white/70 text-sm leading-relaxed">
+                                            This portal is for <strong className="text-white">non-emergency requests</strong> like
+                                            potholes, streetlights, trash pickup, and general municipal services.
+                                        </p>
+                                    </div>
                                 </div>
-                                <div>
-                                    <h2 className="text-xl font-bold text-white">Important Notice</h2>
-                                    <p className="text-white/60 text-sm">Please read before continuing</p>
+
+                                <div className="mt-3 pt-3 border-t border-white/10">
+                                    <p className="text-white/60 text-sm flex items-center gap-2">
+                                        <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 text-xs">✓</span>
+                                        For emergencies (police, fire, medical), please dial <strong className="text-white">911</strong>
+                                    </p>
                                 </div>
                             </div>
 
-                            {/* Warning Content */}
-                            <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 mb-6">
-                                <h3 className="text-red-400 font-semibold text-lg mb-2 flex items-center gap-2">
-                                    <Phone className="w-5 h-5" />
-                                    This is NOT for Emergencies
-                                </h3>
-                                <p className="text-white/80 text-sm leading-relaxed mb-3">
-                                    This 311 portal is for <strong>non-emergency municipal service requests only</strong>.
-                                    It should not be used for situations requiring immediate response.
-                                </p>
-                                <div className="text-white/70 text-sm space-y-1">
-                                    <p className="font-medium text-red-300">For emergencies, call 911 immediately:</p>
-                                    <ul className="list-disc list-inside space-y-0.5 text-white/60">
-                                        <li>Medical emergencies</li>
-                                        <li>Fires</li>
-                                        <li>Crimes in progress</li>
-                                        <li>Immediate threats to life or property</li>
-                                        <li>Downed power lines or gas leaks</li>
-                                    </ul>
+                            {/* Friendly Checkbox */}
+                            <label className="flex items-center gap-3 mb-6 cursor-pointer group p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors border border-transparent hover:border-white/10">
+                                <div className="relative">
+                                    <input
+                                        type="checkbox"
+                                        checked={disclaimerChecked}
+                                        onChange={(e) => setDisclaimerChecked(e.target.checked)}
+                                        className="sr-only peer"
+                                    />
+                                    <div className="w-6 h-6 rounded-lg border-2 border-white/30 peer-checked:border-primary-500 peer-checked:bg-primary-500 transition-all flex items-center justify-center">
+                                        {disclaimerChecked && (
+                                            <CheckCircle2 className="w-4 h-4 text-white" />
+                                        )}
+                                    </div>
                                 </div>
-                            </div>
-
-                            {/* Checkbox */}
-                            <label className="flex items-start gap-3 mb-6 cursor-pointer group">
-                                <input
-                                    type="checkbox"
-                                    checked={disclaimerChecked}
-                                    onChange={(e) => setDisclaimerChecked(e.target.checked)}
-                                    className="mt-1 w-5 h-5 rounded border-white/30 bg-white/10 text-primary-500 focus:ring-primary-500/50 focus:ring-offset-0 cursor-pointer"
-                                />
                                 <span className="text-white/80 text-sm leading-relaxed group-hover:text-white transition-colors">
-                                    I understand that this portal is for <strong>non-emergency requests only</strong> and
-                                    that I should call <strong>911</strong> for any emergency situations.
+                                    Got it! I'll use this for non-emergency requests and call 911 for emergencies.
                                 </span>
                             </label>
 
-                            {/* Continue Button */}
+                            {/* Welcoming Continue Button */}
                             <Button
                                 onClick={handleDisclaimerAcknowledge}
                                 disabled={!disclaimerChecked}
-                                className={`w-full ${!disclaimerChecked ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                leftIcon={<Shield className="w-4 h-4" />}
+                                className={`w-full py-3 text-base font-medium ${!disclaimerChecked ? 'opacity-50 cursor-not-allowed' : 'bg-gradient-to-r from-primary-500 to-purple-600 hover:from-primary-600 hover:to-purple-700'}`}
                             >
-                                I Understand - Continue to Portal
+                                {disclaimerChecked ? "Let's Get Started! →" : "Check the box above to continue"}
                             </Button>
-
-                            <p className="text-center text-white/40 text-xs mt-4">
-                                Your acknowledgment will be recorded for your protection.
-                            </p>
                         </motion.div>
                     </motion.div>
                 )}
             </AnimatePresence>
+
 
             {/* Persistent Non-Emergency Warning Banner */}
             <div className="bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-red-500/20 border-b border-amber-500/30">
