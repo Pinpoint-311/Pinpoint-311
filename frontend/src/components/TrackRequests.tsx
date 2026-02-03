@@ -725,7 +725,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                     {([
                         { key: 'all', label: 'All Requests', mobileLabel: 'All' },
                         { key: 'open', label: 'Open', mobileLabel: 'Open' },
-                        { key: 'in_progress', label: 'In Progress', mobileLabel: 'Active' },
+                        { key: 'in_progress', label: 'In Progress', mobileLabel: 'In Prog' },
                         { key: 'closed', label: 'Resolved', mobileLabel: 'Done' },
                     ] as const).map(({ key, label, mobileLabel }) => {
                         const colors = statusColors[key as StatusFilter];
@@ -753,7 +753,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
             <div className="grid grid-cols-3 gap-2 md:gap-4 mb-6">
                 {[
                     { status: 'open', color: 'amber', label: "Open", mobileLabel: "Open" },
-                    { status: 'in_progress', color: 'blue', label: "In Progress", mobileLabel: "Active" },
+                    { status: 'in_progress', color: 'blue', label: "In Progress", mobileLabel: "In Prog" },
                     { status: 'closed', color: 'emerald', label: "Resolved", mobileLabel: "Done" },
                 ].map(({ status, color, label, mobileLabel }) => (
                     <button
