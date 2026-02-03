@@ -106,7 +106,7 @@ body {
     }
 
     .glass-sidebar {
-        background: rgba(30, 27, 75, 0.8);
+        background: rgba(30, 27, 75, 0.95);
         backdrop-filter: blur(20px);
         border-right: 1px solid rgba(255, 255, 255, 0.1);
     }
