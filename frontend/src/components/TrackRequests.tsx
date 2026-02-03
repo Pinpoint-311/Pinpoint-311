@@ -719,24 +719,30 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                 </div>
             </div>
 
-            {/* Status Filter Tabs - Horizontal Scroll on Mobile */}
-            <div className="mb-4 overflow-x-auto scrollbar-hide -mx-4 px-4 md:mx-0 md:px-0">
-                <div className="flex gap-2 min-w-max pr-4 md:pr-0 md:flex-wrap">
-                    {(['all', 'open', 'in_progress', 'closed'] as StatusFilter[]).map((filterStatus) => {
-                        const colors = statusColors[filterStatus];
-                        const isActive = statusFilter === filterStatus;
+            {/* Status Filter Tabs - Grid layout to fit all buttons */}
+            <div className="mb-4">
+                <div className="grid grid-cols-4 gap-1.5 md:flex md:gap-2 md:flex-wrap">
+                    {([
+                        { key: 'all', label: 'All Requests', mobileLabel: 'All' },
+                        { key: 'open', label: 'Open', mobileLabel: 'Open' },
+                        { key: 'in_progress', label: 'In Progress', mobileLabel: 'Active' },
+                        { key: 'closed', label: 'Resolved', mobileLabel: 'Done' },
+                    ] as const).map(({ key, label, mobileLabel }) => {
+                        const colors = statusColors[key as StatusFilter];
+                        const isActive = statusFilter === key;
                         return (
                             <button
-                                key={filterStatus}
-                                onClick={() => setStatusFilter(filterStatus)}
-                                className={`px-4 py-2 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${isActive
-                                    ? filterStatus === 'all'
+                                key={key}
+                                onClick={() => setStatusFilter(key as StatusFilter)}
+                                className={`px-2 md:px-4 py-2 rounded-lg md:rounded-xl text-xs md:text-sm font-medium transition-all text-center ${isActive
+                                    ? key === 'all'
                                         ? 'bg-primary-500 text-white'
                                         : `${colors?.bg} ${colors?.text} ${colors?.border} border`
                                     : 'bg-white/5 text-white/60 hover:bg-white/10 border border-transparent'
                                     }`}
                             >
-                                {filterStatus === 'all' ? "All Requests" : colors?.label || filterStatus}
+                                <span className="hidden md:inline">{label}</span>
+                                <span className="md:hidden">{mobileLabel}</span>
                             </button>
                         );
                     })}
