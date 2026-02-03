@@ -306,6 +306,29 @@ def encrypt_pii(plaintext: str) -> str:
             }
         )
         
+        # Track KMS usage
+        try:
+            import asyncio
+            from app.db.session import async_session_maker
+            from app.services.api_usage import track_api_usage
+            
+            async def _track():
+                async with async_session_maker() as db:
+                    await track_api_usage(
+                        db,
+                        service_name="kms",
+                        operation="encrypt",
+                        api_calls=1
+                    )
+            
+            try:
+                loop = asyncio.get_running_loop()
+                asyncio.create_task(_track())
+            except RuntimeError:
+                asyncio.run(_track())
+        except Exception as track_err:
+            logger.debug(f"Failed to track KMS encrypt usage: {track_err}")
+        
         # Base64 encode and add prefix
         encrypted_b64 = base64.b64encode(response.ciphertext).decode("utf-8")
         return f"{KMS_ENCRYPTED_PREFIX}{encrypted_b64}"

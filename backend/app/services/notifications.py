@@ -208,7 +208,24 @@ class NotificationService:
         if not self._sms_provider:
             logger.warning("SMS provider not configured")
             return False
-        return await self._sms_provider.send_sms(to, message)
+        success = await self._sms_provider.send_sms(to, message)
+        
+        # Track SMS usage if successful
+        if success:
+            try:
+                from app.db.session import async_session_maker
+                from app.services.api_usage import track_api_usage
+                async with async_session_maker() as db:
+                    await track_api_usage(
+                        db,
+                        service_name="sms",
+                        operation="send_sms",
+                        api_calls=1
+                    )
+            except Exception as e:
+                logger.debug(f"Failed to track SMS usage: {e}")
+        
+        return success
     
     def send_email(
         self,
@@ -221,7 +238,34 @@ class NotificationService:
         if not self._email_provider:
             logger.warning("Email provider not configured")
             return False
-        return self._email_provider.send_email(to, subject, body_html, body_text)
+        success = self._email_provider.send_email(to, subject, body_html, body_text)
+        
+        # Track email usage if successful (sync version)
+        if success:
+            try:
+                import asyncio
+                from app.db.session import async_session_maker
+                from app.services.api_usage import track_api_usage
+                
+                async def _track():
+                    async with async_session_maker() as db:
+                        await track_api_usage(
+                            db,
+                            service_name="email",
+                            operation="send_email",
+                            api_calls=1
+                        )
+                
+                # Run in new event loop if needed
+                try:
+                    loop = asyncio.get_running_loop()
+                    asyncio.create_task(_track())
+                except RuntimeError:
+                    asyncio.run(_track())
+            except Exception as e:
+                logger.debug(f"Failed to track email usage: {e}")
+        
+        return success
     
     def send_request_confirmation_branded(
         self,

@@ -128,6 +128,29 @@ def _get_secret_from_gcp(secret_name: str) -> Optional[Dict[str, str]]:
         name = f"projects/{project}/secrets/{secret_name}/versions/latest"
         response = client.access_secret_version(request={"name": name})
         
+        # Track Secret Manager usage
+        try:
+            import asyncio
+            
+            async def _track():
+                from app.db.session import async_session_maker
+                from app.services.api_usage import track_api_usage
+                async with async_session_maker() as db:
+                    await track_api_usage(
+                        db,
+                        service_name="secret_manager",
+                        operation="access_secret",
+                        api_calls=1
+                    )
+            
+            try:
+                loop = asyncio.get_running_loop()
+                asyncio.create_task(_track())
+            except RuntimeError:
+                asyncio.run(_track())
+        except Exception as track_err:
+            logger.debug(f"Failed to track Secret Manager usage: {track_err}")
+        
         secret_data = json.loads(response.payload.data.decode("UTF-8"))
         _secret_cache[secret_name] = secret_data
         return secret_data
