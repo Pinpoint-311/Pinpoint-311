@@ -60,10 +60,67 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle manager"""
+    import asyncio
+    from app.db.session import AsyncSessionLocal
+    from app.api.health import (
+        check_database, check_auth0, check_google_kms,
+        check_secret_manager, check_vertex_ai, check_translation_api,
+        record_uptime_check
+    )
+    import time
+    
+    # Background task for uptime monitoring
+    async def uptime_monitor():
+        """Run health checks every 5 minutes and record results."""
+        while True:
+            try:
+                async with AsyncSessionLocal() as db:
+                    services_to_check = [
+                        ("database", check_database),
+                        ("auth0", check_auth0),
+                        ("google_kms", check_google_kms),
+                        ("secret_manager", check_secret_manager),
+                        ("vertex_ai", check_vertex_ai),
+                        ("translation_api", check_translation_api),
+                    ]
+                    
+                    for service_name, check_func in services_to_check:
+                        start = time.time()
+                        try:
+                            check_result = await check_func(db)
+                            response_time = int((time.time() - start) * 1000)
+                            status = "healthy" if check_result["status"] in ["healthy", "configured", "fallback", "disabled"] else "down"
+                            error = None if status == "healthy" else check_result.get("message")
+                        except Exception as e:
+                            response_time = int((time.time() - start) * 1000)
+                            status = "down"
+                            error = str(e)
+                        
+                        await record_uptime_check(db, service_name, status, response_time, error)
+                    
+                    print(f"[Uptime Monitor] Health check complete at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            except Exception as e:
+                print(f"[Uptime Monitor] Error: {e}")
+            
+            # Wait 5 minutes before next check
+            await asyncio.sleep(300)
+    
     # Startup: Initialize database with default data
     await seed_database()
+    
+    # Start background uptime monitoring task
+    uptime_task = asyncio.create_task(uptime_monitor())
+    print("[Uptime Monitor] Started background health monitoring (every 5 minutes)")
+    
     yield
-    # Shutdown: Cleanup if needed
+    
+    # Shutdown: Cancel background task
+    uptime_task.cancel()
+    try:
+        await uptime_task
+    except asyncio.CancelledError:
+        pass
+    print("[Uptime Monitor] Stopped background health monitoring")
 
 
 app = FastAPI(
