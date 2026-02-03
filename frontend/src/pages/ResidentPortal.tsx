@@ -468,44 +468,57 @@ export default function ResidentPortal() {
 
     return (
         <div className="min-h-screen flex flex-col">
-            {/* Navigation - Clean Mobile Header */}
-            <nav className="glass-sidebar py-3 md:py-4 px-4 md:px-6 flex items-center justify-between sticky top-0 z-40" aria-label="Main navigation">
-                <button
-                    onClick={() => {
-                        setShowTrackingView(false);
-                        setStep('categories');
-                        setSelectedService(null);
-                        updateHash('');
-                        scrollToTop('instant');
-                    }}
-                    className="flex items-center gap-2 md:gap-3 hover:opacity-80 transition-opacity cursor-pointer"
-                    aria-label="Go to home page"
-                >
-                    {settings?.logo_url ? (
-                        <img src={settings.logo_url} alt="Logo" className="h-8 md:h-10 w-auto" />
-                    ) : (
-                        <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
-                            <Sparkles className="w-4 h-4 md:w-6 md:h-6 text-white" />
-                        </div>
-                    )}
-                    <h1 className="text-lg md:text-xl font-semibold text-white hidden sm:block" data-no-translate>
-                        {settings?.township_name || 'Township 311'}
-                    </h1>
-                </button>
-
-                <div className="flex items-center gap-2 md:gap-4">
-                    {/* Language selector - compact on mobile */}
-                    <div className="scale-90 md:scale-100 origin-right">
-                        <LanguageSelector />
-                    </div>
-                    <Link
-                        to="/login"
-                        className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white/70 hover:text-white text-xs md:text-sm font-medium transition-all border border-white/10 hover:border-white/20 no-underline decoration-transparent"
+            {/* Header Container - Reorders on mobile (banner first, then nav) */}
+            <div className="flex flex-col-reverse md:flex-col sticky top-0 z-40">
+                {/* Navigation - Clean Mobile Header */}
+                <nav className="glass-sidebar py-3 md:py-4 px-4 md:px-6 flex items-center justify-between" aria-label="Main navigation">
+                    <button
+                        onClick={() => {
+                            setShowTrackingView(false);
+                            updateHash('');
+                            window.scrollTo(0, 0);
+                            setStep('categories');
+                            setSelectedService(null);
+                        }}
+                        className="flex items-center gap-2 md:gap-3 hover:opacity-80 transition-opacity cursor-pointer"
+                        aria-label="Go to home page"
                     >
-                        Staff Login
-                    </Link>
+                        {settings?.logo_url ? (
+                            <img src={settings.logo_url} alt="Logo" className="h-8 md:h-10 w-auto" />
+                        ) : (
+                            <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
+                                <Sparkles className="w-4 h-4 md:w-6 md:h-6 text-white" />
+                            </div>
+                        )}
+                        <h1 className="text-lg md:text-xl font-semibold text-white hidden sm:block" data-no-translate>
+                            {settings?.township_name || 'Township 311'}
+                        </h1>
+                    </button>
+
+                    <div className="flex items-center gap-2 md:gap-4">
+                        {/* Language selector - compact on mobile */}
+                        <div className="scale-90 md:scale-100 origin-right">
+                            <LanguageSelector />
+                        </div>
+                        <Link
+                            to="/login"
+                            className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white/70 hover:text-white text-xs md:text-sm font-medium transition-all border border-white/10 hover:border-white/20 no-underline decoration-transparent"
+                        >
+                            Staff Login
+                        </Link>
+                    </div>
+                </nav>
+
+                {/* Persistent Non-Emergency Warning Banner */}
+                <div className="bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-red-500/20 border-b border-amber-500/30">
+                    <div className="max-w-6xl mx-auto px-4 py-2 flex items-center justify-center gap-2 text-center">
+                        <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                        <p className="text-amber-200 text-sm">
+                            <strong>Non-Emergency Only</strong> — For police, fire, or medical emergencies, call <strong className="text-white">911</strong>
+                        </p>
+                    </div>
                 </div>
-            </nav>
+            </div>
 
             {/* Non-Emergency Disclaimer Modal - Friendly Welcome Design */}
             <AnimatePresence>
@@ -598,16 +611,6 @@ export default function ResidentPortal() {
                 )}
             </AnimatePresence>
 
-
-            {/* Persistent Non-Emergency Warning Banner */}
-            <div className="bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-red-500/20 border-b border-amber-500/30">
-                <div className="max-w-6xl mx-auto px-4 py-2 flex items-center justify-center gap-2 text-center">
-                    <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                    <p className="text-amber-200 text-sm">
-                        <strong>Non-Emergency Only</strong> — For police, fire, or medical emergencies, call <strong className="text-white">911</strong>
-                    </p>
-                </div>
-            </div>
 
             {/* Main Content */}
             <main id="main-content" className="flex-1 px-4 py-8 md:px-8 max-w-6xl mx-auto w-full">
