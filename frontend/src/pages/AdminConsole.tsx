@@ -997,6 +997,18 @@ export default function AdminConsole() {
                                 <LogOut className="w-5 h-5 text-white/60" aria-hidden="true" />
                             </button>
                         </div>
+                        {/* Powered by Pinpoint 311 */}
+                        <div className="mt-3 pt-3 border-t border-white/5 text-center">
+                            <a
+                                href="https://github.com/WestWindsorForward/Pinpoint-311"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[10px] text-white/20 hover:text-white/40 transition-colors"
+                                data-no-translate
+                            >
+                                Powered by Pinpoint 311
+                            </a>
+                        </div>
                     </div>
                 </div>
             </aside>
