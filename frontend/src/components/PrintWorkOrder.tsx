@@ -1,4 +1,3 @@
-
 import { ServiceRequestDetail, AuditLogEntry } from '../types';
 import { Printer } from 'lucide-react';
 
@@ -37,7 +36,7 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
         // Status label
         const getStatusLabel = (status: string, substatus: string | null) => {
             if (status === 'closed') {
-                if (substatus === 'resolved') return '✓ RESOLVED';
+                if (substatus === 'resolved') return 'RESOLVED';
                 if (substatus === 'no_action') return 'NO ACTION NEEDED';
                 if (substatus === 'third_party') return 'REFERRED';
                 return 'CLOSED';
@@ -45,10 +44,24 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
             return status.toUpperCase().replace('_', ' ');
         };
 
+        // SVG Icons for formal look
+        const icons = {
+            location: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`,
+            document: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`,
+            camera: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>`,
+            brain: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-1.54"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-1.54"/></svg>`,
+            link: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`,
+            list: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`,
+            user: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
+            check: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
+            clipboard: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>`,
+            alert: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+        };
+
         // Build photos HTML
         const photosHtml = request.media_urls?.length ? `
             <div class="section">
-                <h3>📷 Photos (${request.media_urls.length})</h3>
+                <h3>${icons.camera} Photos (${request.media_urls.length})</h3>
                 <div class="photos">
                     ${request.media_urls.map(url => `<img src="${url}" alt="Issue photo" />`).join('')}
                 </div>
@@ -58,28 +71,30 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
         // Build completion photo HTML
         const completionHtml = request.status === 'closed' && (request.completion_message || request.completion_photo_url) ? `
             <div class="section completion">
-                <h3>✓ Resolution</h3>
+                <h3>${icons.check} Resolution</h3>
                 ${request.completion_message ? `<p><strong>Message:</strong> ${request.completion_message}</p>` : ''}
                 ${request.completion_photo_url ? `<img src="${request.completion_photo_url}" alt="Completion photo" style="max-height: 150px;" />` : ''}
             </div>
         ` : '';
 
-        // Build AI analysis HTML
-        const aiHtml = ai && !ai.error ? `
+        // Build AI analysis HTML - use correct field names
+        const qualitativeText = ai?.qualitative_analysis ?? request.vertex_ai_summary ?? null;
+        const aiHtml = (ai || qualitativeText) && !ai?.error && !ai?._error ? `
             <div class="section ai-analysis">
-                <h3>🤖 AI Analysis</h3>
-                ${ai.summary ? `<p><strong>Summary:</strong> ${ai.summary}</p>` : ''}
-                ${ai.classification ? `<p><strong>Classification:</strong> ${ai.classification}</p>` : ''}
-                ${ai.root_cause ? `<p><strong>Root Cause:</strong> ${ai.root_cause}</p>` : ''}
-                ${ai.recommended_action ? `<p><strong>Recommended Action:</strong> ${ai.recommended_action}</p>` : ''}
-                ${ai.safety_flags?.length ? `<p class="safety-flags"><strong>⚠️ Safety Flags:</strong> ${ai.safety_flags.join(', ')}</p>` : ''}
+                <h3>${icons.brain} AI Analysis</h3>
+                ${qualitativeText ? `<p><strong>Summary:</strong> ${qualitativeText}</p>` : ''}
+                ${ai?.classification || request.vertex_ai_classification ? `<p><strong>Classification:</strong> ${ai?.classification || request.vertex_ai_classification}</p>` : ''}
+                ${ai?.root_cause ? `<p><strong>Root Cause:</strong> ${ai.root_cause}</p>` : ''}
+                ${ai?.recommended_action ? `<p><strong>Recommended Action:</strong> ${ai.recommended_action}</p>` : ''}
+                ${ai?.similar_reports?.length ? `<p><strong>Similar Reports:</strong> ${ai.similar_reports.map((r: any) => r.service_request_id).join(', ')}</p>` : ''}
+                ${ai?.safety_flags?.length ? `<p class="safety-flags"><strong>${icons.alert} Safety Flags:</strong> ${ai.safety_flags.join(', ')}</p>` : ''}
             </div>
         ` : '';
 
         // Build matched asset HTML
         const assetHtml = matchedAsset ? `
             <div class="section asset">
-                <h3>🔗 Matched Asset</h3>
+                <h3>${icons.link} Matched Asset</h3>
                 <div class="grid">
                     <div><strong>Layer:</strong> ${matchedAsset.layer_name}</div>
                     ${matchedAsset.asset_id ? `<div><strong>Asset ID:</strong> ${matchedAsset.asset_id}</div>` : ''}
@@ -92,7 +107,7 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
         // Build timeline HTML
         const timelineHtml = auditLog?.length ? `
             <div class="section timeline">
-                <h3>📋 Timeline</h3>
+                <h3>${icons.list} Timeline</h3>
                 <table>
                     <tr><th>Date</th><th>Action</th><th>By</th><th>Details</th></tr>
                     ${auditLog.map(entry => `
@@ -107,13 +122,22 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
             </div>
         ` : '';
 
-        // Build custom fields HTML
+        // Build custom fields HTML - format labels nicely
+        const formatFieldLabel = (key: string) => {
+            return key
+                .replace(/_/g, ' ')
+                .replace(/([a-z])([A-Z])/g, '$1 $2')
+                .split(' ')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                .join(' ');
+        };
+
         const customFieldsHtml = request.custom_fields && Object.keys(request.custom_fields).length ? `
-            <div class="section">
-                <h3>📝 Additional Information</h3>
+            <div class="section custom-fields">
+                <h3>${icons.clipboard} Additional Information</h3>
                 <div class="grid">
                     ${Object.entries(request.custom_fields).map(([key, value]) => `
-                        <div><strong>${key.replace(/_/g, ' ')}:</strong> ${Array.isArray(value) ? value.join(', ') : value}</div>
+                        <div><strong>${formatFieldLabel(key)}:</strong> ${Array.isArray(value) ? value.join(', ') : value}</div>
                     `).join('')}
                 </div>
             </div>
@@ -137,7 +161,7 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         display: flex;
                         justify-content: space-between;
                         align-items: flex-start;
-                        border-bottom: 3px solid #3b82f6;
+                        border-bottom: 3px solid #1e40af;
                         padding-bottom: 15px;
                         margin-bottom: 20px;
                     }
@@ -195,6 +219,7 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         background: #f9fafb;
                         padding: 12px;
                         border-radius: 6px;
+                        border: 1px solid #e5e7eb;
                     }
                     .meta-item label {
                         display: block;
@@ -202,6 +227,7 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         color: #6b7280;
                         text-transform: uppercase;
                         margin-bottom: 2px;
+                        letter-spacing: 0.5px;
                     }
                     .meta-item span {
                         font-weight: 600;
@@ -216,12 +242,18 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         border-bottom: 1px solid #e5e7eb;
                         padding-bottom: 5px;
                         margin-bottom: 8px;
+                        display: flex;
+                        align-items: center;
+                        gap: 6px;
+                    }
+                    .section h3 svg {
+                        flex-shrink: 0;
                     }
                     .description {
                         background: #f3f4f6;
                         padding: 12px;
                         border-radius: 6px;
-                        border-left: 4px solid #3b82f6;
+                        border-left: 4px solid #1e40af;
                     }
                     .photos {
                         display: flex;
@@ -240,22 +272,33 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         gap: 5px 15px;
                     }
                     .ai-analysis {
-                        background: #faf5ff;
-                        padding: 10px;
+                        background: #f5f3ff;
+                        padding: 12px;
                         border-radius: 6px;
-                        border-left: 4px solid #8b5cf6;
+                        border-left: 4px solid #7c3aed;
                     }
                     .ai-analysis p { margin-bottom: 5px; }
-                    .safety-flags { color: #dc2626; }
+                    .safety-flags { 
+                        color: #dc2626; 
+                        display: flex;
+                        align-items: center;
+                        gap: 6px;
+                    }
                     .asset {
                         background: #ecfdf5;
-                        padding: 10px;
+                        padding: 12px;
                         border-radius: 6px;
                         border-left: 4px solid #10b981;
                     }
+                    .custom-fields {
+                        background: #fffbeb;
+                        padding: 12px;
+                        border-radius: 6px;
+                        border-left: 4px solid #f59e0b;
+                    }
                     .completion {
                         background: #d1fae5;
-                        padding: 10px;
+                        padding: 12px;
                         border-radius: 6px;
                         border-left: 4px solid #059669;
                     }
@@ -265,9 +308,10 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         border-radius: 4px;
                     }
                     .reporter {
-                        background: #fefce8;
-                        padding: 10px;
+                        background: #f0f9ff;
+                        padding: 12px;
                         border-radius: 6px;
+                        border-left: 4px solid #0284c7;
                     }
                     table {
                         width: 100%;
@@ -346,13 +390,13 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                 </div>
 
                 <div class="section">
-                    <h3>📍 Location</h3>
+                    <h3>${icons.location} Location</h3>
                     <p><strong>${request.address || 'No address'}</strong></p>
                     ${request.lat && request.long ? `<p style="color: #6b7280; font-size: 10px;">GPS: ${request.lat.toFixed(6)}, ${request.long.toFixed(6)}</p>` : ''}
                 </div>
 
                 <div class="section">
-                    <h3>📝 Issue Description</h3>
+                    <h3>${icons.document} Issue Description</h3>
                     <div class="description">${request.description}</div>
                 </div>
 
@@ -363,7 +407,7 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                 ${completionHtml}
 
                 <div class="section reporter">
-                    <h3>👤 Reporter Contact</h3>
+                    <h3>${icons.user} Reporter Contact</h3>
                     <div class="grid">
                         <div><strong>Name:</strong> ${request.first_name || ''} ${request.last_name || ''}</div>
                         <div><strong>Email:</strong> ${request.email}</div>

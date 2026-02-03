@@ -2103,6 +2103,24 @@ export default function StaffDashboard() {
                                                 );
                                             })()}
 
+                                            {/* Custom Fields / Additional Information */}
+                                            {selectedRequest.custom_fields && Object.keys(selectedRequest.custom_fields).length > 0 && (
+                                                <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 mb-4">
+                                                    <p className="text-amber-400 font-medium text-sm mb-2 flex items-center gap-2">
+                                                        <FileText className="w-4 h-4" />
+                                                        Additional Information
+                                                    </p>
+                                                    <div className="grid grid-cols-2 gap-2 text-sm">
+                                                        {Object.entries(selectedRequest.custom_fields).map(([key, value]) => (
+                                                            <div key={key} className="flex flex-col">
+                                                                <span className="text-white/40 text-xs capitalize">{key.replace(/_/g, ' ')}</span>
+                                                                <span className="text-white/80">{Array.isArray(value) ? value.join(', ') : String(value)}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+
                                             {/* Completion info */}
                                             {selectedRequest.status === 'closed' && (selectedRequest.completion_message || selectedRequest.completion_photo_url) && (
                                                 <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20 mb-4">
