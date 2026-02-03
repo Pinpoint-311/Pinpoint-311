@@ -1421,7 +1421,7 @@ export default function ResidentPortal() {
                     <p className="text-white/30 text-xs">
                         {"Powered by"}{' '}
                         <a
-                            href="https://github.com/WestWindsorForward/Pinpoint-311"
+                            href="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template"
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-primary-400/70 hover:text-primary-300 transition-colors"
