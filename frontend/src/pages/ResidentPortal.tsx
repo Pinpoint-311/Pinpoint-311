@@ -510,12 +510,14 @@ export default function ResidentPortal() {
                 </nav>
 
                 {/* Persistent Non-Emergency Warning Banner */}
-                <div className="bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-red-500/20 border-b border-amber-500/30">
-                    <div className="max-w-6xl mx-auto px-4 py-2 flex items-center justify-center gap-2 text-center">
-                        <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                        <p className="text-amber-200 text-sm">
-                            <strong>Non-Emergency Only</strong> — For police, fire, or medical emergencies, call <strong className="text-white">911</strong>
-                        </p>
+                <div className="bg-slate-900/95 backdrop-blur-sm">
+                    <div className="bg-gradient-to-r from-amber-500/30 via-orange-500/30 to-red-500/30 border-b border-amber-500/30">
+                        <div className="max-w-6xl mx-auto px-4 py-2 flex items-center justify-center gap-2 text-center">
+                            <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                            <p className="text-amber-200 text-sm">
+                                <strong>Non-Emergency Only</strong> — For police, fire, or medical emergencies, call <strong className="text-white">911</strong>
+                            </p>
+                        </div>
                     </div>
                 </div>
             </div>
