@@ -1803,19 +1803,19 @@ export default function AdminConsole() {
 
                                 <div className="space-y-4">
                                     <Card>
-                                        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                                            <div className="flex items-center gap-4">
-                                                <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center">
+                                        <div className="flex items-center justify-between gap-4">
+                                            <div className="flex items-center gap-4 flex-1 min-w-0">
+                                                <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center shrink-0">
                                                     <Sparkles className="w-6 h-6 text-blue-400" />
                                                 </div>
-                                                <div>
+                                                <div className="min-w-0">
                                                     <h3 className="font-semibold text-white">AI Analysis</h3>
-                                                    <p className="text-sm text-white/50">Enable Vertex AI triage for submissions</p>
+                                                    <p className="text-sm text-white/50 truncate">Enable Vertex AI triage for submissions</p>
                                                 </div>
                                             </div>
                                             <button
                                                 onClick={() => setModules((p) => ({ ...p, ai_analysis: !p.ai_analysis }))}
-                                                className={`w-14 h-8 rounded-full transition-colors ${modules.ai_analysis ? 'bg-primary-500' : 'bg-white/20'
+                                                className={`w-14 h-8 rounded-full transition-colors shrink-0 ${modules.ai_analysis ? 'bg-primary-500' : 'bg-white/20'
                                                     }`}
                                                 role="switch"
                                                 aria-checked={modules.ai_analysis}
@@ -1831,19 +1831,19 @@ export default function AdminConsole() {
                                     </Card>
 
                                     <Card>
-                                        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                                            <div className="flex items-center gap-4">
-                                                <div className="w-12 h-12 rounded-xl bg-green-500/20 flex items-center justify-center">
+                                        <div className="flex items-center justify-between gap-4">
+                                            <div className="flex items-center gap-4 flex-1 min-w-0">
+                                                <div className="w-12 h-12 rounded-xl bg-green-500/20 flex items-center justify-center shrink-0">
                                                     <MessageSquare className="w-6 h-6 text-green-400" />
                                                 </div>
-                                                <div>
+                                                <div className="min-w-0">
                                                     <h3 className="font-semibold text-white">SMS Alerts</h3>
-                                                    <p className="text-sm text-white/50">Enable SMS notifications to residents</p>
+                                                    <p className="text-sm text-white/50 truncate">Enable SMS notifications to residents</p>
                                                 </div>
                                             </div>
                                             <button
                                                 onClick={() => setModules((p) => ({ ...p, sms_alerts: !p.sms_alerts }))}
-                                                className={`w-14 h-8 rounded-full transition-colors ${modules.sms_alerts ? 'bg-primary-500' : 'bg-white/20'
+                                                className={`w-14 h-8 rounded-full transition-colors shrink-0 ${modules.sms_alerts ? 'bg-primary-500' : 'bg-white/20'
                                                     }`}
                                                 role="switch"
                                                 aria-checked={modules.sms_alerts}
@@ -1859,19 +1859,19 @@ export default function AdminConsole() {
                                     </Card>
 
                                     <Card>
-                                        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                                            <div className="flex items-center gap-4">
-                                                <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center">
+                                        <div className="flex items-center justify-between gap-4">
+                                            <div className="flex items-center gap-4 flex-1 min-w-0">
+                                                <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center shrink-0">
                                                     <Mail className="w-6 h-6 text-blue-400" />
                                                 </div>
-                                                <div>
+                                                <div className="min-w-0">
                                                     <h3 className="font-semibold text-white">Email Notifications</h3>
-                                                    <p className="text-sm text-white/50">Send email updates to residents</p>
+                                                    <p className="text-sm text-white/50 truncate">Send email updates to residents</p>
                                                 </div>
                                             </div>
                                             <button
                                                 onClick={() => setModules((p) => ({ ...p, email_notifications: !p.email_notifications }))}
-                                                className={`w-14 h-8 rounded-full transition-colors ${modules.email_notifications ? 'bg-primary-500' : 'bg-white/20'
+                                                className={`w-14 h-8 rounded-full transition-colors shrink-0 ${modules.email_notifications ? 'bg-primary-500' : 'bg-white/20'
                                                     }`}
                                                 role="switch"
                                                 aria-checked={modules.email_notifications}
@@ -1887,19 +1887,19 @@ export default function AdminConsole() {
                                     </Card>
 
                                     <Card>
-                                        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                                            <div className="flex items-center gap-4">
-                                                <div className="w-12 h-12 rounded-xl bg-amber-500/20 flex items-center justify-center">
+                                        <div className="flex items-center justify-between gap-4">
+                                            <div className="flex items-center gap-4 flex-1 min-w-0">
+                                                <div className="w-12 h-12 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
                                                     <BarChart3 className="w-6 h-6 text-amber-400" />
                                                 </div>
-                                                <div>
+                                                <div className="min-w-0">
                                                     <h3 className="font-semibold text-white">Research Portal</h3>
-                                                    <p className="text-sm text-white/50">Enable researcher access to anonymized data exports</p>
+                                                    <p className="text-sm text-white/50 truncate">Enable researcher access to anonymized data exports</p>
                                                 </div>
                                             </div>
                                             <button
                                                 onClick={() => setModules((p) => ({ ...p, research_portal: !p.research_portal }))}
-                                                className={`w-14 h-8 rounded-full transition-colors ${modules.research_portal ? 'bg-primary-500' : 'bg-white/20'
+                                                className={`w-14 h-8 rounded-full transition-colors shrink-0 ${modules.research_portal ? 'bg-primary-500' : 'bg-white/20'
                                                     }`}
                                                 role="switch"
                                                 aria-checked={modules.research_portal}
@@ -2175,34 +2175,38 @@ export default function AdminConsole() {
                                                     {mapLayers.map((layer) => (
                                                         <div
                                                             key={layer.id}
-                                                            className="flex items-center gap-4 p-4 rounded-xl bg-white/5 border border-white/10"
+                                                            className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-3"
                                                         >
-                                                            <div
-                                                                className="w-8 h-8 rounded-lg border-2"
-                                                                style={{
-                                                                    backgroundColor: layer.fill_color + Math.round(layer.fill_opacity * 255).toString(16).padStart(2, '0'),
-                                                                    borderColor: layer.stroke_color,
-                                                                }}
-                                                            />
-                                                            <div className="flex-1">
-                                                                <div className="flex items-center gap-2">
-                                                                    <span className="font-medium text-white">{layer.name}</span>
-                                                                    {layer.layer_type && (
-                                                                        <Badge variant="default" size="sm">
-                                                                            {layer.layer_type}
-                                                                        </Badge>
-                                                                    )}
-                                                                    {!layer.is_active && (
-                                                                        <Badge variant="default" size="sm">
-                                                                            Disabled
-                                                                        </Badge>
+                                                            {/* Layer info row */}
+                                                            <div className="flex items-start gap-3">
+                                                                <div
+                                                                    className="w-8 h-8 rounded-lg border-2 shrink-0"
+                                                                    style={{
+                                                                        backgroundColor: layer.fill_color + Math.round(layer.fill_opacity * 255).toString(16).padStart(2, '0'),
+                                                                        borderColor: layer.stroke_color,
+                                                                    }}
+                                                                />
+                                                                <div className="flex-1 min-w-0">
+                                                                    <div className="flex flex-wrap items-center gap-2">
+                                                                        <span className="font-medium text-white">{layer.name}</span>
+                                                                        {layer.layer_type && (
+                                                                            <Badge variant="default" size="sm">
+                                                                                {layer.layer_type}
+                                                                            </Badge>
+                                                                        )}
+                                                                        {!layer.is_active && (
+                                                                            <Badge variant="default" size="sm">
+                                                                                Disabled
+                                                                            </Badge>
+                                                                        )}
+                                                                    </div>
+                                                                    {layer.description && (
+                                                                        <p className="text-sm text-white/50 truncate">{layer.description}</p>
                                                                     )}
                                                                 </div>
-                                                                {layer.description && (
-                                                                    <p className="text-sm text-white/50">{layer.description}</p>
-                                                                )}
                                                             </div>
-                                                            <div className="flex items-center gap-2">
+                                                            {/* Actions row */}
+                                                            <div className="flex items-center justify-between pt-2 border-t border-white/5">
                                                                 <label className="flex items-center gap-2 text-sm text-white/60">
                                                                     <input
                                                                         type="checkbox"
@@ -2221,49 +2225,51 @@ export default function AdminConsole() {
                                                                     />
                                                                     Show
                                                                 </label>
-                                                                <Button
-                                                                    variant="ghost"
-                                                                    size="sm"
-                                                                    onClick={() => {
-                                                                        setEditingLayer(layer);
-                                                                        setNewLayer({
-                                                                            name: layer.name,
-                                                                            description: layer.description || '',
-                                                                            layer_type: (layer as any).layer_type || 'polygon',
-                                                                            fill_color: layer.fill_color,
-                                                                            stroke_color: layer.stroke_color,
-                                                                            fill_opacity: layer.fill_opacity,
-                                                                            stroke_width: layer.stroke_width,
-                                                                            service_codes: layer.service_codes || [],
-                                                                            geojson: layer.geojson,
-                                                                            routing_mode: ((layer as any).routing_mode === 'block' ? 'block' : 'log') as 'log' | 'block',
-                                                                            routing_config: (layer as any).routing_config || null,
-                                                                            visible_on_map: (layer as any).visible_on_map ?? true,
-                                                                        });
-                                                                        // Always load services for category selection
-                                                                        api.getServices().then(setServices).catch(console.error);
-                                                                        setShowLayerModal(true);
-                                                                    }}
-                                                                >
-                                                                    <Edit className="w-4 h-4" />
-                                                                </Button>
-                                                                <Button
-                                                                    variant="ghost"
-                                                                    size="sm"
-                                                                    onClick={async () => {
-                                                                        if (!confirm(`Delete layer "${layer.name}"?`)) return;
-                                                                        try {
-                                                                            await api.deleteMapLayer(layer.id);
-                                                                            loadTabData();
-                                                                            setSaveMessage('Layer deleted');
-                                                                            setTimeout(() => setSaveMessage(null), 3000);
-                                                                        } catch (err) {
-                                                                            console.error('Failed to delete layer:', err);
-                                                                        }
-                                                                    }}
-                                                                >
-                                                                    <Trash2 className="w-4 h-4 text-red-400" />
-                                                                </Button>
+                                                                <div className="flex items-center gap-1">
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="sm"
+                                                                        onClick={() => {
+                                                                            setEditingLayer(layer);
+                                                                            setNewLayer({
+                                                                                name: layer.name,
+                                                                                description: layer.description || '',
+                                                                                layer_type: (layer as any).layer_type || 'polygon',
+                                                                                fill_color: layer.fill_color,
+                                                                                stroke_color: layer.stroke_color,
+                                                                                fill_opacity: layer.fill_opacity,
+                                                                                stroke_width: layer.stroke_width,
+                                                                                service_codes: layer.service_codes || [],
+                                                                                geojson: layer.geojson,
+                                                                                routing_mode: ((layer as any).routing_mode === 'block' ? 'block' : 'log') as 'log' | 'block',
+                                                                                routing_config: (layer as any).routing_config || null,
+                                                                                visible_on_map: (layer as any).visible_on_map ?? true,
+                                                                            });
+                                                                            // Always load services for category selection
+                                                                            api.getServices().then(setServices).catch(console.error);
+                                                                            setShowLayerModal(true);
+                                                                        }}
+                                                                    >
+                                                                        <Edit className="w-4 h-4" />
+                                                                    </Button>
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="sm"
+                                                                        onClick={async () => {
+                                                                            if (!confirm(`Delete layer "${layer.name}"?`)) return;
+                                                                            try {
+                                                                                await api.deleteMapLayer(layer.id);
+                                                                                loadTabData();
+                                                                                setSaveMessage('Layer deleted');
+                                                                                setTimeout(() => setSaveMessage(null), 3000);
+                                                                            } catch (err) {
+                                                                                console.error('Failed to delete layer:', err);
+                                                                            }
+                                                                        }}
+                                                                    >
+                                                                        <Trash2 className="w-4 h-4 text-red-400" />
+                                                                    </Button>
+                                                                </div>
                                                             </div>
                                                         </div>
                                                     ))}

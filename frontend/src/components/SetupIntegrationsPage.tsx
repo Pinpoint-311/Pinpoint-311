@@ -174,7 +174,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         </div>
 
                         <div className="mt-4 text-xs text-gray-500">
-                            Callback: <code className="bg-white/10 px-1 rounded">{window.location.origin}/api/auth/callback</code>
+                            Callback: <code className="bg-white/10 px-1 rounded break-all">{window.location.origin}/api/auth/callback</code>
                         </div>
                     </Card>
 
