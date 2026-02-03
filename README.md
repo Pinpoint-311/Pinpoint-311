@@ -888,6 +888,28 @@ The following are generally considered out of scope for security reports:
 
 ---
 
+## 🔄 Sustainability & Continuity
+
+**Can this system stand on its own if Pinpoint 311 disappears tomorrow?**
+
+**Yes.** Every deployment is 100% self-hosted on YOUR infrastructure.
+
+| Aspect | Status |
+|--------|--------|
+| **Code Ownership** | ✅ Full source code on your server |
+| **Data Ownership** | ✅ PostgreSQL database you control |
+| **License** | ✅ MIT - fork, modify, redistribute freely |
+| **Dependencies** | ✅ All open-source with public documentation |
+| **Phone-Home** | ✅ None - no calls to Pinpoint 311 servers |
+| **Self-Healing** | ✅ Auto-restart, health checks, Watchtower updates |
+
+**What you'd handle independently:**
+- Security patches for dependencies
+- New features and bug fixes
+- Any developer familiar with Python/FastAPI + React can maintain this codebase
+
+---
+
 ## 📄 License
 
 Pinpoint 311 is open-source software licensed under the [MIT License](LICENSE).
