@@ -159,10 +159,15 @@ export default function CostTracker() {
                             Estimates Only — Verify with Provider Billing
                         </p>
                         <p className="text-amber-700 dark:text-amber-400 mt-1">
-                            These are rough estimates based on tracked API calls. <strong>Actual costs may differ significantly</strong> due to:
-                            free tier allowances (e.g., Maps $200/month credit, Translation 500K chars/month, Secret Manager 10K ops/month),
-                            pricing changes, and usage from other projects sharing the same billing account.
-                            Always verify costs in your Google Cloud Console, Twilio Dashboard, or email provider billing.
+                            These are rough estimates based on tracked API calls. <strong>Actual costs may differ significantly.</strong>
+                        </p>
+                        <ul className="text-amber-700 dark:text-amber-400 mt-2 space-y-1 list-disc list-inside">
+                            <li><strong>Tracking may be incomplete:</strong> Some API calls may not be captured (e.g., cached responses, client-side operations, or edge cases)</li>
+                            <li><strong>Free tiers not subtracted:</strong> Maps $200/month credit, Translation 500K chars/month, Secret Manager/KMS 10K ops/month</li>
+                            <li><strong>Pricing may change:</strong> Rates are estimates and may not reflect current provider pricing</li>
+                        </ul>
+                        <p className="text-amber-700 dark:text-amber-400 mt-2">
+                            <strong>Always verify actual costs</strong> in your Google Cloud Console, Twilio Dashboard, or email provider billing.
                         </p>
                     </div>
                 </div>
