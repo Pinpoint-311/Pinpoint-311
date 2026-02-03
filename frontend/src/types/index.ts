@@ -173,10 +173,10 @@ export interface RequestComment {
 export interface AuditLogEntry {
     id: number;
     service_request_id: number;
-    action: 'submitted' | 'status_change' | 'department_assigned' | 'staff_assigned' | 'comment_added';
+    action: 'submitted' | 'status_change' | 'department_assigned' | 'staff_assigned' | 'comment_added' | 'legal_hold' | 'deleted' | 'restored' | 'priority_accepted';
     old_value: string | null;
     new_value: string | null;
-    actor_type: 'resident' | 'staff';
+    actor_type: 'resident' | 'staff' | 'admin';
     actor_name: string | null;
     created_at: string | null;
     extra_data: {

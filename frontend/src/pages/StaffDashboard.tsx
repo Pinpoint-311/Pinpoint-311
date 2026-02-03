@@ -2361,7 +2361,7 @@ export default function StaffDashboard() {
                                                                 actionConfig = { color: 'bg-teal-500', text: 'Comment added' };
                                                             } else if (entry.action === 'legal_hold') {
                                                                 // Show if legal hold was enabled or removed
-                                                                const isEnabled = entry.new_value === 'true' || entry.new_value === 'True';
+                                                                const isEnabled = entry.new_value === 'enabled';
                                                                 actionConfig = {
                                                                     color: isEnabled ? 'bg-amber-500' : 'bg-gray-500',
                                                                     text: isEnabled ? '⚖️ Legal Hold Enabled' : '⚖️ Legal Hold Removed'
@@ -2396,8 +2396,8 @@ export default function StaffDashboard() {
                                                                     <div className="flex-1 min-w-0 -mt-0.5">
                                                                         <div className="flex items-center gap-2 flex-wrap">
                                                                             <span className="text-white/90 text-sm font-medium">{actionConfig.text}</span>
-                                                                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${entry.actor_type === 'staff' ? 'bg-purple-500/20 text-purple-300' : 'bg-blue-500/20 text-blue-300'}`}>
-                                                                                {entry.actor_type === 'staff' ? entry.actor_name || 'Staff' : 'Resident'}
+                                                                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${entry.actor_type === 'staff' || entry.actor_type === 'admin' ? 'bg-purple-500/20 text-purple-300' : 'bg-blue-500/20 text-blue-300'}`}>
+                                                                                {entry.actor_type === 'staff' || entry.actor_type === 'admin' ? entry.actor_name || 'Staff' : 'Resident'}
                                                                             </span>
                                                                         </div>
                                                                         <div className="text-white/40 text-xs mt-0.5">
