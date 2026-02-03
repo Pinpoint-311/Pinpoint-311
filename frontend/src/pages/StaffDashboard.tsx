@@ -1726,21 +1726,21 @@ export default function StaffDashboard() {
 
                                                             {/* Priority Actions - Large, Easy to Tap Buttons */}
                                                             {(priorityScore || selectedRequest.manual_priority_score) && !hasError && (
-                                                                <div className="space-y-2">
+                                                                <div className="space-y-3">
                                                                     {/* Priority Display */}
                                                                     <div className={`flex items-center justify-between p-3 rounded-xl ${(selectedRequest.manual_priority_score ?? priorityScore) >= 8 ? 'bg-red-500/10 border border-red-500/20' :
-                                                                            (selectedRequest.manual_priority_score ?? priorityScore) >= 6 ? 'bg-amber-500/10 border border-amber-500/20' :
-                                                                                (selectedRequest.manual_priority_score ?? priorityScore) >= 4 ? 'bg-blue-500/10 border border-blue-500/20' :
-                                                                                    'bg-green-500/10 border border-green-500/20'
+                                                                        (selectedRequest.manual_priority_score ?? priorityScore) >= 6 ? 'bg-amber-500/10 border border-amber-500/20' :
+                                                                            (selectedRequest.manual_priority_score ?? priorityScore) >= 4 ? 'bg-blue-500/10 border border-blue-500/20' :
+                                                                                'bg-green-500/10 border border-green-500/20'
                                                                         }`}>
                                                                         <div>
                                                                             <p className="text-xs text-white/50 mb-0.5">
                                                                                 {selectedRequest.manual_priority_score ? 'Confirmed Priority' : 'AI Suggested Priority'}
                                                                             </p>
                                                                             <p className={`text-2xl font-bold ${(selectedRequest.manual_priority_score ?? priorityScore) >= 8 ? 'text-red-400' :
-                                                                                    (selectedRequest.manual_priority_score ?? priorityScore) >= 6 ? 'text-amber-400' :
-                                                                                        (selectedRequest.manual_priority_score ?? priorityScore) >= 4 ? 'text-blue-400' :
-                                                                                            'text-green-400'
+                                                                                (selectedRequest.manual_priority_score ?? priorityScore) >= 6 ? 'text-amber-400' :
+                                                                                    (selectedRequest.manual_priority_score ?? priorityScore) >= 4 ? 'text-blue-400' :
+                                                                                        'text-green-400'
                                                                                 }`}>
                                                                                 {Number(selectedRequest.manual_priority_score ?? priorityScore).toFixed(1)}
                                                                                 <span className="text-sm font-normal opacity-50"> / 10</span>
@@ -1756,7 +1756,7 @@ export default function StaffDashboard() {
 
                                                                     {/* Action Buttons - Full Width, Easy to Tap */}
                                                                     {priorityScore && !selectedRequest.manual_priority_score && (
-                                                                        <div className="flex gap-2">
+                                                                        <div className="flex gap-2 mt-3">
                                                                             <button
                                                                                 onClick={async () => {
                                                                                     setIsUpdatingPriority(true);
