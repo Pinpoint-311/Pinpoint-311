@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { MapPin, Crosshair, Loader2 } from 'lucide-react';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
-import { MapLayer } from '../services/api';
+import { MapLayer, api } from '../services/api';
 
 declare global {
     interface Window {
@@ -184,18 +184,26 @@ export default function GoogleMapsLocationPicker({
         }
     }, [value?.address]);
 
-    // Reverse geocode coordinates to get formatted address
+    // Reverse geocode coordinates to get formatted address - uses backend API for tracking
     const reverseGeocode = useCallback(async (lat: number, lng: number): Promise<string> => {
-        return new Promise((resolve) => {
-            const geocoder = new window.google.maps.Geocoder();
-            geocoder.geocode({ location: { lat, lng } }, (results: google.maps.GeocoderResult[] | null, status: google.maps.GeocoderStatus) => {
-                if (status === 'OK' && results && results[0]) {
-                    resolve(results[0].formatted_address);
-                } else {
-                    resolve(`${lat.toFixed(6)}, ${lng.toFixed(6)}`);
-                }
+        try {
+            // Use backend API which tracks usage for cost monitoring
+            const result = await api.reverseGeocode(lat, lng);
+            return result.formatted_address;
+        } catch (error) {
+            console.warn('Backend geocode failed, falling back to Google SDK:', error);
+            // Fallback to direct Google Maps SDK
+            return new Promise((resolve) => {
+                const geocoder = new window.google.maps.Geocoder();
+                geocoder.geocode({ location: { lat, lng } }, (results: google.maps.GeocoderResult[] | null, status: google.maps.GeocoderStatus) => {
+                    if (status === 'OK' && results && results[0]) {
+                        resolve(results[0].formatted_address);
+                    } else {
+                        resolve(`${lat.toFixed(6)}, ${lng.toFixed(6)}`);
+                    }
+                });
             });
-        });
+        }
     }, []);
 
     // Place marker on map with a visible custom pin
@@ -466,10 +474,8 @@ export default function GoogleMapsLocationPicker({
                                                 });
                                             }
 
-                                            // Reverse geocode to get address
-                                            const geocoder = new window.google.maps.Geocoder();
-                                            geocoder.geocode({ location: { lat: markerLat, lng: markerLng } }, (results: any, status: any) => {
-                                                const address = status === 'OK' && results?.[0]?.formatted_address || `${markerLat.toFixed(6)}, ${markerLng.toFixed(6)}`;
+                                            // Reverse geocode to get address via backend API (for tracking)
+                                            reverseGeocode(markerLat, markerLng).then(address => {
                                                 onChange({ address, lat: markerLat, lng: markerLng });
                                             });
 
