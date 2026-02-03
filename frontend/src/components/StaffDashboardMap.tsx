@@ -67,7 +67,8 @@ export default function StaffDashboardMap({
 
     // UI state
     const [isLoading, setIsLoading] = useState(true);
-    const [showFilters, setShowFilters] = useState(true);
+    // Start with filters closed on mobile for better UX
+    const [showFilters, setShowFilters] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 768);
     const [mapType, setMapType] = useState<string>('hybrid');
     const [expandedSections, setExpandedSections] = useState({
         status: true,

@@ -183,6 +183,8 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
         setSelectedRequest(request);
         // Notify parent of selection for hash update
         onRequestSelect?.(request.service_request_id);
+        // Scroll to top of the page
+        window.scrollTo({ top: 0, behavior: 'instant' });
 
         // Fetch full details with media in background
         try {
@@ -198,6 +200,8 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
         setSelectedRequest(null);
         // Notify parent to update hash back to track list
         onRequestSelect?.(null);
+        // Scroll to top of the page
+        window.scrollTo({ top: 0, behavior: 'instant' });
     };
 
 
@@ -696,26 +700,28 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
     // List View
     return (
         <div className="min-h-screen">
-            {/* Header */}
-            <div className="mb-8">
-                <h2 className="text-3xl font-bold text-white mb-2">{"Track Requests"}</h2>
-                <p className="text-white/60 text-lg">{"View the status of community-reported issues"}</p>
+            {/* Compact Header - Mobile Optimized */}
+            <div className="mb-6">
+                <h2 className="text-2xl md:text-3xl font-bold text-white mb-1">{"Track Requests"}</h2>
+                <p className="text-white/60 text-sm md:text-lg">{"View the status of community-reported issues"}</p>
             </div>
 
-            {/* Filters */}
-            <div className="flex flex-col sm:flex-row gap-4 mb-8">
-                <div className="flex-1">
-                    <div className="relative">
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
-                        <Input
-                            placeholder={"Search by ID, category, or address..."}
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            className="pl-12 h-12 text-base"
-                        />
-                    </div>
+            {/* Search - Full width on mobile */}
+            <div className="mb-4">
+                <div className="relative">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
+                    <Input
+                        placeholder={"Search by ID, category, or address..."}
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="pl-12 h-12 text-base"
+                    />
                 </div>
-                <div className="flex gap-2 flex-wrap">
+            </div>
+
+            {/* Status Filter Tabs - Horizontal Scroll on Mobile */}
+            <div className="mb-4 overflow-x-auto scrollbar-hide -mx-4 px-4 md:mx-0 md:px-0">
+                <div className="flex gap-2 min-w-max md:flex-wrap">
                     {(['all', 'open', 'in_progress', 'closed'] as StatusFilter[]).map((filterStatus) => {
                         const colors = statusColors[filterStatus];
                         const isActive = statusFilter === filterStatus;
@@ -723,7 +729,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                             <button
                                 key={filterStatus}
                                 onClick={() => setStatusFilter(filterStatus)}
-                                className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${isActive
+                                className={`px-4 py-2 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${isActive
                                     ? filterStatus === 'all'
                                         ? 'bg-primary-500 text-white'
                                         : `${colors?.bg} ${colors?.text} ${colors?.border} border`
@@ -737,8 +743,8 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                 </div>
             </div>
 
-            {/* Stats Summary - Moved above list */}
-            <div className="grid grid-cols-3 gap-4 mb-8">
+            {/* Stats Summary - Compact on mobile */}
+            <div className="grid grid-cols-3 gap-2 md:gap-4 mb-6">
                 {[
                     { status: 'open', color: 'amber', label: "Open" },
                     { status: 'in_progress', color: 'blue', label: "In Progress" },
@@ -747,12 +753,12 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                     <button
                         key={status}
                         onClick={() => setStatusFilter(status as StatusFilter)}
-                        className={`p-4 rounded-2xl bg-gradient-to-br from-${color}-500/10 to-${color}-500/5 border border-${color}-500/20 hover:border-${color}-500/40 transition-all text-center group`}
+                        className={`p-3 md:p-4 rounded-xl md:rounded-2xl bg-gradient-to-br from-${color}-500/10 to-${color}-500/5 border border-${color}-500/20 hover:border-${color}-500/40 transition-all text-center group`}
                     >
-                        <div className={`text-4xl font-bold text-${color}-400 group-hover:scale-110 transition-transform`}>
+                        <div className={`text-2xl md:text-4xl font-bold text-${color}-400 group-hover:scale-110 transition-transform`}>
                             {requests.filter(r => r.status === status).length}
                         </div>
-                        <div className="text-sm text-white/50 mt-1">{label}</div>
+                        <div className="text-xs md:text-sm text-white/50 mt-1">{label}</div>
                     </button>
                 ))}
             </div>
