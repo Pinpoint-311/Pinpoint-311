@@ -1426,7 +1426,7 @@ export default function StaffDashboard() {
                             </div>
 
                             {/* Request List */}
-                            <div className="flex-1 overflow-auto">
+                            <div className="flex-1 overflow-auto overscroll-contain">
                                 {isLoading ? (
                                     <div className="flex justify-center py-12">
                                         <div className="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
