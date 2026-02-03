@@ -9,13 +9,24 @@ Pinpoint 311 is **100% free and open-source**. You only pay for the cloud servic
 | **SeeClickFix** | $8,000 - $15,000 | ❌ Vendor-hosted |
 | **PublicStuff/Accela** | $12,000 - $25,000 | ❌ Vendor-hosted |
 | **311 GovPilot** | $10,000 - $20,000 | ❌ Vendor-hosted |
-| **Pinpoint 311** | **$50 - $200/month** | ✅ You own it |
+| **Pinpoint 311** | **$2 - $100/month** | ✅ You own it |
 
 ---
 
 ## 🖥️ Infrastructure Costs
 
-### Self-Hosted VPS (Recommended)
+### Use Your Existing Server (Most Common)
+
+Most municipalities already have IT infrastructure. Pinpoint 311 runs on **any Linux server with Docker**:
+
+| Approach | Monthly | Notes |
+|----------|---------|-------|
+| **Existing municipal server** | **$0** | Just install Docker |
+| **Existing VM/cloud account** | **$0** | Add as a container |
+
+> 💡 **If you already have a server, your infrastructure cost is $0.**
+
+### Need a New Server? (Optional)
 
 | Provider | Specs | Monthly | Notes |
 |----------|-------|---------|-------|
@@ -23,8 +34,6 @@ Pinpoint 311 is **100% free and open-source**. You only pay for the cloud servic
 | **Hetzner** | 4 vCPU, 8GB RAM | **$15** | Best value in EU/US |
 | **DigitalOcean** | 4 vCPU, 8GB RAM | $48 | Simple setup |
 | **AWS Lightsail** | 4 vCPU, 8GB RAM | $80 | AWS ecosystem |
-
-> 💡 **Recommendation**: Start with Oracle Cloud's free tier or Hetzner for the best value.
 
 ---
 
@@ -97,7 +106,7 @@ All variable costs are based on actual usage. Here's what a typical municipality
 
 | Component | Monthly Cost |
 |-----------|--------------|
-| VPS (Oracle Free) | $0 |
+| Server (existing) | $0 |
 | Google Maps | $0 (within credit) |
 | Vertex AI | $1 |
 | Translate | $0 |
@@ -112,13 +121,13 @@ All variable costs are based on actual usage. Here's what a typical municipality
 
 | Component | Monthly Cost |
 |-----------|--------------|
-| VPS (Hetzner) | $15 |
+| Server (existing) | $0 |
 | Google Maps | $0 (within credit) |
 | Vertex AI | $5 |
 | Translate | $2 |
 | SMS (500 msgs) | $4 |
 | Email | $0 |
-| **TOTAL** | **~$26/month** |
+| **TOTAL** | **~$11/month** |
 
 ---
 
@@ -127,13 +136,13 @@ All variable costs are based on actual usage. Here's what a typical municipality
 
 | Component | Monthly Cost |
 |-----------|--------------|
-| VPS (DigitalOcean 8GB) | $48 |
+| Server (existing) | $0 |
 | Google Maps | $20 |
 | Vertex AI | $15 |
 | Translate | $10 |
 | SMS (2K msgs) | $16 |
 | Email (AWS SES) | $2 |
-| **TOTAL** | **~$111/month** |
+| **TOTAL** | **~$63/month** |
 
 ---
 
@@ -152,8 +161,10 @@ All variable costs are based on actual usage. Here's what a typical municipality
 | Population | Monthly | Annual | vs. SeeClickFix |
 |------------|---------|--------|-----------------|
 | 5,000 | $2 | **$24** | Save $8,000+ |
-| 25,000 | $26 | **$312** | Save $10,000+ |
-| 100,000 | $111 | **$1,332** | Save $15,000+ |
+| 25,000 | $11 | **$132** | Save $10,000+ |
+| 100,000 | $63 | **$756** | Save $15,000+ |
+
+> 💡 **These assume you're using existing municipal servers.** If you need a new VPS, add $15-80/month.
 
 ---
 
