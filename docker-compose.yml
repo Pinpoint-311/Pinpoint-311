@@ -172,15 +172,12 @@ services:
   frontend:
     build: ./frontend
     restart: unless-stopped
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
     ports:
-      - "${FRONTEND_PORT:-5173}:5173"
+      - "${FRONTEND_PORT:-5173}:80"
     environment:
       - VITE_API_URL=/api
     healthcheck:
-      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:5173" ]
+      test: [ "CMD", "curl", "-f", "http://localhost:80" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -192,10 +189,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: 256M
+          cpus: '1'
+          memory: 512M
         reservations:
-          memory: 64M
+          memory: 128M
     security_opt:
       - no-new-privileges:true
 
