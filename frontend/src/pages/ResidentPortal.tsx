@@ -468,8 +468,8 @@ export default function ResidentPortal() {
 
     return (
         <div className="min-h-screen flex flex-col">
-            {/* Navigation */}
-            <nav className="glass-sidebar py-4 px-6 flex items-center justify-between sticky top-0 z-40" aria-label="Main navigation">
+            {/* Navigation - Clean Mobile Header */}
+            <nav className="glass-sidebar py-3 md:py-4 px-4 md:px-6 flex items-center justify-between sticky top-0 z-40" aria-label="Main navigation">
                 <button
                     onClick={() => {
                         setShowTrackingView(false);
@@ -478,28 +478,32 @@ export default function ResidentPortal() {
                         updateHash('');
                         scrollToTop('instant');
                     }}
-                    className="flex items-center gap-3 hover:opacity-80 transition-opacity cursor-pointer"
+                    className="flex items-center gap-2 md:gap-3 hover:opacity-80 transition-opacity cursor-pointer"
                     aria-label="Go to home page"
                 >
                     {settings?.logo_url ? (
-                        <img src={settings.logo_url} alt="Logo" className="h-10 w-auto" />
+                        <img src={settings.logo_url} alt="Logo" className="h-8 md:h-10 w-auto" />
                     ) : (
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
-                            <Sparkles className="w-6 h-6 text-white" />
+                        <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
+                            <Sparkles className="w-4 h-4 md:w-6 md:h-6 text-white" />
                         </div>
                     )}
-                    <h1 className="text-xl font-semibold text-white hidden sm:block" data-no-translate>
+                    <h1 className="text-lg md:text-xl font-semibold text-white hidden sm:block" data-no-translate>
                         {settings?.township_name || 'Township 311'}
                     </h1>
                 </button>
 
-                <div className="flex items-center gap-4">
-                    <LanguageSelector />
+                <div className="flex items-center gap-2 md:gap-4">
+                    {/* Language selector - compact on mobile */}
+                    <div className="scale-90 md:scale-100 origin-right">
+                        <LanguageSelector />
+                    </div>
                     <Link
                         to="/login"
-                        className="text-white/60 hover:text-white text-sm font-medium transition-colors"
+                        className="text-white/50 hover:text-white text-xs md:text-sm font-medium transition-colors"
                     >
-                        Staff Login
+                        <span className="hidden sm:inline">Staff Login</span>
+                        <span className="sm:hidden">Staff</span>
                     </Link>
                 </div>
             </nav>

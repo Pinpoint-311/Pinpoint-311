@@ -746,19 +746,22 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
             {/* Stats Summary - Compact on mobile */}
             <div className="grid grid-cols-3 gap-2 md:gap-4 mb-6">
                 {[
-                    { status: 'open', color: 'amber', label: "Open" },
-                    { status: 'in_progress', color: 'blue', label: "In Progress" },
-                    { status: 'closed', color: 'emerald', label: "Resolved" },
-                ].map(({ status, color, label }) => (
+                    { status: 'open', color: 'amber', label: "Open", mobileLabel: "Open" },
+                    { status: 'in_progress', color: 'blue', label: "In Progress", mobileLabel: "Active" },
+                    { status: 'closed', color: 'emerald', label: "Resolved", mobileLabel: "Done" },
+                ].map(({ status, color, label, mobileLabel }) => (
                     <button
                         key={status}
                         onClick={() => setStatusFilter(status as StatusFilter)}
-                        className={`p-3 md:p-4 rounded-xl md:rounded-2xl bg-gradient-to-br from-${color}-500/10 to-${color}-500/5 border border-${color}-500/20 hover:border-${color}-500/40 transition-all text-center group`}
+                        className={`p-2 md:p-4 rounded-xl md:rounded-2xl bg-gradient-to-br from-${color}-500/10 to-${color}-500/5 border border-${color}-500/20 hover:border-${color}-500/40 transition-all text-center group overflow-hidden`}
                     >
-                        <div className={`text-2xl md:text-4xl font-bold text-${color}-400 group-hover:scale-110 transition-transform`}>
+                        <div className={`text-xl md:text-4xl font-bold text-${color}-400 group-hover:scale-110 transition-transform`}>
                             {requests.filter(r => r.status === status).length}
                         </div>
-                        <div className="text-xs md:text-sm text-white/50 mt-1">{label}</div>
+                        <div className="text-[10px] md:text-sm text-white/50 mt-1 truncate">
+                            <span className="hidden md:inline">{label}</span>
+                            <span className="md:hidden">{mobileLabel}</span>
+                        </div>
                     </button>
                 ))}
             </div>
