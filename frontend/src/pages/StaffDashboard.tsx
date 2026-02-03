@@ -1699,31 +1699,64 @@ export default function StaffDashboard() {
                                                         {/* Professional accent line */}
                                                         <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-primary-500/50 via-purple-500/50 to-primary-500/50" />
 
-                                                        <div className="p-4 md:p-5">
-                                                            {/* Header Row - Stack on mobile, side-by-side on larger screens */}
-                                                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-2">
-                                                                <button
-                                                                    onClick={() => setIsAIExpanded(!isAIExpanded)}
-                                                                    className="flex items-center gap-2.5 text-left hover:opacity-80 transition-opacity"
-                                                                >
-                                                                    <div className="p-1.5 sm:p-2 rounded-lg bg-white/5 ring-1 ring-white/10">
-                                                                        <Brain className="w-4 h-4 text-primary-400" />
+                                                        <div className="p-4">
+                                                            {/* Simple Header - Just label and expand toggle */}
+                                                            <button
+                                                                onClick={() => setIsAIExpanded(!isAIExpanded)}
+                                                                className="w-full flex items-center justify-between mb-3"
+                                                            >
+                                                                <div className="flex items-center gap-3">
+                                                                    <div className="p-2 rounded-xl bg-gradient-to-br from-primary-500/20 to-purple-500/20 ring-1 ring-white/10">
+                                                                        <Brain className="w-5 h-5 text-primary-400" />
                                                                     </div>
-                                                                    <div className="min-w-0">
-                                                                        <span className="text-xs sm:text-sm font-bold text-white tracking-wide uppercase">Actionable Intelligence</span>
-                                                                        <div className="flex items-center gap-1.5">
-                                                                            <p className="text-[9px] sm:text-[10px] text-white/40 truncate">Powered by Gemini 3 Flash</p>
-                                                                            <span className="px-1 py-0.5 rounded-sm bg-primary-500/20 text-primary-400 text-[7px] sm:text-[8px] font-bold uppercase tracking-widest border border-primary-500/30 flex-shrink-0">Preview</span>
-                                                                        </div>
+                                                                    <div className="text-left">
+                                                                        <span className="text-sm font-semibold text-white">AI Analysis</span>
+                                                                        <p className="text-[10px] text-white/40">Gemini 3 Flash</p>
                                                                     </div>
-                                                                    <ChevronDown className={`w-4 h-4 text-white/40 transition-transform flex-shrink-0 ${isAIExpanded ? 'rotate-180' : ''}`} />
-                                                                </button>
+                                                                </div>
+                                                                <ChevronDown className={`w-5 h-5 text-white/40 transition-transform ${isAIExpanded ? 'rotate-180' : ''}`} />
+                                                            </button>
 
-                                                                {/* Priority Score Badge - Editable */}
-                                                                {(priorityScore || selectedRequest.manual_priority_score) && !hasError && (
-                                                                    <div className="relative flex flex-wrap items-center gap-2">
-                                                                        {/* Accept AI button - only shows when AI score exists but no manual override */}
-                                                                        {priorityScore && !selectedRequest.manual_priority_score && (
+                                                            {/* Summary Text - Always visible */}
+                                                            {qualitativeText && !hasError && (
+                                                                <p className={`text-sm text-white/70 leading-relaxed mb-4 ${!isAIExpanded ? 'line-clamp-2' : ''}`}>
+                                                                    {qualitativeText}
+                                                                </p>
+                                                            )}
+
+                                                            {/* Priority Actions - Large, Easy to Tap Buttons */}
+                                                            {(priorityScore || selectedRequest.manual_priority_score) && !hasError && (
+                                                                <div className="space-y-2">
+                                                                    {/* Priority Display */}
+                                                                    <div className={`flex items-center justify-between p-3 rounded-xl ${(selectedRequest.manual_priority_score ?? priorityScore) >= 8 ? 'bg-red-500/10 border border-red-500/20' :
+                                                                            (selectedRequest.manual_priority_score ?? priorityScore) >= 6 ? 'bg-amber-500/10 border border-amber-500/20' :
+                                                                                (selectedRequest.manual_priority_score ?? priorityScore) >= 4 ? 'bg-blue-500/10 border border-blue-500/20' :
+                                                                                    'bg-green-500/10 border border-green-500/20'
+                                                                        }`}>
+                                                                        <div>
+                                                                            <p className="text-xs text-white/50 mb-0.5">
+                                                                                {selectedRequest.manual_priority_score ? 'Confirmed Priority' : 'AI Suggested Priority'}
+                                                                            </p>
+                                                                            <p className={`text-2xl font-bold ${(selectedRequest.manual_priority_score ?? priorityScore) >= 8 ? 'text-red-400' :
+                                                                                    (selectedRequest.manual_priority_score ?? priorityScore) >= 6 ? 'text-amber-400' :
+                                                                                        (selectedRequest.manual_priority_score ?? priorityScore) >= 4 ? 'text-blue-400' :
+                                                                                            'text-green-400'
+                                                                                }`}>
+                                                                                {Number(selectedRequest.manual_priority_score ?? priorityScore).toFixed(1)}
+                                                                                <span className="text-sm font-normal opacity-50"> / 10</span>
+                                                                            </p>
+                                                                        </div>
+                                                                        {selectedRequest.manual_priority_score && (
+                                                                            <div className="flex items-center gap-1 text-emerald-400">
+                                                                                <Check className="w-5 h-5" />
+                                                                                <span className="text-xs font-medium">Confirmed</span>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+
+                                                                    {/* Action Buttons - Full Width, Easy to Tap */}
+                                                                    {priorityScore && !selectedRequest.manual_priority_score && (
+                                                                        <div className="flex gap-2">
                                                                             <button
                                                                                 onClick={async () => {
                                                                                     setIsUpdatingPriority(true);
@@ -1742,131 +1775,125 @@ export default function StaffDashboard() {
                                                                                     }
                                                                                 }}
                                                                                 disabled={isUpdatingPriority}
-                                                                                className="px-2 py-1 rounded-lg bg-emerald-500/20 text-emerald-400 text-[10px] sm:text-xs font-medium hover:bg-emerald-500/30 disabled:opacity-50 transition-colors flex items-center gap-1 border border-emerald-500/30"
+                                                                                className="flex-1 py-3 px-4 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 font-semibold text-sm transition-all flex items-center justify-center gap-2 border border-emerald-500/30 active:scale-[0.98]"
                                                                             >
-                                                                                <Check className="w-3 h-3" />
-                                                                                Accept
+                                                                                <Check className="w-5 h-5" />
+                                                                                Accept AI Priority
                                                                             </button>
-                                                                        )}
+                                                                            <button
+                                                                                onClick={() => {
+                                                                                    setShowPriorityEditor(!showPriorityEditor);
+                                                                                    setPendingPriority(selectedRequest.manual_priority_score ?? priorityScore ?? 5);
+                                                                                }}
+                                                                                className="py-3 px-4 rounded-xl bg-white/5 hover:bg-white/10 text-white/70 font-medium text-sm transition-all flex items-center justify-center gap-2 border border-white/10 active:scale-[0.98]"
+                                                                            >
+                                                                                <Edit3 className="w-4 h-4" />
+                                                                                Edit
+                                                                            </button>
+                                                                        </div>
+                                                                    )}
+
+                                                                    {/* Edit button when already confirmed */}
+                                                                    {selectedRequest.manual_priority_score && (
                                                                         <button
                                                                             onClick={() => {
                                                                                 setShowPriorityEditor(!showPriorityEditor);
                                                                                 setPendingPriority(selectedRequest.manual_priority_score ?? priorityScore ?? 5);
                                                                             }}
-                                                                            className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg font-bold text-xs sm:text-sm ring-1 flex items-center gap-1.5 sm:gap-2 transition-all hover:scale-105 cursor-pointer ${(selectedRequest.manual_priority_score ?? priorityScore) >= 8 ? 'bg-red-500/10 text-red-400 ring-red-500/20 hover:ring-red-500/40' :
-                                                                                (selectedRequest.manual_priority_score ?? priorityScore) >= 6 ? 'bg-amber-500/10 text-amber-400 ring-amber-500/20 hover:ring-amber-500/40' :
-                                                                                    (selectedRequest.manual_priority_score ?? priorityScore) >= 4 ? 'bg-blue-500/10 text-blue-400 ring-blue-500/20 hover:ring-blue-500/40' :
-                                                                                        'bg-green-500/10 text-green-400 ring-green-500/20 hover:ring-green-500/40'
-                                                                                }`}
+                                                                            className="w-full py-2.5 px-4 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 font-medium text-sm transition-all flex items-center justify-center gap-2 border border-white/10"
                                                                         >
-                                                                            <span className="text-[8px] sm:text-[10px] uppercase tracking-wider opacity-60 font-medium">
-                                                                                {selectedRequest.manual_priority_score ? 'Priority' : 'AI'}
-                                                                            </span>
-                                                                            <span className="text-sm sm:text-base">{Number(selectedRequest.manual_priority_score ?? priorityScore).toFixed(1)}</span>
-                                                                            <Edit3 className="w-2.5 h-2.5 sm:w-3 sm:h-3 opacity-50" />
+                                                                            <Edit3 className="w-4 h-4" />
+                                                                            Change Priority
                                                                         </button>
-                                                                        {/* Priority Editor Dropdown */}
-                                                                        {showPriorityEditor && (
-                                                                            <div className="absolute top-full right-0 mt-2 p-3 rounded-xl bg-slate-800 border border-white/10 shadow-xl z-50 min-w-[200px]">
-                                                                                <div className="text-xs text-white/60 mb-2 font-medium">Set Manual Priority Override</div>
-                                                                                <div className="grid grid-cols-5 gap-1 mb-3">
-                                                                                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(p => (
-                                                                                        <button
-                                                                                            key={p}
-                                                                                            onClick={() => setPendingPriority(p)}
-                                                                                            className={`w-8 h-8 rounded-lg text-xs font-bold transition-all ${pendingPriority === p
-                                                                                                ? 'bg-primary-500 text-white scale-110'
-                                                                                                : p >= 8 ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
-                                                                                                    : p >= 6 ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'
-                                                                                                        : p >= 4 ? 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30'
-                                                                                                            : 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
-                                                                                                }`}
-                                                                                        >
-                                                                                            {p}
-                                                                                        </button>
-                                                                                    ))}
-                                                                                </div>
-                                                                                <div className="flex gap-2">
+                                                                    )}
+
+                                                                    {/* Priority Editor - Full Width Inline */}
+                                                                    {showPriorityEditor && (
+                                                                        <div className="p-4 rounded-xl bg-slate-800/80 border border-white/10 space-y-4">
+                                                                            <p className="text-sm text-white/70 font-medium">Set Priority Level</p>
+                                                                            <div className="grid grid-cols-5 gap-2">
+                                                                                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(p => (
                                                                                     <button
-                                                                                        onClick={async () => {
-                                                                                            if (!pendingPriority) return;
-                                                                                            setIsUpdatingPriority(true);
-                                                                                            try {
-                                                                                                await api.updateRequest(
-                                                                                                    selectedRequest.service_request_id,
-                                                                                                    { manual_priority_score: pendingPriority }
-                                                                                                );
-                                                                                                // Update local state
-                                                                                                setSelectedRequest(prev => prev ? { ...prev, manual_priority_score: pendingPriority } : null);
-                                                                                                setAllRequests(prev => prev.map(r =>
-                                                                                                    r.service_request_id === selectedRequest.service_request_id
-                                                                                                        ? { ...r, manual_priority_score: pendingPriority }
-                                                                                                        : r
-                                                                                                ));
-                                                                                                setShowPriorityEditor(false);
-                                                                                            } catch (e) {
-                                                                                                console.error('Failed to update priority:', e);
-                                                                                            } finally {
-                                                                                                setIsUpdatingPriority(false);
-                                                                                            }
-                                                                                        }}
-                                                                                        disabled={isUpdatingPriority}
-                                                                                        className="flex-1 px-3 py-1.5 rounded-lg bg-primary-500 text-white text-xs font-bold hover:bg-primary-600 disabled:opacity-50 transition-colors"
+                                                                                        key={p}
+                                                                                        onClick={() => setPendingPriority(p)}
+                                                                                        className={`aspect-square rounded-xl text-base font-bold transition-all active:scale-95 ${pendingPriority === p
+                                                                                            ? 'bg-primary-500 text-white ring-2 ring-primary-400 ring-offset-2 ring-offset-slate-800'
+                                                                                            : p >= 8 ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                                                                                                : p >= 6 ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'
+                                                                                                    : p >= 4 ? 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30'
+                                                                                                        : 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
+                                                                                            }`}
                                                                                     >
-                                                                                        {isUpdatingPriority ? 'Saving...' : 'Save'}
+                                                                                        {p}
                                                                                     </button>
-                                                                                    {selectedRequest.manual_priority_score && (
-                                                                                        <button
-                                                                                            onClick={async () => {
-                                                                                                setIsUpdatingPriority(true);
-                                                                                                try {
-                                                                                                    await api.updateRequest(
-                                                                                                        selectedRequest.service_request_id,
-                                                                                                        { manual_priority_score: null as any }
-                                                                                                    );
-                                                                                                    setSelectedRequest(prev => prev ? { ...prev, manual_priority_score: null } : null);
-                                                                                                    setAllRequests(prev => prev.map(r =>
-                                                                                                        r.service_request_id === selectedRequest.service_request_id
-                                                                                                            ? { ...r, manual_priority_score: null }
-                                                                                                            : r
-                                                                                                    ));
-                                                                                                    setShowPriorityEditor(false);
-                                                                                                } catch (e) {
-                                                                                                    console.error('Failed to clear priority:', e);
-                                                                                                } finally {
-                                                                                                    setIsUpdatingPriority(false);
-                                                                                                }
-                                                                                            }}
-                                                                                            disabled={isUpdatingPriority}
-                                                                                            className="px-3 py-1.5 rounded-lg bg-white/10 text-white/60 text-xs font-medium hover:bg-white/20 disabled:opacity-50 transition-colors"
-                                                                                        >
-                                                                                            Clear
-                                                                                        </button>
-                                                                                    )}
-                                                                                    <button
-                                                                                        onClick={() => setShowPriorityEditor(false)}
-                                                                                        className="px-3 py-1.5 rounded-lg bg-white/10 text-white/60 text-xs font-medium hover:bg-white/20 transition-colors"
-                                                                                    >
-                                                                                        Cancel
-                                                                                    </button>
-                                                                                </div>
-                                                                                {priorityScore && selectedRequest.manual_priority_score !== priorityScore && (
-                                                                                    <div className="mt-2 pt-2 border-t border-white/10 text-[10px] text-white/40">
-                                                                                        AI Priority: {Number(priorityScore).toFixed(1)}
-                                                                                    </div>
-                                                                                )}
+                                                                                ))}
                                                                             </div>
-                                                                        )}
-                                                                    </div>
-                                                                )}
-
-                                                            </div>
-
-                                                            {/* Summary Preview - visible when collapsed */}
-                                                            {!isAIExpanded && qualitativeText && !hasError && (
-                                                                <p className="text-sm text-white/60 mt-2 line-clamp-2">
-                                                                    {qualitativeText.split(". ").slice(0, 2).join('. ')}{qualitativeText.split(". ").length > 2 ? '...' : ''}
-                                                                </p>
+                                                                            <div className="flex gap-2">
+                                                                                <button
+                                                                                    onClick={async () => {
+                                                                                        if (!pendingPriority) return;
+                                                                                        setIsUpdatingPriority(true);
+                                                                                        try {
+                                                                                            await api.updateRequest(
+                                                                                                selectedRequest.service_request_id,
+                                                                                                { manual_priority_score: pendingPriority }
+                                                                                            );
+                                                                                            setSelectedRequest(prev => prev ? { ...prev, manual_priority_score: pendingPriority } : null);
+                                                                                            setAllRequests(prev => prev.map(r =>
+                                                                                                r.service_request_id === selectedRequest.service_request_id
+                                                                                                    ? { ...r, manual_priority_score: pendingPriority }
+                                                                                                    : r
+                                                                                            ));
+                                                                                            setShowPriorityEditor(false);
+                                                                                        } catch (e) {
+                                                                                            console.error('Failed to update priority:', e);
+                                                                                        } finally {
+                                                                                            setIsUpdatingPriority(false);
+                                                                                        }
+                                                                                    }}
+                                                                                    disabled={isUpdatingPriority}
+                                                                                    className="flex-1 py-3 rounded-xl bg-primary-500 hover:bg-primary-600 text-white font-semibold text-sm disabled:opacity-50 transition-all"
+                                                                                >
+                                                                                    {isUpdatingPriority ? 'Saving...' : 'Save Priority'}
+                                                                                </button>
+                                                                                <button
+                                                                                    onClick={() => setShowPriorityEditor(false)}
+                                                                                    className="py-3 px-5 rounded-xl bg-white/10 hover:bg-white/20 text-white/70 font-medium text-sm transition-all"
+                                                                                >
+                                                                                    Cancel
+                                                                                </button>
+                                                                            </div>
+                                                                            {selectedRequest.manual_priority_score && (
+                                                                                <button
+                                                                                    onClick={async () => {
+                                                                                        setIsUpdatingPriority(true);
+                                                                                        try {
+                                                                                            await api.updateRequest(
+                                                                                                selectedRequest.service_request_id,
+                                                                                                { manual_priority_score: null as any }
+                                                                                            );
+                                                                                            setSelectedRequest(prev => prev ? { ...prev, manual_priority_score: null } : null);
+                                                                                            setAllRequests(prev => prev.map(r =>
+                                                                                                r.service_request_id === selectedRequest.service_request_id
+                                                                                                    ? { ...r, manual_priority_score: null }
+                                                                                                    : r
+                                                                                            ));
+                                                                                            setShowPriorityEditor(false);
+                                                                                        } catch (e) {
+                                                                                            console.error('Failed to clear priority:', e);
+                                                                                        } finally {
+                                                                                            setIsUpdatingPriority(false);
+                                                                                        }
+                                                                                    }}
+                                                                                    disabled={isUpdatingPriority}
+                                                                                    className="w-full py-2 text-xs text-white/40 hover:text-white/60 transition-colors"
+                                                                                >
+                                                                                    Reset to AI Suggestion
+                                                                                </button>
+                                                                            )}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
                                                             )}
 
                                                             {/* Collapsible AI Details */}
