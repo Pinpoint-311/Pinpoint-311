@@ -154,7 +154,12 @@ export default function StaffDashboardMap({
     }, [apiKey]);
 
     const initMap = useCallback(() => {
-        if (!mapRef.current || !window.google) return;
+        // Ensure Maps API is fully loaded (not just the script)
+        if (!mapRef.current || !window.google?.maps?.MapTypeControlStyle) {
+            // Retry after a short delay if API isn't fully ready
+            setTimeout(() => initMap(), 100);
+            return;
+        }
 
         const map = new window.google.maps.Map(mapRef.current, {
             center: defaultCenter,
