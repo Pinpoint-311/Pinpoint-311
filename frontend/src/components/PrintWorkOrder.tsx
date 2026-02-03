@@ -539,7 +539,7 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                 </div>
 
                 <div class="section">
-                    <h3>${icons.location} Location</h3>
+                    <h3>${icons.location} Location & Quick Access</h3>
                     <div class="location-container">
                         <div class="location-info">
                             <p><strong>${request.address || 'No address'}</strong></p>
@@ -547,18 +547,18 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                                 <p style="color: #6b7280; font-size: 10px;">GPS: ${request.lat.toFixed(6)}, ${request.long.toFixed(6)}</p>
                             ` : ''}
                         </div>
-                        ${request.lat && request.long ? `
-                            <div class="qr-codes">
+                        <div class="qr-codes">
+                            <div class="qr-item">
+                                <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(`${window.location.origin}/staff#${request.status === 'open' ? 'active' : request.status === 'in_progress' ? 'in_progress' : 'resolved'}/request/${request.service_request_id}`)}" alt="Staff Portal QR" />
+                                <span>Staff Portal</span>
+                            </div>
+                            ${request.lat && request.long ? `
                                 <div class="qr-item">
                                     <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(`https://www.google.com/maps?q=${request.lat},${request.long}`)}" alt="Maps QR" />
-                                    <span>Scan for Maps</span>
+                                    <span>Google Maps</span>
                                 </div>
-                                <div class="qr-item">
-                                    <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(`${window.location.origin}/staff#all/request/${request.service_request_id}`)}" alt="Request QR" />
-                                    <span>View in Staff Portal</span>
-                                </div>
-                            </div>
-                        ` : ''}
+                            ` : ''}
+                        </div>
                     </div>
                     ${request.lat && request.long && mapsApiKey ? `
                         <div class="map-embed">
