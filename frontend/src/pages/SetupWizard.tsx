@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, Cloud, Check, AlertCircle, Loader2, ExternalLink, Lock, Upload, Database, Key, Sparkles, RefreshCw } from 'lucide-react';
 import { api } from '../services/api';
+import SocialLoginConfig from '../components/SocialLoginConfig';
 
 interface SetupStatus {
     gcp_configured: boolean;
@@ -909,6 +910,22 @@ function CompletionScreen({ status, onReconfigureGCP, onReconfigureAuth0 }: Comp
                                 </>
                             )}
                         </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Social Login Configuration - only show if Auth0 is configured */}
+            {status?.auth0_configured && (
+                <div className="max-w-lg mx-auto mb-8 text-left">
+                    <div className="bg-purple-500/20 border border-purple-400/30 rounded-xl p-4">
+                        <div className="flex items-center mb-3">
+                            <Key className="w-5 h-5 text-purple-400 mr-2" />
+                            <span className="text-purple-200 font-medium">Social Login (Optional)</span>
+                        </div>
+                        <p className="text-sm text-purple-300/70 mb-4">
+                            Enable Google and Microsoft login for staff members. Credentials are sent directly to Auth0 and never stored in our system.
+                        </p>
+                        <SocialLoginConfig />
                     </div>
                 </div>
             )}

@@ -48,6 +48,16 @@ SERVICE_PRICING = {
         "per_thousand_calls": 2.00,  # $2 per 1,000 requests
         "unit": "calls"
     },
+    "maps_places": {
+        "description": "Google Maps Places API",
+        "per_thousand_calls": 17.00,  # $17 per 1,000 requests (autocomplete)
+        "unit": "calls"
+    },
+    "maps_directions": {
+        "description": "Google Maps Directions API",
+        "per_thousand_calls": 5.00,  # $5 per 1,000 requests
+        "unit": "calls"
+    },
     "secret_manager": {
         "description": "Google Cloud Secret Manager",
         "per_ten_thousand_ops": 0.03,  # $0.03 per 10,000 access operations
@@ -57,6 +67,18 @@ SERVICE_PRICING = {
         "description": "Google Cloud KMS",
         "per_ten_thousand_ops": 0.03,  # $0.03 per 10,000 cryptographic operations
         "unit": "calls"
+    },
+    "email": {
+        "description": "SMTP Email Notifications",
+        "per_thousand_messages": 0.0,  # Free (SendGrid/Mailgun have free tiers, or self-hosted SMTP)
+        "unit": "messages",
+        "note": "Cost depends on provider. Track for volume monitoring."
+    },
+    "sms": {
+        "description": "SMS Notifications",
+        "per_message": 0.0079,  # ~$0.0079 per segment (Twilio average)
+        "unit": "messages",
+        "note": "Cost varies by provider and destination."
     }
 }
 
@@ -182,13 +204,21 @@ async def estimate_costs(
             # Character-based pricing
             estimated_cost = (data["characters"] / 1_000_000) * pricing.get("per_million_chars", 0)
         
-        elif service in ["maps_geocode", "maps_reverse_geocode", "maps_static"]:
+        elif service in ["maps_geocode", "maps_reverse_geocode", "maps_static", "maps_places", "maps_directions"]:
             # Per-call pricing (per 1,000)
             estimated_cost = (data["api_calls"] / 1000) * pricing.get("per_thousand_calls", 0)
         
         elif service in ["secret_manager", "kms"]:
             # Per-operation pricing (per 10,000)
             estimated_cost = (data["api_calls"] / 10000) * pricing.get("per_ten_thousand_ops", 0)
+        
+        elif service == "email":
+            # Per-thousand messages (usually free)
+            estimated_cost = (data["api_calls"] / 1000) * pricing.get("per_thousand_messages", 0)
+        
+        elif service == "sms":
+            # Per-message pricing
+            estimated_cost = data["api_calls"] * pricing.get("per_message", 0)
         
         costs[service] = {
             "description": pricing.get("description", service),

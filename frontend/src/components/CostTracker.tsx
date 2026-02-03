@@ -13,20 +13,13 @@ import {
     Key,
     Lock,
     AlertCircle,
-    CheckCircle2,
-    BarChart3,
+    Mail,
+    MessageSquare,
+    Navigation,
+    Building2,
 } from 'lucide-react';
 import { Button, AccordionSection } from '../components/ui';
 import { api, CostEstimate, DailyUsageResponse } from '../services/api';
-
-interface SecurityAuditItem {
-    service: string;
-    protocol: string;
-    auth_method: string;
-    encryption: string;
-    status: 'secure' | 'warning' | 'insecure';
-    notes: string;
-}
 
 const SERVICE_ICONS: Record<string, React.ReactNode> = {
     vertex_ai: <Brain className="w-5 h-5" />,
@@ -34,8 +27,12 @@ const SERVICE_ICONS: Record<string, React.ReactNode> = {
     maps_geocode: <MapPin className="w-5 h-5" />,
     maps_reverse_geocode: <MapPin className="w-5 h-5" />,
     maps_static: <MapPin className="w-5 h-5" />,
+    maps_places: <Building2 className="w-5 h-5" />,
+    maps_directions: <Navigation className="w-5 h-5" />,
     secret_manager: <Key className="w-5 h-5" />,
     kms: <Lock className="w-5 h-5" />,
+    email: <Mail className="w-5 h-5" />,
+    sms: <MessageSquare className="w-5 h-5" />,
 };
 
 const SERVICE_COLORS: Record<string, string> = {
@@ -44,85 +41,13 @@ const SERVICE_COLORS: Record<string, string> = {
     maps_geocode: 'from-green-500 to-emerald-600',
     maps_reverse_geocode: 'from-teal-500 to-green-600',
     maps_static: 'from-lime-500 to-green-600',
+    maps_places: 'from-sky-500 to-blue-600',
+    maps_directions: 'from-cyan-500 to-teal-600',
     secret_manager: 'from-orange-500 to-amber-600',
     kms: 'from-red-500 to-rose-600',
+    email: 'from-violet-500 to-purple-600',
+    sms: 'from-pink-500 to-rose-600',
 };
-
-// Security audit data - hardcoded based on implementation review
-const SECURITY_AUDIT: SecurityAuditItem[] = [
-    {
-        service: 'Vertex AI (Gemini)',
-        protocol: 'HTTPS',
-        auth_method: 'OAuth 2.0 / Service Account',
-        encryption: 'TLS 1.3',
-        status: 'secure',
-        notes: 'Uses Google Cloud authentication with encrypted credentials stored in Secret Manager',
-    },
-    {
-        service: 'Google Cloud Translation',
-        protocol: 'HTTPS',
-        auth_method: 'API Key',
-        encryption: 'TLS 1.3',
-        status: 'secure',
-        notes: 'API key stored securely, all requests over HTTPS',
-    },
-    {
-        service: 'Google Maps Geocoding',
-        protocol: 'HTTPS',
-        auth_method: 'API Key',
-        encryption: 'TLS 1.3',
-        status: 'secure',
-        notes: 'API key stored in Secret Manager, restricted by domain',
-    },
-    {
-        service: 'Auth0 Identity',
-        protocol: 'HTTPS',
-        auth_method: 'OAuth 2.0 / OIDC',
-        encryption: 'TLS 1.3',
-        status: 'secure',
-        notes: 'SSO with JWT tokens, MFA supported, credentials in Secret Manager',
-    },
-    {
-        service: 'Google Secret Manager',
-        protocol: 'HTTPS',
-        auth_method: 'Service Account / ADC',
-        encryption: 'TLS 1.3 + AES-256',
-        status: 'secure',
-        notes: 'All secrets encrypted at rest with customer-managed keys',
-    },
-    {
-        service: 'Google Cloud KMS',
-        protocol: 'HTTPS',
-        auth_method: 'Service Account / ADC',
-        encryption: 'TLS 1.3',
-        status: 'secure',
-        notes: 'Used for PII encryption, FIPS 140-2 compliant',
-    },
-    {
-        service: 'PostgreSQL Database',
-        protocol: 'PostgreSQL Wire Protocol',
-        auth_method: 'Username/Password',
-        encryption: 'TLS 1.2+',
-        status: 'secure',
-        notes: 'Connection uses SSL/TLS, credentials in Secret Manager',
-    },
-    {
-        service: 'SMTP Email',
-        protocol: 'SMTP',
-        auth_method: 'Username/Password',
-        encryption: 'TLS (STARTTLS)',
-        status: 'warning',
-        notes: 'TLS should be enforced via SMTP_USE_TLS=true setting',
-    },
-    {
-        service: 'Redis Cache',
-        protocol: 'Redis Protocol',
-        auth_method: 'Password (optional)',
-        encryption: 'TLS (optional)',
-        status: 'warning',
-        notes: 'Ensure REDIS_URL uses rediss:// for TLS in production',
-    },
-];
 
 export default function CostTracker() {
     const [loading, setLoading] = useState(true);
@@ -182,31 +107,6 @@ export default function CostTracker() {
         )
         : null;
 
-    const getStatusBadge = (status: 'secure' | 'warning' | 'insecure') => {
-        if (status === 'secure') {
-            return (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
-                    <CheckCircle2 className="w-3 h-3" />
-                    Secure
-                </span>
-            );
-        }
-        if (status === 'warning') {
-            return (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                    <AlertCircle className="w-3 h-3" />
-                    Review
-                </span>
-            );
-        }
-        return (
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
-                <AlertCircle className="w-3 h-3" />
-                Insecure
-            </span>
-        );
-    };
-
     return (
         <div className="space-y-6">
             {/* Header */}
@@ -250,24 +150,24 @@ export default function CostTracker() {
                 </div>
             )}
 
-            {/* Summary Cards */}
+            {/* Summary Cards - Fixed WCAG contrast with darker overlays and clearer text */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 {/* Total Cost */}
                 <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 p-5 text-white"
+                    className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-700 p-5 text-white shadow-lg"
                 >
-                    <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -mr-8 -mt-8" />
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-black/10 rounded-full -mr-8 -mt-8" />
                     <div className="relative">
-                        <div className="flex items-center gap-2 text-white/80 mb-2">
+                        <div className="flex items-center gap-2 mb-2">
                             <DollarSign className="w-4 h-4" />
-                            <span className="text-sm font-medium">Estimated Cost</span>
+                            <span className="text-sm font-semibold">Estimated Cost</span>
                         </div>
                         <div className="text-3xl font-bold">
                             {loading ? '...' : formatCurrency(costData?.total_estimated_cost || 0)}
                         </div>
-                        <p className="text-sm text-white/70 mt-1">
+                        <p className="text-sm mt-1 text-white/90">
                             Last {period} days
                         </p>
                     </div>
@@ -278,18 +178,18 @@ export default function CostTracker() {
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 }}
-                    className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 p-5 text-white"
+                    className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 p-5 text-white shadow-lg"
                 >
-                    <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -mr-8 -mt-8" />
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-black/10 rounded-full -mr-8 -mt-8" />
                     <div className="relative">
-                        <div className="flex items-center gap-2 text-white/80 mb-2">
+                        <div className="flex items-center gap-2 mb-2">
                             <TrendingUp className="w-4 h-4" />
-                            <span className="text-sm font-medium">Monthly Projection</span>
+                            <span className="text-sm font-semibold">Monthly Projection</span>
                         </div>
                         <div className="text-3xl font-bold">
                             {loading ? '...' : formatCurrency(costData?.monthly_projection || 0)}
                         </div>
-                        <p className="text-sm text-white/70 mt-1">
+                        <p className="text-sm mt-1 text-white/90">
                             Based on current usage
                         </p>
                     </div>
@@ -300,18 +200,18 @@ export default function CostTracker() {
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.2 }}
-                    className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-purple-500 to-pink-600 p-5 text-white"
+                    className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-purple-600 to-fuchsia-700 p-5 text-white shadow-lg"
                 >
-                    <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -mr-8 -mt-8" />
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-black/10 rounded-full -mr-8 -mt-8" />
                     <div className="relative">
-                        <div className="flex items-center gap-2 text-white/80 mb-2">
+                        <div className="flex items-center gap-2 mb-2">
                             <Activity className="w-4 h-4" />
-                            <span className="text-sm font-medium">Total API Calls</span>
+                            <span className="text-sm font-semibold">Total API Calls</span>
                         </div>
                         <div className="text-3xl font-bold">
                             {loading ? '...' : formatNumber(totals?.api_calls || 0)}
                         </div>
-                        <p className="text-sm text-white/70 mt-1">
+                        <p className="text-sm mt-1 text-white/90">
                             Across all services
                         </p>
                     </div>
@@ -322,20 +222,20 @@ export default function CostTracker() {
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.3 }}
-                    className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 p-5 text-white"
+                    className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-amber-600 to-orange-700 p-5 text-white shadow-lg"
                 >
-                    <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -mr-8 -mt-8" />
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-black/10 rounded-full -mr-8 -mt-8" />
                     <div className="relative">
-                        <div className="flex items-center gap-2 text-white/80 mb-2">
+                        <div className="flex items-center gap-2 mb-2">
                             <Brain className="w-4 h-4" />
-                            <span className="text-sm font-medium">AI Tokens</span>
+                            <span className="text-sm font-semibold">AI Tokens</span>
                         </div>
                         <div className="text-3xl font-bold">
                             {loading
                                 ? '...'
                                 : formatNumber((totals?.tokens_input || 0) + (totals?.tokens_output || 0))}
                         </div>
-                        <p className="text-sm text-white/70 mt-1">
+                        <p className="text-sm mt-1 text-white/90">
                             Input + Output
                         </p>
                     </div>
@@ -420,82 +320,6 @@ export default function CostTracker() {
                             <p className="text-sm mt-1">Usage will appear here as services are used</p>
                         </div>
                     )}
-                </div>
-            </AccordionSection>
-
-            {/* Security Audit */}
-            <AccordionSection title="Security Audit - API Connections" defaultOpen>
-                <div className="overflow-x-auto">
-                    <table className="w-full">
-                        <thead>
-                            <tr className="bg-slate-50 dark:bg-slate-800/50">
-                                <th className="text-left py-3 px-4 text-sm font-semibold text-slate-600 dark:text-slate-300">
-                                    Service
-                                </th>
-                                <th className="text-left py-3 px-4 text-sm font-semibold text-slate-600 dark:text-slate-300">
-                                    Protocol
-                                </th>
-                                <th className="text-left py-3 px-4 text-sm font-semibold text-slate-600 dark:text-slate-300">
-                                    Authentication
-                                </th>
-                                <th className="text-left py-3 px-4 text-sm font-semibold text-slate-600 dark:text-slate-300">
-                                    Encryption
-                                </th>
-                                <th className="text-left py-3 px-4 text-sm font-semibold text-slate-600 dark:text-slate-300">
-                                    Status
-                                </th>
-                                <th className="text-left py-3 px-4 text-sm font-semibold text-slate-600 dark:text-slate-300">
-                                    Notes
-                                </th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {SECURITY_AUDIT.map((item, idx) => (
-                                <tr
-                                    key={idx}
-                                    className="border-t border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/30"
-                                >
-                                    <td className="py-3 px-4 font-medium text-slate-900 dark:text-white">
-                                        {item.service}
-                                    </td>
-                                    <td className="py-3 px-4 text-slate-600 dark:text-slate-300">
-                                        <code className="px-2 py-0.5 bg-slate-100 dark:bg-slate-700 rounded text-sm">
-                                            {item.protocol}
-                                        </code>
-                                    </td>
-                                    <td className="py-3 px-4 text-slate-600 dark:text-slate-300 text-sm">
-                                        {item.auth_method}
-                                    </td>
-                                    <td className="py-3 px-4 text-slate-600 dark:text-slate-300 text-sm">
-                                        {item.encryption}
-                                    </td>
-                                    <td className="py-3 px-4">
-                                        {getStatusBadge(item.status)}
-                                    </td>
-                                    <td className="py-3 px-4 text-slate-500 dark:text-slate-400 text-sm max-w-xs">
-                                        {item.notes}
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-
-                <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-lg">
-                    <div className="flex items-start gap-3">
-                        <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-800 flex items-center justify-center flex-shrink-0">
-                            <BarChart3 className="w-4 h-4 text-blue-600 dark:text-blue-300" />
-                        </div>
-                        <div>
-                            <h4 className="font-semibold text-blue-900 dark:text-blue-200">Security Summary</h4>
-                            <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
-                                {SECURITY_AUDIT.filter((s) => s.status === 'secure').length} of{' '}
-                                {SECURITY_AUDIT.length} services are fully secured.{' '}
-                                {SECURITY_AUDIT.filter((s) => s.status === 'warning').length > 0 &&
-                                    `${SECURITY_AUDIT.filter((s) => s.status === 'warning').length} items need review for production hardening.`}
-                            </p>
-                        </div>
-                    </div>
                 </div>
             </AccordionSection>
 
