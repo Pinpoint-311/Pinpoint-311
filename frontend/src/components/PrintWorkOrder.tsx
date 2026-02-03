@@ -6,10 +6,9 @@ interface PrintWorkOrderProps {
     auditLog?: AuditLogEntry[];
     townshipName?: string;
     logoUrl?: string;
-    mapsApiKey?: string | null;
 }
 
-export default function PrintWorkOrder({ request, auditLog, townshipName, logoUrl, mapsApiKey }: PrintWorkOrderProps) {
+export default function PrintWorkOrder({ request, auditLog, townshipName, logoUrl }: PrintWorkOrderProps) {
     const handlePrint = () => {
         // Create a new window for printing
         const printWindow = window.open('', '_blank', 'width=800,height=600');
@@ -409,8 +408,21 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                     .location-info {
                         flex: 1;
                     }
-                    .location-map img {
-                        max-width: 280px;
+                    .map-link {
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 4px;
+                        margin-top: 6px;
+                        padding: 4px 10px;
+                        background: #1e40af;
+                        color: white;
+                        text-decoration: none;
+                        border-radius: 4px;
+                        font-size: 10px;
+                        font-weight: 500;
+                    }
+                    .map-link:hover {
+                        background: #1d4ed8;
                     }
                     .custom-fields {
                         background: #fffbeb;
@@ -516,17 +528,13 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                     <div class="location-container">
                         <div class="location-info">
                             <p><strong>${request.address || 'No address'}</strong></p>
-                            ${request.lat && request.long ? `<p style="color: #6b7280; font-size: 10px;">GPS: ${request.lat.toFixed(6)}, ${request.long.toFixed(6)}</p>` : ''}
+                            ${request.lat && request.long ? `
+                                <p style="color: #6b7280; font-size: 10px;">GPS: ${request.lat.toFixed(6)}, ${request.long.toFixed(6)}</p>
+                                <a href="https://www.google.com/maps?q=${request.lat},${request.long}" target="_blank" class="map-link">
+                                    ${icons.location} Open in Google Maps
+                                </a>
+                            ` : ''}
                         </div>
-                        ${request.lat && request.long && mapsApiKey ? `
-                            <div class="location-map">
-                                <img 
-                                    src="https://maps.googleapis.com/maps/api/staticmap?center=${request.lat},${request.long}&zoom=17&size=280x150&scale=2&maptype=roadmap&markers=color:red%7C${request.lat},${request.long}&key=${mapsApiKey}" 
-                                    alt="Location map" 
-                                    style="border-radius: 6px; border: 1px solid #e5e7eb;"
-                                />
-                            </div>
-                        ` : ''}
                     </div>
                 </div>
 
