@@ -6,9 +6,10 @@ interface PrintWorkOrderProps {
     auditLog?: AuditLogEntry[];
     townshipName?: string;
     logoUrl?: string;
+    mapsApiKey?: string | null;
 }
 
-export default function PrintWorkOrder({ request, auditLog, townshipName, logoUrl }: PrintWorkOrderProps) {
+export default function PrintWorkOrder({ request, auditLog, townshipName, logoUrl, mapsApiKey }: PrintWorkOrderProps) {
     const handlePrint = () => {
         // Create a new window for printing
         const printWindow = window.open('', '_blank', 'width=800,height=600');
@@ -112,16 +113,49 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
             </div>
         ` : '';
 
-        // Build matched asset HTML
+        // Build matched asset HTML with all properties
+        const formatPropertyLabel = (key: string) => {
+            return key
+                .replace(/_/g, ' ')
+                .replace(/([a-z])([A-Z])/g, '$1 $2')
+                .split(' ')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                .join(' ');
+        };
+
+        const getAssetPropertiesHtml = () => {
+            if (!matchedAsset?.properties) return '';
+            const entries = Object.entries(matchedAsset.properties)
+                .filter(([key, value]) => {
+                    // Exclude common ID fields
+                    if (['id', 'asset_id', 'name', 'layer_name', 'objectid', 'fid', 'gid', 'shape', 'geometry'].includes(key.toLowerCase())) return false;
+                    // Exclude null/undefined/empty
+                    if (value === null || value === undefined || value === '') return false;
+                    return true;
+                });
+            if (entries.length === 0) return '';
+            return `
+                <div class="asset-properties">
+                    <strong>Properties:</strong>
+                    <div class="grid asset-grid">
+                        ${entries.map(([key, value]) => `
+                            <div><span class="prop-label">${formatPropertyLabel(key)}:</span> ${String(value)}</div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        };
+
         const assetHtml = matchedAsset ? `
             <div class="section asset">
                 <h3>${icons.link} Matched Asset</h3>
-                <div class="grid">
+                <div class="asset-header">
                     <div><strong>Layer:</strong> ${matchedAsset.layer_name}</div>
-                    ${matchedAsset.asset_id ? `<div><strong>Asset ID:</strong> ${matchedAsset.asset_id}</div>` : ''}
+                    ${matchedAsset.asset_id ? `<div><strong>Asset ID:</strong> <span class="mono">${matchedAsset.asset_id}</span></div>` : ''}
                     ${matchedAsset.asset_type ? `<div><strong>Type:</strong> ${matchedAsset.asset_type}</div>` : ''}
-                    ${matchedAsset.distance_meters ? `<div><strong>Distance:</strong> ${Math.round(matchedAsset.distance_meters)}m</div>` : ''}
+                    ${matchedAsset.distance_meters !== undefined ? `<div><strong>Distance:</strong> ${matchedAsset.distance_meters < 1 ? 'On location' : Math.round(matchedAsset.distance_meters) + 'm away'}</div>` : ''}
                 </div>
+                ${getAssetPropertiesHtml()}
             </div>
         ` : '';
 
@@ -343,6 +377,41 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         border-radius: 6px;
                         border-left: 4px solid #10b981;
                     }
+                    .asset-header {
+                        display: grid;
+                        grid-template-columns: repeat(2, 1fr);
+                        gap: 5px 15px;
+                        margin-bottom: 8px;
+                    }
+                    .asset-properties {
+                        border-top: 1px solid #10b981/30;
+                        padding-top: 8px;
+                        margin-top: 8px;
+                    }
+                    .asset-grid {
+                        margin-top: 5px;
+                    }
+                    .prop-label {
+                        color: #6b7280;
+                    }
+                    .mono {
+                        font-family: monospace;
+                        background: #d1fae5;
+                        padding: 1px 4px;
+                        border-radius: 3px;
+                    }
+                    .location-container {
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: flex-start;
+                        gap: 15px;
+                    }
+                    .location-info {
+                        flex: 1;
+                    }
+                    .location-map img {
+                        max-width: 280px;
+                    }
                     .custom-fields {
                         background: #fffbeb;
                         padding: 12px;
@@ -444,8 +513,21 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
 
                 <div class="section">
                     <h3>${icons.location} Location</h3>
-                    <p><strong>${request.address || 'No address'}</strong></p>
-                    ${request.lat && request.long ? `<p style="color: #6b7280; font-size: 10px;">GPS: ${request.lat.toFixed(6)}, ${request.long.toFixed(6)}</p>` : ''}
+                    <div class="location-container">
+                        <div class="location-info">
+                            <p><strong>${request.address || 'No address'}</strong></p>
+                            ${request.lat && request.long ? `<p style="color: #6b7280; font-size: 10px;">GPS: ${request.lat.toFixed(6)}, ${request.long.toFixed(6)}</p>` : ''}
+                        </div>
+                        ${request.lat && request.long && mapsApiKey ? `
+                            <div class="location-map">
+                                <img 
+                                    src="https://maps.googleapis.com/maps/api/staticmap?center=${request.lat},${request.long}&zoom=17&size=280x150&scale=2&maptype=roadmap&markers=color:red%7C${request.lat},${request.long}&key=${mapsApiKey}" 
+                                    alt="Location map" 
+                                    style="border-radius: 6px; border: 1px solid #e5e7eb;"
+                                />
+                            </div>
+                        ` : ''}
+                    </div>
                 </div>
 
                 <div class="section">
