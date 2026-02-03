@@ -37,6 +37,7 @@ import {
     Edit3,
     Bell,
     Settings,
+    Download,
 } from 'lucide-react';
 import { Button, Card, Modal, Input, Textarea, Select, StatusBadge, Badge } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
@@ -901,14 +902,62 @@ export default function StaffDashboard() {
                 {currentView === 'statistics' && (
                     <div className="flex-1 p-8 overflow-auto bg-gradient-to-br from-gray-50 to-purple-50">
                         <div className="max-w-7xl mx-auto space-y-6">
-                            {/* Header */}
-                            <div className="mb-6">
-                                <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">Analytics Dashboard</h1>
-                                {advancedStats?.cached_at && (
-                                    <p className="text-sm text-gray-500 mt-1">
-                                        Last updated: {new Date(advancedStats.cached_at).toLocaleString()}
-                                    </p>
-                                )}
+                            {/* Header with Export Button */}
+                            <div className="mb-6 flex items-start justify-between">
+                                <div>
+                                    <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">Analytics Dashboard</h1>
+                                    {advancedStats?.cached_at && (
+                                        <p className="text-sm text-gray-500 mt-1">
+                                            Last updated: {new Date(advancedStats.cached_at).toLocaleString()}
+                                        </p>
+                                    )}
+                                </div>
+                                <div className="relative group">
+                                    <button
+                                        className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all shadow-lg hover:shadow-xl font-medium"
+                                    >
+                                        <Download className="w-4 h-4" />
+                                        Export Data
+                                        <ChevronDown className="w-4 h-4" />
+                                    </button>
+                                    <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-xl border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                                        <div className="p-2">
+                                            <p className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase">Export Requests</p>
+                                            <button
+                                                onClick={() => api.exportRequests({ format: 'csv' })}
+                                                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
+                                            >
+                                                📄 Download as CSV
+                                            </button>
+                                            <button
+                                                onClick={() => api.exportRequests({ format: 'json' })}
+                                                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
+                                            >
+                                                📋 Download as JSON
+                                            </button>
+                                            <button
+                                                onClick={() => api.exportRequests({ format: 'geojson' })}
+                                                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
+                                            >
+                                                🗺️ Download as GeoJSON
+                                            </button>
+                                            <div className="border-t border-gray-100 my-2" />
+                                            <p className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase">Export Statistics</p>
+                                            <button
+                                                onClick={() => api.exportStatistics({ format: 'csv' })}
+                                                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
+                                            >
+                                                📊 Statistics as CSV
+                                            </button>
+                                            <button
+                                                onClick={() => api.exportStatistics({ format: 'json' })}
+                                                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
+                                            >
+                                                📈 Statistics as JSON
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
 
                             {/* Basic Statistics Overview */}

@@ -855,6 +855,85 @@ class ApiClient {
         });
     }
 
+    // Data Export
+    async exportRequests(params: {
+        format?: 'csv' | 'json' | 'geojson';
+        start_date?: string;
+        end_date?: string;
+        status?: string;
+        category_id?: number;
+        include_pii?: boolean;
+    } = {}): Promise<void> {
+        const query = new URLSearchParams();
+        if (params.format) query.append('format', params.format);
+        if (params.start_date) query.append('start_date', params.start_date);
+        if (params.end_date) query.append('end_date', params.end_date);
+        if (params.status) query.append('status', params.status);
+        if (params.category_id) query.append('category_id', params.category_id.toString());
+        if (params.include_pii !== undefined) query.append('include_pii', params.include_pii.toString());
+
+        const response = await fetch(`${API_BASE}/export/requests?${query}`, {
+            headers: {
+                'Authorization': `Bearer ${this.token}`,
+            },
+        });
+
+        if (!response.ok) {
+            throw new Error('Export failed');
+        }
+
+        // Trigger download
+        const blob = await response.blob();
+        const disposition = response.headers.get('Content-Disposition');
+        const filenameMatch = disposition?.match(/filename=(.+)/);
+        const filename = filenameMatch?.[1] || `export.${params.format || 'csv'}`;
+
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        a.remove();
+    }
+
+    async exportStatistics(params: {
+        format?: 'csv' | 'json';
+        start_date?: string;
+        end_date?: string;
+    } = {}): Promise<void> {
+        const query = new URLSearchParams();
+        if (params.format) query.append('format', params.format);
+        if (params.start_date) query.append('start_date', params.start_date);
+        if (params.end_date) query.append('end_date', params.end_date);
+
+        const response = await fetch(`${API_BASE}/export/statistics?${query}`, {
+            headers: {
+                'Authorization': `Bearer ${this.token}`,
+            },
+        });
+
+        if (!response.ok) {
+            throw new Error('Export failed');
+        }
+
+        // Trigger download
+        const blob = await response.blob();
+        const disposition = response.headers.get('Content-Disposition');
+        const filenameMatch = disposition?.match(/filename=(.+)/);
+        const filename = filenameMatch?.[1] || `statistics.${params.format || 'json'}`;
+
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        a.remove();
+    }
+
 }
 
 
