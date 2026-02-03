@@ -150,6 +150,24 @@ export default function CostTracker() {
                 </div>
             )}
 
+            {/* Billing Disclaimer */}
+            <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-xl">
+                <div className="flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                    <div className="text-sm">
+                        <p className="font-medium text-amber-800 dark:text-amber-300">
+                            Estimates Only — Verify with Provider Billing
+                        </p>
+                        <p className="text-amber-700 dark:text-amber-400 mt-1">
+                            These are rough estimates based on tracked API calls. <strong>Actual costs may differ significantly</strong> due to:
+                            free tier allowances (e.g., Maps $200/month credit, Translation 500K chars/month, Secret Manager 10K ops/month),
+                            pricing changes, and usage from other projects sharing the same billing account.
+                            Always verify costs in your Google Cloud Console, Twilio Dashboard, or email provider billing.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
             {/* Summary Cards - Fixed WCAG contrast with darker overlays and clearer text */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 {/* Total Cost */}

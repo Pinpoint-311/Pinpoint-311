@@ -20,65 +20,115 @@ logger = logging.getLogger(__name__)
 
 
 # Pricing estimates (as of 2026, subject to change)
-# These are approximate - actual billing depends on Google Cloud pricing
+# These are approximate - actual billing depends on provider pricing
+# IMPORTANT: Always verify costs with provider billing dashboards
 SERVICE_PRICING = {
     "vertex_ai": {
         "description": "Gemini 3.0 Flash",
         "input_tokens_per_million": 0.075,  # $0.075 per 1M input tokens
         "output_tokens_per_million": 0.30,   # $0.30 per 1M output tokens
-        "unit": "tokens"
+        "unit": "tokens",
+        "free_tier": {
+            "monthly_limit": 0,  # No free tier for Vertex AI
+            "unit": "tokens"
+        }
     },
     "translation": {
         "description": "Google Cloud Translation API",
         "per_million_chars": 20.00,  # $20 per 1M characters
-        "unit": "characters"
+        "unit": "characters",
+        "free_tier": {
+            "monthly_limit": 500_000,  # 500K characters free per month
+            "unit": "characters"
+        }
     },
     "maps_geocode": {
         "description": "Google Maps Geocoding API",
         "per_thousand_calls": 5.00,  # $5 per 1,000 requests
-        "unit": "calls"
+        "unit": "calls",
+        "free_tier": {
+            "monthly_limit": 0,  # $200 credit covers ~40K requests
+            "monthly_credit": 200.00,
+            "unit": "calls"
+        }
     },
     "maps_reverse_geocode": {
         "description": "Google Maps Reverse Geocoding API",
         "per_thousand_calls": 5.00,  # $5 per 1,000 requests
-        "unit": "calls"
+        "unit": "calls",
+        "free_tier": {
+            "monthly_limit": 0,  # Shares $200 credit with other Maps APIs
+            "monthly_credit": 200.00,
+            "unit": "calls"
+        }
     },
     "maps_static": {
         "description": "Google Maps Static API",
         "per_thousand_calls": 2.00,  # $2 per 1,000 requests
-        "unit": "calls"
+        "unit": "calls",
+        "free_tier": {
+            "monthly_limit": 0,  # Shares $200 credit
+            "monthly_credit": 200.00,
+            "unit": "calls"
+        }
     },
     "maps_places": {
         "description": "Google Maps Places API",
         "per_thousand_calls": 17.00,  # $17 per 1,000 requests (autocomplete)
-        "unit": "calls"
+        "unit": "calls",
+        "free_tier": {
+            "monthly_limit": 0,  # Shares $200 credit
+            "monthly_credit": 200.00,
+            "unit": "calls"
+        }
     },
     "maps_directions": {
         "description": "Google Maps Directions API",
         "per_thousand_calls": 5.00,  # $5 per 1,000 requests
-        "unit": "calls"
+        "unit": "calls",
+        "free_tier": {
+            "monthly_limit": 0,  # Shares $200 credit
+            "monthly_credit": 200.00,
+            "unit": "calls"
+        }
     },
     "secret_manager": {
         "description": "Google Cloud Secret Manager",
         "per_ten_thousand_ops": 0.03,  # $0.03 per 10,000 access operations
-        "unit": "calls"
+        "unit": "calls",
+        "free_tier": {
+            "monthly_limit": 10_000,  # 10K access operations free
+            "unit": "calls"
+        }
     },
     "kms": {
         "description": "Google Cloud KMS",
         "per_ten_thousand_ops": 0.03,  # $0.03 per 10,000 cryptographic operations
-        "unit": "calls"
+        "unit": "calls",
+        "free_tier": {
+            "monthly_limit": 10_000,  # 10K operations free
+            "unit": "calls"
+        }
     },
     "email": {
         "description": "SMTP Email Notifications",
-        "per_thousand_messages": 0.0,  # Free (SendGrid/Mailgun have free tiers, or self-hosted SMTP)
+        "per_thousand_messages": 0.0,  # Typically free (SendGrid: 100/day, Mailgun: 5K/month)
         "unit": "messages",
-        "note": "Cost depends on provider. Track for volume monitoring."
+        "free_tier": {
+            "monthly_limit": 5_000,  # Most providers offer ~5K free
+            "unit": "messages",
+            "note": "Varies by provider. SendGrid: 100/day, Mailgun: 5K/month, self-hosted: unlimited"
+        }
     },
     "sms": {
         "description": "SMS Notifications",
         "per_message": 0.0079,  # ~$0.0079 per segment (Twilio average)
         "unit": "messages",
-        "note": "Cost varies by provider and destination."
+        "free_tier": {
+            "monthly_limit": 0,  # No free tier for SMS (some trial credits)
+            "unit": "messages",
+            "note": "Twilio provides trial credits. Cost varies by destination country."
+        }
     }
 }
 
