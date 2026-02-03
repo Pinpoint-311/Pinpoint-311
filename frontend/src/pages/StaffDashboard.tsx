@@ -1756,7 +1756,7 @@ export default function StaffDashboard() {
 
                                                                     {/* Action Buttons - Full Width, Easy to Tap */}
                                                                     {priorityScore && !selectedRequest.manual_priority_score && (
-                                                                        <div className="flex gap-2 mt-3">
+                                                                        <div className="flex gap-2 mt-3 mb-4">
                                                                             <button
                                                                                 onClick={async () => {
                                                                                     setIsUpdatingPriority(true);

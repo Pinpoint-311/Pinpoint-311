@@ -48,14 +48,18 @@ export default function RequestDetailMap({
         }
 
         if (window.google?.maps) {
-            initMap();
+            // Delay slightly to ensure all maps objects are ready
+            setTimeout(() => initMap(), 100);
             return;
         }
 
         const script = document.createElement("script");
         script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&loading=async`;
         script.async = true;
-        script.onload = () => initMap();
+        script.onload = () => {
+            // Delay to ensure MapTypeControlStyle is available
+            setTimeout(() => initMap(), 200);
+        };
         script.onerror = () => setIsLoading(false);
         document.head.appendChild(script);
 
@@ -67,25 +71,32 @@ export default function RequestDetailMap({
     }, [apiKey]);
 
     const initMap = useCallback(() => {
-        if (!mapRef.current || !window.google?.maps?.MapTypeControlStyle) return;
+        if (!mapRef.current || !window.google?.maps) return;
 
-        const map = new window.google.maps.Map(mapRef.current, {
+        // Build map options with safe defaults
+        const mapOptions: google.maps.MapOptions = {
             center: { lat, lng },
             zoom: 18,
             mapTypeId: 'hybrid',
             mapTypeControl: true,
-            mapTypeControlOptions: {
-                style: window.google.maps.MapTypeControlStyle.HORIZONTAL_BAR,
-                position: window.google.maps.ControlPosition.TOP_LEFT,
-                mapTypeIds: ['roadmap', 'satellite', 'hybrid'],
-            },
             streetViewControl: true,
             fullscreenControl: true,
             zoomControl: true,
-            zoomControlOptions: {
+        };
+
+        // Only add advanced control options if MapTypeControlStyle is available
+        if (window.google.maps.MapTypeControlStyle) {
+            mapOptions.mapTypeControlOptions = {
+                style: window.google.maps.MapTypeControlStyle.HORIZONTAL_BAR,
+                position: window.google.maps.ControlPosition.TOP_LEFT,
+                mapTypeIds: ['roadmap', 'satellite', 'hybrid'],
+            };
+            mapOptions.zoomControlOptions = {
                 position: window.google.maps.ControlPosition.LEFT_BOTTOM,
-            },
-        });
+            };
+        }
+
+        const map = new window.google.maps.Map(mapRef.current, mapOptions);
 
         mapInstanceRef.current = map;
         infoWindowRef.current = new window.google.maps.InfoWindow();
