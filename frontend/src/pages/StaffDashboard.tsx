@@ -1914,7 +1914,7 @@ export default function StaffDashboard() {
 
                                                                     {/* Priority Justification Quote */}
                                                                     {ai?.priority_justification && !hasError && (
-                                                                        <div className="relative pl-4 mb-5 border-l-2 border-primary-500/20">
+                                                                        <div className="relative pl-4 mt-6 mb-5 border-l-2 border-primary-500/20">
                                                                             <p className="text-white/40 text-xs italic leading-relaxed">"{ai.priority_justification}"</p>
                                                                         </div>
                                                                     )}
