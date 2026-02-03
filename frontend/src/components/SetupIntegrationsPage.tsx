@@ -193,7 +193,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                             <Badge variant="success">Auto-configured</Badge>
                         </div>
                         <p className="text-gray-300 text-sm">
-                            Database connection is configured via <code className="bg-white/10 px-1 rounded">DATABASE_URL</code> environment variable in docker-compose.yml.
+                            Database connection is configured via <code className="bg-white/10 px-1 rounded break-all">DATABASE_URL</code> environment variable in docker-compose.yml.
                         </p>
                         <div className="mt-4 flex items-center gap-2 text-green-400 text-sm">
                             <CheckCircle className="w-4 h-4" />
