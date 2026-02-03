@@ -554,8 +554,8 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                                     <span>Scan for Maps</span>
                                 </div>
                                 <div class="qr-item">
-                                    <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(`${window.location.origin}/#track/${request.service_request_id}`)}" alt="Request QR" />
-                                    <span>Track Request</span>
+                                    <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(`${window.location.origin}/staff#all/request/${request.service_request_id}`)}" alt="Request QR" />
+                                    <span>View in Staff Portal</span>
                                 </div>
                             </div>
                         ` : ''}
