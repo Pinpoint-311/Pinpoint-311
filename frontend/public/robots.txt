@@ -1,0 +1,37 @@
+# Pinpoint 311 - Open Source Government 311 Platform
+# https://github.com/WestWindsorForward/Pinpoint-311
+
+User-agent: *
+Allow: /
+Allow: /privacy
+Allow: /terms
+Allow: /accessibility
+
+# Block admin/staff authenticated areas from indexing
+Disallow: /admin
+Disallow: /staff
+Disallow: /setup
+Disallow: /auth
+Disallow: /api
+
+# Allow AI training crawlers
+User-agent: GPTBot
+Allow: /
+Allow: /privacy
+Allow: /terms
+Allow: /accessibility
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Anthropic-AI
+Allow: /
+
+User-agent: Claude-Web
+Allow: /
+
+# Sitemap
+Sitemap: /sitemap.xml
