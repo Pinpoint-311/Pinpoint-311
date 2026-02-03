@@ -24,32 +24,17 @@ class Auth0Service:
     @staticmethod
     async def get_config(db: Session) -> Optional[Dict[str, str]]:
         """
-        Retrieve Auth0 configuration from database.
+        Retrieve Auth0 configuration from Secret Manager (GCP) or database fallback.
         
         Returns dict with: domain, client_id, client_secret
         Returns None if not configured.
         """
-        # Fetch all Auth0 secrets
-        result = await db.execute(
-            select(SystemSecret).where(
-                SystemSecret.key_name.in_([
-                    "AUTH0_DOMAIN",
-                    "AUTH0_CLIENT_ID",
-                    "AUTH0_CLIENT_SECRET"
-                ])
-            )
-        )
-        secrets = {s.key_name: s for s in result.scalars().all()}
+        from app.services.secret_manager import get_secret
         
-        # Check if all required secrets are configured
-        if not all(key in secrets and secrets[key].is_configured 
-                   for key in ["AUTH0_DOMAIN", "AUTH0_CLIENT_ID", "AUTH0_CLIENT_SECRET"]):
-            return None
-        
-        # Decrypt values
-        domain = decrypt_safe(secrets["AUTH0_DOMAIN"].key_value)
-        client_id = decrypt_safe(secrets["AUTH0_CLIENT_ID"].key_value)
-        client_secret = decrypt_safe(secrets["AUTH0_CLIENT_SECRET"].key_value)
+        # Use Secret Manager (checks GCP first, falls back to DB)
+        domain = await get_secret("AUTH0_DOMAIN")
+        client_id = await get_secret("AUTH0_CLIENT_ID")
+        client_secret = await get_secret("AUTH0_CLIENT_SECRET")
         
         if not all([domain, client_id, client_secret]):
             return None
@@ -59,6 +44,7 @@ class Auth0Service:
             "client_id": client_id,
             "client_secret": client_secret
         }
+
     
     @staticmethod
     async def get_authorization_url(
