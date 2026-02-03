@@ -65,6 +65,19 @@ class GeocodingService:
                     result = data["results"][0]
                     location = result["geometry"]["location"]
                     
+                    # Track API usage for cost estimation
+                    try:
+                        from app.db.session import SessionLocal
+                        from app.services.api_usage import track_api_usage
+                        async with SessionLocal() as db:
+                            await track_api_usage(
+                                db=db,
+                                service_name="maps_geocode",
+                                operation="geocode"
+                            )
+                    except Exception as e:
+                        logger.warning(f"Failed to track geocoding usage: {e}")
+                    
                     # Extract address components
                     components = {}
                     for comp in result.get("address_components", []):
@@ -97,6 +110,20 @@ class GeocodingService:
                 
                 if data.get("status") == "OK" and data.get("results"):
                     result = data["results"][0]
+                    
+                    # Track API usage for cost estimation
+                    try:
+                        from app.db.session import SessionLocal
+                        from app.services.api_usage import track_api_usage
+                        async with SessionLocal() as db:
+                            await track_api_usage(
+                                db=db,
+                                service_name="maps_reverse_geocode",
+                                operation="reverse_geocode"
+                            )
+                    except Exception as e:
+                        logger.warning(f"Failed to track reverse geocoding usage: {e}")
+                    
                     return GeocodingResult(
                         lat=lat,
                         lng=lng,

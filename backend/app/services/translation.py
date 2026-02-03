@@ -132,6 +132,20 @@ async def translate_text(
             if "data" in result and "translations" in result["data"]:
                 translated = result["data"]["translations"][0]["translatedText"]
                 
+                # Track API usage for cost estimation
+                try:
+                    from app.db.session import SessionLocal
+                    from app.services.api_usage import track_api_usage
+                    async with SessionLocal() as db:
+                        await track_api_usage(
+                            db=db,
+                            service_name="translation",
+                            operation="translate_text",
+                            characters=len(text)
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to track translation usage: {e}")
+                
                 # 3. Save to database cache
                 await save_translation_to_cache(text, target_lang, translated)
                 

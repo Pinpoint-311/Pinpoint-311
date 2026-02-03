@@ -558,3 +558,24 @@ class UptimeRecord(Base):
     error_message = Column(String(500))  # Error details if status is not healthy
     checked_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
+
+class ApiUsageRecord(Base):
+    """Track API calls to external services for cost estimation and monitoring."""
+    __tablename__ = "api_usage_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    service_name = Column(String(100), nullable=False, index=True)  # vertex_ai, translation, maps_geocode, maps_static, secret_manager, kms
+    operation = Column(String(100))  # e.g., "analyze", "translate", "geocode", "reverse_geocode"
+    
+    # Usage metrics (different services use different metrics)
+    tokens_input = Column(Integer, default=0)  # For AI services (Gemini)
+    tokens_output = Column(Integer, default=0)  # For AI services (Gemini)
+    characters = Column(Integer, default=0)  # For translation API
+    api_calls = Column(Integer, default=1)  # Count of API calls (for per-call pricing)
+    
+    # Request context
+    request_id = Column(String(50), index=True)  # Optional link to service_request_id
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+

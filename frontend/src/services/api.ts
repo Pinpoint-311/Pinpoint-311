@@ -794,6 +794,27 @@ class ApiClient {
         return this.request('/health/uptime/check-now', { method: 'POST' });
     }
 
+    // ========== API Cost Tracking ==========
+
+    async getCostEstimate(days: number = 30): Promise<CostEstimate> {
+        return this.request<CostEstimate>(`/system/api-usage/cost-estimate?days=${days}`);
+    }
+
+    async getApiUsage(days: number = 30, service?: string): Promise<ApiUsageResponse> {
+        const params = new URLSearchParams();
+        params.append('days', days.toString());
+        if (service) params.append('service', service);
+        return this.request<ApiUsageResponse>(`/system/api-usage/usage?${params.toString()}`);
+    }
+
+    async getDailyUsage(days: number = 30): Promise<DailyUsageResponse> {
+        return this.request<DailyUsageResponse>(`/system/api-usage/daily?days=${days}`);
+    }
+
+    async getApiPricing(): Promise<Record<string, any>> {
+        return this.request<Record<string, any>>('/system/api-usage/pricing');
+    }
+
 }
 
 
@@ -987,5 +1008,47 @@ export interface UptimeStats {
         '24h'?: { uptime_percent: number; checks: number; healthy: number };
         '7d'?: { uptime_percent: number; checks: number; healthy: number };
         '30d'?: { uptime_percent: number; checks: number; healthy: number };
+    }>;
+}
+
+// API Cost Tracking types
+export interface ServiceUsage {
+    tokens_input: number;
+    tokens_output: number;
+    characters: number;
+    api_calls: number;
+    record_count: number;
+}
+
+export interface ServiceCost {
+    description: string;
+    usage: ServiceUsage;
+    estimated_cost: number;
+    pricing_info: Record<string, unknown>;
+}
+
+export interface CostEstimate {
+    period_days: number;
+    services: Record<string, ServiceCost>;
+    total_estimated_cost: number;
+    monthly_projection: number;
+    pricing_disclaimer: string;
+}
+
+export interface ApiUsageResponse {
+    period_days: number;
+    services: Record<string, ServiceUsage>;
+    available_services: string[];
+}
+
+export interface DailyUsageResponse {
+    period_days: number;
+    data: Array<{
+        date: string;
+        service_name: string;
+        tokens_input: number;
+        tokens_output: number;
+        characters: number;
+        api_calls: number;
     }>;
 }

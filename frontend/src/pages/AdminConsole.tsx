@@ -65,6 +65,7 @@ import {
     Twitter,
     Linkedin,
     type LucideIcon,
+    DollarSign,
 } from 'lucide-react';
 import { Button, Card, Modal, Input, Select, Badge, AccordionSection } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
@@ -77,6 +78,7 @@ import OperationsPanel from '../components/OperationsPanel';
 import SetupIntegrationsPage from '../components/SetupIntegrationsPage';
 import AuditLogViewer from '../components/AuditLogViewer';
 import VersionSwitcher from '../components/VersionSwitcher';
+import CostTracker from '../components/CostTracker';
 
 // Icon library for service categories
 const ICON_LIBRARY: { name: string; icon: LucideIcon }[] = [
@@ -111,7 +113,7 @@ const ICON_LIBRARY: { name: string; icon: LucideIcon }[] = [
     { name: 'Users', icon: Users },
 ];
 
-type Tab = 'branding' | 'users' | 'departments' | 'services' | 'integration' | 'system' | 'health' | 'compliance';
+type Tab = 'branding' | 'users' | 'departments' | 'services' | 'integration' | 'system' | 'health' | 'compliance' | 'costs';
 
 // Sidebar accordion components
 interface SidebarGroupProps {
@@ -218,7 +220,8 @@ export default function AdminConsole() {
             integration: 'Setup & Integration',
             system: 'System Settings',
             health: 'System Health',
-            compliance: 'Compliance'
+            compliance: 'Compliance',
+            costs: 'API Costs'
         };
         updateTitle(tabTitles[currentTab]);
         scrollToTop('instant');
@@ -934,8 +937,8 @@ export default function AdminConsole() {
                         <SidebarGroup
                             title="System & Compliance"
                             icon={Settings}
-                            isActive={currentTab === 'system' || currentTab === 'health' || currentTab === 'compliance'}
-                            defaultOpen={currentTab === 'system' || currentTab === 'health' || currentTab === 'compliance'}
+                            isActive={currentTab === 'system' || currentTab === 'health' || currentTab === 'compliance' || currentTab === 'costs'}
+                            defaultOpen={currentTab === 'system' || currentTab === 'health' || currentTab === 'compliance' || currentTab === 'costs'}
                         >
                             <SidebarItem
                                 icon={Settings}
@@ -948,6 +951,12 @@ export default function AdminConsole() {
                                 label="System Health"
                                 isActive={currentTab === 'health'}
                                 onClick={() => { setCurrentTab('health'); setSidebarOpen(false); }}
+                            />
+                            <SidebarItem
+                                icon={DollarSign}
+                                label="API Costs"
+                                isActive={currentTab === 'costs'}
+                                onClick={() => { setCurrentTab('costs'); setSidebarOpen(false); }}
                             />
                             <SidebarItem
                                 icon={Shield}
@@ -2755,6 +2764,11 @@ export default function AdminConsole() {
                             <div className="mt-8">
                                 <AuditLogViewer />
                             </div>
+                        )}
+
+                        {/* API Costs Tab */}
+                        {currentTab === 'costs' && (
+                            <CostTracker />
                         )}
 
                     </div>

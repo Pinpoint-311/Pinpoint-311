@@ -181,6 +181,23 @@ def analyze_request(self, request_id: int):
             
             logger.info(f"[AI Analysis] Got result: {analysis_result}")
             
+            # Track API usage for cost estimation
+            try:
+                from app.services.api_usage import track_api_usage
+                # Estimate token counts (rough estimation based on prompt/response)
+                tokens_in = len(prompt) // 4  # Rough estimate: ~4 chars per token
+                tokens_out = len(str(analysis_result)) // 4
+                await track_api_usage(
+                    db=db,
+                    service_name="vertex_ai",
+                    operation="analyze_request",
+                    tokens_input=tokens_in,
+                    tokens_output=tokens_out,
+                    request_id=request.service_request_id
+                )
+            except Exception as e:
+                logger.warning(f"[AI Analysis] Failed to track usage: {e}")
+            
             # Check for errors in result
             if "_error" in analysis_result:
                 logger.error(f"[AI Analysis] Error from Vertex AI: {analysis_result['_error']}")
