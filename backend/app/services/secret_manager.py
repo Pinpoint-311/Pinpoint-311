@@ -372,8 +372,8 @@ async def migrate_to_secret_manager() -> Dict[str, Any]:
     """
     Migrate all secrets from database to Google Secret Manager.
     
-    After successful migration, scrubs the encrypted values from the database
-    to ensure secrets only exist in one place.
+    SAFETY: Only scrubs secrets from database AFTER verifying they can be
+    read back from GCP. This prevents data loss if the write fails.
     
     Returns a summary of migrated secrets.
     """
@@ -390,6 +390,7 @@ async def migrate_to_secret_manager() -> Dict[str, Any]:
         }
     
     migrated = []
+    verified = []
     failed = []
     skipped = []
     scrubbed = []
@@ -434,21 +435,40 @@ async def migrate_to_secret_manager() -> Dict[str, Any]:
                 else:
                     failed.append({"key": secret.key_name, "error": "write failed"})
             
-            # Scrub successfully migrated secrets from database
-            if migrated:
+            # CRITICAL: Verify each migrated secret can be read back from GCP
+            # Only scrub if verification passes
+            clear_cache()  # Clear cache to force fresh reads
+            
+            for key_name in migrated:
+                try:
+                    # Try to read the secret back from GCP
+                    read_value = await get_secret(key_name)
+                    if read_value:
+                        verified.append(key_name)
+                    else:
+                        failed.append({"key": key_name, "error": "verification failed - could not read back from GCP"})
+                except Exception as e:
+                    failed.append({"key": key_name, "error": f"verification failed: {str(e)}"})
+            
+            # Only scrub VERIFIED secrets from database
+            if verified:
                 for secret in secrets:
-                    if secret.key_name in migrated:
+                    if secret.key_name in verified:
                         # Clear the encrypted value but keep the record
                         secret.key_value = None
                         scrubbed.append(secret.key_name)
                 
                 await db.commit()
-                logger.info(f"Scrubbed {len(scrubbed)} secrets from database after migration")
+                logger.info(f"Scrubbed {len(scrubbed)} verified secrets from database after migration")
+            else:
+                logger.warning("No secrets verified - database values NOT scrubbed")
         
         return {
-            "status": "success",
+            "status": "success" if verified else "partial_failure",
             "migrated": len(migrated),
             "migrated_keys": migrated,
+            "verified": len(verified),
+            "verified_keys": verified,
             "scrubbed": len(scrubbed),
             "scrubbed_keys": scrubbed,
             "skipped": len(skipped),
@@ -463,5 +483,7 @@ async def migrate_to_secret_manager() -> Dict[str, Any]:
             "status": "error",
             "error": str(e),
             "migrated": len(migrated),
-            "migrated_keys": migrated
+            "migrated_keys": migrated,
+            "warning": "Database values NOT scrubbed due to error"
         }
+
