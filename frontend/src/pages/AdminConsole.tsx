@@ -1017,7 +1017,7 @@ export default function AdminConsole() {
                 </header>
 
                 {/* Content */}
-                <div className="flex-1 p-4 md:p-6 overflow-auto">
+                <div ref={contentRef} className="flex-1 p-4 md:p-6 overflow-auto">
                     <div className="max-w-4xl mx-auto">
                         {/* Save message */}
                         <AnimatePresence>
@@ -1486,8 +1486,8 @@ export default function AdminConsole() {
 
                                 {/* Premium Table */}
                                 <div className="rounded-2xl bg-white/[0.03] backdrop-blur-xl border border-white/10 overflow-hidden shadow-2xl">
-                                    {/* Table Header */}
-                                    <div className="px-6 py-4 border-b border-white/10 bg-gradient-to-r from-white/[0.05] to-transparent">
+                                    {/* Table Header - Hidden on mobile */}
+                                    <div className="hidden md:block px-6 py-4 border-b border-white/10 bg-gradient-to-r from-white/[0.05] to-transparent">
                                         <div className="grid grid-cols-12 gap-4 items-center">
                                             <div className="col-span-4 text-xs font-semibold text-white/50 uppercase tracking-wider">User</div>
                                             <div className="col-span-3 text-xs font-semibold text-white/50 uppercase tracking-wider">Email</div>
@@ -1505,9 +1505,65 @@ export default function AdminConsole() {
                                                 initial={{ opacity: 0, y: 10 }}
                                                 animate={{ opacity: 1, y: 0 }}
                                                 transition={{ delay: index * 0.05 }}
-                                                className="px-6 py-4 hover:bg-white/[0.03] transition-all duration-200 group"
+                                                className="px-4 md:px-6 py-4 hover:bg-white/[0.03] transition-all duration-200 group"
                                             >
-                                                <div className="grid grid-cols-12 gap-4 items-center">
+                                                {/* Mobile: Card Layout */}
+                                                <div className="md:hidden space-y-3">
+                                                    <div className="flex items-center justify-between">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className={`relative w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm shadow-lg ${u.role === 'admin'
+                                                                ? 'bg-gradient-to-br from-amber-400 to-orange-500 text-white'
+                                                                : 'bg-gradient-to-br from-primary-400 to-primary-600 text-white'
+                                                                }`}>
+                                                                {u.full_name ? u.full_name.charAt(0).toUpperCase() : u.username.charAt(0).toUpperCase()}
+                                                                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-slate-900" />
+                                                            </div>
+                                                            <div>
+                                                                <p className="font-semibold text-white text-sm">{u.full_name || u.username}</p>
+                                                                <p className="text-xs text-white/40">@{u.username}</p>
+                                                            </div>
+                                                        </div>
+                                                        {u.role === 'admin' ? (
+                                                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30">
+                                                                <Shield className="w-3 h-3" />
+                                                                Admin
+                                                            </span>
+                                                        ) : (
+                                                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-blue-500/20 to-cyan-500/20 text-blue-300 border border-blue-500/30">
+                                                                <UserIcon className="w-3 h-3" />
+                                                                Staff
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-xs text-white/50 truncate">{u.email}</p>
+                                                    <div className="flex items-center justify-between">
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {u.departments && u.departments.length > 0 ? (
+                                                                u.departments.slice(0, 2).map((dept) => (
+                                                                    <span key={dept.id} className="px-2 py-0.5 text-xs rounded-lg bg-white/5 text-white/70 border border-white/10">
+                                                                        {dept.name}
+                                                                    </span>
+                                                                ))
+                                                            ) : (
+                                                                <span className="text-xs text-white/25 italic">No department</span>
+                                                            )}
+                                                        </div>
+                                                        <button
+                                                            onClick={() => handleDeleteUser(u.id)}
+                                                            disabled={u.id === user?.id}
+                                                            className={`p-2 rounded-lg ${u.id === user?.id
+                                                                ? 'text-white/20 cursor-not-allowed'
+                                                                : 'hover:bg-red-500/20 text-white/40 hover:text-red-400'
+                                                                }`}
+                                                            title={u.id === user?.id ? "Cannot delete yourself" : "Delete user"}
+                                                        >
+                                                            <Trash2 className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                {/* Desktop: Grid Layout */}
+                                                <div className="hidden md:grid grid-cols-12 gap-4 items-center">
                                                     {/* User Info */}
                                                     <div className="col-span-4 flex items-center gap-4">
                                                         <div className={`relative w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg shadow-lg ${u.role === 'admin'
@@ -2072,7 +2128,7 @@ export default function AdminConsole() {
 
                                         {/* Custom Map Layers */}
                                         <Card>
-                                            <div className="flex items-center justify-between mb-4">
+                                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
                                                 <div>
                                                     <h3 className="text-lg font-semibold text-white">Custom Map Layers</h3>
                                                     <p className="text-sm text-white/50">
@@ -2081,6 +2137,7 @@ export default function AdminConsole() {
                                                 </div>
                                                 <Button
                                                     size="sm"
+                                                    className="w-full sm:w-auto"
                                                     onClick={() => {
                                                         setEditingLayer(null);
                                                         setNewLayer({
