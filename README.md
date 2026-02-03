@@ -901,7 +901,24 @@ The following are generally considered out of scope for security reports:
 | **License** | ✅ MIT - fork, modify, redistribute freely |
 | **Dependencies** | ✅ All open-source with public documentation |
 | **Phone-Home** | ✅ None - no calls to Pinpoint 311 servers |
-| **Self-Healing** | ✅ Auto-restart, health checks, Watchtower updates |
+| **Self-Healing** | ✅ Auto-restart, health checks |
+| **Watchtower** | ✅ Optional auto-updates (see below) |
+
+**Watchtower (Optional):**
+Watchtower automatically updates your Docker containers with security patches. It runs at 3am daily.
+
+```bash
+# Enable Watchtower
+docker compose up -d watchtower
+
+# Disable Watchtower  
+docker compose stop watchtower
+
+# Check status
+docker compose ps watchtower
+```
+
+> 💡 The core system works perfectly without Watchtower. Enable it for hands-off security updates, or disable it for full manual control.
 
 **What you'd handle independently:**
 - Security patches for dependencies
