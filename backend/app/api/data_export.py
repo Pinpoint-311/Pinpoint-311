@@ -16,7 +16,7 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models import ServiceRequest, ServiceCategory, User, Department, SystemSettings
+from app.models import ServiceRequest, ServiceDefinition, User, Department, SystemSettings
 from app.api.auth import get_current_user, get_current_staff_user
 from app.core.encryption import decrypt_pii
 
@@ -45,20 +45,20 @@ async def get_requests_for_export(
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     status: Optional[str] = None,
-    category_id: Optional[int] = None
+    service_code: Optional[str] = None
 ) -> List[ServiceRequest]:
     """Fetch requests with optional filters."""
-    query = select(ServiceRequest).order_by(ServiceRequest.created_at.desc())
+    query = select(ServiceRequest).order_by(ServiceRequest.requested_datetime.desc())
     
-    conditions = []
+    conditions = [ServiceRequest.deleted_at.is_(None)]  # Exclude soft-deleted
     if start_date:
-        conditions.append(ServiceRequest.created_at >= start_date)
+        conditions.append(ServiceRequest.requested_datetime >= start_date)
     if end_date:
-        conditions.append(ServiceRequest.created_at <= end_date)
+        conditions.append(ServiceRequest.requested_datetime <= end_date)
     if status:
         conditions.append(ServiceRequest.status == status)
-    if category_id:
-        conditions.append(ServiceRequest.category_id == category_id)
+    if service_code:
+        conditions.append(ServiceRequest.service_code == service_code)
     
     if conditions:
         query = query.where(and_(*conditions))
@@ -71,31 +71,30 @@ def request_to_dict(request: ServiceRequest, include_pii: bool = True) -> dict:
     """Convert request to dictionary for export."""
     data = {
         "id": request.id,
-        "request_id": request.request_id,
+        "request_id": request.service_request_id,
         "status": request.status,
         "priority": request.priority,
-        "category_id": request.category_id,
-        "category_name": request.category.name if request.category else "",
-        "department_id": request.department_id,
-        "department_name": request.department.name if request.department else "",
+        "service_code": request.service_code,
+        "service_name": request.service_name,
+        "department_id": request.assigned_department_id,
+        "department_name": request.assigned_department.name if request.assigned_department else "",
         "description": request.description,
         "address": request.address,
-        "latitude": request.latitude,
-        "longitude": request.longitude,
-        "created_at": format_datetime(request.created_at),
-        "updated_at": format_datetime(request.updated_at),
-        "resolved_at": format_datetime(request.resolved_at),
-        "assigned_to_id": request.assigned_to_id,
-        "assigned_to_name": request.assigned_to.full_name if request.assigned_to else "",
-        "resolution_notes": request.resolution_notes or "",
-        "ai_summary": request.ai_summary or "",
-        "ai_priority_suggestion": request.ai_priority_suggestion or "",
+        "latitude": request.lat,
+        "longitude": request.long,
+        "created_at": format_datetime(request.requested_datetime),
+        "updated_at": format_datetime(request.updated_datetime),
+        "closed_at": format_datetime(request.closed_datetime),
+        "assigned_to": request.assigned_to or "",
+        "staff_notes": request.staff_notes or "",
+        "ai_summary": request.vertex_ai_summary or "",
+        "source": request.source or "",
     }
     
     if include_pii:
-        data["reporter_name"] = safe_decrypt(request.reporter_name) if request.reporter_name else ""
-        data["reporter_email"] = safe_decrypt(request.reporter_email) if request.reporter_email else ""
-        data["reporter_phone"] = safe_decrypt(request.reporter_phone) if request.reporter_phone else ""
+        data["reporter_name"] = f"{request.first_name or ''} {request.last_name or ''}".strip()
+        data["reporter_email"] = request.email or ""
+        data["reporter_phone"] = request.phone or ""
     else:
         data["reporter_name"] = "[redacted]"
         data["reporter_email"] = "[redacted]"
@@ -115,7 +114,7 @@ def request_to_geojson_feature(request: ServiceRequest, include_pii: bool = True
         "type": "Feature",
         "geometry": {
             "type": "Point",
-            "coordinates": [request.longitude or 0, request.latitude or 0]
+            "coordinates": [request.long or 0, request.lat or 0]
         },
         "properties": properties
     }
@@ -127,7 +126,7 @@ async def export_requests(
     start_date: Optional[datetime] = Query(None, description="Start date filter"),
     end_date: Optional[datetime] = Query(None, description="End date filter"),
     status: Optional[str] = Query(None, description="Status filter"),
-    category_id: Optional[int] = Query(None, description="Category ID filter"),
+    service_code: Optional[str] = Query(None, description="Service code filter"),
     include_pii: bool = Query(True, description="Include reporter PII (name, email, phone)"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_staff_user)
@@ -138,13 +137,13 @@ async def export_requests(
     - **format**: csv, json, or geojson
     - **start_date**: Optional start date filter (YYYY-MM-DD)
     - **end_date**: Optional end date filter (YYYY-MM-DD)
-    - **status**: Optional status filter (open, in_progress, resolved, closed)
-    - **category_id**: Optional category ID filter
+    - **status**: Optional status filter (open, in_progress, closed)
+    - **service_code**: Optional service code filter
     - **include_pii**: Include reporter PII or redact it (default: true)
     
     Requires staff or admin authentication.
     """
-    requests = await get_requests_for_export(db, start_date, end_date, status, category_id)
+    requests = await get_requests_for_export(db, start_date, end_date, status, service_code)
     
     # Get township name for filename
     settings_result = await db.execute(select(SystemSettings).limit(1))
@@ -187,7 +186,7 @@ async def export_requests(
                     "start_date": start_date.isoformat() if start_date else None,
                     "end_date": end_date.isoformat() if end_date else None,
                     "status": status,
-                    "category_id": category_id,
+                    "service_code": service_code,
                     "pii_included": include_pii
                 }
             },
@@ -257,7 +256,7 @@ async def export_statistics(
     if end_date:
         conditions.append(ServiceRequest.created_at <= end_date)
     
-    base_query = select(ServiceRequest)
+    base_query = select(ServiceRequest).where(ServiceRequest.deleted_at.is_(None))
     if conditions:
         base_query = base_query.where(and_(*conditions))
     
@@ -276,17 +275,17 @@ async def export_statistics(
         # By status
         by_status[req.status] = by_status.get(req.status, 0) + 1
         
-        # By category
-        cat_name = req.category.name if req.category else "Uncategorized"
+        # By category (service_name)
+        cat_name = req.service_name or "Unknown"
         by_category[cat_name] = by_category.get(cat_name, 0) + 1
         
         # By department
-        dept_name = req.department.name if req.department else "Unassigned"
+        dept_name = req.assigned_department.name if req.assigned_department else "Unassigned"
         by_department[dept_name] = by_department.get(dept_name, 0) + 1
         
         # Resolution time
-        if req.resolved_at and req.created_at:
-            resolution_times.append((req.resolved_at - req.created_at).total_seconds() / 3600)  # hours
+        if req.closed_datetime and req.requested_datetime:
+            resolution_times.append((req.closed_datetime - req.requested_datetime).total_seconds() / 3600)  # hours
     
     avg_resolution_hours = sum(resolution_times) / len(resolution_times) if resolution_times else 0
     
