@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models import ServiceRequest, ServiceDefinition, User, Department, SystemSettings
-from app.api.auth import get_current_user, get_current_staff_user
+from app.core.auth import get_current_user, get_current_staff
 from app.core.encryption import decrypt_pii
 
 router = APIRouter(prefix="/export", tags=["data-export"])
@@ -129,7 +129,7 @@ async def export_requests(
     service_code: Optional[str] = Query(None, description="Service code filter"),
     include_pii: bool = Query(True, description="Include reporter PII (name, email, phone)"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_staff_user)
+    current_user: User = Depends(get_current_staff)
 ):
     """
     Export 311 requests as CSV, JSON, or GeoJSON.
@@ -235,7 +235,7 @@ async def export_statistics(
     end_date: Optional[datetime] = Query(None, description="End date filter"),
     format: str = Query("json", description="Export format: csv or json"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_staff_user)
+    current_user: User = Depends(get_current_staff)
 ):
     """
     Export aggregated statistics as CSV or JSON.
