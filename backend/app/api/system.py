@@ -52,7 +52,10 @@ async def update_settings(
         settings = SystemSettings(**settings_data.model_dump())
         db.add(settings)
     else:
-        for key, value in settings_data.model_dump().items():
+        # IMPORTANT: Only update fields that were explicitly provided in the request
+        # Using exclude_unset=True prevents default values in the schema from 
+        # overwriting saved values when the frontend doesn't send all fields
+        for key, value in settings_data.model_dump(exclude_unset=True).items():
             setattr(settings, key, value)
     
     await db.commit()
