@@ -652,6 +652,25 @@ export default function StaffDashboard() {
         setCurrentView('active'); // Switch to list view to see details
     };
 
+    // Export handlers with proper error handling
+    const handleExportRequests = async (format: 'csv' | 'json' | 'geojson') => {
+        try {
+            await api.exportRequests({ format });
+        } catch (err: any) {
+            console.error('Export failed:', err);
+            alert(`Export failed: ${err.message || 'Unknown error'}. Please try again.`);
+        }
+    };
+
+    const handleExportStatistics = async (format: 'csv' | 'json') => {
+        try {
+            await api.exportStatistics({ format });
+        } catch (err: any) {
+            console.error('Statistics export failed:', err);
+            alert(`Export failed: ${err.message || 'Unknown error'}. Please try again.`);
+        }
+    };
+
     return (
         <div className="h-screen flex overflow-hidden">
             {/* Mobile sidebar backdrop */}
@@ -924,19 +943,19 @@ export default function StaffDashboard() {
                                         <div className="p-2">
                                             <p className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase">Export Requests</p>
                                             <button
-                                                onClick={() => api.exportRequests({ format: 'csv' })}
+                                                onClick={() => handleExportRequests('csv')}
                                                 className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
                                             >
                                                 📄 Download as CSV
                                             </button>
                                             <button
-                                                onClick={() => api.exportRequests({ format: 'json' })}
+                                                onClick={() => handleExportRequests('json')}
                                                 className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
                                             >
                                                 📋 Download as JSON
                                             </button>
                                             <button
-                                                onClick={() => api.exportRequests({ format: 'geojson' })}
+                                                onClick={() => handleExportRequests('geojson')}
                                                 className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
                                             >
                                                 🗺️ Download as GeoJSON
@@ -944,13 +963,13 @@ export default function StaffDashboard() {
                                             <div className="border-t border-gray-100 my-2" />
                                             <p className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase">Export Statistics</p>
                                             <button
-                                                onClick={() => api.exportStatistics({ format: 'csv' })}
+                                                onClick={() => handleExportStatistics('csv')}
                                                 className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
                                             >
                                                 📊 Statistics as CSV
                                             </button>
                                             <button
-                                                onClick={() => api.exportStatistics({ format: 'json' })}
+                                                onClick={() => handleExportStatistics('json')}
                                                 className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
                                             >
                                                 📈 Statistics as JSON
