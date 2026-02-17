@@ -225,7 +225,7 @@ AI priority suggestions follow a **strict human accountability model**:
 | **Uptime Monitoring** | ✅ **Implemented** (GitHub Actions) | Resolved | 15-min health checks with alerting |
 | **Error Tracking** | ✅ **Implemented** (Sentry SDK) | Resolved | Set SENTRY_DSN to enable |
 | **Compliance Docs** | ✅ **Implemented** | Resolved | SSP and PIA in /docs folder |
-| Audit Retention | Permanent (no purge) | Low | Implement configurable archival policy |
+| Audit Retention | ✅ **Implemented** | Resolved | Configurable archival policy in Admin Console |
 | PII in Comments | Text input only | Moderate | Add AI/regex PII scanning for public fields |
 
 
