@@ -1240,7 +1240,7 @@ export default function StaffDashboard() {
                                 animate={{ x: 0 }}
                                 exit={{ x: '100%' }}
                                 transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                                className="fixed right-0 top-0 bottom-0 w-full sm:w-[480px] bg-gray-950/95 backdrop-blur-xl border-l border-white/10 z-[70] flex flex-col shadow-2xl shadow-black/50"
+                                className="fixed right-0 top-0 bottom-0 w-full sm:w-[520px] bg-gray-950/95 backdrop-blur-xl border-l border-white/10 z-[70] flex flex-col shadow-2xl shadow-black/50"
                             >
                                 {/* Chat Header */}
                                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-gradient-to-r from-emerald-600/20 to-teal-600/20">
@@ -1250,15 +1250,26 @@ export default function StaffDashboard() {
                                         </div>
                                         <div>
                                             <h3 className="text-white font-semibold text-sm">AI Analytics Advisor</h3>
-                                            <p className="text-white/40 text-xs">Gemini 3.0 · Full system context</p>
+                                            <p className="text-white/40 text-xs">Gemini 3.0 · Research-grade insights</p>
                                         </div>
                                     </div>
-                                    <button
-                                        onClick={() => setChatOpen(false)}
-                                        className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
-                                    >
-                                        <X className="w-4 h-4 text-white/70" />
-                                    </button>
+                                    <div className="flex items-center gap-1.5">
+                                        {chatMessages.length > 0 && (
+                                            <button
+                                                onClick={() => { setChatMessages([]); setChatInput(''); }}
+                                                className="w-8 h-8 rounded-lg bg-white/5 hover:bg-red-500/20 flex items-center justify-center transition-colors group"
+                                                title="Clear conversation"
+                                            >
+                                                <Trash2 className="w-3.5 h-3.5 text-white/40 group-hover:text-red-400 transition-colors" />
+                                            </button>
+                                        )}
+                                        <button
+                                            onClick={() => setChatOpen(false)}
+                                            className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
+                                        >
+                                            <X className="w-4 h-4 text-white/70" />
+                                        </button>
+                                    </div>
                                 </div>
 
                                 {/* Messages Area */}
@@ -1270,14 +1281,15 @@ export default function StaffDashboard() {
                                             </div>
                                             <h4 className="text-white font-semibold mb-2">Ask anything about your data</h4>
                                             <p className="text-white/40 text-sm mb-6 max-w-xs">
-                                                I have access to all requests, staff data, departments, geographic patterns, weather, and AI analysis — everything except resident personal info.
+                                                I analyze all requests, staff data, geographic patterns, social equity metrics, resident sentiment, and government responsiveness — everything except resident PII.
                                             </p>
                                             <div className="space-y-2 w-full max-w-xs">
                                                 {[
-                                                    'What are our busiest days and hours?',
-                                                    'Which areas need the most attention?',
-                                                    'How is staff workload distributed?',
-                                                    'What trends should I watch for?',
+                                                    'Which neighborhoods have the highest social vulnerability?',
+                                                    'How does resident sentiment vary by category?',
+                                                    'What\'s our average triage time and how can we improve?',
+                                                    'Are there equity gaps in our response times?',
+                                                    'What trends should I watch for this season?',
                                                 ].map((q, i) => (
                                                     <button
                                                         key={i}
@@ -1294,25 +1306,60 @@ export default function StaffDashboard() {
                                     {chatMessages.map((msg, i) => (
                                         <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                                             <div
-                                                className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === 'user'
-                                                    ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-br-md'
-                                                    : 'bg-white/5 border border-white/10 text-white/90 rounded-bl-md'
+                                                className={`max-w-[90%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === 'user'
+                                                    ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-br-md shadow-lg shadow-emerald-500/10'
+                                                    : 'bg-white/[0.03] border border-white/10 text-white/90 rounded-bl-md'
                                                     }`}
                                             >
                                                 {msg.role === 'assistant' ? (
                                                     <div
-                                                        className="prose prose-invert prose-sm max-w-none [&_p]:mb-2 [&_ul]:mb-2 [&_ol]:mb-2 [&_li]:mb-0.5 [&_h1]:text-lg [&_h2]:text-base [&_h3]:text-sm [&_h2]:mt-3 [&_h3]:mt-2 [&_h2]:mb-1 [&_h3]:mb-1 [&_code]:bg-white/10 [&_code]:px-1 [&_code]:rounded [&_strong]:text-emerald-300"
+                                                        className="prose prose-invert prose-sm max-w-none [&_p]:mb-2.5 [&_p]:leading-relaxed [&_ul]:mb-2.5 [&_ul]:pl-4 [&_ol]:mb-2.5 [&_ol]:pl-4 [&_li]:mb-1 [&_li]:leading-relaxed [&_h1]:text-lg [&_h1]:font-bold [&_h1]:text-white [&_h1]:mt-4 [&_h1]:mb-2 [&_h2]:text-[15px] [&_h2]:font-semibold [&_h2]:text-emerald-300 [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:border-b [&_h2]:border-white/10 [&_h2]:pb-1 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-white/90 [&_h3]:mt-3 [&_h3]:mb-1 [&_code]:bg-white/10 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-emerald-300 [&_code]:text-xs [&_strong]:text-emerald-300 [&_strong]:font-semibold [&_em]:text-white/70 [&_table]:w-full [&_table]:my-3 [&_table]:text-xs [&_th]:text-left [&_th]:px-2 [&_th]:py-1.5 [&_th]:border-b [&_th]:border-white/20 [&_th]:text-emerald-300 [&_th]:font-semibold [&_td]:px-2 [&_td]:py-1.5 [&_td]:border-b [&_td]:border-white/5 [&_hr]:border-white/10 [&_hr]:my-3"
                                                         dangerouslySetInnerHTML={{
-                                                            __html: msg.content
-                                                                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                                                                .replace(/\*(.+?)\*/g, '<em>$1</em>')
-                                                                .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-                                                                .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-                                                                .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-                                                                .replace(/^- (.+)$/gm, '<li>$1</li>')
-                                                                .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
-                                                                .replace(/`([^`]+)`/g, '<code>$1</code>')
-                                                                .replace(/\n/g, '<br />')
+                                                            __html: (() => {
+                                                                let html = msg.content;
+                                                                // Escape HTML entities first (except our markdown)
+                                                                html = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                                                                // Headers (must be before bold processing)
+                                                                html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+                                                                html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+                                                                html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+                                                                // Horizontal rules
+                                                                html = html.replace(/^---+$/gm, '<hr />');
+                                                                // Bold and italic
+                                                                html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+                                                                html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+                                                                html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+                                                                // Inline code
+                                                                html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+                                                                // Tables
+                                                                html = html.replace(/^(\|.+\|)\n(\|[-| :]+\|)\n((?:\|.+\|\n?)+)/gm, (_match, headerRow: string, _sepRow: string, bodyRows: string) => {
+                                                                    const headers = headerRow.split('|').filter((c: string) => c.trim()).map((c: string) => `<th>${c.trim()}</th>`).join('');
+                                                                    const rows = bodyRows.trim().split('\n').map((row: string) => {
+                                                                        const cells = row.split('|').filter((c: string) => c.trim()).map((c: string) => `<td>${c.trim()}</td>`).join('');
+                                                                        return `<tr>${cells}</tr>`;
+                                                                    }).join('');
+                                                                    return `<table><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table>`;
+                                                                });
+                                                                // Numbered lists
+                                                                html = html.replace(/^(\d+)\. (.+)$/gm, '<li data-ol>$2</li>');
+                                                                // Unordered lists
+                                                                html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+                                                                // Wrap consecutive <li> tags in <ul> or <ol>
+                                                                html = html.replace(/((?:<li data-ol>[^]*?<\/li>\n?)+)/g, (match) => {
+                                                                    const clean = match.replace(/ data-ol/g, '');
+                                                                    return `<ol>${clean}</ol>`;
+                                                                });
+                                                                html = html.replace(/((?:<li>[^]*?<\/li>\n?)+)/g, '<ul>$1</ul>');
+                                                                // Paragraphs: wrap remaining text lines
+                                                                html = html.replace(/\n\n/g, '</p><p>');
+                                                                html = html.replace(/\n/g, '<br />');
+                                                                // Clean up empty paragraphs and extra breaks around block elements
+                                                                html = html.replace(/<br \/>\s*(<h[123]>)/g, '$1');
+                                                                html = html.replace(/(<\/h[123]>)\s*<br \/>/g, '$1');
+                                                                html = html.replace(/<br \/>\s*(<ul>|<ol>|<table>|<hr \/>)/g, '$1');
+                                                                html = html.replace(/(<\/ul>|<\/ol>|<\/table>|<hr \/>)\s*<br \/>/g, '$1');
+                                                                return html;
+                                                            })()
                                                         }}
                                                     />
                                                 ) : (
@@ -1324,11 +1371,14 @@ export default function StaffDashboard() {
 
                                     {chatLoading && (
                                         <div className="flex justify-start">
-                                            <div className="bg-white/5 border border-white/10 rounded-2xl rounded-bl-md px-4 py-3">
-                                                <div className="flex items-center gap-1.5">
-                                                    <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                                                    <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                                                    <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                            <div className="bg-white/[0.03] border border-white/10 rounded-2xl rounded-bl-md px-4 py-3">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="flex items-center gap-1">
+                                                        <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                                        <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                                        <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                                    </div>
+                                                    <span className="text-xs text-white/30 ml-1">Analyzing data...</span>
                                                 </div>
                                             </div>
                                         </div>
@@ -1356,7 +1406,7 @@ export default function StaffDashboard() {
                                             <Send className="w-4 h-4" />
                                         </button>
                                     </div>
-                                    <p className="text-[10px] text-white/20 mt-1.5 text-center">Powered by Gemini 3.0 Flash · All system data except resident PII</p>
+                                    <p className="text-[10px] text-white/20 mt-1.5 text-center">Gemini 3.0 Flash · Equity metrics · Sentiment analysis · All system data except PII</p>
                                 </form>
                             </motion.div>
                         </>
