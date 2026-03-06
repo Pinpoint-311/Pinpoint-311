@@ -44,7 +44,7 @@ import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { api, MapLayer } from '../services/api';
 import { ServiceRequest, ServiceRequestDetail, ServiceDefinition, Statistics, AdvancedStatistics, RequestComment, ClosedSubstatus, User as UserType, Department, AuditLogEntry } from '../types';
-import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, AreaChart, Area, Tooltip } from 'recharts';
+import { XAxis, YAxis, ResponsiveContainer, AreaChart, Area, Tooltip } from 'recharts';
 import StaffDashboardMap from '../components/StaffDashboardMap';
 import RequestDetailMap from '../components/RequestDetailMap';
 import { usePageNavigation } from '../hooks/usePageNavigation';
@@ -931,49 +931,58 @@ export default function StaffDashboard() {
                                         </p>
                                     )}
                                 </div>
-                                <div className="relative group">
+                                <div className="flex items-center gap-3">
+                                    {/* Research Portal Link */}
                                     <button
-                                        className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all shadow-lg hover:shadow-xl font-medium"
+                                        onClick={() => window.location.href = '/research'}
+                                        className="flex items-center gap-2 px-4 py-2.5 bg-white border border-purple-200 text-purple-700 rounded-lg hover:bg-purple-50 hover:border-purple-400 transition-all shadow-sm font-medium"
                                     >
-                                        <Download className="w-4 h-4" />
-                                        Export Data
-                                        <ChevronDown className="w-4 h-4" />
+                                        🔬 Research Portal
                                     </button>
-                                    <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-xl border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-                                        <div className="p-2">
-                                            <p className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase">Export Requests</p>
-                                            <button
-                                                onClick={() => handleExportRequests('csv')}
-                                                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
-                                            >
-                                                📄 Download as CSV
-                                            </button>
-                                            <button
-                                                onClick={() => handleExportRequests('json')}
-                                                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
-                                            >
-                                                📋 Download as JSON
-                                            </button>
-                                            <button
-                                                onClick={() => handleExportRequests('geojson')}
-                                                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
-                                            >
-                                                🗺️ Download as GeoJSON
-                                            </button>
-                                            <div className="border-t border-gray-100 my-2" />
-                                            <p className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase">Export Statistics</p>
-                                            <button
-                                                onClick={() => handleExportStatistics('csv')}
-                                                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
-                                            >
-                                                📊 Statistics as CSV
-                                            </button>
-                                            <button
-                                                onClick={() => handleExportStatistics('json')}
-                                                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
-                                            >
-                                                📈 Statistics as JSON
-                                            </button>
+                                    <div className="relative group">
+                                        <button
+                                            className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all shadow-lg hover:shadow-xl font-medium"
+                                        >
+                                            <Download className="w-4 h-4" />
+                                            Export Data
+                                            <ChevronDown className="w-4 h-4" />
+                                        </button>
+                                        <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-xl border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                                            <div className="p-2">
+                                                <p className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase">Export Requests</p>
+                                                <button
+                                                    onClick={() => handleExportRequests('csv')}
+                                                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
+                                                >
+                                                    📄 Download as CSV
+                                                </button>
+                                                <button
+                                                    onClick={() => handleExportRequests('json')}
+                                                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
+                                                >
+                                                    📋 Download as JSON
+                                                </button>
+                                                <button
+                                                    onClick={() => handleExportRequests('geojson')}
+                                                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
+                                                >
+                                                    🗺️ Download as GeoJSON
+                                                </button>
+                                                <div className="border-t border-gray-100 my-2" />
+                                                <p className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase">Export Statistics</p>
+                                                <button
+                                                    onClick={() => handleExportStatistics('csv')}
+                                                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
+                                                >
+                                                    📊 Statistics as CSV
+                                                </button>
+                                                <button
+                                                    onClick={() => handleExportStatistics('json')}
+                                                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
+                                                >
+                                                    📈 Statistics as JSON
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -1070,8 +1079,8 @@ export default function StaffDashboard() {
                                 })()}
                             </div>
 
-                            {/* Top KPIs - Government Focused */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {/* Key Performance Indicators */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
 
                                 <div className="bg-white rounded-lg shadow p-6 border-l-4 border-purple-500">
                                     <div className="text-sm font-medium text-gray-600">Next Week Forecast</div>
@@ -1100,127 +1109,141 @@ export default function StaffDashboard() {
                                     </div>
                                     <div className="text-xs text-gray-500 mt-1">P1-P3 open &gt; 7 days</div>
                                 </div>
-                            </div>
 
-                            {/* Predictive Insights Panel */}
-                            {advancedStats?.predictive_insights && (
-                                <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg shadow-lg p-6 border border-purple-300">
-                                    <div className="mb-4">
-                                        <h2 className="text-xl font-bold text-gray-900">Predictive Insights</h2>
-                                        <div className="mt-2 bg-white/60 rounded p-3 border border-purple-200">
-                                            <p className="text-sm text-gray-800 font-medium mb-1">How Predictions Work:</p>
-                                            <p className="text-xs text-gray-700 leading-relaxed">
-                                                <strong>Volume Forecast:</strong> Calculated using a 4-week moving average of your recent request history.
-                                                We analyze the past 4 weeks of data and project the trend forward.<br />
-                                                <strong>Peak Activity:</strong> Based on historical patterns showing which day/month consistently receives the most requests.
-                                            </p>
-                                        </div>
+                                <div className="bg-white rounded-lg shadow p-6 border-l-4 border-blue-500">
+                                    <div className="text-sm font-medium text-gray-600">Peak Activity</div>
+                                    <div className="text-3xl font-bold text-blue-600 mt-2">
+                                        {advancedStats?.predictive_insights?.seasonal_peak_day || 'N/A'}
                                     </div>
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                        <div>
-                                            <div className="text-sm font-medium text-gray-700">Volume Forecast</div>
-                                            <div className="text-2xl font-bold text-purple-600 mt-1">
-                                                {advancedStats.predictive_insights.volume_forecast_next_week} tickets
-                                            </div>
-                                            <div className="text-xs text-gray-600 mt-1">Expected next week</div>
-                                        </div>
-                                        <div>
-                                            <div className="text-sm font-medium text-gray-700">Peak Activity</div>
-                                            <div className="text-2xl font-bold text-blue-600 mt-1">
-                                                {advancedStats.predictive_insights.seasonal_peak_day}
-                                            </div>
-                                            <div className="text-xs text-gray-600 mt-1">Busiest day of week</div>
-                                        </div>
-                                        <div>
-                                            <div className="text-sm font-medium text-gray-700">Seasonal Peak</div>
-                                            <div className="text-2xl font-bold text-indigo-600 mt-1">
-                                                {advancedStats.predictive_insights.seasonal_peak_month}
-                                            </div>
-                                            <div className="text-xs text-gray-600 mt-1">Highest volume month</div>
-                                        </div>
+                                    <div className="text-xs text-gray-600 mt-1">
+                                        Peak month: {advancedStats?.predictive_insights?.seasonal_peak_month || 'N/A'}
                                     </div>
                                 </div>
-                            )}
 
-                            {/* Geographic Hotspots - Problem Areas */}
-                            {advancedStats?.hotspots && advancedStats.hotspots.length > 0 && (
-                                <div className="bg-white rounded-lg shadow-lg p-6 border-t-4 border-red-500">
-                                    <div className="mb-4">
-                                        <h3 className="text-lg font-bold text-gray-900">Problem Areas</h3>
-                                        <p className="text-sm text-gray-600 mt-1">
-                                            Locations with concentrated service requests. Consider prioritizing inspections or infrastructure improvements.
-                                        </p>
-                                        <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
-                                            <strong>Note:</strong> Data may reflect reporting patterns. Areas may appear more active if residents are more familiar with the platform.
+                                {/* Geographic Hotspots - Problem Areas */}
+                                {advancedStats?.hotspots && advancedStats.hotspots.length > 0 && (
+                                    <div className="bg-white rounded-lg shadow-lg p-6 border-t-4 border-red-500">
+                                        <div className="mb-4">
+                                            <h3 className="text-lg font-bold text-gray-900">Problem Areas</h3>
+                                            <p className="text-sm text-gray-600 mt-1">
+                                                Locations with concentrated service requests. Consider prioritizing inspections or infrastructure improvements.
+                                            </p>
+                                            <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+                                                <strong>Note:</strong> Data may reflect reporting patterns. Areas may appear more active if residents are more familiar with the platform.
+                                            </div>
                                         </div>
-                                    </div>
-                                    <div className="space-y-3">
-                                        {advancedStats.hotspots.slice(0, 6).map((hotspot, idx) => (
-                                            <div key={idx} className="flex items-start justify-between p-4 bg-gradient-to-r from-red-50 to-orange-50 rounded-lg border border-red-200 hover:border-red-400 transition">
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="text-sm font-semibold text-gray-900">
-                                                        {hotspot.sample_address || `Area ${idx + 1}`}
-                                                    </div>
-                                                    {hotspot.top_categories && hotspot.top_categories.length > 0 && (
-                                                        <div className="flex flex-wrap gap-1 mt-2">
-                                                            {hotspot.top_categories.slice(0, 3).map((cat, i) => (
-                                                                <span key={i} className="text-xs px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full">
-                                                                    {cat}
-                                                                </span>
-                                                            ))}
+                                        <div className="space-y-3">
+                                            {advancedStats.hotspots.slice(0, 6).map((hotspot, idx) => (
+                                                <div key={idx} className="flex items-start justify-between p-4 bg-gradient-to-r from-red-50 to-orange-50 rounded-lg border border-red-200 hover:border-red-400 transition">
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="text-sm font-semibold text-gray-900">
+                                                            {hotspot.sample_address || `Area ${idx + 1}`}
                                                         </div>
-                                                    )}
-                                                    <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
-                                                        <span>{hotspot.count} requests</span>
-                                                        {hotspot.unique_reporters && (
-                                                            <span className={`${hotspot.unique_reporters === 1 ? 'text-amber-600 font-medium' : ''}`}>
-                                                                {hotspot.unique_reporters === 1
-                                                                    ? '⚠ Single reporter'
-                                                                    : `${hotspot.unique_reporters} reporters`}
-                                                            </span>
+                                                        {hotspot.top_categories && hotspot.top_categories.length > 0 && (
+                                                            <div className="flex flex-wrap gap-1 mt-2">
+                                                                {hotspot.top_categories.slice(0, 3).map((cat, i) => (
+                                                                    <span key={i} className="text-xs px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full">
+                                                                        {cat}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                        <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
+                                                            <span>{hotspot.count} requests</span>
+                                                            {hotspot.unique_reporters && (
+                                                                <span className={`${hotspot.unique_reporters === 1 ? 'text-amber-600 font-medium' : ''}`}>
+                                                                    {hotspot.unique_reporters === 1
+                                                                        ? '⚠ Single reporter'
+                                                                        : `${hotspot.unique_reporters} reporters`}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    <div className="ml-4 flex-shrink-0 text-center">
+                                                        <div className="bg-gradient-to-r from-red-500 to-orange-500 text-white w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg shadow-lg">
+                                                            {hotspot.count}
+                                                        </div>
+                                                        {hotspot.unique_reporters && hotspot.count > 1 && (
+                                                            <div className="text-xs text-gray-400 mt-1">
+                                                                {(hotspot.count / hotspot.unique_reporters).toFixed(1)}/user
+                                                            </div>
                                                         )}
                                                     </div>
                                                 </div>
-                                                <div className="ml-4 flex-shrink-0 text-center">
-                                                    <div className="bg-gradient-to-r from-red-500 to-orange-500 text-white w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg shadow-lg">
-                                                        {hotspot.count}
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Requests by Category */}
+                                <div className="bg-white rounded-lg shadow-lg p-6 border-t-4 border-purple-500">
+                                    <h3 className="text-lg font-bold text-gray-900 mb-4">Requests by Category</h3>
+                                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                                        {Object.entries(advancedStats?.requests_by_category || {})
+                                            .sort(([, a], [, b]) => (b as number) - (a as number))
+                                            .map(([category, count]) => (
+                                                <div key={category} className="bg-gradient-to-br from-purple-50 to-blue-50 rounded-lg p-4 border border-purple-200 hover:shadow-md transition">
+                                                    <div className="text-sm font-medium text-gray-900 truncate">{category}</div>
+                                                    <div className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent mt-1">
+                                                        {count as number}
                                                     </div>
-                                                    {hotspot.unique_reporters && hotspot.count > 1 && (
-                                                        <div className="text-xs text-gray-400 mt-1">
-                                                            {(hotspot.count / hotspot.unique_reporters).toFixed(1)}/user
-                                                        </div>
-                                                    )}
                                                 </div>
-                                            </div>
-                                        ))}
+                                            ))}
                                     </div>
                                 </div>
-                            )}
 
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                {/* Staff Performance */}
+                                {advancedStats?.top_staff_by_resolutions && Object.keys(advancedStats.top_staff_by_resolutions).length > 0 && (
+                                    <div className="bg-white rounded-lg shadow-lg p-6 border-t-4 border-purple-500">
+                                        <h3 className="text-lg font-bold text-gray-900 mb-4">Top Staff by Resolutions</h3>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                            {Object.entries(advancedStats.top_staff_by_resolutions)
+                                                .sort(([, a], [, b]) => (b as number) - (a as number))
+                                                .slice(0, 9)
+                                                .map(([staff, count]) => (
+                                                    <div key={staff} className="flex items-center justify-between p-3 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg border border-purple-200">
+                                                        <span className="text-sm font-medium text-gray-900 truncate flex-1">{staff}</span>
+                                                        <span className="bg-gradient-to-r from-purple-600 to-blue-600 text-white px-3 py-1 rounded-full text-sm font-bold ml-2">
+                                                            {count as number}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                        </div>
+                                    </div>
+                                )}
 
-                                {/* Priority Backlog */}
+                                {/* Current Workload */}
+                                {advancedStats?.workload_by_staff && Object.keys(advancedStats.workload_by_staff).length > 0 && (
+                                    <div className="bg-white rounded-lg shadow p-6">
+                                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Current Workload</h3>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                            {Object.entries(advancedStats.workload_by_staff)
+                                                .sort(([, a], [, b]) => (b as number) - (a as number))
+                                                .slice(0, 9)
+                                                .map(([staff, count]) => (
+                                                    <div key={staff} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
+                                                        <span className="text-sm font-medium text-gray-900 truncate flex-1">{staff}</span>
+                                                        <span className="bg-blue-500 text-white px-3 py-1 rounded-full text-sm font-bold ml-2">
+                                                            {count as number}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Weekly Trend */}
                                 <div className="bg-white rounded-lg shadow p-6">
-                                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Priority Backlog</h3>
+                                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Weekly Trend</h3>
                                     <div className="h-64">
                                         <ResponsiveContainer width="100%" height="100%">
-                                            <BarChart
-                                                data={Object.entries(advancedStats?.backlog_by_priority || {})
-                                                    .filter(([_, count]) => count > 0)
-                                                    .map(([priority, count]) => ({
-                                                        priority: `P${priority}`,
-                                                        count
-                                                    }))}
-                                                layout="horizontal"
-                                            >
+                                            <AreaChart data={advancedStats?.weekly_trend || []}>
                                                 <XAxis
-                                                    type="number"
+                                                    dataKey="period"
                                                     stroke="#6b7280"
                                                     style={{ fontSize: '12px' }}
                                                 />
                                                 <YAxis
-                                                    type="category"
-                                                    dataKey="priority"
                                                     stroke="#6b7280"
                                                     style={{ fontSize: '12px' }}
                                                 />
@@ -1230,124 +1253,16 @@ export default function StaffDashboard() {
                                                         border: '1px solid #e5e7eb'
                                                     }}
                                                 />
-                                                <Bar dataKey="count" fill="#3b82f6" radius={[0, 4, 4, 0]} />
-                                            </BarChart>
+                                                <Area
+                                                    type="monotone"
+                                                    dataKey="total"
+                                                    stroke="#3b82f6"
+                                                    fill="#93c5fd"
+                                                    fillOpacity={0.6}
+                                                />
+                                            </AreaChart>
                                         </ResponsiveContainer>
                                     </div>
-                                </div>
-                            </div>
-
-                            {/* Requests by Category */}
-                            <div className="bg-white rounded-lg shadow-lg p-6 border-t-4 border-purple-500">
-                                <h3 className="text-lg font-bold text-gray-900 mb-4">Requests by Category</h3>
-                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                                    {Object.entries(advancedStats?.requests_by_category || {})
-                                        .sort(([, a], [, b]) => (b as number) - (a as number))
-                                        .map(([category, count]) => (
-                                            <div key={category} className="bg-gradient-to-br from-purple-50 to-blue-50 rounded-lg p-4 border border-purple-200 hover:shadow-md transition">
-                                                <div className="text-sm font-medium text-gray-900 truncate">{category}</div>
-                                                <div className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent mt-1">
-                                                    {count as number}
-                                                </div>
-                                            </div>
-                                        ))}
-                                </div>
-                            </div>
-
-                            {/* Repeat Locations */}
-                            {advancedStats?.repeat_locations && advancedStats.repeat_locations.length > 0 && (
-                                <div className="bg-white rounded-lg shadow p-6">
-                                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Repeat Locations (Infrastructure Hotspots)</h3>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                        {advancedStats.repeat_locations.slice(0, 6).map((loc, idx) => (
-                                            <div key={idx} className="border border-gray-200 rounded-lg p-4 hover:border-blue-400 transition">
-                                                <div className="flex items-start justify-between">
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="text-sm font-medium text-gray-900 truncate">{loc.address}</div>
-                                                        <div className="text-xs text-gray-500 mt-1">
-                                                            {loc.lat.toFixed(4)}, {loc.lng.toFixed(4)}
-                                                        </div>
-                                                    </div>
-                                                    <div className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-sm font-bold ml-2 flex-shrink-0">
-                                                        {loc.request_count}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Staff Performance */}
-                            {advancedStats?.top_staff_by_resolutions && Object.keys(advancedStats.top_staff_by_resolutions).length > 0 && (
-                                <div className="bg-white rounded-lg shadow-lg p-6 border-t-4 border-purple-500">
-                                    <h3 className="text-lg font-bold text-gray-900 mb-4">Top Staff by Resolutions</h3>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                        {Object.entries(advancedStats.top_staff_by_resolutions)
-                                            .sort(([, a], [, b]) => (b as number) - (a as number))
-                                            .slice(0, 9)
-                                            .map(([staff, count]) => (
-                                                <div key={staff} className="flex items-center justify-between p-3 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg border border-purple-200">
-                                                    <span className="text-sm font-medium text-gray-900 truncate flex-1">{staff}</span>
-                                                    <span className="bg-gradient-to-r from-purple-600 to-blue-600 text-white px-3 py-1 rounded-full text-sm font-bold ml-2">
-                                                        {count as number}
-                                                    </span>
-                                                </div>
-                                            ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Current Workload */}
-                            {advancedStats?.workload_by_staff && Object.keys(advancedStats.workload_by_staff).length > 0 && (
-                                <div className="bg-white rounded-lg shadow p-6">
-                                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Current Workload</h3>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                        {Object.entries(advancedStats.workload_by_staff)
-                                            .sort(([, a], [, b]) => (b as number) - (a as number))
-                                            .slice(0, 9)
-                                            .map(([staff, count]) => (
-                                                <div key={staff} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
-                                                    <span className="text-sm font-medium text-gray-900 truncate flex-1">{staff}</span>
-                                                    <span className="bg-blue-500 text-white px-3 py-1 rounded-full text-sm font-bold ml-2">
-                                                        {count as number}
-                                                    </span>
-                                                </div>
-                                            ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Weekly Trend */}
-                            <div className="bg-white rounded-lg shadow p-6">
-                                <h3 className="text-lg font-semibold text-gray-900 mb-4">Weekly Trend</h3>
-                                <div className="h-64">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <AreaChart data={advancedStats?.weekly_trend || []}>
-                                            <XAxis
-                                                dataKey="period"
-                                                stroke="#6b7280"
-                                                style={{ fontSize: '12px' }}
-                                            />
-                                            <YAxis
-                                                stroke="#6b7280"
-                                                style={{ fontSize: '12px' }}
-                                            />
-                                            <Tooltip
-                                                contentStyle={{
-                                                    backgroundColor: 'white',
-                                                    border: '1px solid #e5e7eb'
-                                                }}
-                                            />
-                                            <Area
-                                                type="monotone"
-                                                dataKey="total"
-                                                stroke="#3b82f6"
-                                                fill="#93c5fd"
-                                                fillOpacity={0.6}
-                                            />
-                                        </AreaChart>
-                                    </ResponsiveContainer>
                                 </div>
                             </div>
                         </div>
@@ -2634,7 +2549,8 @@ export default function StaffDashboard() {
                             )}
                         </div>
                     </div>
-                )}
+                )
+                }
             </div>
 
             {/* Manual Intake Modal */}
@@ -2680,10 +2596,10 @@ export default function StaffDashboard() {
                         <Button type="submit">Create Intake</Button>
                     </div>
                 </form>
-            </Modal>
+            </Modal >
 
             {/* Close Request Modal - Substatus Selection */}
-            <Modal isOpen={showClosedModal} onClose={() => setShowClosedModal(false)} title="Close Request">
+            < Modal isOpen={showClosedModal} onClose={() => setShowClosedModal(false)} title="Close Request" >
                 <div className="space-y-6">
                     <p className="text-white/70 text-sm">Select a resolution type for this request:</p>
 
@@ -2794,10 +2710,10 @@ export default function StaffDashboard() {
                         </Button>
                     </div>
                 </div>
-            </Modal>
+            </Modal >
 
             {/* Delete Request Modal */}
-            <Modal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} title="Delete Request">
+            < Modal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} title="Delete Request" >
                 <div className="space-y-4">
                     <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20">
                         <p className="text-red-400 font-medium flex items-center gap-2">
@@ -2830,7 +2746,7 @@ export default function StaffDashboard() {
                         </Button>
                     </div>
                 </div>
-            </Modal>
+            </Modal >
 
             {/* Premium Photo Lightbox Modal */}
             {
