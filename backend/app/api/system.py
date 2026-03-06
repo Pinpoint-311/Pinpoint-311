@@ -1236,7 +1236,7 @@ async def update_system(_: User = Depends(get_current_admin)):
 
 # ============ Version Switcher ============
 
-GITHUB_REPO = "WestWindsorForward/WWF-Open-Source-311-Template"
+GITHUB_REPO = "WestWindsorForward/Pinpoint-311"
 GITHUB_API_BASE = "https://api.github.com"
 
 
