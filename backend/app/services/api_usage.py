@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 SERVICE_PRICING = {
     "vertex_ai": {
         "description": "Gemini 3.0 Flash",
-        "input_tokens_per_million": 0.075,  # $0.075 per 1M input tokens
-        "output_tokens_per_million": 0.30,   # $0.30 per 1M output tokens
+        "input_tokens_per_million": 0.50,  # $0.50 per 1M input tokens
+        "output_tokens_per_million": 3.00,  # $3.00 per 1M output tokens
         "unit": "tokens",
         "free_tier": {
             "monthly_limit": 0,  # No free tier for Vertex AI
@@ -43,52 +43,47 @@ SERVICE_PRICING = {
         }
     },
     "maps_geocode": {
-        "description": "Google Maps Geocoding API",
+        "description": "Google Maps Geocoding API (Essentials)",
         "per_thousand_calls": 5.00,  # $5 per 1,000 requests
         "unit": "calls",
         "free_tier": {
-            "monthly_limit": 0,  # $200 credit covers ~40K requests
-            "monthly_credit": 200.00,
+            "monthly_limit": 10_000,  # 10K free events/month (Essentials tier)
             "unit": "calls"
         }
     },
     "maps_reverse_geocode": {
-        "description": "Google Maps Reverse Geocoding API",
+        "description": "Google Maps Reverse Geocoding API (Essentials)",
         "per_thousand_calls": 5.00,  # $5 per 1,000 requests
         "unit": "calls",
         "free_tier": {
-            "monthly_limit": 0,  # Shares $200 credit with other Maps APIs
-            "monthly_credit": 200.00,
+            "monthly_limit": 10_000,  # 10K free events/month (Essentials tier)
             "unit": "calls"
         }
     },
     "maps_static": {
-        "description": "Google Maps Static API",
+        "description": "Google Maps Static API (Essentials)",
         "per_thousand_calls": 2.00,  # $2 per 1,000 requests
         "unit": "calls",
         "free_tier": {
-            "monthly_limit": 0,  # Shares $200 credit
-            "monthly_credit": 200.00,
+            "monthly_limit": 10_000,  # 10K free events/month (Essentials tier)
             "unit": "calls"
         }
     },
     "maps_places": {
-        "description": "Google Maps Places API",
+        "description": "Google Maps Places API (Pro)",
         "per_thousand_calls": 17.00,  # $17 per 1,000 requests (autocomplete)
         "unit": "calls",
         "free_tier": {
-            "monthly_limit": 0,  # Shares $200 credit
-            "monthly_credit": 200.00,
+            "monthly_limit": 5_000,  # 5K free events/month (Pro tier)
             "unit": "calls"
         }
     },
     "maps_directions": {
-        "description": "Google Maps Directions API",
+        "description": "Google Maps Directions API (Essentials)",
         "per_thousand_calls": 5.00,  # $5 per 1,000 requests
         "unit": "calls",
         "free_tier": {
-            "monthly_limit": 0,  # Shares $200 credit
-            "monthly_credit": 200.00,
+            "monthly_limit": 10_000,  # 10K free events/month (Essentials tier)
             "unit": "calls"
         }
     },

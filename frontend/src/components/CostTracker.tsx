@@ -163,7 +163,7 @@ export default function CostTracker() {
                         </p>
                         <ul className="text-amber-700 dark:text-amber-400 mt-2 space-y-1 list-disc list-inside">
                             <li><strong>Tracking may be incomplete:</strong> Some API calls may not be captured (e.g., cached responses, client-side operations, or edge cases)</li>
-                            <li><strong>Free tiers not subtracted:</strong> Maps $200/month credit, Translation 500K chars/month, Secret Manager/KMS 10K ops/month</li>
+                            <li><strong>Free tiers not subtracted:</strong> Maps 5K-10K free events/API/month, Translation 500K chars/month, Secret Manager/KMS 10K ops/month</li>
                             <li><strong>Pricing may change:</strong> Rates are estimates and may not reflect current provider pricing</li>
                         </ul>
                         <p className="text-amber-700 dark:text-amber-400 mt-2">
