@@ -390,6 +390,50 @@ export default function GoogleMapsLocationPicker({
                     } catch (e) {
                         console.warn('Failed to add township boundary:', e);
                     }
+
+                    // Fit map to boundary bounds (if no existing pin location)
+                    if (!value?.lat && !value?.lng) {
+                        try {
+                            const boundaryBounds = new window.google.maps.LatLngBounds();
+                            const gj = townshipBoundary as any;
+
+                            // Extract all coordinates from the GeoJSON to compute bounds
+                            const extractCoords = (geom: any) => {
+                                if (!geom) return;
+                                if (geom.type === 'Polygon') {
+                                    for (const ring of geom.coordinates || []) {
+                                        for (const [lng, lat] of ring) {
+                                            boundaryBounds.extend({ lat, lng });
+                                        }
+                                    }
+                                } else if (geom.type === 'MultiPolygon') {
+                                    for (const poly of geom.coordinates || []) {
+                                        for (const ring of poly) {
+                                            for (const [lng, lat] of ring) {
+                                                boundaryBounds.extend({ lat, lng });
+                                            }
+                                        }
+                                    }
+                                }
+                            };
+
+                            if (gj.type === 'FeatureCollection') {
+                                for (const feature of gj.features || []) {
+                                    extractCoords(feature.geometry);
+                                }
+                            } else if (gj.type === 'Feature') {
+                                extractCoords(gj.geometry);
+                            } else {
+                                extractCoords(gj);
+                            }
+
+                            if (!boundaryBounds.isEmpty()) {
+                                map.fitBounds(boundaryBounds);
+                            }
+                        } catch (e) {
+                            console.warn('Failed to fit map to boundary bounds:', e);
+                        }
+                    }
                 }
 
 
