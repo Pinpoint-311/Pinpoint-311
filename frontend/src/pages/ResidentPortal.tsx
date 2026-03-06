@@ -818,6 +818,7 @@ export default function ResidentPortal() {
                                                 if (requestId) {
                                                     updateHash(`track/${requestId}`);
                                                     setShowTrackingView(true);
+                                                    scrollToTop('instant');
                                                 }
                                             }}
                                         />
