@@ -10,10 +10,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/build-publish.yml"><img src="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/build-publish.yml/badge.svg" alt="Build Status"></a>
-  <a href="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/codeql.yml"><img src="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
-  <a href="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/security-scan.yml"><img src="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/security-scan.yml/badge.svg" alt="Security Scan"></a>
-  <a href="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/accessibility.yml"><img src="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/actions/workflows/accessibility.yml/badge.svg" alt="Accessibility"></a>
+  <a href="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/build-publish.yml"><img src="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/build-publish.yml/badge.svg" alt="Build Status"></a>
+  <a href="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/codeql.yml"><img src="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
+  <a href="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/security-scan.yml"><img src="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/security-scan.yml/badge.svg" alt="Security Scan"></a>
+  <a href="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/accessibility.yml"><img src="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/accessibility.yml/badge.svg" alt="Accessibility"></a>
 </p>
 
 ## 🏛️ Introduction
@@ -56,7 +56,7 @@ Beyond the UI, it features a sophisticated **AI & Geospatial Engine** that autom
 | **Multilingual** | ❌ English | ~10 languages | **✅ 109 languages** |
 | **Resident Login** | Required | Required | **✅ No account needed** |
 | **Live Tracking** | ❌ None | ✅ Email only | **✅ SMS + Email + Magic Link** |
-| **Location Accuracy** | Text address | GPS pin | **✅ GPS + Asset Snapping** |
+| **Location Accuracy** | Text address | GPS pin | **✅ GPS + Asset Selection** |
 | **PII Protection** | ❌ None | ⚠️ Basic | **✅ Auto-Redacted + KMS** |
 | **Geofencing** | ❌ None | ⚠️ Limited | **✅ PostGIS Boundaries** |
 | **Research Export** | ❌ None | ⚠️ Extra cost | **✅ 60+ fields, free** |
@@ -137,16 +137,22 @@ graph TB
         RP[Resident Portal]
         SP[Staff Dashboard]
         AC[Admin Console]
+        RL[Research Lab]
     end
 
     subgraph "Backend Services"
         API[FastAPI Server]
-        WK[Celery Worker]
+        WK[Celery Worker + Beat]
         RD[(Redis Cache)]
     end
 
     subgraph "Data Layer"
         PG[(PostgreSQL + PostGIS)]
+    end
+
+    subgraph "Infrastructure"
+        CD[Caddy HTTPS]
+        WT[Watchtower Auto-Updates]
     end
 
     subgraph "External Services"
@@ -157,17 +163,20 @@ graph TB
         A0[Auth0 SSO]
     end
 
-    RP --> API
-    SP --> API
-    AC --> API
-    
+    RP --> CD
+    SP --> CD
+    AC --> CD
+    RL --> CD
+    CD --> API
+    CD --> |static| RP
+
     API --> PG
     API --> RD
     API --> WK
-    
+
     WK --> SM
     WK --> VA
-    
+
     API --> GM
     API --> GT
     API --> A0
@@ -242,7 +251,7 @@ graph LR
 - **Priority Scoring (Human-in-the-Loop)**: AI suggests a 1-10 urgency score, but scores are **never automatically saved**. Staff must explicitly accept or override the AI suggestion, ensuring human accountability for all priority decisions.
 
 ### 🗺️ Geospatial Power
-- **Asset Matching**: snaps user pins to verified infrastructure (e.g., streetlights, hydrants) using PostGIS `ST_DWithin`.
+- **Asset Selection**: When map layers are configured, residents can click on nearby infrastructure (e.g., streetlights, hydrants, park zones) and select the specific asset their report relates to.
 - **Boundary Enforcement**: Validates that requests are actually within township limits before submission.
 - **Heatmaps & Clustering**: Auto-groups nearby requests to visualize problem hotspots.
 
@@ -260,7 +269,7 @@ The Resident Portal is the public face of the system, designed for zero friction
 - **Interactive Map**: Google Maps integration with drag-to-set pin functionality.
 - **Address Autocomplete**: Type-ahead search for local addresses.
 - **Jurisdiction Boundaries**: System-level polygons (GeoJSON) define the valid service area. PINS dropped outside are auto-rejected.
-- **Asset Integration**: Requests can be linked to specific infrastructure assets (e.g., specific park zones) if configured.
+- **Asset Selection**: When map layers are configured, residents can click on infrastructure assets displayed on the map (e.g., specific park zones, hydrants) and select the one related to their report.
 
 ### 3. Advanced Routing Logic
 - **Road-Based Routing**: Configurable rules for state/county roads.
@@ -676,16 +685,14 @@ For full security details, see [COMPLIANCE.md](./COMPLIANCE.md).
 ### 📋 Document Retention Engine
 
 State-specific record retention with legal hold protection:
-- **Built-in policies**: TX (10yr), NJ/PA/WI (7yr), NY/MI/WA (6yr), CA/FL/others (3-5yr)
+- **Built-in policies**: TX (10yr), NJ/PA/WI (7yr), NY/MI/WA/CT (6yr), CA/FL/most states (5yr), GA/MA (3yr)
 - **Admin-configurable**: Select state or custom period
-- **Automatic enforcement**: Daily Celery task archives expired records
+- **Automatic enforcement**: Daily Celery Beat task archives expired records
 
 #### Legal Holds
-When litigation or investigation is anticipated, records can be placed on **legal hold** to prevent automatic deletion:
-- **Per-request holds**: Staff can flag individual requests as "Legal Hold" from the detail view
-- **Bulk holds**: Admin can apply holds to all requests matching specific criteria (date range, category, location)
-- **Hold expiration**: Optional expiration date, or indefinite hold until manually released
-- **Audit trail**: All hold/release actions are logged with timestamp and user
+Records can be placed on **legal hold** via the `flagged` field to prevent automatic archival:
+- **Per-request holds**: Staff can flag individual requests from the detail view
+- **Audit trail**: All flag/unflag actions are logged with timestamp and user
 
 #### Compliance Features
 | Requirement | Implementation |
@@ -713,8 +720,10 @@ Pinpoint 311 uses GitHub Actions for automated builds and security scanning:
 |----------|---------|---------|
 | **Build & Publish** | Push to main | Multi-arch Docker images to GHCR |
 | **CodeQL** | Push/PR + weekly | Static security analysis (Python/JS) |
-| **Security Scan** | Push + weekly | OWASP ZAP + Trivy vulnerability scanning |
+| **Security Scan** | Push to main + weekly (Sundays) | OWASP ZAP + Trivy vulnerability scanning |
+| **Accessibility** | Push to main | Pa11y accessibility audits |
 | **Uptime Monitor** | Every 15 min | Health checks with auto-restart |
+| **Load Test** | Manual dispatch | K6 performance benchmarking |
 | **Dependabot** | Weekly | Automatic dependency updates |
 
 ### Self-Healing Infrastructure
@@ -739,7 +748,7 @@ Prevents the 311 system from affecting other server systems:
 | Database | 1 core | 1GB | 150MB |
 | Backend | 1 core | 1GB | 150MB |
 | Worker | 0.5 core | 512MB | 60MB |
-| Frontend | 0.5 core | 256MB | 30MB |
+| Frontend | 1 core | 512MB | 30MB |
 | Redis | 0.25 core | 256MB | 30MB |
 | Caddy | 0.25 core | 128MB | 60MB |
 
@@ -749,8 +758,8 @@ Prevents the 311 system from affecting other server systems:
 
 Pre-built images available on GitHub Container Registry:
 ```bash
-ghcr.io/westwindsorforward/wwf-311-backend:latest
-ghcr.io/westwindsorforward/wwf-311-frontend:latest
+ghcr.io/pinpoint-311/wwf-311-backend:latest
+ghcr.io/pinpoint-311/wwf-311-frontend:latest
 ```
 
 Supports both `linux/amd64` and `linux/arm64` architectures.
@@ -777,8 +786,8 @@ docker compose up --build -d
 ### Quick Start (Using Prebuilt Images)
 ```bash
 # 1. Clone the repository
-git clone https://github.com/WestWindsorForward/WWF-Open-Source-311-Template.git
-cd WWF-Open-Source-311-Template
+git clone https://github.com/Pinpoint-311/Pinpoint-311.git
+cd Pinpoint-311
 
 # 2. Configure Environment
 cp .env.example .env
@@ -850,7 +859,7 @@ For enterprise-grade secret storage, configure GCP in the Setup Wizard. Secrets 
 ## 🗺️ Roadmap
 
 - [x] AI Triage & Gemini 3.0 Integration
-- [x] PostGIS Asset Snapping & Geofencing
+- [x] PostGIS Asset Selection & Geofencing
 - [x] Multi-Language Support (109 languages)
 - [ ] iOS/Android Native App Wrappers (Capacitor)
 - [ ] 3rd Party CRM Integrations (Salesforce, GovPilot)
@@ -869,7 +878,7 @@ Pinpoint 311 is designed for municipal government use, handling sensitive reside
 
 We use GitHub's **Private Vulnerability Reporting** to handle disclosures securely:
 
-1. Go to the [**Security** tab](https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/security) in this repository.
+1. Go to the [**Security** tab](https://github.com/Pinpoint-311/Pinpoint-311/security) in this repository.
 2. Click on **"Report a vulnerability"** to open a private advisory.
 3. Describe the vulnerability. This opens a private communication channel visible *only* to the project maintainers.
 

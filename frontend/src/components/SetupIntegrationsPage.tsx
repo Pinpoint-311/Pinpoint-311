@@ -734,7 +734,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         Need help? Check the <strong>System Health</strong> tab to verify your integrations are working correctly.
                     </p>
                     <a
-                        href="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template/blob/main/docs/SETUP.md"
+                        href="https://github.com/Pinpoint-311/Pinpoint-311/blob/main/docs/SETUP.md"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-blue-400 text-sm hover:underline flex items-center gap-1"

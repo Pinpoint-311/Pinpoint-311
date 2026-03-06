@@ -176,7 +176,7 @@ export default function Login() {
                             <p className="text-white/20 text-xs mt-4">
                                 Powered by{' '}
                                 <a
-                                    href="https://github.com/WestWindsorForward/WWF-Open-Source-311-Template"
+                                    href="https://github.com/Pinpoint-311/Pinpoint-311"
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="text-primary-400/50 hover:text-primary-300 transition-colors"

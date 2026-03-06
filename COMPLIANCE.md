@@ -363,7 +363,7 @@ Pinpoint 311 includes one-command setup scripts to minimize deployment friction:
 
 ## 8. Contact & Resources
 
-- **Repository**: [GitHub](https://github.com/WestWindsorForward/WWF-Open-Source-311-Template)
+- **Repository**: [GitHub](https://github.com/Pinpoint-311/Pinpoint-311)
 - **API Documentation**: `/api/docs` (Swagger UI)
 - **Security Issues**: Report privately via GitHub Security Advisories
 

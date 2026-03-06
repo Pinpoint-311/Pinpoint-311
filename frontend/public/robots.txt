@@ -1,5 +1,5 @@
 # Pinpoint 311 - Open Source Government 311 Platform
-# https://github.com/WestWindsorForward/Pinpoint-311
+# https://github.com/Pinpoint-311/Pinpoint-311
 
 User-agent: *
 Allow: /

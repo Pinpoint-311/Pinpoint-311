@@ -2,7 +2,7 @@
 # Set DOMAIN=your.domain.com in .env or docker-compose
 {$DOMAIN:localhost} {
     # API routes - must come first for proper matching
-    # Rate limiting is handled by SlowAPI in the backend (100 req/min per IP)
+    # Rate limiting is handled by SlowAPI in the backend (500 req/min per IP)
     handle /api/* {
         reverse_proxy backend:8000
     }

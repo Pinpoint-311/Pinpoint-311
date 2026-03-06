@@ -103,8 +103,8 @@ curl -X POST https://311.westwindsorforward.org/api/system/backups/create \
 #### Step 2: Spin Up Test Environment (15 min)
 ```bash
 # Clone repo on a test server
-git clone https://github.com/WestWindsorForward/WWF-Open-Source-311-Template.git
-cd WWF-Open-Source-311-Template
+git clone https://github.com/Pinpoint-311/Pinpoint-311.git
+cd Pinpoint-311
 
 # Copy production .env (with different DB name)
 cp /path/to/production/.env .env
@@ -161,7 +161,7 @@ docker compose up -d
 # Destroy test environment
 docker compose down -v
 cd ..
-rm -rf WWF-Open-Source-311-Template
+rm -rf Pinpoint-311
 ```
 
 ---

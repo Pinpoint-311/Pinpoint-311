@@ -1236,7 +1236,7 @@ async def update_system(_: User = Depends(get_current_admin)):
 
 # ============ Version Switcher ============
 
-GITHUB_REPO = "WestWindsorForward/Pinpoint-311"
+GITHUB_REPO = "Pinpoint-311/Pinpoint-311"
 GITHUB_API_BASE = "https://api.github.com"
 
 
@@ -2468,7 +2468,7 @@ async def execute_runbook(
             for service in ["backend", "frontend", "redis", "caddy"]:
                 subprocess.run(
                     ["docker-compose", "restart", service],
-                    cwd="/home/ubuntu/WWF-Open-Source-311-Template",
+                    cwd="/home/ubuntu/Pinpoint-311",
                     capture_output=True, timeout=60
                 )
             result["details"]["restarted"] = ["backend", "frontend", "redis", "caddy"]
@@ -2480,7 +2480,7 @@ async def execute_runbook(
                 raise HTTPException(status_code=400, detail=f"Cannot restart service: {service}")
             subprocess.run(
                 ["docker-compose", "restart", service],
-                cwd="/home/ubuntu/WWF-Open-Source-311-Template",
+                cwd="/home/ubuntu/Pinpoint-311",
                 capture_output=True, timeout=60
             )
             result["details"]["restarted"] = [service]
