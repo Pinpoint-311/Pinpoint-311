@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, FormEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
@@ -185,6 +185,38 @@ export default function StaffDashboard() {
 
     // Activity feed state
     const [showActivityFeed, setShowActivityFeed] = useState(false);
+
+    // AI Analytics Chat state
+    const [chatOpen, setChatOpen] = useState(false);
+    const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
+    const [chatInput, setChatInput] = useState('');
+    const [chatLoading, setChatLoading] = useState(false);
+    const chatEndRef = useRef<HTMLDivElement>(null);
+
+    // Scroll chat to bottom when new messages arrive
+    useEffect(() => {
+        if (chatEndRef.current) {
+            chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+    }, [chatMessages, chatLoading]);
+
+    const sendChatMessage = async (e?: FormEvent) => {
+        e?.preventDefault();
+        const msg = chatInput.trim();
+        if (!msg || chatLoading) return;
+        const newMessages = [...chatMessages, { role: 'user' as const, content: msg }];
+        setChatMessages(newMessages);
+        setChatInput('');
+        setChatLoading(true);
+        try {
+            const result = await api.analyticsChat(msg, newMessages.slice(0, -1));
+            setChatMessages(prev => [...prev, { role: 'assistant', content: result.response }]);
+        } catch (err: any) {
+            setChatMessages(prev => [...prev, { role: 'assistant', content: `⚠️ Error: ${err.message || 'Failed to get AI response'}` }]);
+        } finally {
+            setChatLoading(false);
+        }
+    };
 
     // Get current user's department IDs
     const userDepartmentIds = useMemo(() => {
@@ -933,6 +965,13 @@ export default function StaffDashboard() {
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <button
+                                        onClick={() => setChatOpen(true)}
+                                        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 transition-all text-sm font-medium shadow-lg shadow-emerald-500/20"
+                                    >
+                                        <Sparkles className="w-4 h-4" />
+                                        Ask AI
+                                    </button>
+                                    <button
                                         onClick={() => window.location.href = '/research'}
                                         className="flex items-center gap-2 px-4 py-2 bg-white/10 border border-white/20 text-white rounded-lg hover:bg-white/20 transition-all text-sm font-medium"
                                     >
@@ -963,24 +1002,24 @@ export default function StaffDashboard() {
                             {/* Overview Stats Row */}
                             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                                 <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5">
-                                    <div className="text-xs font-medium text-white/50 uppercase tracking-wider">Total Requests</div>
+                                    <div className="text-xs font-medium text-white/70 uppercase tracking-wider">Total Requests</div>
                                     <div className="text-3xl font-bold text-white mt-2">{advancedStats?.total_requests || 0}</div>
-                                    <div className="text-xs text-white/40 mt-1">All time</div>
+                                    <div className="text-xs text-white/60 mt-1">All time</div>
                                 </div>
                                 <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5">
-                                    <div className="text-xs font-medium text-white/50 uppercase tracking-wider">Open</div>
-                                    <div className="text-3xl font-bold text-amber-400 mt-2">{advancedStats?.open_requests || 0}</div>
-                                    <div className="text-xs text-white/40 mt-1">Awaiting action</div>
+                                    <div className="text-xs font-medium text-white/70 uppercase tracking-wider">Open</div>
+                                    <div className="text-3xl font-bold text-amber-300 mt-2">{advancedStats?.open_requests || 0}</div>
+                                    <div className="text-xs text-white/60 mt-1">Awaiting action</div>
                                 </div>
                                 <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5">
-                                    <div className="text-xs font-medium text-white/50 uppercase tracking-wider">In Progress</div>
-                                    <div className="text-3xl font-bold text-blue-400 mt-2">{advancedStats?.in_progress_requests || 0}</div>
-                                    <div className="text-xs text-white/40 mt-1">Being worked on</div>
+                                    <div className="text-xs font-medium text-white/70 uppercase tracking-wider">In Progress</div>
+                                    <div className="text-3xl font-bold text-blue-300 mt-2">{advancedStats?.in_progress_requests || 0}</div>
+                                    <div className="text-xs text-white/60 mt-1">Being worked on</div>
                                 </div>
                                 <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5">
-                                    <div className="text-xs font-medium text-white/50 uppercase tracking-wider">Closed</div>
-                                    <div className="text-3xl font-bold text-emerald-400 mt-2">{advancedStats?.closed_requests || 0}</div>
-                                    <div className="text-xs text-white/40 mt-1">{advancedStats?.resolution_rate?.toFixed(0) || 0}% resolution rate</div>
+                                    <div className="text-xs font-medium text-white/70 uppercase tracking-wider">Closed</div>
+                                    <div className="text-3xl font-bold text-emerald-300 mt-2">{advancedStats?.closed_requests || 0}</div>
+                                    <div className="text-xs text-white/60 mt-1">{advancedStats?.resolution_rate?.toFixed(0) || 0}% resolution rate</div>
                                 </div>
                             </div>
 
@@ -1004,20 +1043,20 @@ export default function StaffDashboard() {
                                     return (
                                         <div className="space-y-3">
                                             <div className="flex h-6 rounded-full overflow-hidden bg-white/5">
-                                                <div className="bg-red-500 transition-all flex items-center justify-center text-[10px] font-bold text-white" style={{ width: `${(highPriority / total) * 100}%` }}>
+                                                <div className="bg-red-600 transition-all flex items-center justify-center text-[11px] font-bold text-white" style={{ width: `${(highPriority / total) * 100}%`, textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
                                                     {highPriority > 0 && `${Math.round((highPriority / total) * 100)}%`}
                                                 </div>
-                                                <div className="bg-amber-500 transition-all flex items-center justify-center text-[10px] font-bold text-white" style={{ width: `${(mediumPriority / total) * 100}%` }}>
+                                                <div className="bg-amber-600 transition-all flex items-center justify-center text-[11px] font-bold text-white" style={{ width: `${(mediumPriority / total) * 100}%`, textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
                                                     {mediumPriority > 0 && `${Math.round((mediumPriority / total) * 100)}%`}
                                                 </div>
-                                                <div className="bg-emerald-500 transition-all flex items-center justify-center text-[10px] font-bold text-white" style={{ width: `${(lowPriority / total) * 100}%` }}>
+                                                <div className="bg-emerald-600 transition-all flex items-center justify-center text-[11px] font-bold text-white" style={{ width: `${(lowPriority / total) * 100}%`, textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
                                                     {lowPriority > 0 && `${Math.round((lowPriority / total) * 100)}%`}
                                                 </div>
                                             </div>
                                             <div className="flex justify-between text-sm">
-                                                <span className="text-red-400">● High (8-10): <strong>{highPriority}</strong></span>
-                                                <span className="text-amber-400">● Medium (5-7): <strong>{mediumPriority}</strong></span>
-                                                <span className="text-emerald-400">● Low (1-4): <strong>{lowPriority}</strong></span>
+                                                <span className="text-red-300">● High (8-10): <strong>{highPriority}</strong></span>
+                                                <span className="text-amber-300">● Medium (5-7): <strong>{mediumPriority}</strong></span>
+                                                <span className="text-emerald-300">● Low (1-4): <strong>{lowPriority}</strong></span>
                                             </div>
                                         </div>
                                     );
@@ -1027,24 +1066,24 @@ export default function StaffDashboard() {
                             {/* KPI Cards */}
                             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                                 <div className="bg-gradient-to-br from-purple-500/20 to-purple-500/5 border border-purple-500/30 rounded-xl p-5">
-                                    <div className="text-xs font-medium text-purple-300/80 uppercase tracking-wider">Next Week Forecast</div>
+                                    <div className="text-xs font-medium text-purple-200 uppercase tracking-wider">Next Week Forecast</div>
                                     <div className="text-3xl font-bold text-white mt-2">{advancedStats?.predictive_insights?.volume_forecast_next_week || 0}</div>
-                                    <div className="text-xs text-white/40 mt-1 capitalize">Trend: {advancedStats?.predictive_insights?.trend_direction || 'stable'}</div>
+                                    <div className="text-xs text-white/60 mt-1 capitalize">Trend: {advancedStats?.predictive_insights?.trend_direction || 'stable'}</div>
                                 </div>
                                 <div className="bg-gradient-to-br from-emerald-500/20 to-emerald-500/5 border border-emerald-500/30 rounded-xl p-5">
-                                    <div className="text-xs font-medium text-emerald-300/80 uppercase tracking-wider">Avg Resolution</div>
+                                    <div className="text-xs font-medium text-emerald-200 uppercase tracking-wider">Avg Resolution</div>
                                     <div className="text-3xl font-bold text-white mt-2">{advancedStats?.avg_resolution_hours ? `${advancedStats.avg_resolution_hours.toFixed(1)}h` : 'N/A'}</div>
-                                    <div className="text-xs text-white/40 mt-1">{advancedStats?.resolution_rate?.toFixed(0) || 0}% completion</div>
+                                    <div className="text-xs text-white/60 mt-1">{advancedStats?.resolution_rate?.toFixed(0) || 0}% completion</div>
                                 </div>
                                 <div className="bg-gradient-to-br from-red-500/20 to-red-500/5 border border-red-500/30 rounded-xl p-5">
-                                    <div className="text-xs font-medium text-red-300/80 uppercase tracking-wider">High Priority Aging</div>
+                                    <div className="text-xs font-medium text-red-200 uppercase tracking-wider">High Priority Aging</div>
                                     <div className="text-3xl font-bold text-white mt-2">{advancedStats?.aging_high_priority_count || 0}</div>
-                                    <div className="text-xs text-white/40 mt-1">P1-P3 open &gt; 7 days</div>
+                                    <div className="text-xs text-white/60 mt-1">P1-P3 open &gt; 7 days</div>
                                 </div>
                                 <div className="bg-gradient-to-br from-blue-500/20 to-blue-500/5 border border-blue-500/30 rounded-xl p-5">
-                                    <div className="text-xs font-medium text-blue-300/80 uppercase tracking-wider">Peak Activity</div>
+                                    <div className="text-xs font-medium text-blue-200 uppercase tracking-wider">Peak Activity</div>
                                     <div className="text-3xl font-bold text-white mt-2">{advancedStats?.predictive_insights?.seasonal_peak_day || 'N/A'}</div>
-                                    <div className="text-xs text-white/40 mt-1">Peak: {advancedStats?.predictive_insights?.seasonal_peak_month || 'N/A'}</div>
+                                    <div className="text-xs text-white/60 mt-1">Peak: {advancedStats?.predictive_insights?.seasonal_peak_month || 'N/A'}</div>
                                 </div>
                             </div>
 
@@ -1181,7 +1220,148 @@ export default function StaffDashboard() {
                             </div>
                         </div>
                     </div>
-                )}
+                )} {/* This closes the conditional for currentView === 'statistics' || currentView === 'dashboard' */}
+
+                {/* AI Analytics Chat Panel */}
+                <AnimatePresence>
+                    {chatOpen && (
+                        <>
+                            {/* Backdrop */}
+                            <motion.div
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60]"
+                                onClick={() => setChatOpen(false)}
+                            />
+                            {/* Panel */}
+                            <motion.div
+                                initial={{ x: '100%' }}
+                                animate={{ x: 0 }}
+                                exit={{ x: '100%' }}
+                                transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                                className="fixed right-0 top-0 bottom-0 w-full sm:w-[480px] bg-gray-950/95 backdrop-blur-xl border-l border-white/10 z-[70] flex flex-col shadow-2xl shadow-black/50"
+                            >
+                                {/* Chat Header */}
+                                <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-gradient-to-r from-emerald-600/20 to-teal-600/20">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/30">
+                                            <Sparkles className="w-5 h-5 text-white" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-white font-semibold text-sm">AI Analytics Advisor</h3>
+                                            <p className="text-white/40 text-xs">Gemini 3.0 · Full system context</p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => setChatOpen(false)}
+                                        className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
+                                    >
+                                        <X className="w-4 h-4 text-white/70" />
+                                    </button>
+                                </div>
+
+                                {/* Messages Area */}
+                                <div className="flex-1 overflow-auto p-4 space-y-4" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.1) transparent' }}>
+                                    {chatMessages.length === 0 && !chatLoading && (
+                                        <div className="flex flex-col items-center justify-center h-full text-center px-6">
+                                            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/20 flex items-center justify-center mb-4">
+                                                <Sparkles className="w-8 h-8 text-emerald-400" />
+                                            </div>
+                                            <h4 className="text-white font-semibold mb-2">Ask anything about your data</h4>
+                                            <p className="text-white/40 text-sm mb-6 max-w-xs">
+                                                I have access to all requests, staff data, departments, geographic patterns, weather, and AI analysis — everything except resident personal info.
+                                            </p>
+                                            <div className="space-y-2 w-full max-w-xs">
+                                                {[
+                                                    'What are our busiest days and hours?',
+                                                    'Which areas need the most attention?',
+                                                    'How is staff workload distributed?',
+                                                    'What trends should I watch for?',
+                                                ].map((q, i) => (
+                                                    <button
+                                                        key={i}
+                                                        onClick={() => { setChatInput(q); }}
+                                                        className="w-full text-left px-3 py-2.5 text-sm text-white/70 bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 hover:border-emerald-500/30 transition-all"
+                                                    >
+                                                        {q}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {chatMessages.map((msg, i) => (
+                                        <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                            <div
+                                                className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === 'user'
+                                                    ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-br-md'
+                                                    : 'bg-white/5 border border-white/10 text-white/90 rounded-bl-md'
+                                                    }`}
+                                            >
+                                                {msg.role === 'assistant' ? (
+                                                    <div
+                                                        className="prose prose-invert prose-sm max-w-none [&_p]:mb-2 [&_ul]:mb-2 [&_ol]:mb-2 [&_li]:mb-0.5 [&_h1]:text-lg [&_h2]:text-base [&_h3]:text-sm [&_h2]:mt-3 [&_h3]:mt-2 [&_h2]:mb-1 [&_h3]:mb-1 [&_code]:bg-white/10 [&_code]:px-1 [&_code]:rounded [&_strong]:text-emerald-300"
+                                                        dangerouslySetInnerHTML={{
+                                                            __html: msg.content
+                                                                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                                                                .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                                                                .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+                                                                .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+                                                                .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+                                                                .replace(/^- (.+)$/gm, '<li>$1</li>')
+                                                                .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
+                                                                .replace(/`([^`]+)`/g, '<code>$1</code>')
+                                                                .replace(/\n/g, '<br />')
+                                                        }}
+                                                    />
+                                                ) : (
+                                                    <span>{msg.content}</span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+
+                                    {chatLoading && (
+                                        <div className="flex justify-start">
+                                            <div className="bg-white/5 border border-white/10 rounded-2xl rounded-bl-md px-4 py-3">
+                                                <div className="flex items-center gap-1.5">
+                                                    <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                                    <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                                    <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                    <div ref={chatEndRef} />
+                                </div>
+
+                                {/* Input Area */}
+                                <form onSubmit={sendChatMessage} className="px-4 py-3 border-t border-white/10 bg-gray-950/80">
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="text"
+                                            value={chatInput}
+                                            onChange={(e) => setChatInput(e.target.value)}
+                                            placeholder="Ask about your data..."
+                                            className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-white/30 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/25 transition-all"
+                                            disabled={chatLoading}
+                                            autoFocus
+                                        />
+                                        <button
+                                            type="submit"
+                                            disabled={!chatInput.trim() || chatLoading}
+                                            className="w-10 h-10 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 flex items-center justify-center text-white disabled:opacity-30 disabled:cursor-not-allowed hover:from-emerald-700 hover:to-teal-700 transition-all shadow-lg shadow-emerald-500/20"
+                                        >
+                                            <Send className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                    <p className="text-[10px] text-white/20 mt-1.5 text-center">Powered by Gemini 3.0 Flash · All system data except resident PII</p>
+                                </form>
+                            </motion.div>
+                        </>
+                    )}
+                </AnimatePresence>
 
                 {/* List/Detail View */}
                 {currentView !== 'statistics' && currentView !== 'dashboard' && (

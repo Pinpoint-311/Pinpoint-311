@@ -332,6 +332,14 @@ class ApiClient {
         return this.request<AdvancedStatistics>('/system/advanced-statistics');
     }
 
+    // AI Analytics Chat
+    async analyticsChat(message: string, history: { role: string; content: string }[]): Promise<{ response: string; context_used: string[] }> {
+        return this.request<{ response: string; context_used: string[] }>('/system/analytics-chat', {
+            method: 'POST',
+            body: JSON.stringify({ message, history }),
+        });
+    }
+
     // System Update (Admin)
     async updateSystem(): Promise<{ status: string; message: string }> {
         return this.request<{ status: string; message: string }>('/system/update', {

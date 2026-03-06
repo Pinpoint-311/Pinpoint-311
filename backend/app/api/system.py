@@ -2533,3 +2533,354 @@ async def execute_runbook(
         result["status"] = "error"
         result["details"]["error"] = str(e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============ AI Analytics Chat ============
+
+from pydantic import BaseModel
+from typing import Optional
+from datetime import timedelta
+
+class ChatMessage(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+
+class AnalyticsChatRequest(BaseModel):
+    message: str
+    history: List[ChatMessage] = []
+
+class AnalyticsChatResponse(BaseModel):
+    response: str
+    context_used: List[str]
+
+
+@router.post("/analytics-chat", response_model=AnalyticsChatResponse)
+async def analytics_chat(
+    body: AnalyticsChatRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_staff)
+):
+    """
+    Conversational AI analytics — chat with Vertex AI about all system data.
+    Gathers comprehensive context from across the platform (excluding resident PII)
+    and uses Gemini 3.0 Flash to answer questions.
+    """
+    from datetime import datetime
+    from sqlalchemy import extract, text
+    
+    context_used = []
+    now = datetime.utcnow()
+    
+    # ========== 1. System Settings (Township Identity) ==========
+    settings_result = await db.execute(select(SystemSettings).limit(1))
+    settings = settings_result.scalar_one_or_none()
+    township_name = settings.township_name if settings and hasattr(settings, 'township_name') and settings.township_name else "the municipality"
+    context_used.append("system_settings")
+    
+    # ========== 2. All Requests — Sanitized (No PII) ==========
+    all_requests_result = await db.execute(
+        select(ServiceRequest).where(ServiceRequest.deleted_at.is_(None))
+    )
+    all_requests = all_requests_result.scalars().all()
+    context_used.append("all_service_requests")
+    
+    total = len(all_requests)
+    open_count = sum(1 for r in all_requests if r.status == "open")
+    in_progress_count = sum(1 for r in all_requests if r.status == "in_progress")
+    closed_count = sum(1 for r in all_requests if r.status == "closed")
+    
+    # Category breakdown
+    categories = {}
+    for r in all_requests:
+        cat = r.service_name or "Unknown"
+        categories[cat] = categories.get(cat, 0) + 1
+    
+    # Priority distribution
+    high_priority = sum(1 for r in all_requests if (getattr(r, 'manual_priority_score', None) or (r.ai_analysis or {}).get('priority_score', 5) if isinstance(r.ai_analysis, dict) else 5) >= 8)
+    med_priority = sum(1 for r in all_requests if 5 <= (getattr(r, 'manual_priority_score', None) or (r.ai_analysis or {}).get('priority_score', 5) if isinstance(r.ai_analysis, dict) else 5) < 8)
+    low_priority = total - high_priority - med_priority
+    
+    # Resolution time for closed requests
+    resolution_times = []
+    for r in all_requests:
+        if r.status == "closed" and r.closed_datetime and r.requested_datetime:
+            hours = (r.closed_datetime - r.requested_datetime).total_seconds() / 3600
+            resolution_times.append(hours)
+    avg_resolution = sum(resolution_times) / len(resolution_times) if resolution_times else 0
+    
+    # ========== 3. Temporal Patterns ==========
+    hourly = {}
+    daily = {}
+    monthly = {}
+    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    for r in all_requests:
+        if r.requested_datetime:
+            h = r.requested_datetime.hour
+            hourly[h] = hourly.get(h, 0) + 1
+            d = day_names[r.requested_datetime.weekday()]
+            daily[d] = daily.get(d, 0) + 1
+            m = r.requested_datetime.strftime("%Y-%m")
+            monthly[m] = monthly.get(m, 0) + 1
+    
+    busiest_hour = max(hourly, key=hourly.get) if hourly else "N/A"
+    busiest_day = max(daily, key=daily.get) if daily else "N/A"
+    context_used.append("temporal_patterns")
+    
+    # ========== 4. Geographic Data — Addresses + Hotspots ==========
+    # Top addresses by request count (no resident names)
+    address_counts = {}
+    for r in all_requests:
+        if r.address:
+            address_counts[r.address] = address_counts.get(r.address, 0) + 1
+    top_addresses = sorted(address_counts.items(), key=lambda x: x[1], reverse=True)[:15]
+    context_used.append("geographic_data")
+    
+    # ========== 5. Staff Data (No personal info beyond names/roles) ==========
+    staff_result = await db.execute(
+        select(User).where(User.role.in_(["staff", "admin"]))
+    )
+    staff_members = staff_result.scalars().all()
+    
+    # Staff workload
+    staff_workload = {}
+    staff_resolutions = {}
+    for r in all_requests:
+        assigned = getattr(r, 'assigned_to', None) or getattr(r, 'agency_responsible', None)
+        if assigned:
+            if r.status in ("open", "in_progress"):
+                staff_workload[assigned] = staff_workload.get(assigned, 0) + 1
+            if r.status == "closed":
+                staff_resolutions[assigned] = staff_resolutions.get(assigned, 0) + 1
+    context_used.append("staff_data")
+    
+    # ========== 6. Department Data ==========
+    from app.models import Department
+    dept_result = await db.execute(select(Department).where(Department.is_active == True))
+    departments = dept_result.scalars().all()
+    dept_info = [{"name": d.name, "description": d.description or ""} for d in departments]
+    context_used.append("departments")
+    
+    # ========== 7. AI Analysis Summaries ==========
+    ai_summaries = []
+    flagged_requests = []
+    for r in all_requests:
+        if r.vertex_ai_summary:
+            ai_summaries.append({
+                "id": r.service_request_id,
+                "category": r.service_name,
+                "address": r.address or "Unknown",
+                "summary": r.vertex_ai_summary[:200],
+                "classification": r.vertex_ai_classification,
+                "priority": (r.ai_analysis or {}).get("priority_score") if isinstance(r.ai_analysis, dict) else None
+            })
+        if r.flagged:
+            flagged_requests.append({
+                "id": r.service_request_id,
+                "reason": r.flag_reason,
+                "category": r.service_name,
+                "address": r.address or "Unknown"
+            })
+    context_used.append("ai_analysis")
+    
+    # ========== 8. Weather Context ==========
+    weather_summary = ""
+    try:
+        # Get weather for the township's approximate center (from most common request coords)
+        lats = [r.lat for r in all_requests if r.lat]
+        lngs = [r.long for r in all_requests if r.long]
+        if lats and lngs:
+            center_lat = sum(lats) / len(lats)
+            center_lng = sum(lngs) / len(lngs)
+            from app.api.research import get_weather_context
+            weather = get_weather_context(now, center_lat, center_lng)
+            if weather.get("temp_max_c") is not None:
+                weather_summary = f"Recent weather: High {weather['temp_max_c']}°C, Low {weather['temp_min_c']}°C, Precip {weather['precip_24h_mm']}mm"
+                context_used.append("weather")
+    except Exception as e:
+        logger.warning(f"Weather context unavailable: {e}")
+    
+    # ========== 9. Request Details — Sanitized List ==========
+    request_details = []
+    for r in all_requests[:100]:  # Cap at 100 most recent
+        detail = {
+            "id": r.service_request_id,
+            "category": r.service_name,
+            "status": r.status,
+            "priority": r.priority,
+            "address": r.address or "Unknown",
+            "description": (r.description[:150] + "...") if r.description and len(r.description) > 150 else r.description,
+            "source": r.source,
+            "created": r.requested_datetime.isoformat() if r.requested_datetime else None,
+            "closed": r.closed_datetime.isoformat() if r.closed_datetime else None,
+        }
+        if r.ai_analysis and isinstance(r.ai_analysis, dict):
+            detail["ai_priority"] = r.ai_analysis.get("priority_score")
+            detail["ai_category"] = r.vertex_ai_classification
+        if r.flagged:
+            detail["flagged"] = True
+            detail["flag_reason"] = r.flag_reason
+        request_details.append(detail)
+    
+    # ========== Build the System Prompt ==========
+    system_prompt = f"""You are an expert municipal analytics advisor for {township_name}. You have deep access to the community's 311 service request system and all associated data. Answer questions with specific numbers, actionable insights, and data-driven recommendations. Format responses with markdown for readability. Be concise but thorough.
+
+## CURRENT SYSTEM DATA
+
+### Overview
+- Total requests (all time): {total}
+- Open: {open_count} | In Progress: {in_progress_count} | Closed: {closed_count}
+- Resolution rate: {(closed_count / total * 100) if total else 0:.1f}%
+- Average resolution time: {avg_resolution:.1f} hours
+
+### Priority Distribution
+- High priority (8-10): {high_priority} ({(high_priority/total*100) if total else 0:.1f}%)
+- Medium priority (5-7): {med_priority} ({(med_priority/total*100) if total else 0:.1f}%)
+- Low priority (1-4): {low_priority} ({(low_priority/total*100) if total else 0:.1f}%)
+
+### Requests by Category
+{chr(10).join(f'- {cat}: {count}' for cat, count in sorted(categories.items(), key=lambda x: x[1], reverse=True))}
+
+### Temporal Patterns
+- Busiest hour: {busiest_hour}:00
+- Busiest day: {busiest_day}
+- Hourly distribution: {json.dumps(dict(sorted(hourly.items())))}
+- Daily distribution: {json.dumps(daily)}
+- Monthly trend: {json.dumps(dict(sorted(monthly.items())))}
+
+### Top Problem Locations (by request count)
+{chr(10).join(f'- {addr}: {count} requests' for addr, count in top_addresses)}
+
+### Staff Performance
+Top Resolvers:
+{chr(10).join(f'- {staff}: {count} resolved' for staff, count in sorted(staff_resolutions.items(), key=lambda x: x[1], reverse=True)[:10]) if staff_resolutions else '- No resolution data yet'}
+
+Current Workload:
+{chr(10).join(f'- {staff}: {count} active' for staff, count in sorted(staff_workload.items(), key=lambda x: x[1], reverse=True)[:10]) if staff_workload else '- No active assignments'}
+
+### Departments
+{chr(10).join(f'- {d["name"]}: {d["description"]}' for d in dept_info) if dept_info else '- No departments configured'}
+
+### AI Analysis Highlights
+- Requests with AI analysis: {len(ai_summaries)}
+- Flagged requests: {len(flagged_requests)}
+{chr(10).join(f'- FLAGGED [{r["id"]}] at {r["address"]}: {r["reason"]}' for r in flagged_requests[:10]) if flagged_requests else ''}
+
+### Environmental Context
+{weather_summary if weather_summary else 'Weather data not available'}
+Season: {'Winter' if now.month in [12,1,2] else 'Spring' if now.month in [3,4,5] else 'Summer' if now.month in [6,7,8] else 'Fall'}
+
+### Recent Request Details (sanitized, no personal info)
+{json.dumps(request_details[:50], indent=None, default=str)}
+
+## IMPORTANT RULES
+- NEVER share or reference resident names, emails, or phone numbers
+- Always cite specific data points from the above context
+- If asked about something not in the data, say so clearly
+- Provide actionable recommendations when relevant
+- Use markdown formatting (headers, bullet points, bold) for readability
+"""
+
+    # ========== Build Conversation & Call Vertex AI ==========
+    try:
+        from app.services.vertex_ai_service import analyze_with_gemini
+        from app.services.secret_manager import get_secret as sm_get_secret
+        
+        project_id = await sm_get_secret("VERTEX_AI_PROJECT")
+        if not project_id:
+            # Try alternative key
+            project_id = os.getenv("GOOGLE_VERTEX_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+        
+        if not project_id:
+            raise HTTPException(status_code=503, detail="Vertex AI not configured — VERTEX_AI_PROJECT not set")
+        
+        location = os.getenv("GOOGLE_VERTEX_LOCATION", "us-central1")
+        service_account_json = await sm_get_secret("VERTEX_AI_SERVICE_ACCOUNT_KEY")
+        
+        # Build the full conversation prompt
+        conversation = system_prompt + "\n\n## CONVERSATION\n"
+        for msg in body.history[-20:]:  # Last 20 messages for context
+            role_label = "Staff" if msg.role == "user" else "AI Advisor"
+            conversation += f"\n**{role_label}:** {msg.content}\n"
+        conversation += f"\n**Staff:** {body.message}\n\n**AI Advisor:**"
+        
+        # Call Vertex AI — use lower temperature for factual responses
+        import google.auth
+        from google.auth.transport.requests import Request
+        from google.oauth2 import service_account
+        import aiohttp
+        
+        if service_account_json:
+            sa_info = json.loads(service_account_json)
+            credentials = service_account.Credentials.from_service_account_info(
+                sa_info,
+                scopes=['https://www.googleapis.com/auth/cloud-platform']
+            )
+        else:
+            credentials, _ = google.auth.default(
+                scopes=['https://www.googleapis.com/auth/cloud-platform']
+            )
+        
+        credentials.refresh(Request())
+        
+        endpoint = f"https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent"
+        
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": conversation}]}],
+            "generationConfig": {
+                "temperature": 0.3,
+                "topP": 0.8,
+                "maxOutputTokens": 4096,
+            },
+            "safetySettings": [
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+            ]
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                endpoint,
+                headers={
+                    "Authorization": f"Bearer {credentials.token}",
+                    "Content-Type": "application/json"
+                },
+                json=payload
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.error(f"Vertex AI error: {error_text}")
+                    raise HTTPException(status_code=502, detail=f"AI service error: {response.status}")
+                
+                result = await response.json()
+        
+        # Extract response text
+        ai_response = ""
+        if 'candidates' in result and result['candidates']:
+            parts = result['candidates'][0].get('content', {}).get('parts', [])
+            for part in parts:
+                if 'text' in part:
+                    ai_response += part['text']
+        
+        if not ai_response:
+            ai_response = "I wasn't able to generate a response. Please try rephrasing your question."
+        
+        # Track API usage
+        try:
+            from app.services.api_usage import track_api_call
+            await track_api_call(db, "vertex_ai", endpoint="analytics_chat", tokens_used=len(conversation) // 4 + len(ai_response) // 4)
+        except Exception:
+            pass
+        
+        return AnalyticsChatResponse(
+            response=ai_response.strip(),
+            context_used=context_used
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Analytics chat error: {e}")
+        raise HTTPException(status_code=500, detail=f"AI analytics chat failed: {str(e)}")
+
