@@ -363,7 +363,7 @@ export default function StaffDashboardMap({
                             <p style="margin: 0 0 12px 0; font-size: 13px; color: #4b5563; line-height: 1.5;">${translatedDescription}${request.description.length > 120 ? '...' : ''}</p>
                             ${request.address ? `<p style="margin: 0 0 16px 0; font-size: 12px; color: #6b7280; display: flex; align-items: center; gap: 6px;">📍 ${request.address}</p>` : ''}
                             <button 
-                                onclick="window.staffDashboardSelectReques"${request.service_request_id}""
+                                onclick="window.staffDashboardSelectRequest('${request.service_request_id}')"
                                 style="width: 100%; padding: 10px 16px; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; border: none; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; transition: transform 0.1s;"
                                 onmouseover="this.style.transform='scale(1.02)'"
                                 onmouseout="this.style.transform='scale(1)'"
