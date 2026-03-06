@@ -814,7 +814,12 @@ export default function ResidentPortal() {
                                             departments={departments}
                                             users={users}
                                             townshipBoundary={townshipBoundary}
-                                            onRequestSelect={() => { }}
+                                            onRequestSelect={(requestId) => {
+                                                if (requestId) {
+                                                    updateHash(`track/${requestId}`);
+                                                    setShowTrackingView(true);
+                                                }
+                                            }}
                                         />
                                     </div>
                                 </motion.div>
