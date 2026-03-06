@@ -3,18 +3,18 @@
 
 services:
   backend:
-    image: ghcr.io/westwindsorforward/wwf-311-backend:latest
+    image: ghcr.io/pinpoint-311/wwf-311-backend:latest
     build: !reset null
     volumes:
       - .:/project # Keep project mount for config access
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
   worker:
-    image: ghcr.io/westwindsorforward/wwf-311-backend:latest
+    image: ghcr.io/pinpoint-311/wwf-311-backend:latest
     build: !reset null
     volumes: !reset []
 
   frontend:
-    image: ghcr.io/westwindsorforward/wwf-311-frontend:latest
+    image: ghcr.io/pinpoint-311/wwf-311-frontend:latest
     build: !reset null
     volumes: !reset []

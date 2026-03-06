@@ -5,7 +5,7 @@ Securely retrieves secrets from Google Secret Manager.
 Falls back to database storage for local development.
 
 Secrets are bundled into 6 groups to fit the free tier:
-- secret-zitadel: Zitadel Cloud SSO credentials
+- secret-auth: Auth0 SSO credentials
 - secret-smtp: Email configuration
 - secret-sms: SMS provider configuration
 - secret-google: Google Cloud API keys
@@ -166,7 +166,7 @@ async def get_secret(key_name: str) -> Optional[str]:
     Uses Google Secret Manager if available, falls back to database.
     
     Secret key mappings:
-    - ZITADEL_* -> secret-zitadel bundle
+    - AUTH0_* -> secret-auth bundle
     - SMTP_* -> secret-smtp bundle
     - SMS_*, TWILIO_* -> secret-sms bundle
     - GOOGLE_*, VERTEX_* -> secret-google bundle
@@ -175,7 +175,7 @@ async def get_secret(key_name: str) -> Optional[str]:
     """
     if _is_gcp_available():
         # Determine which bundle this key belongs to
-        if key_name.startswith("ZITADEL_") or key_name.startswith("AUTH0_"):
+        if key_name.startswith("AUTH0_"):
             bundle = _get_secret_from_gcp("secret-auth")
         elif key_name.startswith("SMTP_") or key_name.startswith("EMAIL_"):
             bundle = _get_secret_from_gcp("secret-smtp")
@@ -227,7 +227,7 @@ async def get_secrets_bundle(prefix: str) -> Dict[str, str]:
     
     if _is_gcp_available():
         # Map prefix to bundle name
-        if prefix.startswith("ZITADEL") or prefix.startswith("AUTH0"):
+        if prefix.startswith("AUTH0"):
             bundle = _get_secret_from_gcp("secret-auth")
         elif prefix.startswith("SMTP") or prefix.startswith("EMAIL"):
             bundle = _get_secret_from_gcp("secret-smtp")
@@ -281,7 +281,7 @@ def clear_cache():
 
 def _get_bundle_name(key_name: str) -> str:
     """Determine which Secret Manager bundle a key belongs to."""
-    if key_name.startswith("ZITADEL_") or key_name.startswith("AUTH0_"):
+    if key_name.startswith("AUTH0_"):
         return "secret-auth"
     elif key_name.startswith("SMTP_") or key_name.startswith("EMAIL_"):
         return "secret-smtp"

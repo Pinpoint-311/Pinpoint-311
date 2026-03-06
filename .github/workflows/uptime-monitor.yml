@@ -45,7 +45,7 @@ jobs:
           username: ubuntu
           key: ${{ secrets.PROD_SSH_KEY }}
           script: |
-            cd /home/ubuntu/WWF-Open-Source-311-Template
+            cd /home/ubuntu/Pinpoint-311
             echo "🔄 Auto-healing triggered at $(date)"
             docker compose restart backend frontend
             sleep 30

@@ -134,7 +134,7 @@ services:
   worker:
     build: ./backend
     restart: unless-stopped
-    command: celery -A app.core.celery_app worker --loglevel=info
+    command: celery -A app.core.celery_app worker --beat --loglevel=info
     volumes:
       - ./backend:/app
     environment:

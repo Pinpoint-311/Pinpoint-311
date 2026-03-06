@@ -71,10 +71,10 @@ DEFAULT_DEPARTMENTS = [
 
 # Default secrets (keys only, not values)
 DEFAULT_SECRETS = [
-    # Zitadel Cloud SSO (Required for authentication)
-    {"key_name": "ZITADEL_DOMAIN", "description": "Zitadel Cloud domain (e.g., yourorg-abc123.zitadel.cloud)"},
-    {"key_name": "ZITADEL_CLIENT_ID", "description": "Zitadel application client ID"},
-    {"key_name": "ZITADEL_CLIENT_SECRET", "description": "Zitadel application client secret"},
+    # Auth0 SSO (Required for authentication)
+    {"key_name": "AUTH0_DOMAIN", "description": "Auth0 domain (e.g., yourapp.us.auth0.com)"},
+    {"key_name": "AUTH0_CLIENT_ID", "description": "Auth0 application client ID"},
+    {"key_name": "AUTH0_CLIENT_SECRET", "description": "Auth0 application client secret"},
     
     
     # Google Maps / GIS

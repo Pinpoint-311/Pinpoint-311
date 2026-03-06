@@ -36,9 +36,7 @@ async def generate_bootstrap_token(
     
     Requires the INITIAL_ADMIN_PASSWORD from environment to authorize.
     """
-    from app.services.zitadel_service import get_zitadel_status
     from app.core.config import get_settings
-    from fastapi import Header
     
     settings = get_settings()
     
@@ -88,7 +86,6 @@ async def use_bootstrap_token(
     
     ONLY works when Auth0 is NOT configured.
     """
-    from app.services.zitadel_service import get_zitadel_status
     import time as time_module
     
     # Check if SSO is already configured
