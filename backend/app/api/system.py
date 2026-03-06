@@ -1776,7 +1776,7 @@ async def switch_version(
             try:
                 async with httpx.AsyncClient(timeout=5.0) as client:
                     # Check backend health
-                    health_resp = await client.get("http://localhost:8000/health")
+                    health_resp = await client.get("http://localhost:8000/api/health")
                     if health_resp.status_code == 200:
                         health_ok = True
                         break
