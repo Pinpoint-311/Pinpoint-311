@@ -11,7 +11,7 @@ import aiofiles
 logger = logging.getLogger(__name__)
 
 from app.db.session import get_db
-from app.models import SystemSettings, SystemSecret, ServiceRequest, User, DisclaimerAcknowledgment
+from app.models import SystemSettings, SystemSecret, ServiceRequest, User, DisclaimerAcknowledgment, AuditLog
 from app.schemas import (
     SystemSettingsBase, SystemSettingsResponse,
     SecretCreate, SecretUpdate, SecretResponse,
@@ -1560,7 +1560,7 @@ async def switch_version(
         # 3. Restart original containers
         try:
             subprocess.run(
-                ["docker-compose", "restart", "backend", "frontend"],
+                ["docker", "compose", "restart", "backend", "frontend"],
                 cwd=project_root,
                 capture_output=True,
                 timeout=120
@@ -1716,7 +1716,7 @@ async def switch_version(
         try:
             # First, rebuild images
             build_result = subprocess.run(
-                ["docker-compose", "build", "--no-cache", "backend", "frontend"],
+                ["docker", "compose", "build", "--no-cache", "backend", "frontend"],
                 cwd=project_root,
                 capture_output=True,
                 text=True,
@@ -1731,7 +1731,7 @@ async def switch_version(
             
             # Then restart with new images
             restart_result = subprocess.run(
-                ["docker-compose", "up", "-d", "--force-recreate", "backend", "frontend"],
+                ["docker", "compose", "up", "-d", "--force-recreate", "backend", "frontend"],
                 cwd=project_root,
                 capture_output=True,
                 text=True,
