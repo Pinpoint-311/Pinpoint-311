@@ -917,113 +917,77 @@ export default function StaffDashboard() {
                     </div>
                 )}
 
-                {/* Statistics View - Clean Government Design */}
+                {/* Statistics View — Dark Glassmorphism Design */}
                 {currentView === 'statistics' && (
-                    <div className="flex-1 p-8 overflow-auto bg-gradient-to-br from-gray-50 to-purple-50">
+                    <div className="flex-1 p-6 lg:p-8 overflow-auto">
                         <div className="max-w-7xl mx-auto space-y-6">
-                            {/* Header with Export Button */}
-                            <div className="mb-6 flex items-start justify-between">
+                            {/* Header */}
+                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                                 <div>
-                                    <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">Analytics Dashboard</h1>
+                                    <h1 className="text-2xl lg:text-3xl font-bold text-white">Analytics Dashboard</h1>
                                     {advancedStats?.cached_at && (
-                                        <p className="text-sm text-gray-500 mt-1">
-                                            Last updated: {new Date(advancedStats.cached_at).toLocaleString()}
+                                        <p className="text-sm text-white/40 mt-1">
+                                            Updated {new Date(advancedStats.cached_at).toLocaleString()}
                                         </p>
                                     )}
                                 </div>
-                                <div className="flex items-center gap-3">
-                                    {/* Research Portal Link */}
+                                <div className="flex items-center gap-2">
                                     <button
                                         onClick={() => window.location.href = '/research'}
-                                        className="flex items-center gap-2 px-4 py-2.5 bg-white border border-purple-200 text-purple-700 rounded-lg hover:bg-purple-50 hover:border-purple-400 transition-all shadow-sm font-medium"
+                                        className="flex items-center gap-2 px-4 py-2 bg-white/10 border border-white/20 text-white rounded-lg hover:bg-white/20 transition-all text-sm font-medium"
                                     >
                                         🔬 Research Portal
                                     </button>
                                     <div className="relative group">
-                                        <button
-                                            className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all shadow-lg hover:shadow-xl font-medium"
-                                        >
+                                        <button className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all text-sm font-medium">
                                             <Download className="w-4 h-4" />
-                                            Export Data
-                                            <ChevronDown className="w-4 h-4" />
+                                            Export
+                                            <ChevronDown className="w-3 h-3" />
                                         </button>
-                                        <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-xl border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-                                            <div className="p-2">
-                                                <p className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase">Export Requests</p>
-                                                <button
-                                                    onClick={() => handleExportRequests('csv')}
-                                                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
-                                                >
-                                                    📄 Download as CSV
-                                                </button>
-                                                <button
-                                                    onClick={() => handleExportRequests('json')}
-                                                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
-                                                >
-                                                    📋 Download as JSON
-                                                </button>
-                                                <button
-                                                    onClick={() => handleExportRequests('geojson')}
-                                                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
-                                                >
-                                                    🗺️ Download as GeoJSON
-                                                </button>
-                                                <div className="border-t border-gray-100 my-2" />
-                                                <p className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase">Export Statistics</p>
-                                                <button
-                                                    onClick={() => handleExportStatistics('csv')}
-                                                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
-                                                >
-                                                    📊 Statistics as CSV
-                                                </button>
-                                                <button
-                                                    onClick={() => handleExportStatistics('json')}
-                                                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-purple-50 rounded-md transition-colors"
-                                                >
-                                                    📈 Statistics as JSON
-                                                </button>
+                                        <div className="absolute right-0 mt-2 w-52 bg-gray-900 border border-white/20 rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                                            <div className="p-1.5">
+                                                <p className="px-3 py-1.5 text-xs font-semibold text-white/40 uppercase">Requests</p>
+                                                <button onClick={() => handleExportRequests('csv')} className="w-full text-left px-3 py-2 text-sm text-white/80 hover:bg-white/10 rounded-md">📄 CSV</button>
+                                                <button onClick={() => handleExportRequests('json')} className="w-full text-left px-3 py-2 text-sm text-white/80 hover:bg-white/10 rounded-md">📋 JSON</button>
+                                                <button onClick={() => handleExportRequests('geojson')} className="w-full text-left px-3 py-2 text-sm text-white/80 hover:bg-white/10 rounded-md">🗺️ GeoJSON</button>
+                                                <div className="border-t border-white/10 my-1" />
+                                                <p className="px-3 py-1.5 text-xs font-semibold text-white/40 uppercase">Statistics</p>
+                                                <button onClick={() => handleExportStatistics('csv')} className="w-full text-left px-3 py-2 text-sm text-white/80 hover:bg-white/10 rounded-md">📊 CSV</button>
+                                                <button onClick={() => handleExportStatistics('json')} className="w-full text-left px-3 py-2 text-sm text-white/80 hover:bg-white/10 rounded-md">📈 JSON</button>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
                             </div>
 
-                            {/* Basic Statistics Overview */}
-                            <div className="bg-white rounded-lg shadow-lg p-6 border-t-4 border-purple-500">
-                                <h2 className="text-xl font-bold text-gray-900 mb-4">Overview</h2>
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                                    <div>
-                                        <div className="text-sm font-medium text-gray-600">Total Requests (All Time)</div>
-                                        <div className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent mt-1">
-                                            {advancedStats?.total_requests || 0}
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <div className="text-sm font-medium text-gray-600">Open</div>
-                                        <div className="text-2xl font-bold text-orange-600 mt-1">
-                                            {advancedStats?.open_requests || 0}
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <div className="text-sm font-medium text-gray-600">In Progress</div>
-                                        <div className="text-2xl font-bold text-blue-600 mt-1">
-                                            {advancedStats?.in_progress_requests || 0}
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <div className="text-sm font-medium text-gray-600">Closed</div>
-                                        <div className="text-2xl font-bold text-green-600 mt-1">
-                                            {advancedStats?.closed_requests || 0}
-                                        </div>
-                                    </div>
+                            {/* Overview Stats Row */}
+                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5">
+                                    <div className="text-xs font-medium text-white/50 uppercase tracking-wider">Total Requests</div>
+                                    <div className="text-3xl font-bold text-white mt-2">{advancedStats?.total_requests || 0}</div>
+                                    <div className="text-xs text-white/40 mt-1">All time</div>
+                                </div>
+                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5">
+                                    <div className="text-xs font-medium text-white/50 uppercase tracking-wider">Open</div>
+                                    <div className="text-3xl font-bold text-amber-400 mt-2">{advancedStats?.open_requests || 0}</div>
+                                    <div className="text-xs text-white/40 mt-1">Awaiting action</div>
+                                </div>
+                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5">
+                                    <div className="text-xs font-medium text-white/50 uppercase tracking-wider">In Progress</div>
+                                    <div className="text-3xl font-bold text-blue-400 mt-2">{advancedStats?.in_progress_requests || 0}</div>
+                                    <div className="text-xs text-white/40 mt-1">Being worked on</div>
+                                </div>
+                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5">
+                                    <div className="text-xs font-medium text-white/50 uppercase tracking-wider">Closed</div>
+                                    <div className="text-3xl font-bold text-emerald-400 mt-2">{advancedStats?.closed_requests || 0}</div>
+                                    <div className="text-xs text-white/40 mt-1">{advancedStats?.resolution_rate?.toFixed(0) || 0}% resolution rate</div>
                                 </div>
                             </div>
 
                             {/* Priority Distribution */}
-                            <div className="bg-white rounded-lg shadow-lg p-6 border-t-4 border-orange-500">
-                                <h2 className="text-xl font-bold text-gray-900 mb-4">Priority Distribution</h2>
+                            <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6">
+                                <h2 className="text-lg font-semibold text-white mb-4">Priority Distribution</h2>
                                 {(() => {
-                                    // Calculate priority distribution from allRequests
                                     const highPriority = allRequests.filter(r => {
                                         const p = (r as any).manual_priority_score ?? ((r as any).ai_analysis?.priority_score) ?? 5;
                                         return p >= 8;
@@ -1038,231 +1002,181 @@ export default function StaffDashboard() {
                                     }).length;
                                     const total = allRequests.length || 1;
                                     return (
-                                        <div className="space-y-4">
-                                            <div className="grid grid-cols-3 gap-4 text-center mb-6">
-                                                <div>
-                                                    <div className="text-3xl font-bold text-red-600">{highPriority}</div>
-                                                    <div className="text-sm text-gray-600">High (8-10)</div>
-                                                </div>
-                                                <div>
-                                                    <div className="text-3xl font-bold text-amber-700">{mediumPriority}</div>
-                                                    <div className="text-sm text-gray-600">Medium (5-7)</div>
-                                                </div>
-                                                <div>
-                                                    <div className="text-3xl font-bold text-green-700">{lowPriority}</div>
-                                                    <div className="text-sm text-gray-600">Low (1-4)</div>
-                                                </div>
-                                            </div>
-                                            {/* Visual Bar */}
-                                            <div className="flex h-8 rounded-lg overflow-hidden">
-                                                <div
-                                                    className="bg-red-500 flex items-center justify-center text-white text-xs font-bold"
-                                                    style={{ width: `${(highPriority / total) * 100}%` }}
-                                                >
+                                        <div className="space-y-3">
+                                            <div className="flex h-6 rounded-full overflow-hidden bg-white/5">
+                                                <div className="bg-red-500 transition-all flex items-center justify-center text-[10px] font-bold text-white" style={{ width: `${(highPriority / total) * 100}%` }}>
                                                     {highPriority > 0 && `${Math.round((highPriority / total) * 100)}%`}
                                                 </div>
-                                                <div
-                                                    className="bg-yellow-500 flex items-center justify-center text-white text-xs font-bold"
-                                                    style={{ width: `${(mediumPriority / total) * 100}%` }}
-                                                >
+                                                <div className="bg-amber-500 transition-all flex items-center justify-center text-[10px] font-bold text-white" style={{ width: `${(mediumPriority / total) * 100}%` }}>
                                                     {mediumPriority > 0 && `${Math.round((mediumPriority / total) * 100)}%`}
                                                 </div>
-                                                <div
-                                                    className="bg-green-500 flex items-center justify-center text-white text-xs font-bold"
-                                                    style={{ width: `${(lowPriority / total) * 100}%` }}
-                                                >
+                                                <div className="bg-emerald-500 transition-all flex items-center justify-center text-[10px] font-bold text-white" style={{ width: `${(lowPriority / total) * 100}%` }}>
                                                     {lowPriority > 0 && `${Math.round((lowPriority / total) * 100)}%`}
                                                 </div>
+                                            </div>
+                                            <div className="flex justify-between text-sm">
+                                                <span className="text-red-400">● High (8-10): <strong>{highPriority}</strong></span>
+                                                <span className="text-amber-400">● Medium (5-7): <strong>{mediumPriority}</strong></span>
+                                                <span className="text-emerald-400">● Low (1-4): <strong>{lowPriority}</strong></span>
                                             </div>
                                         </div>
                                     );
                                 })()}
                             </div>
 
-                            {/* Key Performance Indicators */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-
-                                <div className="bg-white rounded-lg shadow p-6 border-l-4 border-purple-500">
-                                    <div className="text-sm font-medium text-gray-600">Next Week Forecast</div>
-                                    <div className="text-3xl font-bold text-purple-600 mt-2">
-                                        {advancedStats?.predictive_insights?.volume_forecast_next_week || 0}
-                                    </div>
-                                    <div className="text-xs text-gray-600 mt-1 capitalize">
-                                        Trend: {advancedStats?.predictive_insights?.trend_direction || 'N/A'}
-                                    </div>
+                            {/* KPI Cards */}
+                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                                <div className="bg-gradient-to-br from-purple-500/20 to-purple-500/5 border border-purple-500/30 rounded-xl p-5">
+                                    <div className="text-xs font-medium text-purple-300/80 uppercase tracking-wider">Next Week Forecast</div>
+                                    <div className="text-3xl font-bold text-white mt-2">{advancedStats?.predictive_insights?.volume_forecast_next_week || 0}</div>
+                                    <div className="text-xs text-white/40 mt-1 capitalize">Trend: {advancedStats?.predictive_insights?.trend_direction || 'stable'}</div>
                                 </div>
-
-                                <div className="bg-white rounded-lg shadow p-6 border-l-4 border-green-500">
-                                    <div className="text-sm font-medium text-gray-600">Avg Resolution Time</div>
-                                    <div className="text-3xl font-bold text-green-600 mt-2">
-                                        {advancedStats?.avg_resolution_hours?.toFixed(1) || 'N/A'}h
-                                    </div>
-                                    <div className="text-xs text-gray-600 mt-1">
-                                        {advancedStats?.resolution_rate?.toFixed(0) || 0}% completion rate
-                                    </div>
+                                <div className="bg-gradient-to-br from-emerald-500/20 to-emerald-500/5 border border-emerald-500/30 rounded-xl p-5">
+                                    <div className="text-xs font-medium text-emerald-300/80 uppercase tracking-wider">Avg Resolution</div>
+                                    <div className="text-3xl font-bold text-white mt-2">{advancedStats?.avg_resolution_hours ? `${advancedStats.avg_resolution_hours.toFixed(1)}h` : 'N/A'}</div>
+                                    <div className="text-xs text-white/40 mt-1">{advancedStats?.resolution_rate?.toFixed(0) || 0}% completion</div>
                                 </div>
-
-                                <div className="bg-white rounded-lg shadow p-6 border-l-4 border-red-500">
-                                    <div className="text-sm font-medium text-gray-600">High Priority Aging</div>
-                                    <div className="text-3xl font-bold text-red-600 mt-2">
-                                        {advancedStats?.aging_high_priority_count || 0}
-                                    </div>
-                                    <div className="text-xs text-gray-500 mt-1">P1-P3 open &gt; 7 days</div>
+                                <div className="bg-gradient-to-br from-red-500/20 to-red-500/5 border border-red-500/30 rounded-xl p-5">
+                                    <div className="text-xs font-medium text-red-300/80 uppercase tracking-wider">High Priority Aging</div>
+                                    <div className="text-3xl font-bold text-white mt-2">{advancedStats?.aging_high_priority_count || 0}</div>
+                                    <div className="text-xs text-white/40 mt-1">P1-P3 open &gt; 7 days</div>
                                 </div>
-
-                                <div className="bg-white rounded-lg shadow p-6 border-l-4 border-blue-500">
-                                    <div className="text-sm font-medium text-gray-600">Peak Activity</div>
-                                    <div className="text-3xl font-bold text-blue-600 mt-2">
-                                        {advancedStats?.predictive_insights?.seasonal_peak_day || 'N/A'}
-                                    </div>
-                                    <div className="text-xs text-gray-600 mt-1">
-                                        Peak month: {advancedStats?.predictive_insights?.seasonal_peak_month || 'N/A'}
-                                    </div>
+                                <div className="bg-gradient-to-br from-blue-500/20 to-blue-500/5 border border-blue-500/30 rounded-xl p-5">
+                                    <div className="text-xs font-medium text-blue-300/80 uppercase tracking-wider">Peak Activity</div>
+                                    <div className="text-3xl font-bold text-white mt-2">{advancedStats?.predictive_insights?.seasonal_peak_day || 'N/A'}</div>
+                                    <div className="text-xs text-white/40 mt-1">Peak: {advancedStats?.predictive_insights?.seasonal_peak_month || 'N/A'}</div>
                                 </div>
+                            </div>
 
-                                {/* Geographic Hotspots - Problem Areas */}
-                                {advancedStats?.hotspots && advancedStats.hotspots.length > 0 && (
-                                    <div className="bg-white rounded-lg shadow-lg p-6 border-t-4 border-red-500">
-                                        <div className="mb-4">
-                                            <h3 className="text-lg font-bold text-gray-900">Problem Areas</h3>
-                                            <p className="text-sm text-gray-600 mt-1">
-                                                Locations with concentrated service requests. Consider prioritizing inspections or infrastructure improvements.
-                                            </p>
-                                            <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
-                                                <strong>Note:</strong> Data may reflect reporting patterns. Areas may appear more active if residents are more familiar with the platform.
-                                            </div>
-                                        </div>
-                                        <div className="space-y-3">
-                                            {advancedStats.hotspots.slice(0, 6).map((hotspot, idx) => (
-                                                <div key={idx} className="flex items-start justify-between p-4 bg-gradient-to-r from-red-50 to-orange-50 rounded-lg border border-red-200 hover:border-red-400 transition">
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="text-sm font-semibold text-gray-900">
-                                                            {hotspot.sample_address || `Area ${idx + 1}`}
-                                                        </div>
-                                                        {hotspot.top_categories && hotspot.top_categories.length > 0 && (
-                                                            <div className="flex flex-wrap gap-1 mt-2">
-                                                                {hotspot.top_categories.slice(0, 3).map((cat, i) => (
-                                                                    <span key={i} className="text-xs px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full">
-                                                                        {cat}
-                                                                    </span>
-                                                                ))}
-                                                            </div>
-                                                        )}
-                                                        <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
-                                                            <span>{hotspot.count} requests</span>
-                                                            {hotspot.unique_reporters && (
-                                                                <span className={`${hotspot.unique_reporters === 1 ? 'text-amber-600 font-medium' : ''}`}>
-                                                                    {hotspot.unique_reporters === 1
-                                                                        ? '⚠ Single reporter'
-                                                                        : `${hotspot.unique_reporters} reporters`}
-                                                                </span>
-                                                            )}
-                                                        </div>
+                            {/* Two-Column: Categories + Weekly Trend */}
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                {/* Requests by Category — Horizontal Bars */}
+                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6">
+                                    <h3 className="text-lg font-semibold text-white mb-4">Requests by Category</h3>
+                                    <div className="space-y-3">
+                                        {(() => {
+                                            const entries = Object.entries(advancedStats?.requests_by_category || {})
+                                                .sort(([, a], [, b]) => (b as number) - (a as number));
+                                            const maxCount = entries.length > 0 ? (entries[0][1] as number) : 1;
+                                            return entries.map(([category, count]) => (
+                                                <div key={category}>
+                                                    <div className="flex justify-between text-sm mb-1">
+                                                        <span className="text-white/80 truncate mr-2">{category}</span>
+                                                        <span className="text-white/60 font-medium flex-shrink-0">{count as number}</span>
                                                     </div>
-                                                    <div className="ml-4 flex-shrink-0 text-center">
-                                                        <div className="bg-gradient-to-r from-red-500 to-orange-500 text-white w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg shadow-lg">
-                                                            {hotspot.count}
-                                                        </div>
-                                                        {hotspot.unique_reporters && hotspot.count > 1 && (
-                                                            <div className="text-xs text-gray-400 mt-1">
-                                                                {(hotspot.count / hotspot.unique_reporters).toFixed(1)}/user
-                                                            </div>
-                                                        )}
+                                                    <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+                                                        <div
+                                                            className="h-full bg-gradient-to-r from-purple-500 to-blue-500 rounded-full transition-all"
+                                                            style={{ width: `${((count as number) / maxCount) * 100}%` }}
+                                                        />
                                                     </div>
                                                 </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Requests by Category */}
-                                <div className="bg-white rounded-lg shadow-lg p-6 border-t-4 border-purple-500">
-                                    <h3 className="text-lg font-bold text-gray-900 mb-4">Requests by Category</h3>
-                                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                                        {Object.entries(advancedStats?.requests_by_category || {})
-                                            .sort(([, a], [, b]) => (b as number) - (a as number))
-                                            .map(([category, count]) => (
-                                                <div key={category} className="bg-gradient-to-br from-purple-50 to-blue-50 rounded-lg p-4 border border-purple-200 hover:shadow-md transition">
-                                                    <div className="text-sm font-medium text-gray-900 truncate">{category}</div>
-                                                    <div className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent mt-1">
-                                                        {count as number}
-                                                    </div>
-                                                </div>
-                                            ))}
+                                            ));
+                                        })()}
                                     </div>
                                 </div>
 
-                                {/* Staff Performance */}
-                                {advancedStats?.top_staff_by_resolutions && Object.keys(advancedStats.top_staff_by_resolutions).length > 0 && (
-                                    <div className="bg-white rounded-lg shadow-lg p-6 border-t-4 border-purple-500">
-                                        <h3 className="text-lg font-bold text-gray-900 mb-4">Top Staff by Resolutions</h3>
-                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                            {Object.entries(advancedStats.top_staff_by_resolutions)
-                                                .sort(([, a], [, b]) => (b as number) - (a as number))
-                                                .slice(0, 9)
-                                                .map(([staff, count]) => (
-                                                    <div key={staff} className="flex items-center justify-between p-3 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg border border-purple-200">
-                                                        <span className="text-sm font-medium text-gray-900 truncate flex-1">{staff}</span>
-                                                        <span className="bg-gradient-to-r from-purple-600 to-blue-600 text-white px-3 py-1 rounded-full text-sm font-bold ml-2">
-                                                            {count as number}
-                                                        </span>
-                                                    </div>
-                                                ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Current Workload */}
-                                {advancedStats?.workload_by_staff && Object.keys(advancedStats.workload_by_staff).length > 0 && (
-                                    <div className="bg-white rounded-lg shadow p-6">
-                                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Current Workload</h3>
-                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                            {Object.entries(advancedStats.workload_by_staff)
-                                                .sort(([, a], [, b]) => (b as number) - (a as number))
-                                                .slice(0, 9)
-                                                .map(([staff, count]) => (
-                                                    <div key={staff} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
-                                                        <span className="text-sm font-medium text-gray-900 truncate flex-1">{staff}</span>
-                                                        <span className="bg-blue-500 text-white px-3 py-1 rounded-full text-sm font-bold ml-2">
-                                                            {count as number}
-                                                        </span>
-                                                    </div>
-                                                ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Weekly Trend */}
-                                <div className="bg-white rounded-lg shadow p-6">
-                                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Weekly Trend</h3>
+                                {/* Weekly Trend Chart */}
+                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6">
+                                    <h3 className="text-lg font-semibold text-white mb-4">Weekly Trend</h3>
                                     <div className="h-64">
                                         <ResponsiveContainer width="100%" height="100%">
                                             <AreaChart data={advancedStats?.weekly_trend || []}>
-                                                <XAxis
-                                                    dataKey="period"
-                                                    stroke="#6b7280"
-                                                    style={{ fontSize: '12px' }}
-                                                />
-                                                <YAxis
-                                                    stroke="#6b7280"
-                                                    style={{ fontSize: '12px' }}
-                                                />
-                                                <Tooltip
-                                                    contentStyle={{
-                                                        backgroundColor: 'white',
-                                                        border: '1px solid #e5e7eb'
-                                                    }}
-                                                />
-                                                <Area
-                                                    type="monotone"
-                                                    dataKey="total"
-                                                    stroke="#3b82f6"
-                                                    fill="#93c5fd"
-                                                    fillOpacity={0.6}
-                                                />
+                                                <XAxis dataKey="period" stroke="rgba(255,255,255,0.3)" style={{ fontSize: '11px' }} tick={{ fill: 'rgba(255,255,255,0.5)' }} />
+                                                <YAxis stroke="rgba(255,255,255,0.3)" style={{ fontSize: '11px' }} tick={{ fill: 'rgba(255,255,255,0.5)' }} />
+                                                <Tooltip contentStyle={{ backgroundColor: 'rgba(17,24,39,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: 'white' }} />
+                                                <Area type="monotone" dataKey="total" stroke="#8b5cf6" fill="url(#purpleGradient)" fillOpacity={0.4} strokeWidth={2} />
+                                                <defs>
+                                                    <linearGradient id="purpleGradient" x1="0" y1="0" x2="0" y2="1">
+                                                        <stop offset="0%" stopColor="#8b5cf6" stopOpacity={0.6} />
+                                                        <stop offset="100%" stopColor="#8b5cf6" stopOpacity={0.05} />
+                                                    </linearGradient>
+                                                </defs>
                                             </AreaChart>
                                         </ResponsiveContainer>
                                     </div>
+                                </div>
+                            </div>
+
+                            {/* Two-Column: Hotspots + Staff */}
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                {/* Problem Areas — Compact Table */}
+                                {advancedStats?.hotspots && advancedStats.hotspots.length > 0 && (
+                                    <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6">
+                                        <h3 className="text-lg font-semibold text-white mb-1">Problem Areas</h3>
+                                        <p className="text-xs text-white/40 mb-4">Top locations by request volume</p>
+                                        <div className="space-y-2">
+                                            {advancedStats.hotspots.slice(0, 5).map((hotspot, idx) => (
+                                                <div key={idx} className="flex items-center gap-3 p-3 bg-white/5 rounded-lg hover:bg-white/10 transition">
+                                                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-red-500 to-orange-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                                                        {hotspot.count}
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="text-sm text-white/90 truncate">{hotspot.sample_address || `Area ${idx + 1}`}</div>
+                                                        <div className="flex items-center gap-2 mt-0.5">
+                                                            {hotspot.top_categories?.slice(0, 2).map((cat, i) => (
+                                                                <span key={i} className="text-[10px] px-1.5 py-0.5 bg-white/10 text-white/60 rounded">{cat}</span>
+                                                            ))}
+                                                            {hotspot.unique_reporters && (
+                                                                <span className="text-[10px] text-white/30">{hotspot.unique_reporters} reporter{hotspot.unique_reporters !== 1 ? 's' : ''}</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Staff Performance + Workload */}
+                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6">
+                                    <h3 className="text-lg font-semibold text-white mb-1">Staff Activity</h3>
+                                    <p className="text-xs text-white/40 mb-4">Resolutions and current workload</p>
+
+                                    {/* Top Resolvers */}
+                                    {advancedStats?.top_staff_by_resolutions && Object.keys(advancedStats.top_staff_by_resolutions).length > 0 && (
+                                        <div className="mb-4">
+                                            <div className="text-xs font-medium text-white/50 uppercase tracking-wider mb-2">Top Resolvers</div>
+                                            <div className="space-y-1.5">
+                                                {Object.entries(advancedStats.top_staff_by_resolutions)
+                                                    .sort(([, a], [, b]) => (b as number) - (a as number))
+                                                    .slice(0, 5)
+                                                    .map(([staff, count], idx) => (
+                                                        <div key={staff} className="flex items-center gap-2 p-2 bg-white/5 rounded-lg">
+                                                            <span className="text-xs text-white/30 w-4">{idx + 1}.</span>
+                                                            <span className="text-sm text-white/80 flex-1 truncate">{staff}</span>
+                                                            <span className="text-sm font-semibold text-emerald-400">{count as number}</span>
+                                                        </div>
+                                                    ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Current Workload */}
+                                    {advancedStats?.workload_by_staff && Object.keys(advancedStats.workload_by_staff).length > 0 && (
+                                        <div>
+                                            <div className="text-xs font-medium text-white/50 uppercase tracking-wider mb-2">Current Workload</div>
+                                            <div className="space-y-1.5">
+                                                {Object.entries(advancedStats.workload_by_staff)
+                                                    .sort(([, a], [, b]) => (b as number) - (a as number))
+                                                    .slice(0, 5)
+                                                    .map(([staff, count]) => (
+                                                        <div key={staff} className="flex items-center gap-2 p-2 bg-white/5 rounded-lg">
+                                                            <span className="text-sm text-white/80 flex-1 truncate">{staff}</span>
+                                                            <span className="text-sm font-semibold text-blue-400">{count as number} active</span>
+                                                        </div>
+                                                    ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Empty state */}
+                                    {(!advancedStats?.top_staff_by_resolutions || Object.keys(advancedStats.top_staff_by_resolutions).length === 0) &&
+                                        (!advancedStats?.workload_by_staff || Object.keys(advancedStats.workload_by_staff).length === 0) && (
+                                            <div className="text-center py-8 text-white/30">
+                                                <p className="text-sm">No staff activity data available</p>
+                                            </div>
+                                        )}
                                 </div>
                             </div>
                         </div>
