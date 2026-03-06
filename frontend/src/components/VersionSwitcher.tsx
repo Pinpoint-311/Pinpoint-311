@@ -159,6 +159,43 @@ export default function VersionSwitcher() {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
 
+            // Check if response is actually JSON (server may return HTML during restart)
+            const contentType = response.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) {
+                // Server is likely restarting — wait and poll for health
+                setMessage('⏳ Server is restarting after deployment... checking status');
+                let healthy = false;
+                for (let attempt = 0; attempt < 8; attempt++) {
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                    try {
+                        const healthResp = await fetch('/api/health');
+                        if (healthResp.ok) {
+                            const healthContentType = healthResp.headers.get('content-type') || '';
+                            if (healthContentType.includes('application/json')) {
+                                healthy = true;
+                                break;
+                            }
+                        }
+                    } catch {
+                        // Server still down, keep waiting
+                    }
+                    setMessage(`⏳ Server restarting... attempt ${attempt + 2}/8`);
+                }
+
+                if (healthy) {
+                    setMessage('✅ Deployment complete — server is back online');
+                    setSelectedRef(null);
+                    setSelectedRelease(null);
+                    setSelectedCommit(null);
+                    setSecurity(null);
+                    fetchCurrentVersion();
+                    fetchReleases();
+                } else {
+                    setError('⚠️ Deployment may have succeeded but server health check timed out. Please refresh the page.');
+                }
+                return;
+            }
+
             const data = await response.json();
 
             if (response.ok) {
@@ -179,7 +216,37 @@ export default function VersionSwitcher() {
                 }
             }
         } catch (err: any) {
-            setError(`Failed to deploy: ${err.message}`);
+            // Network error likely means server restarted — poll for health
+            setMessage('⏳ Connection lost during deployment — server may be restarting...');
+            let healthy = false;
+            for (let attempt = 0; attempt < 8; attempt++) {
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                try {
+                    const healthResp = await fetch('/api/health');
+                    if (healthResp.ok) {
+                        const healthContentType = healthResp.headers.get('content-type') || '';
+                        if (healthContentType.includes('application/json')) {
+                            healthy = true;
+                            break;
+                        }
+                    }
+                } catch {
+                    // Still down
+                }
+                setMessage(`⏳ Waiting for server... attempt ${attempt + 2}/8`);
+            }
+
+            if (healthy) {
+                setMessage('✅ Deployment complete — server is back online');
+                setSelectedRef(null);
+                setSelectedRelease(null);
+                setSelectedCommit(null);
+                setSecurity(null);
+                fetchCurrentVersion();
+                fetchReleases();
+            } else {
+                setError(`Failed to deploy: ${err.message}. Server may still be restarting — try refreshing in a minute.`);
+            }
         } finally {
             setIsSwitching(false);
         }
