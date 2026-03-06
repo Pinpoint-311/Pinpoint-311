@@ -91,6 +91,7 @@ services:
     volumes:
       - ./backend:/app
       - .:/project
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       DATABASE_URL: postgresql+asyncpg://${DB_USER:-township}:${DB_PASSWORD:-township}@db/${DB_NAME:-township_db}
       REDIS_URL: redis://redis:6379/0
