@@ -1515,6 +1515,23 @@ async def switch_version(
     deployment_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     backup_dir = "/project/backups"
     
+    # Auto-detect the Docker Compose project name from running containers
+    try:
+        project_name_result = subprocess.run(
+            ["docker", "compose", "ls", "--format", "json"],
+            capture_output=True, text=True, timeout=10
+        )
+        import json as _json
+        if project_name_result.returncode == 0:
+            projects = _json.loads(project_name_result.stdout)
+            compose_project = projects[0]["Name"] if projects else "wwf-open-source-311-template"
+        else:
+            compose_project = "wwf-open-source-311-template"
+    except Exception:
+        compose_project = "wwf-open-source-311-template"
+    
+    logger.info(f"[Deploy] Using compose project: {compose_project}")
+    
     # Deployment state tracking
     state = {
         "original_sha": None,
@@ -1560,7 +1577,7 @@ async def switch_version(
         # 3. Restart original containers
         try:
             subprocess.run(
-                ["docker", "compose", "restart", "backend", "frontend"],
+                ["docker", "compose", "-p", compose_project, "restart", "backend", "frontend"],
                 cwd=project_root,
                 capture_output=True,
                 timeout=120
@@ -1714,9 +1731,9 @@ async def switch_version(
         
         # ===== STEP 5: Rebuild Containers =====
         try:
-            # First, rebuild images
+            # Only rebuild frontend (backend auto-reloads via --reload + volume mount)
             build_result = subprocess.run(
-                ["docker", "compose", "build", "--no-cache", "backend", "frontend"],
+                ["docker", "compose", "-p", compose_project, "build", "--no-cache", "frontend"],
                 cwd=project_root,
                 capture_output=True,
                 text=True,
@@ -1727,11 +1744,11 @@ async def switch_version(
                 log_step("container_build", False, build_result.stderr[:300])
                 raise Exception(f"Container build failed: {build_result.stderr[:200]}")
             
-            log_step("container_build", True, "Built backend and frontend images")
+            log_step("container_build", True, "Built frontend image")
             
             # Then restart with new images
             restart_result = subprocess.run(
-                ["docker", "compose", "up", "-d", "--force-recreate", "backend", "frontend"],
+                ["docker", "compose", "-p", compose_project, "up", "-d", "--force-recreate", "frontend"],
                 cwd=project_root,
                 capture_output=True,
                 text=True,
@@ -1743,7 +1760,7 @@ async def switch_version(
                 raise Exception(f"Container restart failed: {restart_result.stderr[:200]}")
             
             state["containers_rebuilt"] = True
-            log_step("container_restart", True, "Restarted containers with new code")
+            log_step("container_restart", True, "Restarted frontend container with new code")
             
         except subprocess.TimeoutExpired:
             log_step("container_rebuild", False, "Container rebuild timed out")
@@ -1776,10 +1793,10 @@ async def switch_version(
         # ===== STEP 7: Log to Audit =====
         try:
             audit_entry = AuditLog(
-                action="version_deployed",
-                entity_type="system",
-                entity_id=0,
                 user_id=current_user.id,
+                username=current_user.username if hasattr(current_user, 'username') else str(current_user.id),
+                event_type="version_deployed",
+                success=True,
                 details={
                     "deployment_id": deployment_id,
                     "from_sha": state["original_sha"][:7],
@@ -1818,10 +1835,11 @@ async def switch_version(
         # Log failed deployment to audit
         try:
             audit_entry = AuditLog(
-                action="version_deployment_failed",
-                entity_type="system",
-                entity_id=0,
                 user_id=current_user.id,
+                username=current_user.username if hasattr(current_user, 'username') else str(current_user.id),
+                event_type="version_deployment_failed",
+                success=False,
+                failure_reason=str(e)[:255],
                 details={
                     "deployment_id": deployment_id,
                     "target_ref": ref,
