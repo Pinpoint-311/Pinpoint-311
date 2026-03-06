@@ -12,7 +12,7 @@ bcrypt==4.0.1
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
 celery==5.3.6
-redis==5.0.1
+redis==7.2.1
 httpx==0.26.0
 google-cloud-aiplatform==1.38.1
 google-cloud-kms==2.21.0
