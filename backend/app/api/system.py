@@ -2699,7 +2699,170 @@ async def analytics_chat(
     except Exception as e:
         logger.warning(f"Weather context unavailable: {e}")
     
-    # ========== 9. Request Details — Sanitized List ==========
+    # ========== 9. Research Fields — Social Equity, Sentiment, Friction ==========
+    equity_summary = ""
+    sentiment_summary = ""
+    friction_summary = ""
+    infra_summary = ""
+    
+    try:
+        from app.api.research import (
+            get_infrastructure_category, analyze_sentiment,
+            detect_trust_indicators, generate_zone_id
+        )
+        
+        # --- Infrastructure category breakdown (lightweight string lookup) ---
+        infra_categories = {}
+        for r in all_requests:
+            cat = get_infrastructure_category(r.service_code)
+            if cat:
+                infra_categories[cat] = infra_categories.get(cat, 0) + 1
+        if infra_categories:
+            infra_summary = "Infrastructure Category Breakdown:\n" + \
+                chr(10).join(f"- {cat}: {count}" for cat, count in sorted(infra_categories.items(), key=lambda x: x[1], reverse=True))
+            context_used.append("infrastructure_categories")
+        
+        # --- Sentiment & Trust aggregates (sample ~50 recent with descriptions) ---
+        desc_requests = [r for r in all_requests if r.description and len(r.description.strip()) > 10][:50]
+        if desc_requests:
+            sentiments = [analyze_sentiment(r.description) for r in desc_requests]
+            valid_sentiments = [s for s in sentiments if s is not None]
+            avg_sentiment = sum(valid_sentiments) / len(valid_sentiments) if valid_sentiments else 0
+            
+            trust_results = [detect_trust_indicators(r.description) for r in desc_requests]
+            repeat_pct = sum(1 for t in trust_results if t.get('is_repeat_report')) / len(trust_results) * 100
+            frustration_pct = sum(1 for t in trust_results if t.get('frustration_expressed')) / len(trust_results) * 100
+            prior_ref_pct = sum(1 for t in trust_results if t.get('prior_report_mentioned')) / len(trust_results) * 100
+            
+            sentiment_summary = f"""Resident Sentiment Analysis (sampled {len(desc_requests)} recent requests):
+- Average sentiment score: {avg_sentiment:.2f} (scale: -1.0 angry to +1.0 positive)
+- Frustration expressed: {frustration_pct:.0f}% of requests
+- Repeat reports: {repeat_pct:.0f}% of requests
+- Prior report referenced: {prior_ref_pct:.0f}% of requests"""
+            context_used.append("sentiment_trust")
+        
+        # --- Social Equity aggregates (sample requests with coordinates) ---
+        try:
+            from app.api.research import (
+                get_census_tract_geoid, get_social_vulnerability_index,
+                get_income_quintile_from_zone, get_population_density_category,
+                get_housing_tenure_mix
+            )
+            
+            geo_requests = [r for r in all_requests if r.lat and r.long][:30]
+            if geo_requests:
+                svi_values = []
+                income_dist = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+                density_dist = {"low": 0, "medium": 0, "high": 0}
+                renter_pcts = []
+                
+                for r in geo_requests:
+                    try:
+                        zone_id = generate_zone_id(r.lat, r.long)
+                        geoid = get_census_tract_geoid(r.lat, r.long)
+                        
+                        svi = get_social_vulnerability_index(geoid)
+                        if svi is not None:
+                            svi_values.append(svi)
+                        
+                        iq = get_income_quintile_from_zone(zone_id, geoid)
+                        if iq and iq in income_dist:
+                            income_dist[iq] += 1
+                        
+                        pd_cat = get_population_density_category(zone_id, geoid)
+                        if pd_cat and pd_cat in density_dist:
+                            density_dist[pd_cat] += 1
+                        
+                        ht = get_housing_tenure_mix(geoid)
+                        if ht is not None:
+                            renter_pcts.append(ht)
+                    except Exception:
+                        continue
+                
+                avg_svi = sum(svi_values) / len(svi_values) if svi_values else None
+                avg_renter = sum(renter_pcts) / len(renter_pcts) if renter_pcts else None
+                
+                equity_parts = [f"Social Equity Metrics (sampled {len(geo_requests)} requests):"]
+                if avg_svi is not None:
+                    equity_parts.append(f"- Average Social Vulnerability Index: {avg_svi:.2f} (0=low, 1=high)")
+                if any(income_dist.values()):
+                    equity_parts.append(f"- Income quintile distribution: Q1(lowest)={income_dist[1]}, Q2={income_dist[2]}, Q3={income_dist[3]}, Q4={income_dist[4]}, Q5(highest)={income_dist[5]}")
+                if any(density_dist.values()):
+                    equity_parts.append(f"- Population density: Low={density_dist['low']}, Medium={density_dist['medium']}, High={density_dist['high']}")
+                if avg_renter is not None:
+                    equity_parts.append(f"- Average renter percentage in request areas: {avg_renter*100:.0f}%")
+                
+                if len(equity_parts) > 1:
+                    equity_summary = chr(10).join(equity_parts)
+                    context_used.append("social_equity")
+        except Exception as e:
+            logger.warning(f"Social equity data unavailable: {e}")
+        
+        # --- Bureaucratic Friction aggregates ---
+        try:
+            from app.api.research import (
+                calculate_time_to_triage, count_reassignments,
+                is_off_hours_submission, calculate_escalation_occurred
+            )
+            from sqlalchemy.orm import selectinload
+            
+            # Load audit logs for a sample of requests
+            sample_ids = [r.id for r in all_requests[:100]]
+            if sample_ids:
+                from app.models import RequestAuditLog
+                audit_result = await db.execute(
+                    select(RequestAuditLog).where(
+                        RequestAuditLog.service_request_id.in_(sample_ids)
+                    )
+                )
+                audit_logs_all = audit_result.scalars().all()
+                
+                # Group by request ID
+                audit_by_request = {}
+                for log in audit_logs_all:
+                    audit_by_request.setdefault(log.service_request_id, []).append(log)
+                
+                triage_times = []
+                reassignment_counts = []
+                off_hours_count = 0
+                escalation_count = 0
+                sample_count = min(len(all_requests), 100)
+                
+                for r in all_requests[:100]:
+                    req_audits = audit_by_request.get(r.id, [])
+                    
+                    tt = calculate_time_to_triage(r.requested_datetime, req_audits)
+                    if tt is not None:
+                        triage_times.append(tt)
+                    
+                    rc = count_reassignments(req_audits)
+                    reassignment_counts.append(rc)
+                    
+                    if is_off_hours_submission(r.requested_datetime):
+                        off_hours_count += 1
+                    
+                    if calculate_escalation_occurred(req_audits):
+                        escalation_count += 1
+                
+                avg_triage = sum(triage_times) / len(triage_times) if triage_times else None
+                avg_reassign = sum(reassignment_counts) / len(reassignment_counts) if reassignment_counts else 0
+                
+                friction_parts = [f"Bureaucratic Friction Metrics (sampled {sample_count} requests):"]
+                if avg_triage is not None:
+                    friction_parts.append(f"- Average time-to-triage: {avg_triage:.1f} hours")
+                friction_parts.append(f"- Average reassignment count: {avg_reassign:.1f}")
+                friction_parts.append(f"- Off-hours submissions: {off_hours_count}/{sample_count} ({off_hours_count/sample_count*100:.0f}%)")
+                friction_parts.append(f"- Escalated requests: {escalation_count}/{sample_count} ({escalation_count/sample_count*100:.0f}%)")
+                
+                friction_summary = chr(10).join(friction_parts)
+                context_used.append("bureaucratic_friction")
+        except Exception as e:
+            logger.warning(f"Bureaucratic friction data unavailable: {e}")
+    
+    except Exception as e:
+        logger.warning(f"Research field aggregates unavailable: {e}")
+    
+    # ========== 10. Request Details — Sanitized List ==========
     request_details = []
     for r in all_requests[:100]:  # Cap at 100 most recent
         detail = {
@@ -2722,12 +2885,14 @@ async def analytics_chat(
         request_details.append(detail)
     
     # ========== Build the System Prompt ==========
-    system_prompt = f"""You are an expert municipal analytics advisor for {township_name}. You have deep access to the community's 311 service request system and all associated data. Answer questions with specific numbers, actionable insights, and data-driven recommendations. Format responses with markdown for readability. Be concise but thorough.
+    system_prompt = f"""You are an expert municipal analytics advisor for {township_name}. You have deep access to the community's 311 service request system INCLUDING advanced research-grade data: social equity metrics, resident sentiment analysis, bureaucratic friction indicators, and infrastructure categorization.
+
+Your role is to provide **specific, data-driven insights** with exact numbers. You are speaking to municipal staff who need actionable intelligence.
 
 ## CURRENT SYSTEM DATA
 
 ### Overview
-- Total requests (all time): {total}
+- **Total requests (all time): {total}**
 - Open: {open_count} | In Progress: {in_progress_count} | Closed: {closed_count}
 - Resolution rate: {(closed_count / total * 100) if total else 0:.1f}%
 - Average resolution time: {avg_resolution:.1f} hours
@@ -2765,6 +2930,18 @@ Current Workload:
 - Flagged requests: {len(flagged_requests)}
 {chr(10).join(f'- FLAGGED [{r["id"]}] at {r["address"]}: {r["reason"]}' for r in flagged_requests[:10]) if flagged_requests else ''}
 
+### Infrastructure Categories
+{infra_summary if infra_summary else 'No infrastructure category data available'}
+
+### Social Equity Metrics
+{equity_summary if equity_summary else 'Social equity data not available (Census API may be unavailable)'}
+
+### Resident Sentiment & Trust
+{sentiment_summary if sentiment_summary else 'Sentiment data not available'}
+
+### Government Responsiveness (Bureaucratic Friction)
+{friction_summary if friction_summary else 'Friction metrics not available'}
+
 ### Environmental Context
 {weather_summary if weather_summary else 'Weather data not available'}
 Season: {'Winter' if now.month in [12,1,2] else 'Spring' if now.month in [3,4,5] else 'Summer' if now.month in [6,7,8] else 'Fall'}
@@ -2772,13 +2949,24 @@ Season: {'Winter' if now.month in [12,1,2] else 'Spring' if now.month in [3,4,5]
 ### Recent Request Details (sanitized, no personal info)
 {json.dumps(request_details[:50], indent=None, default=str)}
 
+## RESPONSE FORMAT RULES
+- Use **##** section headers to organize responses into clear sections
+- Use bullet points for lists of 3+ items
+- **Bold** all key numbers, percentages, and metric values
+- Use tables (| col | col |) when comparing departments, categories, or time periods
+- Keep paragraphs short: 2-3 sentences maximum
+- End substantive responses with a "## Key Takeaway" section (1-2 sentences)
+- When recommending actions, use numbered lists for priority order
+
 ## IMPORTANT RULES
 - NEVER share or reference resident names, emails, or phone numbers
-- Always cite specific data points from the above context
+- Always cite specific data points — never say "some" or "several" when you have exact numbers
 - If asked about something not in the data, say so clearly
+- When discussing equity metrics, explain what the numbers mean in plain language (e.g., "An SVI of 0.7 means this area is in the top 30% most vulnerable nationally")
 - Provide actionable recommendations when relevant
-- Use markdown formatting (headers, bullet points, bold) for readability
+- Cross-reference data across categories when it adds insight (e.g., connect sentiment to response time, or equity to priority patterns)
 """
+
 
     # ========== Build Conversation & Call Vertex AI ==========
     try:
