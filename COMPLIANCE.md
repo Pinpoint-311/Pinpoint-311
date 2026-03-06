@@ -27,8 +27,8 @@ The Pinpoint 311 platform is designed for on-premises deployment within municipa
 | **Admin** | System-wide control: users, departments, branding, API keys |
 
 ### Open311 Compliance
-- **GeoReport v2**: Standard-compliant API for interoperability
-- **Service Discovery**: XML/JSON endpoint at `/api/services/`
+- **GeoReport v2**: Standard-compliant JSON API for interoperability
+- **Service Discovery**: JSON endpoint at `/api/open311/v2/services.json`
 - **Third-Party Integration**: Compatible with Open311 reporter apps
 
 ---
@@ -239,8 +239,10 @@ AI priority suggestions follow a **strict human accountability model**:
 |----------|------|---------|---------|
 | **Build & Publish** | `build-publish.yml` | Push to main | Multi-arch Docker builds + Trivy scan |
 | **CodeQL** | `codeql.yml` | Push/PR + weekly | Static security analysis (SAST) |
-| **Security Scan** | `security-scan.yml` | Push + weekly | OWASP ZAP (DAST) + Trivy repo scan |
+| **Security Scan** | `security-scan.yml` | Push to main + weekly (Sundays) | OWASP ZAP (DAST) + Trivy repo scan |
+| **Accessibility** | `accessibility.yml` | Push to main | Pa11y accessibility audits |
 | **Uptime Monitor** | `uptime-monitor.yml` | Every 15 min | Health checks + auto-issue on failure |
+| **Load Test** | `load-test.yml` | Manual dispatch | K6 performance benchmarking |
 
 ### Dependency Management (Dependabot)
 
@@ -290,7 +292,6 @@ SENTRY_DSN=https://xxx@xxx.ingest.sentry.io/xxx
 
 | Priority | Item | Effort |
 |----------|------|--------|
-| Low | Audit Retention Policy | Add configurable archival |
 | Medium | PII Scanning in Comments | Regex + optional Vertex AI detection |
 
 ---
@@ -314,7 +315,7 @@ SENTRY_DSN=https://xxx@xxx.ingest.sentry.io/xxx
 
 ---
 
-## 6. Accessibility (WCAG 2.2 AA)
+## 6. Accessibility (WCAG 2.1 AA)
 
 | Standard | Status |
 |----------|--------|
@@ -340,7 +341,7 @@ Pinpoint 311 includes one-command setup scripts to minimize deployment friction:
 | Service | Purpose |
 |---------|---------|
 | Cloud KMS | PII encryption keys |
-| Cloud Translation API | 130+ language support |
+| Cloud Translation API | 100+ language support |
 | Vertex AI | AI analysis (Gemini Flash) |
 | Secret Manager | Credential storage |
 
@@ -369,5 +370,5 @@ Pinpoint 311 includes one-command setup scripts to minimize deployment friction:
 
 ---
 
-*Document Version: 1.2 | Last Updated: February 2026*
+*Document Version: 1.3 | Last Updated: March 2026*
 

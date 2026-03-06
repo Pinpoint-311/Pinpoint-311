@@ -50,7 +50,7 @@ Beyond the UI, it features a sophisticated **AI & Geospatial Engine** that autom
 | **Pricing** | Free (DIY) | $5-20K/year | **Free & Open Source** |
 | **Data Ownership** | ✅ You own | ❌ Vendor-hosted | **✅ Self-hosted** |
 | **Source Code** | N/A | ❌ Proprietary | **✅ MIT License** |
-| **Mobile Experience** | Non-responsive | Native apps | **PWA (No App Store)** |
+| **Mobile Experience** | Non-responsive | Native apps | **Responsive Web App** |
 | **AI Triage** | ❌ Manual | ❌ Basic rules | **✅ Gemini 3.0 Flash** |
 | **Photo Analysis** | ❌ None | ❌ None | **✅ Vision AI** |
 | **Multilingual** | ❌ English | ~10 languages | **✅ 109 languages** |
@@ -240,7 +240,7 @@ graph LR
 
 ### 🎨 User Experience First
 - **Premium Glassmorphism Design**: A modern, translucent UI that builds trust and engagement.
-- **Mobile-First Architecture**: Fully responsive web app that behaves natively on iOS/Android.
+- **Mobile-First Architecture**: Fully responsive web app optimized for iOS and Android browsers.
 - **109 Language Support**: Powered by Google Translate API with intelligent caching. **Complete translation coverage**: UI strings, service categories, status labels, filter buttons, priority levels, search placeholders, and user-submitted content are automatically translated. **Automatic notification translation**: All confirmation emails and SMS messages are sent in the resident's selected language—no additional configuration needed.
 - **No-Login Submission**: Removes friction for residents while maintaining security via email magic links.
 
@@ -552,9 +552,10 @@ All research fields are computed on-the-fly using real APIs:
 - **Completion Proof**: "Review & Close" workflow attaches the final resolution photo to the closing email sent to the resident.
 
 ### Standards Compliance
-- **Open311 v2**: Fully compliant with the Open311 GeoReport v2 standard (JSON).
-    - `GET /requests.json`: Public feed (cached via Redis).
-    - `POST /requests.json`: Standard submission endpoint.
+- **Open311 v2**: Compatible with the Open311 GeoReport v2 standard (JSON).
+    - `GET /api/open311/v2/requests.json`: Public feed (cached via Redis).
+    - `POST /api/open311/v2/requests.json`: Standard submission endpoint.
+    - `GET /api/open311/v2/services.json`: Service discovery endpoint.
 - **Audit Trails**: Every action (submission, comment, status change) is logged for accountability.
 
 ### Tech Stack
@@ -586,7 +587,7 @@ The entire Pinpoint 311 stack uses **less memory than a single Chrome tab**:
 
 > **For comparison**: A single Gmail tab uses 200-400 MB. The entire production 311 system with AI, maps, authentication, and real-time monitoring uses less than half of that.
 
-**Deployment costs:** Runs on a free-tier cloud VM (1 vCPU, 1GB RAM) or ~$5-10/month on any cloud provider. Can handle 1,000+ concurrent users before scaling is needed.
+**Deployment costs:** Runs on a free-tier cloud VM (1 vCPU, 1GB RAM) or ~$5-10/month on any cloud provider. Suitable for typical municipal workloads without additional scaling.
 
 ### 🗄️ Database Migrations (Alembic)
 
@@ -704,9 +705,9 @@ Records can be placed on **legal hold** via the `flagged` field to prevent autom
 | **Records Officer** | Designated admin role for retention policy management |
 
 
-### ♿ Accessibility (WCAG 2.2 AA)
+### ♿ Accessibility (WCAG 2.1 AA)
 
-Full keyboard navigation, 4.5:1 contrast ratio, proper aria-labels on all interactive elements. See [COMPLIANCE.md](./COMPLIANCE.md) for details.
+Keyboard navigation, 4.5:1 contrast ratio, and aria-labels on interactive elements. See [COMPLIANCE.md](./COMPLIANCE.md) for details.
 
 ---
 
