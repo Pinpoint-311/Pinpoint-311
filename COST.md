@@ -43,19 +43,21 @@ All variable costs are based on actual usage. Here's what a typical municipality
 
 ### Google Maps Platform
 
-| API | Free Tier | Cost After Free | Typical Monthly Usage |
-|-----|-----------|-----------------|----------------------|
-| **Maps JavaScript** | $200/mo credit | $7/1K loads | 500 loads = **$0** |
-| **Geocoding** | $200/mo credit | $5/1K requests | 200 = **$0** |
-| **Places Autocomplete** | $200/mo credit | $2.83/1K | 300 = **$0** |
+> ⚠️ **As of March 2025**, Google replaced the old $200/month credit with **per-API free event quotas**.
 
-> 📍 **Most municipalities stay within the $200/month free credit.**
+| API | Tier | Free Monthly Events | Cost After Free |
+|-----|------|---------------------|------------------|
+| **Maps JavaScript** | Essentials | 10,000 loads | $7/1K loads |
+| **Geocoding** | Essentials | 10,000 requests | $5/1K requests |
+| **Places Autocomplete** | Pro | 5,000 sessions | $2.83/1K sessions |
+
+> 📍 **Most municipalities stay well within the free quotas.** A town with 500 requests/month typically uses ~500-1,000 map loads and ~500 geocoding calls — **$0/month**.
 
 ### Vertex AI (Gemini 3.0 Flash)
 
 | Model | Input | Output | Typical Monthly |
 |-------|-------|--------|-----------------|
-| **Gemini 3.0 Flash** | $0.00001/1K chars | $0.00004/1K chars | ~$2-5 |
+| **Gemini 3.0 Flash** | $0.50/1M tokens | $3.00/1M tokens | ~$2-5 |
 
 > 🤖 AI analysis of 500 requests/month costs approximately **$2-5**.
 

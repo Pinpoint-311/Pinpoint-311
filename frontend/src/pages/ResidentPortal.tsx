@@ -471,7 +471,7 @@ export default function ResidentPortal() {
             {/* Header Container - Reorders on mobile (banner first, then nav) */}
             <div className="flex flex-col-reverse md:flex-col sticky top-0 z-40">
                 {/* Navigation - Clean Mobile Header */}
-                <nav className="glass-sidebar py-3 md:py-4 px-4 md:px-6 flex items-center justify-between" aria-label="Main navigation">
+                <nav className="glass-sidebar py-3 md:py-4 px-4 md:px-6 flex items-center justify-between relative z-10" aria-label="Main navigation">
                     <button
                         onClick={() => {
                             setShowTrackingView(false);
