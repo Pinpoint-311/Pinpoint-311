@@ -43,7 +43,7 @@ All variable costs are based on actual usage. Here's what a typical municipality
 
 ### Google Maps Platform
 
-> ⚠️ **As of March 2025**, Google replaced the old $200/month credit with **per-API free event quotas**.
+> ⚠️ Google replaced the old $200/month credit with **per-API free event quotas** in 2025.
 
 | API | Tier | Free Monthly Events | Cost After Free |
 |-----|------|---------------------|------------------|
