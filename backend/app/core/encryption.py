@@ -216,7 +216,7 @@ def _get_kms_key_name() -> Optional[str]:
     if not project:
         return None
     
-    # Key location and ring from env or database (Setup Wizard stores these)
+    # Key location and ring from env or database (Admin Console stores these)
     location = _get_config_sync("KMS_LOCATION") or "us-central1"
     key_ring = _get_config_sync("KMS_KEY_RING") or "pinpoint311-keyring"
     key_id = _get_config_sync("KMS_KEY_ID") or "pii-encryption-key"
@@ -229,7 +229,7 @@ def _get_kms_client():
     """Get a cached KMS client.
     
     Loads credentials from:
-    1. Database (GCP_SERVICE_ACCOUNT_JSON stored by Setup Wizard)
+    1. Database (GCP_SERVICE_ACCOUNT_JSON stored by Admin Console)
     2. Falls back to default application credentials
     """
     global _kms_client
@@ -242,7 +242,7 @@ def _get_kms_client():
         from google.oauth2 import service_account
         import json
         
-        # First try to load from database (Setup Wizard storage)
+        # First try to load from database (Admin Console storage)
         try:
             from app.db.session import sync_engine
             from sqlalchemy import text

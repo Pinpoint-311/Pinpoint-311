@@ -9,7 +9,7 @@ import ResidentPortal from './pages/ResidentPortal';
 import StaffDashboard from './pages/StaffDashboard';
 import AdminConsole from './pages/AdminConsole';
 import { ResearchLab } from './pages/ResearchLab';
-import { SetupWizard } from './pages/SetupWizard';
+
 import Login from './pages/Login';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
@@ -70,14 +70,7 @@ function AppRoutes() {
                     </ProtectedRoute>
                 }
             />
-            <Route
-                path="/setup"
-                element={
-                    <ProtectedRoute requiredRole="admin">
-                        <SetupWizard />
-                    </ProtectedRoute>
-                }
-            />
+            <Route path="/setup" element={<Navigate to="/admin#integration" replace />} />
             <Route
                 path="/staff/request/:requestId"
                 element={

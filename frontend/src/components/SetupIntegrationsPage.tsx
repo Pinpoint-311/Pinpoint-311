@@ -2,9 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    Key, Shield, Cloud, MessageSquare, Mail, Sparkles, CheckCircle,
+    Key, Shield, Cloud, MessageSquare, Mail, CheckCircle,
     AlertCircle, ChevronDown, ChevronUp, Copy, Check, Terminal,
-    ExternalLink, AlertTriangle, Database
+    ExternalLink, AlertTriangle, Database, BookOpen,
+    ListChecks
 } from 'lucide-react';
 
 import { Card, Button, Input, Select, Badge } from './ui';
@@ -34,7 +35,8 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
     const [localSmsProvider, setLocalSmsProvider] = useState<string>('none');
     const [savingSmsProvider, setSavingSmsProvider] = useState(false);
-    const userModifiedSms = useRef(false); // Flag to prevent useEffect from overwriting user changes
+    const userModifiedSms = useRef(false);
+    const [expandedGuide, setExpandedGuide] = useState<string | null>(null);
 
 
 
@@ -79,7 +81,28 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         }
     }, [smsProviderFromSecrets]);
     const sentryConfigured = isConfigured('SENTRY_DSN');
+    const gcpConfigured = isConfigured('GOOGLE_CLOUD_PROJECT');
+    const smsConfigured = !!(localSmsProvider && localSmsProvider !== 'none');
 
+    // Setup progress calculation
+    const setupSteps = [
+        { label: 'Auth0 SSO', done: !!auth0Configured, required: true },
+        { label: 'Email (SMTP)', done: !!smtpConfigured, required: false },
+        { label: 'Google Cloud', done: !!gcpConfigured, required: false },
+        { label: 'SMS Alerts', done: smsConfigured, required: false },
+    ];
+    const completedCount = setupSteps.filter(s => s.done).length;
+
+    // Toggle helper for collapsible instruction panels
+    const toggleGuide = (id: string) => setExpandedGuide(prev => prev === id ? null : id);
+
+    // Reusable instruction step renderer
+    const InstructionStep = ({ num, children }: { num: number; children: React.ReactNode }) => (
+        <div className="flex gap-3 items-start">
+            <span className="flex-shrink-0 w-6 h-6 rounded-full bg-white/10 text-white/70 text-xs font-bold flex items-center justify-center mt-0.5">{num}</span>
+            <div className="text-sm text-white/70 leading-relaxed">{children}</div>
+        </div>
+    );
 
     return (
         <div className="space-y-6">
@@ -89,26 +112,161 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 <p className="text-gray-300 mt-1">Configure authentication, notifications, and cloud services</p>
             </div>
 
-            {/* Setup Wizard CTA */}
-            <Card className="bg-gradient-to-r from-indigo-600/20 to-purple-600/20 border-indigo-500/30">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-xl bg-indigo-500/30 flex items-center justify-center">
-                            <Sparkles className="w-6 h-6 text-indigo-400" />
-                        </div>
-                        <div>
-                            <h3 className="text-lg font-bold text-white">Automated Setup Wizard</h3>
-                            <p className="text-white/70 text-sm">Configure Auth0 and Google Cloud in minutes — no SSH required!</p>
+            {/* ── Setup Progress Tracker ── */}
+            <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-slate-800/80 via-slate-900/90 to-slate-800/80 backdrop-blur-xl p-5"
+            >
+                <div className="flex items-center gap-3 mb-4">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                        <ListChecks className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                        <h2 className="font-semibold text-white">Setup Progress</h2>
+                        <p className="text-white/50 text-xs">{completedCount} of {setupSteps.length} integrations configured</p>
+                    </div>
+                </div>
+
+                {/* Progress bar */}
+                <div className="h-2 rounded-full bg-white/10 mb-4 overflow-hidden">
+                    <motion.div
+                        className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-cyan-400"
+                        initial={{ width: 0 }}
+                        animate={{ width: `${(completedCount / setupSteps.length) * 100}%` }}
+                        transition={{ duration: 0.8, ease: 'easeOut' }}
+                    />
+                </div>
+
+                {/* Step chips */}
+                <div className="flex flex-wrap gap-2">
+                    {setupSteps.map(step => (
+                        <span
+                            key={step.label}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${step.done
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                : step.required
+                                    ? 'bg-amber-500/15 text-amber-300 border border-amber-500/25'
+                                    : 'bg-white/5 text-white/40 border border-white/10'
+                                }`}
+                        >
+                            {step.done ? <CheckCircle className="w-3.5 h-3.5" /> : step.required ? <AlertCircle className="w-3.5 h-3.5" /> : <div className="w-3.5 h-3.5 rounded-full border border-current" />}
+                            {step.label}
+                            {step.required && !step.done && <span className="text-[10px] opacity-70">required</span>}
+                        </span>
+                    ))}
+                </div>
+            </motion.div>
+
+            {/* ── Setup Instructions (collapsible) ── */}
+            <Card className="border-indigo-500/20 bg-indigo-500/5">
+                <button
+                    onClick={() => toggleGuide('master')}
+                    className="w-full flex items-center justify-between"
+                >
+                    <div className="flex items-center gap-3">
+                        <BookOpen className="w-5 h-5 text-indigo-400" />
+                        <div className="text-left">
+                            <h3 className="font-semibold text-white">Setup Instructions</h3>
+                            <p className="text-white/50 text-xs">Step-by-step guides for each integration</p>
                         </div>
                     </div>
-                    <Button
-                        onClick={() => window.location.href = '/setup'}
-                        className="bg-indigo-600 hover:bg-indigo-700"
-                    >
-                        <Sparkles className="w-4 h-4 mr-2" />
-                        Launch Wizard
-                    </Button>
-                </div>
+                    {expandedGuide === 'master' ? <ChevronUp className="w-5 h-5 text-white/50" /> : <ChevronDown className="w-5 h-5 text-white/50" />}
+                </button>
+
+                <AnimatePresence>
+                    {expandedGuide === 'master' && (
+                        <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="overflow-hidden"
+                        >
+                            <div className="mt-4 space-y-4">
+                                {/* Auth0 Instructions */}
+                                <div className="rounded-xl border border-orange-500/20 bg-orange-500/5 p-4">
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <Key className="w-4 h-4 text-orange-400" />
+                                        <h4 className="font-semibold text-white text-sm">Auth0 SSO Setup</h4>
+                                        {auth0Configured && <Badge variant="success">Done</Badge>}
+                                    </div>
+                                    <div className="space-y-2.5">
+                                        <InstructionStep num={1}>Go to <a href="https://auth0.com" target="_blank" rel="noopener noreferrer" className="text-orange-300 underline underline-offset-2">auth0.com</a> and create a free account (or use your organization's existing tenant).</InstructionStep>
+                                        <InstructionStep num={2}>In the Auth0 Dashboard, go to <strong className="text-white/90">Applications → Create Application</strong>. Choose <strong className="text-white/90">Regular Web Application</strong>.</InstructionStep>
+                                        <InstructionStep num={3}>In the app's <strong className="text-white/90">Settings</strong> tab, copy the <strong className="text-white/90">Domain</strong>, <strong className="text-white/90">Client ID</strong>, and <strong className="text-white/90">Client Secret</strong> into the fields below.</InstructionStep>
+                                        <InstructionStep num={4}>
+                                            Set the <strong className="text-white/90">Allowed Callback URL</strong> to: <code className="bg-black/30 px-1.5 py-0.5 rounded text-orange-300 text-xs break-all">{window.location.origin}/api/auth/callback</code>
+                                            <button onClick={() => copyToClipboard(`${window.location.origin}/api/auth/callback`, 'callback')} className="ml-1 inline-flex text-white/40 hover:text-white/70 transition-colors">
+                                                {copyFeedback === 'callback' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                                            </button>
+                                        </InstructionStep>
+                                        <InstructionStep num={5}>Under <strong className="text-white/90">Security → Multi-factor Auth</strong>, enable MFA for staff login protection.</InstructionStep>
+                                        <InstructionStep num={6}><em className="text-white/50">Optional:</em> Under <strong className="text-white/90">Authentication → Social</strong>, add Google and Microsoft connections for social login.</InstructionStep>
+                                    </div>
+                                </div>
+
+                                {/* SMTP Instructions */}
+                                <div className="rounded-xl border border-violet-500/20 bg-violet-500/5 p-4">
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <Mail className="w-4 h-4 text-violet-400" />
+                                        <h4 className="font-semibold text-white text-sm">Email (SMTP) Setup</h4>
+                                        {smtpConfigured && <Badge variant="success">Done</Badge>}
+                                    </div>
+                                    <div className="space-y-2.5">
+                                        <InstructionStep num={1}>Choose an SMTP provider. Common options for government: <strong className="text-white/90">SendGrid</strong>, <strong className="text-white/90">Gmail</strong> (via App Passwords), or your organization's <strong className="text-white/90">existing SMTP relay</strong>.</InstructionStep>
+                                        <InstructionStep num={2}>
+                                            <strong className="text-white/90">Gmail:</strong> Enable 2FA on your Google Account, then go to <em>Security → App Passwords</em> and generate one. Use <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">smtp.gmail.com</code> port <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">587</code>.
+                                        </InstructionStep>
+                                        <InstructionStep num={3}>
+                                            <strong className="text-white/90">SendGrid:</strong> Create a free account at <a href="https://sendgrid.com" target="_blank" rel="noopener noreferrer" className="text-violet-300 underline underline-offset-2">sendgrid.com</a>. Generate an API key under <em>Settings → API Keys</em>. Use <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">smtp.sendgrid.net</code> port <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">587</code>, username <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">apikey</code>, password = your API key.
+                                        </InstructionStep>
+                                        <InstructionStep num={4}>Enter the host, port, from address, username, and password in the Email (SMTP) card below and click <strong className="text-white/90">Save SMTP Settings</strong>.</InstructionStep>
+                                    </div>
+                                </div>
+
+                                {/* GCP Instructions */}
+                                <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <Cloud className="w-4 h-4 text-blue-400" />
+                                        <h4 className="font-semibold text-white text-sm">Google Cloud Setup</h4>
+                                        {gcpConfigured && <Badge variant="success">Done</Badge>}
+                                    </div>
+                                    <div className="space-y-2.5">
+                                        <InstructionStep num={1}>Create a GCP project at <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">console.cloud.google.com</a>.</InstructionStep>
+                                        <InstructionStep num={2}>Enable the following APIs: <strong className="text-white/90">Cloud KMS</strong>, <strong className="text-white/90">Cloud Translation</strong>, <strong className="text-white/90">Vertex AI</strong>, and <strong className="text-white/90">Secret Manager</strong>.</InstructionStep>
+                                        <InstructionStep num={3}>Create a Service Account with the roles: <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud KMS Admin</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud Translation API User</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Vertex AI User</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Secret Manager Admin</code>.</InstructionStep>
+                                        <InstructionStep num={4}>Download the Service Account JSON key file.</InstructionStep>
+                                        <InstructionStep num={5}>
+                                            Run the setup script on your server:
+                                            <div className="mt-1.5 flex items-center gap-2">
+                                                <code className="bg-black/30 px-2 py-1 rounded text-green-400 text-xs font-mono">./scripts/setup_gcp.sh YOUR_PROJECT_ID</code>
+                                                <button onClick={() => copyToClipboard('./scripts/setup_gcp.sh YOUR_PROJECT_ID', 'gcp-cmd')} className="text-white/40 hover:text-white/70 transition-colors">
+                                                    {copyFeedback === 'gcp-cmd' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                                                </button>
+                                            </div>
+                                        </InstructionStep>
+                                        <InstructionStep num={6}>The script will configure KMS, Translation, Vertex AI, and Secret Manager automatically. Review the output for any errors.</InstructionStep>
+                                    </div>
+                                </div>
+
+                                {/* SMS Instructions */}
+                                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <MessageSquare className="w-4 h-4 text-emerald-400" />
+                                        <h4 className="font-semibold text-white text-sm">SMS Notifications Setup</h4>
+                                        {smsConfigured && <Badge variant="success">Done</Badge>}
+                                    </div>
+                                    <div className="space-y-2.5">
+                                        <InstructionStep num={1}><strong className="text-white/90">Twilio (recommended):</strong> Create an account at <a href="https://www.twilio.com" target="_blank" rel="noopener noreferrer" className="text-emerald-300 underline underline-offset-2">twilio.com</a>. Note your <strong className="text-white/90">Account SID</strong> and <strong className="text-white/90">Auth Token</strong> from the Console Dashboard.</InstructionStep>
+                                        <InstructionStep num={2}>Purchase a phone number under <strong className="text-white/90">Phone Numbers → Manage → Buy a number</strong>.</InstructionStep>
+                                        <InstructionStep num={3}>Select "Twilio" in the SMS Notifications card below, enter your credentials, and save.</InstructionStep>
+                                        <InstructionStep num={4}><strong className="text-white/90">Custom HTTP API:</strong> Alternatively, select "Custom HTTP API" and provide your endpoint URL. The platform sends a POST with <code className="bg-black/30 px-1 rounded text-emerald-300 text-xs">{`{ "to": "+1...", "message": "..." }`}</code>.</InstructionStep>
+                                    </div>
+                                </div>
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
             </Card>
 
 
@@ -577,17 +735,14 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     </div>
                                 </div>
                             </div>
-                            <p className="text-white/60 text-sm mb-4">
-                                Set up via environment variables or use the guided Setup Wizard.
+                            <p className="text-white/60 text-sm mb-3">
+                                Configure Google Cloud for AI analysis, encryption, and translation.
+                                See the <strong className="text-blue-300">Deployment Guide</strong> above for step-by-step instructions.
                             </p>
-                            <Button
-                                size="sm"
-                                className="w-full bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700"
-                                onClick={() => window.location.href = '/setup'}
-                            >
-                                <Sparkles className="w-4 h-4 mr-2" />
-                                Configure with Wizard
-                            </Button>
+                            <div className="bg-black/30 rounded-lg p-3 text-xs font-mono text-green-400">
+                                <span className="text-white/40"># Run on your server:</span><br />
+                                ./scripts/setup_gcp.sh YOUR_PROJECT_ID
+                            </div>
                         </div>
                     </motion.div>
 

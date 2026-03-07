@@ -92,7 +92,7 @@ async def check_google_kms(db: AsyncSession) -> Dict[str, Any]:
         if not project:
             return {
                 "status": "not_configured",
-                "message": "GCP project not configured (run Setup Wizard)",
+                "message": "GCP project not configured (see Admin Console → Setup & Integration)",
                 "project": None
             }
         
@@ -155,7 +155,7 @@ async def check_google_kms(db: AsyncSession) -> Dict[str, Any]:
 async def check_secret_manager(db: AsyncSession) -> Dict[str, Any]:
     """Test Google Secret Manager"""
     try:
-        # Check for GCP project (from env OR database via Setup Wizard)
+        # Check for GCP project (from env OR database via Admin Console)
         project = await get_config_value(db, "GOOGLE_CLOUD_PROJECT")
         use_sm = os.getenv("USE_SECRET_MANAGER", "").lower() == "true"
         
@@ -165,7 +165,7 @@ async def check_secret_manager(db: AsyncSession) -> Dict[str, Any]:
         if not project:
             return {
                 "status": "not_configured",
-                "message": "GCP project not configured (run Setup Wizard)",
+                "message": "GCP project not configured (see Admin Console → Setup & Integration)",
                 "project": None
             }
         
@@ -208,7 +208,7 @@ async def check_vertex_ai(db: AsyncSession) -> Dict[str, Any]:
         if not project:
             return {
                 "status": "not_configured",
-                "message": "GCP project not configured (run Setup Wizard)",
+                "message": "GCP project not configured (see Admin Console → Setup & Integration)",
                 "project": None,
                 "location": location
             }

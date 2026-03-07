@@ -707,7 +707,7 @@ class ApiClient {
         return this.request('/system/backups/cleanup', { method: 'POST' });
     }
 
-    // ========== Setup Wizard ==========
+    // ========== Setup ==========
 
     async getSetupStatus(): Promise<{
         auth0_configured: boolean;

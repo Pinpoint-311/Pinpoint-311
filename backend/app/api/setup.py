@@ -1,5 +1,5 @@
 """
-Setup wizard API endpoints for automated Auth0 and Google Cloud configuration.
+Setup API endpoints for Auth0 and Google Cloud configuration.
 
 Security: All endpoints require admin authentication and log actions to audit trail.
 """
