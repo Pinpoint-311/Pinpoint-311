@@ -71,6 +71,7 @@ export default function VersionSwitcher() {
     const [isLoading, setIsLoading] = useState(false);
     const [isLoadingSecurity, setIsLoadingSecurity] = useState(false);
     const [isSwitching, setIsSwitching] = useState(false);
+    const [deployProgress, setDeployProgress] = useState(0);
     const [error, setError] = useState<string | null>(null);
     const [message, setMessage] = useState<string | null>(null);
     const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -149,10 +150,12 @@ export default function VersionSwitcher() {
         if (!confirmed) return;
 
         setIsSwitching(true);
+        setDeployProgress(10);
         setMessage('Starting deployment...');
         setError(null);
 
         try {
+            setDeployProgress(25);
             const token = localStorage.getItem('token');
             const response = await fetch(`/api/system/switch-version?ref=${encodeURIComponent(selectedRef)}`, {
                 method: 'POST',
@@ -163,7 +166,8 @@ export default function VersionSwitcher() {
             const contentType = response.headers.get('content-type') || '';
             if (!contentType.includes('application/json')) {
                 // Server is likely restarting — wait and poll for health
-                setMessage('⏳ Server is restarting after deployment... checking status');
+                setDeployProgress(40);
+                setMessage('Server is restarting after deployment...');
                 let healthy = false;
                 for (let attempt = 0; attempt < 8; attempt++) {
                     await new Promise(resolve => setTimeout(resolve, 5000));
@@ -179,11 +183,14 @@ export default function VersionSwitcher() {
                     } catch {
                         // Server still down, keep waiting
                     }
-                    setMessage(`⏳ Server restarting... attempt ${attempt + 2}/8`);
+                    const pct = 40 + Math.round(((attempt + 1) / 8) * 50);
+                    setDeployProgress(pct);
+                    setMessage(`Server restarting... ${pct}%`);
                 }
 
                 if (healthy) {
-                    setMessage('✅ Deployment complete — server is back online');
+                    setDeployProgress(100);
+                    setMessage('Deployment complete — server is back online');
                     setSelectedRef(null);
                     setSelectedRelease(null);
                     setSelectedCommit(null);
@@ -199,7 +206,8 @@ export default function VersionSwitcher() {
             const data = await response.json();
 
             if (response.ok) {
-                setMessage(`✅ ${data.message}`);
+                setDeployProgress(100);
+                setMessage(data.message || 'Deployment complete');
                 setSelectedRef(null);
                 setSelectedRelease(null);
                 setSelectedCommit(null);
@@ -217,7 +225,8 @@ export default function VersionSwitcher() {
             }
         } catch (err: any) {
             // Network error likely means server restarted — poll for health
-            setMessage('⏳ Connection lost during deployment — server may be restarting...');
+            setDeployProgress(35);
+            setMessage('Connection lost — server may be restarting...');
             let healthy = false;
             for (let attempt = 0; attempt < 8; attempt++) {
                 await new Promise(resolve => setTimeout(resolve, 5000));
@@ -233,11 +242,14 @@ export default function VersionSwitcher() {
                 } catch {
                     // Still down
                 }
-                setMessage(`⏳ Waiting for server... attempt ${attempt + 2}/8`);
+                const pct = 40 + Math.round(((attempt + 1) / 8) * 50);
+                setDeployProgress(pct);
+                setMessage(`Waiting for server... ${pct}%`);
             }
 
             if (healthy) {
-                setMessage('✅ Deployment complete — server is back online');
+                setDeployProgress(100);
+                setMessage('Deployment complete — server is back online');
                 setSelectedRef(null);
                 setSelectedRelease(null);
                 setSelectedCommit(null);
@@ -249,6 +261,8 @@ export default function VersionSwitcher() {
             }
         } finally {
             setIsSwitching(false);
+            // Reset progress after a delay so the 100% state is visible
+            setTimeout(() => setDeployProgress(0), 3000);
         }
     };
 
@@ -500,27 +514,39 @@ export default function VersionSwitcher() {
                         ) : null}
                     </div>
 
-                    {/* Switch Button */}
-                    <button
-                        onClick={handleSwitchVersion}
-                        disabled={isSwitching || !selectedRef}
-                        className={`w-full flex items-center justify-center gap-1.5 py-2 rounded-lg font-medium transition-colors text-sm ${security?.summary.all_passed
-                            ? 'bg-indigo-600 hover:bg-indigo-500 text-white'
-                            : 'bg-amber-600/80 hover:bg-amber-600 text-white'
-                            }`}
-                    >
-                        {isSwitching ? (
-                            <>
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                Switching...
-                            </>
-                        ) : (
-                            <>
-                                <Package className="w-3.5 h-3.5" />
-                                Deploy this version
-                            </>
-                        )}
-                    </button>
+                    {/* Switch Button + Progress */}
+                    {isSwitching ? (
+                        <div className="space-y-1.5">
+                            <div className="flex items-center justify-between text-xs">
+                                <span className="text-white/70 flex items-center gap-1.5">
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                    {message || 'Deploying...'}
+                                </span>
+                                <span className="font-mono font-semibold text-white">{deployProgress}%</span>
+                            </div>
+                            <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+                                <div
+                                    className={`h-full rounded-full transition-all duration-700 ease-out ${deployProgress >= 100
+                                            ? 'bg-gradient-to-r from-emerald-400 to-cyan-400'
+                                            : 'bg-gradient-to-r from-indigo-400 to-purple-400'
+                                        }`}
+                                    style={{ width: `${deployProgress}%` }}
+                                />
+                            </div>
+                        </div>
+                    ) : (
+                        <button
+                            onClick={handleSwitchVersion}
+                            disabled={!selectedRef}
+                            className={`w-full flex items-center justify-center gap-1.5 py-2 rounded-lg font-medium transition-colors text-sm ${security?.summary.all_passed
+                                ? 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                                : 'bg-amber-600/80 hover:bg-amber-600 text-white'
+                                }`}
+                        >
+                            <Package className="w-3.5 h-3.5" />
+                            Deploy this version
+                        </button>
+                    )}
 
                     {security && !security.summary.all_passed && (
                         <p className="text-[10px] text-amber-400/80 flex items-start gap-1">
@@ -539,7 +565,7 @@ export default function VersionSwitcher() {
                 </div>
             )}
 
-            {message && (
+            {message && !isSwitching && (
                 <div className="p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400 text-xs flex items-center gap-1.5">
                     <Check className="w-3 h-3 flex-shrink-0" />
                     <span>{message}</span>
