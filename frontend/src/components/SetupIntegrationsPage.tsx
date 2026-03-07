@@ -10,7 +10,7 @@ import {
 
 import { Card, Button, Input, Select, Badge } from './ui';
 import { SystemSecret } from '../types';
-import SocialLoginConfig from './SocialLoginConfig';
+
 
 interface ModulesState {
     ai_analysis: boolean;
@@ -362,18 +362,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 </div>
             </div>
 
-            {/* Social Login Configuration */}
-            {auth0Configured && (
-                <div>
-                    <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                        <Key className="w-5 h-5 text-purple-400" />
-                        Social Login (Optional)
-                    </h2>
-                    <Card>
-                        <SocialLoginConfig />
-                    </Card>
-                </div>
-            )}
+
 
             {/* Optional Integrations - Premium Design */}
             <div>
@@ -719,14 +708,22 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.3 }}
-                        className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-blue-500/10 via-cyan-500/5 to-sky-500/10 border-blue-500/20 backdrop-blur-xl p-6 hover:border-blue-500/40 transition-all duration-300"
+                        className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${gcpConfigured
+                            ? 'bg-gradient-to-br from-blue-500/10 via-cyan-500/5 to-sky-500/10 border-blue-500/30 shadow-lg shadow-blue-500/10'
+                            : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'
+                            }`}
                     >
-                        <div className="absolute inset-0 bg-gradient-to-r from-blue-500/5 via-transparent to-cyan-500/5 pointer-events-none" />
+                        {gcpConfigured && (
+                            <div className="absolute inset-0 bg-gradient-to-r from-blue-500/5 via-transparent to-cyan-500/5 pointer-events-none" />
+                        )}
 
                         <div className="relative">
                             <div className="flex items-start justify-between mb-4">
                                 <div className="flex items-center gap-4">
-                                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-400 to-cyan-500 shadow-lg shadow-blue-500/30 flex items-center justify-center">
+                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${gcpConfigured
+                                        ? 'bg-gradient-to-br from-blue-400 to-cyan-500 shadow-lg shadow-blue-500/30'
+                                        : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'
+                                        }`}>
                                         <Cloud className="w-7 h-7 text-white" />
                                     </div>
                                     <div>
@@ -734,15 +731,133 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                         <p className="text-white/50 text-sm">AI, KMS, Secrets, Translation</p>
                                     </div>
                                 </div>
+                                {gcpConfigured ? (
+                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-blue-500/20 to-cyan-500/20 text-blue-300 border border-blue-500/30 shadow-lg shadow-blue-500/10">
+                                        <CheckCircle className="w-3.5 h-3.5" />
+                                        Configured
+                                    </span>
+                                ) : (
+                                    <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 text-white/50 border border-white/10">
+                                        Optional
+                                    </span>
+                                )}
                             </div>
-                            <p className="text-white/60 text-sm mb-3">
-                                Configure Google Cloud for AI analysis, encryption, and translation.
-                                See the <strong className="text-blue-300">Deployment Guide</strong> above for step-by-step instructions.
+
+                            <p className="text-white/60 text-sm mb-4">
+                                Enables AI analysis (Vertex AI), PII encryption (Cloud KMS), multi-language translation, and secure secrets storage.
+                                See the <strong className="text-blue-300">Setup Instructions</strong> above for a full walkthrough.
                             </p>
-                            <div className="bg-black/30 rounded-lg p-3 text-xs font-mono text-green-400">
-                                <span className="text-white/40"># Run on your server:</span><br />
-                                ./scripts/setup_gcp.sh YOUR_PROJECT_ID
-                            </div>
+
+                            {/* Manual configuration fields */}
+                            {!gcpConfigured || secretValues['GOOGLE_CLOUD_PROJECT'] !== undefined ? (
+                                <div className="space-y-3">
+                                    <div>
+                                        <label className="text-sm text-white/60 mb-1.5 block">GCP Project ID</label>
+                                        <div className="flex gap-2">
+                                            <Input
+                                                type="text"
+                                                placeholder="my-municipality-project"
+                                                value={secretValues['GOOGLE_CLOUD_PROJECT'] || ''}
+                                                onChange={(e) => setSecretValues(p => ({ ...p, 'GOOGLE_CLOUD_PROJECT': e.target.value }))}
+                                                className="flex-1 text-sm"
+                                            />
+                                            <Button
+                                                size="sm"
+                                                className="bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700"
+                                                onClick={() => handleSave('GOOGLE_CLOUD_PROJECT')}
+                                                disabled={!secretValues['GOOGLE_CLOUD_PROJECT'] || savingKey === 'GOOGLE_CLOUD_PROJECT'}
+                                            >
+                                                {savingKey === 'GOOGLE_CLOUD_PROJECT' ? '...' : 'Save'}
+                                            </Button>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-3 gap-2">
+                                        <div>
+                                            <label className="text-xs text-white/50 mb-1 block">KMS Location</label>
+                                            <Input
+                                                type="text"
+                                                placeholder="us-central1"
+                                                value={secretValues['KMS_LOCATION'] || ''}
+                                                onChange={(e) => setSecretValues(p => ({ ...p, 'KMS_LOCATION': e.target.value }))}
+                                                className="text-xs"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs text-white/50 mb-1 block">KMS Key Ring</label>
+                                            <Input
+                                                type="text"
+                                                placeholder="pinpoint311"
+                                                value={secretValues['KMS_KEY_RING'] || ''}
+                                                onChange={(e) => setSecretValues(p => ({ ...p, 'KMS_KEY_RING': e.target.value }))}
+                                                className="text-xs"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs text-white/50 mb-1 block">KMS Key ID</label>
+                                            <Input
+                                                type="text"
+                                                placeholder="pii-encryption"
+                                                value={secretValues['KMS_KEY_ID'] || ''}
+                                                onChange={(e) => setSecretValues(p => ({ ...p, 'KMS_KEY_ID': e.target.value }))}
+                                                className="text-xs"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <Button
+                                        size="sm"
+                                        className="w-full bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700"
+                                        onClick={async () => {
+                                            if (secretValues['GOOGLE_CLOUD_PROJECT']) await handleSave('GOOGLE_CLOUD_PROJECT');
+                                            if (secretValues['KMS_LOCATION']) await handleSave('KMS_LOCATION');
+                                            if (secretValues['KMS_KEY_RING']) await handleSave('KMS_KEY_RING');
+                                            if (secretValues['KMS_KEY_ID']) await handleSave('KMS_KEY_ID');
+
+                                            // Auto-enable AI module when GCP is configured
+                                            if (modules && onUpdateModules && secretValues['GOOGLE_CLOUD_PROJECT']) {
+                                                await onUpdateModules({ ...modules, ai_analysis: true });
+                                            }
+                                        }}
+                                        disabled={!secretValues['GOOGLE_CLOUD_PROJECT'] || savingKey !== null}
+                                    >
+                                        {savingKey ? 'Saving...' : 'Save GCP Settings'}
+                                    </Button>
+
+                                    <p className="text-white/40 text-xs">
+                                        KMS fields are optional — the platform defaults to <code className="bg-black/20 px-1 rounded">us-central1</code> / <code className="bg-black/20 px-1 rounded">pinpoint311</code> / <code className="bg-black/20 px-1 rounded">pii-encryption</code> if left blank.
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="space-y-3">
+                                    <div className="flex items-center gap-2">
+                                        <div className="flex-1 h-10 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center px-4">
+                                            <CheckCircle className="w-4 h-4 text-blue-400 mr-2" />
+                                            <span className="text-blue-200 text-sm">GCP configured and ready</span>
+                                        </div>
+                                        <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, 'GOOGLE_CLOUD_PROJECT': '' }))}>
+                                            Change
+                                        </Button>
+                                    </div>
+
+                                    {/* Module sync indicator */}
+                                    {modules && (
+                                        <div className={`flex items-center gap-2 text-xs ${modules.ai_analysis ? 'text-blue-400' : 'text-white/40'}`}>
+                                            {modules.ai_analysis ? (
+                                                <>
+                                                    <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+                                                    AI Analysis module enabled
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <div className="w-2 h-2 rounded-full bg-white/30" />
+                                                    AI Analysis module disabled
+                                                </>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     </motion.div>
 
