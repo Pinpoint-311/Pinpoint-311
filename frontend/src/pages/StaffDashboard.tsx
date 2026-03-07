@@ -157,6 +157,7 @@ export default function StaffDashboard() {
     const [filterService, setFilterService] = useState<string | null>(null);
     const [filterAssignment, setFilterAssignment] = useState<'all' | 'me' | 'department'>('all');
     const [showFilters, setShowFilters] = useState(false);
+    const [sortOrder, setSortOrder] = useState<'newest' | 'oldest' | 'priority_high' | 'priority_low' | 'alpha'>('newest');
 
     // Asset-related requests (for matched assets)
     type AssetRelatedRequest = { service_request_id: string; service_name: string; status: string; requested_datetime: string; address: string; description: string; };
@@ -259,44 +260,35 @@ export default function StaffDashboard() {
         if (filterAssignment === 'me' && user) {
             filtered = filtered.filter(r => r.assigned_to === user.username);
         } else if (filterAssignment === 'department' && userDepartmentIds.length > 0) {
-            // Only show in "dept" if assigned to my department but NOT to a specific person
+            // Show ALL requests assigned to my department (whether assigned to a person or not)
             filtered = filtered.filter(r =>
                 r.assigned_department_id &&
-                userDepartmentIds.includes(r.assigned_department_id) &&
-                !r.assigned_to  // No specific staff assigned = All Department Staff
+                userDepartmentIds.includes(r.assigned_department_id)
             );
         }
 
-        // Sort by assignment group FIRST (mine -> dept -> all), then by priority within each group
+        // Sort based on selected sort order
         filtered.sort((a, b) => {
-            // Primary: Assignment grouping (assigned to me -> my department -> others)
-            const getAssignmentGroup = (r: ServiceRequest) => {
-                if (user && r.assigned_to === user.username) return 0; // Assigned specifically to me
-                // My department, but no specific person assigned (All Department Staff)
-                if (r.assigned_department_id && userDepartmentIds.includes(r.assigned_department_id) && !r.assigned_to) return 1;
-                return 2; // Others (including requests assigned to specific people in my dept who are not me)
-            };
+            const getPriority = (r: ServiceRequest) =>
+                r.manual_priority_score ?? ((r.ai_analysis as any)?.priority_score) ?? 5;
 
-            const assignmentDiff = getAssignmentGroup(a) - getAssignmentGroup(b);
-            if (assignmentDiff !== 0) return assignmentDiff; // Group by assignment first
-
-            // Secondary: Within each group, sort by priority (higher = more urgent, descending)
-            const priorityA =
-                a.manual_priority_score ??
-                ((a.ai_analysis as any)?.priority_score) ??
-                5;
-            const priorityB =
-                b.manual_priority_score ??
-                ((b.ai_analysis as any)?.priority_score) ??
-                5;
-            if (priorityA !== priorityB) return priorityB - priorityA; // Higher score first
-
-            // Tertiary: Sort by requested_datetime (newest first)
-            return new Date(b.requested_datetime).getTime() - new Date(a.requested_datetime).getTime();
+            switch (sortOrder) {
+                case 'oldest':
+                    return new Date(a.requested_datetime).getTime() - new Date(b.requested_datetime).getTime();
+                case 'priority_high':
+                    return getPriority(b) - getPriority(a);
+                case 'priority_low':
+                    return getPriority(a) - getPriority(b);
+                case 'alpha':
+                    return (a.service_name || '').localeCompare(b.service_name || '');
+                case 'newest':
+                default:
+                    return new Date(b.requested_datetime).getTime() - new Date(a.requested_datetime).getTime();
+            }
         });
 
         return filtered;
-    }, [allRequests, currentView, searchQuery, filterDepartment, filterService, filterAssignment, user, userDepartmentIds]);
+    }, [allRequests, currentView, searchQuery, filterDepartment, filterService, filterAssignment, user, userDepartmentIds, sortOrder]);
 
     // Quick stats for the current view
     const quickStats = useMemo(() => {
@@ -308,9 +300,9 @@ export default function StaffDashboard() {
         });
 
         const assignedToMe = viewRequests.filter(r => user && r.assigned_to === user.username).length;
-        // Only count as "dept" if no specific person assigned (All Department Staff)
+        // Count ALL requests in my department(s)
         const inMyDepartment = viewRequests.filter(r =>
-            r.assigned_department_id && userDepartmentIds.includes(r.assigned_department_id) && !r.assigned_to
+            r.assigned_department_id && userDepartmentIds.includes(r.assigned_department_id)
         ).length;
         const total = viewRequests.length;
 
@@ -765,7 +757,7 @@ export default function StaffDashboard() {
                                         const readItems = JSON.parse(localStorage.getItem('activityFeedRead') || '[]');
                                         const readSet = new Set(readItems);
                                         let count = 0;
-                                        requests.forEach(req => {
+                                        allRequests.forEach(req => {
                                             const age = now - new Date(req.requested_datetime).getTime();
                                             if (age < twentyFourHours && req.assigned_department_id && userDepartmentIds.includes(req.assigned_department_id)) {
                                                 if (!readSet.has(`new-${req.service_request_id}`)) count++;
@@ -1489,6 +1481,22 @@ export default function StaffDashboard() {
                                             <X className="w-4 h-4" aria-hidden="true" />
                                         </button>
                                     )}
+                                </div>
+
+                                {/* Sort Order */}
+                                <div>
+                                    <select
+                                        value={sortOrder}
+                                        onChange={(e) => setSortOrder(e.target.value as typeof sortOrder)}
+                                        className="glass-input text-sm py-2 w-full"
+                                        aria-label="Sort order"
+                                    >
+                                        <option value="newest">Newest First</option>
+                                        <option value="oldest">Oldest First</option>
+                                        <option value="priority_high">Priority: High → Low</option>
+                                        <option value="priority_low">Priority: Low → High</option>
+                                        <option value="alpha">Category A → Z</option>
+                                    </select>
                                 </div>
 
                                 {/* Advanced Filters Panel */}
@@ -2946,7 +2954,7 @@ export default function StaffDashboard() {
             <ActivityFeed
                 isOpen={showActivityFeed}
                 onClose={() => setShowActivityFeed(false)}
-                requests={requests}
+                requests={allRequests}
                 userId={user?.username || ''}
                 userDepartmentIds={userDepartmentIds}
                 onSelectRequest={(request) => {
