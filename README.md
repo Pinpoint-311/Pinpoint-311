@@ -2,6 +2,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
+  <a href="https://hackclub.com/fiscal-sponsorship/"><img src="https://img.shields.io/badge/Fiscal%20Sponsor-Hack%20Club-ec3750.svg" alt="Fiscally Sponsored by Hack Club"></a>
   <img src="https://img.shields.io/badge/React-18-61DAFB.svg" alt="React 18">
   <img src="https://img.shields.io/badge/FastAPI-0.109-009688.svg" alt="FastAPI">
   <img src="https://img.shields.io/badge/PostgreSQL-15-336791.svg" alt="PostgreSQL 15">
@@ -979,6 +980,15 @@ docker compose ps watchtower
 
 Pinpoint 311 is open-source software licensed under the [MIT License](LICENSE).
 
+---
+
+## 🤝 Fiscal Sponsorship
+
+Pinpoint 311 is fiscally sponsored by **[The Hack Foundation](https://hackclub.com/fiscal-sponsorship/)** (d.b.a. Hack Club), a 501(c)(3) public charity (EIN: 81-2908499). Hack Club provides fiscal sponsorship infrastructure, allowing Pinpoint 311 to receive tax-deductible donations on our behalf while we focus on building civic technology.
+
+Donations to Pinpoint 311 are tax-deductible to the extent permitted by law.
+
 <p align="center">
-  Built by Pinpoint 311 for Civic Engagement
+  Built by Pinpoint 311 for Civic Engagement<br>
+  <a href="https://hackclub.com/fiscal-sponsorship/"><img src="https://img.shields.io/badge/Fiscally%20Sponsored%20by-Hack%20Club-ec3750.svg" alt="Fiscally Sponsored by Hack Club"></a>
 </p>
