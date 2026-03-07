@@ -66,6 +66,7 @@ import {
     Linkedin,
     type LucideIcon,
     DollarSign,
+    FlaskConical,
 } from 'lucide-react';
 import { Button, Card, Modal, Input, Select, Badge, AccordionSection } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
@@ -1898,8 +1899,8 @@ export default function AdminConsole() {
                                     <Card>
                                         <div className="flex items-center justify-between gap-4">
                                             <div className="flex items-center gap-4 flex-1 min-w-0">
-                                                <div className="w-12 h-12 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
-                                                    <BarChart3 className="w-6 h-6 text-amber-400" />
+                                                <div className="w-12 h-12 rounded-xl bg-violet-500/20 flex items-center justify-center shrink-0">
+                                                    <FlaskConical className="w-6 h-6 text-violet-400" />
                                                 </div>
                                                 <div className="min-w-0">
                                                     <h3 className="font-semibold text-white">Research Portal</h3>

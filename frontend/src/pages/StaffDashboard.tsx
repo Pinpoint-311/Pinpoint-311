@@ -38,6 +38,7 @@ import {
     Bell,
     Settings,
     Download,
+    FlaskConical,
 } from 'lucide-react';
 import { Button, Card, Modal, Input, Textarea, Select, StatusBadge, Badge } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
@@ -959,7 +960,7 @@ export default function StaffDashboard() {
                                     <h1 className="text-2xl lg:text-3xl font-bold text-white">Analytics Dashboard</h1>
                                     {advancedStats?.cached_at && (
                                         <p className="text-sm text-white/40 mt-1">
-                                            Updated {new Date(advancedStats.cached_at).toLocaleString()}
+                                            Updated {new Date(advancedStats.cached_at.endsWith('Z') ? advancedStats.cached_at : advancedStats.cached_at + 'Z').toLocaleString()}
                                         </p>
                                     )}
                                 </div>
@@ -975,7 +976,8 @@ export default function StaffDashboard() {
                                         onClick={() => window.location.href = '/research'}
                                         className="flex items-center gap-2 px-4 py-2 bg-white/10 border border-white/20 text-white rounded-lg hover:bg-white/20 transition-all text-sm font-medium"
                                     >
-                                        🔬 Research Portal
+                                        <FlaskConical className="w-4 h-4" />
+                                        Research Portal
                                     </button>
                                     <div className="relative group">
                                         <button className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all text-sm font-medium">

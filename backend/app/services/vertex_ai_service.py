@@ -1,5 +1,5 @@
 """
-Vertex AI Service for 311 Request Analysis using Gemini 2.0 Flash
+Vertex AI Service for 311 Request Analysis using Gemini 3.0 Flash
 
 This service analyzes service requests using Google's Gemini model to provide:
 - Priority scoring (1-10)
