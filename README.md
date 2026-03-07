@@ -58,7 +58,7 @@ Beyond the UI, it features a sophisticated **AI & Geospatial Engine** that autom
 | **Live Tracking** | ❌ None | ✅ Email only | **✅ SMS + Email + Magic Link** |
 | **Location Accuracy** | Text address | GPS pin | **✅ GPS + Asset Selection** |
 | **PII Protection** | ❌ None | ⚠️ Basic | **✅ Auto-Redacted + KMS** |
-| **Geofencing** | ❌ None | ⚠️ Limited | **✅ PostGIS Boundaries** |
+| **Geofencing** | ❌ None | ⚠️ Limited | **✅ GeoJSON Boundaries** |
 | **Research Export** | ❌ None | ⚠️ Extra cost | **✅ 60+ fields, free** |
 | **Custom Branding** | DIY | ⚠️ Limited | **✅ Full white-label** |
 | **Self-Healing** | ❌ None | ❌ Managed | **✅ Auto-restart + Watchtower** |
@@ -253,8 +253,8 @@ graph LR
 
 ### 🗺️ Geospatial Power
 - **Asset Selection**: When map layers are configured, residents can click on nearby infrastructure (e.g., streetlights, hydrants, park zones) and select the specific asset their report relates to.
-- **Boundary Enforcement**: Validates that requests are actually within township limits before submission.
-- **Heatmaps & Clustering**: Auto-groups nearby requests to visualize problem hotspots.
+- **Boundary Enforcement**: Validates that requests are within township limits using point-in-polygon checks against uploaded GeoJSON boundaries.
+- **Marker Clustering**: Auto-groups nearby request markers on the map via Google Maps MarkerClusterer. Backend hotspot detection uses PostGIS `ST_ClusterDBSCAN` for analytics.
 
 ---
 

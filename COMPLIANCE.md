@@ -24,6 +24,7 @@ The Pinpoint 311 platform is designed for on-premises deployment within municipa
 |------|--------------|
 | **Resident** | Public submission, track own requests (ID required), no PII visibility |
 | **Staff** | Department-scoped or global request management, internal comments |
+| **Researcher** | Read-only access to sanitized data exports and analytics dashboards |
 | **Admin** | System-wide control: users, departments, branding, API keys |
 
 ### Open311 Compliance
