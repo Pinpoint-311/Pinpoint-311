@@ -92,6 +92,7 @@ Beyond the UI, it features a sophisticated **AI & Geospatial Engine** that autom
 **Manage & resolve requests**
 
 ✅ AI-powered triage<br>
+✅ AI Analytics Advisor<br>
 ✅ Priority scoring<br>
 ✅ Department routing<br>
 ✅ Internal comments
@@ -330,6 +331,25 @@ The Staff Dashboard is the command center for municipal operations, protected by
     - **Hotspot Analysis**: Automatically clusters requests to identify problem areas (e.g., "Pothole Clusters" on specific roads).
     - **User Bias Detection**: Flags suspicious activity using spatial statistics (e.g., single user spamming requests in a 10m radius).
     - **Jurisdiction Verification**: Real-time point-in-polygon checks against township boundaries.
+
+### 5. AI Analytics Advisor (Conversational Intelligence)
+A full conversational AI interface powered by **Gemini 3.0 Flash** that lets staff ask questions about their data in natural language. Unlike traditional dashboards, it cross-references **all system data** with **research-grade analytics** to provide actionable insights.
+
+- **Natural Language Queries**: Ask questions like "What's our average triage time?" or "Are there equity gaps in our response times?" and get data-driven answers with specific numbers.
+- **Research-Grade Context**: The AI has access to aggregated metrics from the Research Suite:
+
+| Data Category | Metrics Available |
+|---|---|
+| **Social Equity** | Social Vulnerability Index (SVI), income quintile distribution, housing tenure, population density |
+| **Resident Sentiment** | Average sentiment score, frustration rate, repeat report rate, prior report references |
+| **Bureaucratic Friction** | Average triage time, reassignment count, off-hours submission rate, escalation rate |
+| **Infrastructure** | Category breakdown (roads/pavement, lighting, stormwater, etc.) |
+
+- **Cross-Referencing**: Connects patterns across categories—e.g., correlating response times with social vulnerability, or sentiment with seasonal trends.
+- **Formatted Responses**: Outputs structured markdown with section headers, bold metrics, comparison tables, and "Key Takeaway" summaries.
+- **Conversation Memory**: Maintains multi-turn context so staff can drill into follow-up questions.
+- **Privacy-First**: Never exposes resident PII—all data is aggregated and sanitized before reaching the AI.
+- **Clear Conversation**: One-click reset to start fresh analysis sessions.
 
 ---
 
