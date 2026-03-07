@@ -222,7 +222,7 @@ async def check_vertex_ai(db: AsyncSession) -> Dict[str, Any]:
             "message": "Vertex AI configured (not tested to save API costs)",
             "project": project,
             "location": location,
-            "model": "gemini-2.0-flash-exp"
+            "model": "gemini-3-flash-preview"
         }
         
     except Exception as e:

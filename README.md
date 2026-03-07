@@ -324,7 +324,7 @@ The Staff Dashboard is the command center for municipal operations, protected by
 - **Proximity Analysis**: Checks if the issue is near critical infrastructure (Schools, Hospitals, Fire Stations) via PostGIS, with a **Nominatim (OpenStreetMap)** fallback for unmapped areas.
 - **Sentiment Analysis**: Gauges the tone of the resident's description (Neutral, Frustrated, Urgent).
 - **Weather Context**: Automatically fetches real-time weather (e.g., "Heavy Rain, 45°F") to validiate hazards.
-- **Gemini 3.0 Flash**: Powered by Google's latest model with "Thinking Config" for deep reasoning and lower latency.
+- **Gemini Flash**: Powered by Google's latest model (`gemini-3-flash-preview`) with "Thinking Config" for deep reasoning.
 - **Duplicate Detection**: Suggests potential duplicate reports based on location (within 50m) and time window.
 - **Human-in-the-Loop Priority**: AI priority suggestions are stored in a JSON field and displayed with an **"Accept AI Priority"** button. Staff must explicitly accept the score before it becomes the official priority, creating a complete audit trail.
 - **PostGIS Geospatial Analytics**:
@@ -373,8 +373,7 @@ A full CMS for managing the municipality's presence without touching code.
 - **Custom Map Layers**: Upload **GeoJSON** files to visualize township assets (Parks, Storm Drains, Zoning Districts) directly on the staff map.
 - **Domain Configuration**: Automatic HTTPS provisioning via Caddy (Let's Encrypt) for custom domains.
 - **Key Management**: Securely store API keys for Google Maps, Vertex AI (Google Cloud Project ID + Service Account Key), and SMS Providers.
-- **Feature Modules**: Toggle major features like "AI Analysis" or "SMS Alerts" on/off globally.
-    - `ENABLE_SMS_ALERTS`: Toggle text message notifications (Twilio or Generic).
+- **Feature Modules**: Toggle major features like "AI Analysis" or "SMS Alerts" on/off globally via the Admin Console modules panel.
 - **Database Maintenance**: Tools to seed default data or flush test records.
 
 ### 3. Legal Documents & Compliance
@@ -822,12 +821,15 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 # docker compose up --build -d
 ```
 
-### Access Points
+### Access Points (Production via Caddy)
 - **Resident Portal**: `http://localhost/`
 - **Staff Dashboard**: `http://localhost/staff`
 - **Admin Console**: `http://localhost/admin`
 - **Research Lab**: `http://localhost/research` *(requires researcher role)*
 - **API Documentation**: `http://localhost/api/docs`
+
+> [!TIP]
+> In development without Caddy, the frontend runs at `http://localhost:5173` and the API at `http://localhost:8000`.
 
 ### Initial Setup & Authentication
 
@@ -854,14 +856,14 @@ curl -X POST http://localhost/api/auth/bootstrap
 ```
 Click the returned magic link → logs you into Admin Console.
 
-#### Step 4: Configure Auth0 via Setup Wizard
-In Admin Console → Setup Wizard:
+#### Step 4: Configure Auth0 via Setup & Integration
+In Admin Console → Setup & Integration:
 1. Enter Auth0 domain, client ID, client secret
 2. System encrypts and stores credentials securely
 3. Bootstrap access is automatically disabled
 
 #### Step 5: (Optional) Enable Google Secret Manager
-For enterprise-grade secret storage, configure GCP in the Setup Wizard. Secrets will be migrated from the database to Google Secret Manager.
+For enterprise-grade secret storage, configure GCP in the Setup & Integration page. Secrets will be migrated from the database to Google Secret Manager.
 
 ### Security Storage
 
