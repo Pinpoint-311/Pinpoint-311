@@ -259,12 +259,15 @@ export default function StaffDashboard() {
         // Apply assignment filter
         if (filterAssignment === 'me' && user) {
             filtered = filtered.filter(r => r.assigned_to === user.username);
-        } else if (filterAssignment === 'department' && userDepartmentIds.length > 0) {
-            // Show ALL requests assigned to my department (whether assigned to a person or not)
-            filtered = filtered.filter(r =>
-                r.assigned_department_id &&
-                userDepartmentIds.includes(r.assigned_department_id)
-            );
+        } else if (filterAssignment === 'department') {
+            if (userDepartmentIds.length > 0) {
+                // Show ALL requests assigned to my department
+                filtered = filtered.filter(r =>
+                    r.assigned_department_id &&
+                    userDepartmentIds.includes(r.assigned_department_id)
+                );
+            }
+            // If no departments configured, show all requests (no additional filter)
         }
 
         // Sort based on selected sort order
@@ -300,11 +303,13 @@ export default function StaffDashboard() {
         });
 
         const assignedToMe = viewRequests.filter(r => user && r.assigned_to === user.username).length;
-        // Count ALL requests in my department(s)
-        const inMyDepartment = viewRequests.filter(r =>
-            r.assigned_department_id && userDepartmentIds.includes(r.assigned_department_id)
-        ).length;
         const total = viewRequests.length;
+        // Count requests in my department(s) — if no depts configured, count all
+        const inMyDepartment = userDepartmentIds.length > 0
+            ? viewRequests.filter(r =>
+                r.assigned_department_id && userDepartmentIds.includes(r.assigned_department_id)
+            ).length
+            : total;
 
         return { assignedToMe, inMyDepartment, total };
     }, [allRequests, currentView, user, userDepartmentIds]);
