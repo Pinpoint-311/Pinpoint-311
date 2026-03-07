@@ -329,37 +329,20 @@ SENTRY_DSN=https://xxx@xxx.ingest.sentry.io/xxx
 
 ---
 
-## 7. Automated Setup Scripts
+## 7. Setup & Configuration
 
-Pinpoint 311 includes one-command setup scripts to minimize deployment friction:
+All platform integrations are configured through the **Admin Console → Setup & Integration** tab using step-by-step instructions. No CLI tools or scripts are required.
 
-### Google Cloud Platform Setup
-```bash
-./scripts/setup_gcp.sh [PROJECT_ID] [LOCATION]
-```
-
-**Automatically configures:**
-| Service | Purpose |
-|---------|---------|
-| Cloud KMS | PII encryption keys |
-| Cloud Translation API | 100+ language support |
-| Vertex AI | AI analysis (Gemini Flash) |
-| Secret Manager | Credential storage |
-
-### Auth0 SSO Setup
-```bash
-./scripts/setup_auth0.sh [DOMAIN] [CLIENT_ID] [CLIENT_SECRET]
-```
-
-**Automatically configures:**
-- Creates Auth0 application and configures callbacks
-- Configures redirect URLs for production and development
-- Outputs credentials for Admin Console
+| Integration | Configuration Method |
+|-------------|---------------------|
+| Google Cloud (KMS, Translation, Vertex AI) | Manual setup via [GCP Console](https://console.cloud.google.com), credentials entered in Admin Console |
+| Auth0 SSO | Manual setup via [Auth0 Dashboard](https://auth0.com), credentials entered in Admin Console |
+| Email (SMTP) | SMTP credentials entered directly in Admin Console |
+| SMS Notifications | Twilio or custom HTTP API credentials entered in Admin Console |
 
 ### Prerequisites
-- `gcloud` CLI installed and authenticated
 - Auth0 account (free tier available)
-- GCP project with billing enabled
+- GCP project with billing enabled (for AI, encryption, and translation features)
 
 ---
 
