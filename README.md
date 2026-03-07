@@ -20,7 +20,7 @@
 
 Pinpoint 311 is a production-grade, open-source platform designed for modern municipalities. It replaces legacy, clunky government forms with a **consumer-grade user experience** that feels as polished as a ride-sharing or food-delivery app.
 
-Beyond the UI, it features a sophisticated **AI & Geospatial Engine** that automates triage, detects duplicate reports, and routes requests based on precise location data—saving thousands of staff hours manually sorting tickets.
+Beyond the UI, it features a sophisticated **AI & Geospatial Engine** that automates triage, surfaces similar nearby reports for staff awareness, and routes requests based on precise location data—saving thousands of staff hours manually sorting tickets.
 
 ---
 
@@ -325,7 +325,7 @@ The Staff Dashboard is the command center for municipal operations, protected by
 - **Sentiment Analysis**: Gauges the tone of the resident's description (Neutral, Frustrated, Urgent).
 - **Weather Context**: Automatically fetches real-time weather (e.g., "Heavy Rain, 45°F") to validiate hazards.
 - **Gemini Flash**: Powered by Google's latest model (`gemini-3-flash-preview`) with "Thinking Config" for deep reasoning.
-- **Duplicate Detection**: Suggests potential duplicate reports based on location (within 50m) and time window.
+- **Similar Request Detection**: Surfaces nearby requests within 50m and a recent time window for staff awareness. The AI does not flag requests as duplicates or delete them—all requests are preserved and any action is left entirely to staff judgment.
 - **Human-in-the-Loop Priority**: AI priority suggestions are stored in a JSON field and displayed with an **"Accept AI Priority"** button. Staff must explicitly accept the score before it becomes the official priority, creating a complete audit trail.
 - **PostGIS Geospatial Analytics**:
     - **Hotspot Analysis**: Automatically clusters requests to identify problem areas (e.g., "Pothole Clusters" on specific roads).
