@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Key, Shield, Cloud, MessageSquare, Mail, CheckCircle,
-    AlertCircle, ChevronDown, ChevronUp, Copy, Check, Terminal,
+    AlertCircle, ChevronDown, ChevronUp, Copy, Check,
     ExternalLink, AlertTriangle, Database, BookOpen,
     ListChecks
 } from 'lucide-react';
@@ -31,7 +31,7 @@ interface SetupIntegrationsPageProps {
 export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh, modules, onUpdateModules }: SetupIntegrationsPageProps) {
     const [secretValues, setSecretValues] = useState<Record<string, string>>({});
     const [savingKey, setSavingKey] = useState<string | null>(null);
-    const [showTerminal, setShowTerminal] = useState(false);
+
     const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
     const [localSmsProvider, setLocalSmsProvider] = useState<string>('none');
     const [savingSmsProvider, setSavingSmsProvider] = useState(false);
@@ -232,20 +232,16 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                         {gcpConfigured && <Badge variant="success">Done</Badge>}
                                     </div>
                                     <div className="space-y-2.5">
-                                        <InstructionStep num={1}>Create a GCP project at <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">console.cloud.google.com</a>.</InstructionStep>
-                                        <InstructionStep num={2}>Enable the following APIs: <strong className="text-white/90">Cloud KMS</strong>, <strong className="text-white/90">Cloud Translation</strong>, <strong className="text-white/90">Vertex AI</strong>, and <strong className="text-white/90">Secret Manager</strong>.</InstructionStep>
-                                        <InstructionStep num={3}>Create a Service Account with the roles: <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud KMS Admin</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud Translation API User</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Vertex AI User</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Secret Manager Admin</code>.</InstructionStep>
-                                        <InstructionStep num={4}>Download the Service Account JSON key file.</InstructionStep>
-                                        <InstructionStep num={5}>
-                                            Run the setup script on your server:
-                                            <div className="mt-1.5 flex items-center gap-2">
-                                                <code className="bg-black/30 px-2 py-1 rounded text-green-400 text-xs font-mono">./scripts/setup_gcp.sh YOUR_PROJECT_ID</code>
-                                                <button onClick={() => copyToClipboard('./scripts/setup_gcp.sh YOUR_PROJECT_ID', 'gcp-cmd')} className="text-white/40 hover:text-white/70 transition-colors">
-                                                    {copyFeedback === 'gcp-cmd' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                                </button>
-                                            </div>
+                                        <InstructionStep num={1}>Go to <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">console.cloud.google.com</a> and create a new project (or select an existing one). Note the <strong className="text-white/90">Project ID</strong>.</InstructionStep>
+                                        <InstructionStep num={2}>Go to <strong className="text-white/90">APIs & Services → Library</strong> and enable: <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud KMS API</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud Translation API</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Vertex AI API</code>, and <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Secret Manager API</code>.</InstructionStep>
+                                        <InstructionStep num={3}>
+                                            <strong className="text-white/90">Create a KMS Key Ring and Key:</strong> Go to <strong className="text-white/90">Security → Key Management</strong>. Click <strong className="text-white/90">Create Key Ring</strong>, name it (e.g. <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pinpoint311</code>), select a location (e.g. <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">us-central1</code>). Then create a key inside the ring (e.g. <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pii-encryption</code>), purpose: <strong className="text-white/90">Symmetric encrypt/decrypt</strong>.
                                         </InstructionStep>
-                                        <InstructionStep num={6}>The script will configure KMS, Translation, Vertex AI, and Secret Manager automatically. Review the output for any errors.</InstructionStep>
+                                        <InstructionStep num={4}>
+                                            <strong className="text-white/90">Create a Service Account:</strong> Go to <strong className="text-white/90">IAM & Admin → Service Accounts → Create</strong>. Grant it the roles: <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud KMS CryptoKey Encrypter/Decrypter</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud Translation API User</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Vertex AI User</code>, and <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Secret Manager Admin</code>.
+                                        </InstructionStep>
+                                        <InstructionStep num={5}>On the Service Account page, go to <strong className="text-white/90">Keys → Add Key → Create new key → JSON</strong>. Download the key file and keep it secure.</InstructionStep>
+                                        <InstructionStep num={6}>Enter your <strong className="text-white/90">Project ID</strong>, <strong className="text-white/90">KMS Location</strong>, <strong className="text-white/90">Key Ring</strong>, and <strong className="text-white/90">Key ID</strong> in the Google Cloud card below and click <strong className="text-white/90">Save GCP Settings</strong>.</InstructionStep>
                                     </div>
                                 </div>
 
@@ -936,65 +932,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             </div>
 
 
-            {/* Terminal Commands (Collapsible) */}
-            <Card className="bg-slate-900/50">
-                <button
-                    onClick={() => setShowTerminal(!showTerminal)}
-                    className="w-full flex items-center justify-between"
-                >
-                    <div className="flex items-center gap-3">
-                        <Terminal className="w-5 h-5 text-green-400" />
-                        <div className="text-left">
-                            <h3 className="font-semibold text-white">Advanced: Terminal Setup Commands</h3>
-                            <p className="text-gray-300 text-xs">For manual server configuration</p>
-                        </div>
-                    </div>
-                    {showTerminal ? <ChevronUp className="w-5 h-5 text-gray-300" /> : <ChevronDown className="w-5 h-5 text-gray-300" />}
-                </button>
 
-                <AnimatePresence>
-                    {showTerminal && (
-                        <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: 'auto', opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            className="overflow-hidden"
-                        >
-                            <div className="mt-4 space-y-4">
-                                {/* GCP Setup */}
-                                <div className="bg-black/30 rounded-lg p-4">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <span className="text-white/60 text-sm font-medium">Google Cloud Platform Setup</span>
-                                        <button
-                                            onClick={() => copyToClipboard('./scripts/setup_gcp.sh YOUR_PROJECT_ID', 'GCP')}
-                                            className="flex items-center gap-2 px-3 py-1 bg-white/10 hover:bg-white/20 rounded text-xs text-white/80 transition-colors"
-                                        >
-                                            {copyFeedback === 'GCP' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                            Copy
-                                        </button>
-                                    </div>
-                                    <code className="text-green-400 font-mono text-sm">./scripts/setup_gcp.sh YOUR_PROJECT_ID</code>
-                                </div>
-
-                                {/* Auth0 Setup */}
-                                <div className="bg-black/30 rounded-lg p-4">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <span className="text-white/60 text-sm font-medium">Auth0 Configuration Helper</span>
-                                        <button
-                                            onClick={() => copyToClipboard('./scripts/setup_auth0.sh', 'Auth0')}
-                                            className="flex items-center gap-2 px-3 py-1 bg-white/10 hover:bg-white/20 rounded text-xs text-white/80 transition-colors"
-                                        >
-                                            {copyFeedback === 'Auth0' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                            Copy
-                                        </button>
-                                    </div>
-                                    <code className="text-green-400 font-mono text-sm">./scripts/setup_auth0.sh</code>
-                                </div>
-                            </div>
-                        </motion.div>
-                    )}
-                </AnimatePresence>
-            </Card>
 
             {/* Help Link */}
             <Card className="bg-blue-500/10 border-blue-500/20">
