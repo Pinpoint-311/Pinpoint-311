@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -14,6 +14,10 @@ from app.schemas import (
     RequestAuditLogResponse
 )
 from app.core.auth import get_current_staff
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter()
 
@@ -90,9 +94,6 @@ async def list_public_requests(
             "completion_message": r.completion_message[:200] if r.completion_message else None,
             "completion_photo_url": None,  # Excluded from list - use has_completion_photo flag
             "has_completion_photo": bool(r.completion_photo_url),  # Flag indicating completion photo exists
-            # Fields for map filtering
-            "assigned_department_id": r.assigned_department_id,
-            "assigned_to": r.assigned_to,
         }
         for r in requests
     ]
@@ -137,7 +138,6 @@ async def get_public_request_detail(request_id: str, db: AsyncSession = Depends(
         "media_urls": request.media_urls or [],  # Full array of photo data for detail view
         "completion_message": request.completion_message,
         "completion_photo_url": request.completion_photo_url,  # Full completion photo
-        "assigned_to": request.assigned_to,
         "assigned_department_name": request.assigned_department.name if request.assigned_department else None,
     }
 
@@ -168,9 +168,11 @@ async def get_public_comments(request_id: str, db: AsyncSession = Depends(get_db
 
 
 @router.post("/public/requests/{request_id}/comments", response_model=RequestCommentResponse)
+@limiter.limit("5/minute")
 async def add_public_comment(
+    request: Request,
     request_id: str,
-    content: str = Query(..., min_length=1, max_length=1000),
+    content: str = Body(..., min_length=1, max_length=1000, embed=True),
     db: AsyncSession = Depends(get_db)
 ):
     """Add a public comment to a request - no auth required, always external visibility"""
@@ -178,13 +180,13 @@ async def add_public_comment(
     result = await db.execute(
         select(ServiceRequest).where(ServiceRequest.service_request_id == request_id)
     )
-    request = result.scalar_one_or_none()
-    if not request:
+    sr = result.scalar_one_or_none()
+    if not sr:
         raise HTTPException(status_code=404, detail="Request not found")
     
     # Create external comment (anonymous - "Resident")
     comment = RequestComment(
-        service_request_id=request.id,
+        service_request_id=sr.id,
         username="Resident",
         content=content,
         visibility="external"
@@ -219,9 +221,10 @@ async def get_audit_log(
     return audit_result.scalars().all()
 
 
-@router.get("/public/requests/{request_id}/audit-log", response_model=List[RequestAuditLogResponse])
+@router.get("/public/requests/{request_id}/audit-log")
 async def get_public_audit_log(request_id: str, db: AsyncSession = Depends(get_db)):
-    """Get public audit log for a request - shows status changes only, no internal details"""
+    """Get public audit log for a request - shows status changes only, no internal details.
+    Staff usernames are redacted from public responses."""
     result = await db.execute(
         select(ServiceRequest).where(
             ServiceRequest.service_request_id == request_id,
@@ -239,7 +242,22 @@ async def get_public_audit_log(request_id: str, db: AsyncSession = Depends(get_d
         .where(RequestAuditLog.action.in_(["submitted", "status_change"]))
         .order_by(RequestAuditLog.created_at.asc())
     )
-    return audit_result.scalars().all()
+    entries = audit_result.scalars().all()
+    
+    # Redact staff usernames from public audit log
+    return [
+        {
+            "id": e.id,
+            "action": e.action,
+            "old_value": e.old_value,
+            "new_value": e.new_value,
+            "actor_type": e.actor_type,
+            "actor_name": e.actor_name if e.actor_type == "resident" else "Staff",
+            "created_at": e.created_at,
+            "extra_data": e.extra_data,
+        }
+        for e in entries
+    ]
 
 
 
@@ -264,7 +282,9 @@ async def list_open311_services(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/requests.json", response_model=ServiceRequestResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
 async def create_request(
+    request: Request,
     request_data: ServiceRequestCreate,
     db: AsyncSession = Depends(get_db)
 ):
