@@ -1,6 +1,9 @@
 # Pinpoint 311 - Advanced Municipal Request System
 
 <p align="center">
+  <img src="frontend/public/pinpoint311_logo_light.png" alt="Pinpoint 311" height="60">
+</p>
+<p align="center">
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
   <a href="https://hcb.hackclub.com/pinpoint-311"><img src="https://img.shields.io/badge/Fiscal%20Sponsor-Hack%20Club-ec3750.svg" alt="Fiscally Sponsored by Hack Club"></a>
   <img src="https://img.shields.io/badge/React-18-61DAFB.svg" alt="React 18">

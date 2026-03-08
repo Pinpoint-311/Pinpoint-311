@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { Sparkles, AlertCircle, Shield, LogIn } from 'lucide-react';
+import { AlertCircle, Shield, LogIn } from 'lucide-react';
 import { Button, Card } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
@@ -98,12 +98,11 @@ export default function Login() {
                                     className="h-16 mx-auto mb-4"
                                 />
                             ) : (
-                                <div
-                                    className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center glow-effect"
-                                    aria-hidden="true"
-                                >
-                                    <Sparkles className="w-8 h-8 text-white" />
-                                </div>
+                                <img
+                                    src="/pinpoint311_icon.png"
+                                    alt="Pinpoint 311"
+                                    className="h-16 w-16 mx-auto mb-4 rounded-2xl"
+                                />
                             )}
                             <h1 className="text-2xl font-bold text-white" data-no-translate>
                                 {settings?.township_name || 'Municipality 311'}
@@ -179,9 +178,10 @@ export default function Login() {
                                     href="https://github.com/Pinpoint-311/Pinpoint-311"
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="text-primary-400/50 hover:text-primary-300 transition-colors"
+                                    className="text-primary-400/50 hover:text-primary-300 transition-colors inline-flex items-center gap-1"
                                     data-no-translate
                                 >
+                                    <img src="/pinpoint311_icon.png" alt="" className="h-3 w-3 inline-block" style={{ verticalAlign: '-1px' }} />
                                     Pinpoint 311
                                 </a>
                                 {' '}— Free &amp; Open Source
