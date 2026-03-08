@@ -2563,7 +2563,7 @@ async def analytics_chat(
     """
     Conversational AI analytics — chat with Vertex AI about all system data.
     Gathers comprehensive context from across the platform (excluding resident PII)
-    and uses Gemini 3.0 Flash to answer questions.
+    and uses Gemini 3.1 Flash-Lite to answer questions.
     """
     from datetime import datetime
     from sqlalchemy import extract, text
@@ -3010,7 +3010,7 @@ Season: {'Winter' if now.month in [12,1,2] else 'Spring' if now.month in [3,4,5]
         
         credentials.refresh(Request())
         
-        endpoint = f"https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent"
+        endpoint = f"https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/gemini-3.1-flash-lite-preview:generateContent"
         
         payload = {
             "contents": [{"role": "user", "parts": [{"text": conversation}]}],
