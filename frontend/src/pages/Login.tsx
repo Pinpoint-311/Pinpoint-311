@@ -19,7 +19,7 @@ export default function Login() {
     // Set page title for accessibility
     useEffect(() => {
         const previousTitle = document.title;
-        document.title = `Staff Login | ${settings?.township_name || 'Township 311'}`;
+        document.title = `Staff Login | ${settings?.township_name || 'Municipality 311'}`;
         return () => {
             document.title = previousTitle;
         };
@@ -94,7 +94,7 @@ export default function Login() {
                             {settings?.logo_url ? (
                                 <img
                                     src={settings.logo_url}
-                                    alt={`${settings?.township_name || 'Township'} logo`}
+                                    alt={`${settings?.township_name || 'Municipality'} logo`}
                                     className="h-16 mx-auto mb-4"
                                 />
                             ) : (
@@ -106,7 +106,7 @@ export default function Login() {
                                 </div>
                             )}
                             <h1 className="text-2xl font-bold text-white" data-no-translate>
-                                {settings?.township_name || 'Township 311'}
+                                {settings?.township_name || 'Municipality 311'}
                             </h1>
                             <p className="text-white/50 mt-2">Staff Access Portal</p>
                         </div>

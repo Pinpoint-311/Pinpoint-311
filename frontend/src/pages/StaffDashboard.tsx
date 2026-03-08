@@ -736,7 +736,7 @@ export default function StaffDashboard() {
                                 aria-label="Go to dashboard home"
                             >
                                 {settings?.logo_url ? (
-                                    <img src={settings.logo_url} alt={`${settings?.township_name || 'Township'} logo`} className="h-8 w-auto" />
+                                    <img src={settings.logo_url} alt={`${settings?.township_name || 'Municipality'} logo`} className="h-8 w-auto" />
                                 ) : (
                                     <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
                                         <Sparkles className="w-5 h-5 text-white" />
@@ -2774,7 +2774,7 @@ export default function StaffDashboard() {
                             />
                             <div>
                                 <p className="font-medium text-white">No Action Needed</p>
-                                <p className="text-sm text-white/50">Issue doesn't require township intervention</p>
+                                <p className="text-sm text-white/50">Issue doesn't require municipal intervention</p>
                             </div>
                         </label>
 
@@ -2789,7 +2789,7 @@ export default function StaffDashboard() {
                             />
                             <div>
                                 <p className="font-medium text-white">Resolved</p>
-                                <p className="text-sm text-white/50">Issue has been fixed by township staff</p>
+                                <p className="text-sm text-white/50">Issue has been fixed by municipal staff</p>
                             </div>
                         </label>
 
