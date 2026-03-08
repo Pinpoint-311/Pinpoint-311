@@ -5,7 +5,7 @@ import {
     Key, Shield, Cloud, MessageSquare, Mail, CheckCircle,
     AlertCircle, ChevronDown, ChevronUp, Copy, Check,
     ExternalLink, AlertTriangle, Database, BookOpen,
-    ListChecks
+    ListChecks, HardDrive
 } from 'lucide-react';
 
 import { Card, Button, Input, Select, Badge } from './ui';
@@ -83,6 +83,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const sentryConfigured = isConfigured('SENTRY_DSN');
     const gcpConfigured = isConfigured('GOOGLE_CLOUD_PROJECT');
     const smsConfigured = !!(localSmsProvider && localSmsProvider !== 'none');
+    const backupConfigured = isConfigured('BACKUP_S3_BUCKET') && isConfigured('BACKUP_S3_ACCESS_KEY') && isConfigured('BACKUP_S3_SECRET_KEY') && isConfigured('BACKUP_ENCRYPTION_KEY');
 
     // Setup progress calculation
     const setupSteps = [
@@ -90,6 +91,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         { label: 'Email (SMTP)', done: !!smtpConfigured, required: false },
         { label: 'Google Cloud', done: !!gcpConfigured, required: false },
         { label: 'SMS Alerts', done: smsConfigured, required: false },
+        { label: 'DB Backups', done: !!backupConfigured, required: false },
     ];
     const completedCount = setupSteps.filter(s => s.done).length;
 
@@ -257,6 +259,25 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                         <InstructionStep num={2}>Purchase a phone number under <strong className="text-white/90">Phone Numbers → Manage → Buy a number</strong>.</InstructionStep>
                                         <InstructionStep num={3}>Select "Twilio" in the SMS Notifications card below, enter your credentials, and save.</InstructionStep>
                                         <InstructionStep num={4}><strong className="text-white/90">Custom HTTP API:</strong> Alternatively, select "Custom HTTP API" and provide your endpoint URL. The platform sends a POST with <code className="bg-black/30 px-1 rounded text-emerald-300 text-xs">{`{ "to": "+1...", "message": "..." }`}</code>.</InstructionStep>
+                                    </div>
+                                </div>
+
+                                {/* Database Backup Instructions */}
+                                <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <HardDrive className="w-4 h-4 text-amber-400" />
+                                        <h4 className="font-semibold text-white text-sm">Database Backup Setup</h4>
+                                        {backupConfigured && <Badge variant="success">Done</Badge>}
+                                    </div>
+                                    <div className="space-y-2.5">
+                                        <InstructionStep num={1}>You need an <strong className="text-white/90">S3-compatible object storage</strong> bucket. This can be <strong className="text-white/90">AWS S3</strong>, <strong className="text-white/90">Oracle Object Storage</strong>, <strong className="text-white/90">MinIO</strong>, or any S3-compatible provider.</InstructionStep>
+                                        <InstructionStep num={2}><strong className="text-white/90">AWS S3:</strong> Create a bucket in the <a href="https://s3.console.aws.amazon.com" target="_blank" rel="noopener noreferrer" className="text-amber-300 underline underline-offset-2">AWS Console</a>. Create an IAM user with <code className="bg-black/30 px-1 rounded text-amber-300 text-xs">s3:PutObject</code>, <code className="bg-black/30 px-1 rounded text-amber-300 text-xs">s3:GetObject</code>, <code className="bg-black/30 px-1 rounded text-amber-300 text-xs">s3:ListBucket</code>, and <code className="bg-black/30 px-1 rounded text-amber-300 text-xs">s3:DeleteObject</code> permissions. Generate an access key.</InstructionStep>
+                                        <InstructionStep num={3}><strong className="text-white/90">Oracle Object Storage:</strong> Create a bucket in your OCI tenancy. Generate a <em>Customer Secret Key</em> under your user settings — this provides S3-compatible access key and secret key. The endpoint is <code className="bg-black/30 px-1 rounded text-amber-300 text-xs">{`https://<namespace>.compat.objectstorage.<region>.oraclecloud.com`}</code>.</InstructionStep>
+                                        <InstructionStep num={4}>Choose a strong <strong className="text-white/90">encryption passphrase</strong> for AES-256 backup encryption. Store this passphrase securely — without it, backups cannot be restored.</InstructionStep>
+                                        <InstructionStep num={5}>Enter your S3 bucket name, access key, secret key, encryption key, and optionally the endpoint/region in the <strong className="text-white/90">Database Backups</strong> card below.</InstructionStep>
+                                    </div>
+                                    <div className="mt-3 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2">
+                                        <p className="text-amber-200/80 text-xs"><strong>⚠ Privacy note:</strong> Backups contain a full database snapshot including resident PII. Old backups are deleted per the retention policy, but PII anonymization only applies to the live database — not to previously created backup files.</p>
                                     </div>
                                 </div>
                             </div>
@@ -924,6 +945,159 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, 'SENTRY_DSN': '' }))}>
                                         Change
                                     </Button>
+                                </div>
+                            )}
+                        </div>
+                    </motion.div>
+
+                    {/* Database Backups - Premium Card */}
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.5 }}
+                        className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${backupConfigured
+                            ? 'bg-gradient-to-br from-amber-500/10 via-yellow-500/5 to-orange-500/10 border-amber-500/30 shadow-lg shadow-amber-500/10'
+                            : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'
+                            }`}
+                    >
+                        {backupConfigured && (
+                            <div className="absolute inset-0 bg-gradient-to-r from-amber-500/5 via-transparent to-orange-500/5 pointer-events-none" />
+                        )}
+
+                        <div className="relative">
+                            <div className="flex items-start justify-between mb-4">
+                                <div className="flex items-center gap-4">
+                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${backupConfigured
+                                        ? 'bg-gradient-to-br from-amber-400 to-orange-500 shadow-lg shadow-amber-500/30'
+                                        : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'
+                                        }`}>
+                                        <HardDrive className="w-7 h-7 text-white" />
+                                    </div>
+                                    <div>
+                                        <h3 className="font-bold text-lg text-white">Database Backups</h3>
+                                        <p className="text-white/50 text-sm">Encrypted S3-compatible storage</p>
+                                    </div>
+                                </div>
+                                {backupConfigured ? (
+                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30 shadow-lg shadow-amber-500/10">
+                                        <CheckCircle className="w-3.5 h-3.5" />
+                                        Configured
+                                    </span>
+                                ) : (
+                                    <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 text-white/50 border border-white/10">
+                                        Optional
+                                    </span>
+                                )}
+                            </div>
+
+                            <p className="text-white/60 text-sm mb-4">
+                                Backups are encrypted with AES-256 and stored in your S3-compatible bucket. Backup cleanup follows your configured retention policy.
+                                See the <strong className="text-amber-300">Setup Instructions</strong> above for provider-specific guidance.
+                            </p>
+
+                            {!backupConfigured || secretValues['BACKUP_S3_BUCKET'] !== undefined ? (
+                                <div className="space-y-3">
+                                    <div>
+                                        <label className="text-sm text-white/60 mb-1.5 block">S3 Bucket Name</label>
+                                        <div className="flex gap-2">
+                                            <Input
+                                                type="text"
+                                                placeholder="my-backup-bucket"
+                                                value={secretValues['BACKUP_S3_BUCKET'] || ''}
+                                                onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_BUCKET': e.target.value }))}
+                                                className="flex-1 text-sm"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                            <label className="text-xs text-white/50 mb-1 block">Access Key</label>
+                                            <Input
+                                                type="text"
+                                                placeholder="AKIA..."
+                                                value={secretValues['BACKUP_S3_ACCESS_KEY'] || ''}
+                                                onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_ACCESS_KEY': e.target.value }))}
+                                                className="text-sm"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs text-white/50 mb-1 block">Secret Key</label>
+                                            <Input
+                                                type="password"
+                                                placeholder="Your S3 secret key"
+                                                value={secretValues['BACKUP_S3_SECRET_KEY'] || ''}
+                                                onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_SECRET_KEY': e.target.value }))}
+                                                className="text-sm"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <label className="text-sm text-white/60 mb-1.5 block">Encryption Passphrase</label>
+                                        <Input
+                                            type="password"
+                                            placeholder="Strong passphrase for AES-256 encryption"
+                                            value={secretValues['BACKUP_ENCRYPTION_KEY'] || ''}
+                                            onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_ENCRYPTION_KEY': e.target.value }))}
+                                            className="text-sm"
+                                        />
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                            <label className="text-xs text-white/50 mb-1 block">S3 Endpoint <span className="text-white/30">(optional)</span></label>
+                                            <Input
+                                                type="text"
+                                                placeholder="https://... (non-AWS only)"
+                                                value={secretValues['BACKUP_S3_ENDPOINT'] || ''}
+                                                onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_ENDPOINT': e.target.value }))}
+                                                className="text-xs"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs text-white/50 mb-1 block">Region <span className="text-white/30">(optional)</span></label>
+                                            <Input
+                                                type="text"
+                                                placeholder="us-ashburn-1"
+                                                value={secretValues['BACKUP_S3_REGION'] || ''}
+                                                onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_REGION': e.target.value }))}
+                                                className="text-xs"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <Button
+                                        size="sm"
+                                        className="w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
+                                        onClick={async () => {
+                                            if (secretValues['BACKUP_S3_BUCKET']) await handleSave('BACKUP_S3_BUCKET');
+                                            if (secretValues['BACKUP_S3_ACCESS_KEY']) await handleSave('BACKUP_S3_ACCESS_KEY');
+                                            if (secretValues['BACKUP_S3_SECRET_KEY']) await handleSave('BACKUP_S3_SECRET_KEY');
+                                            if (secretValues['BACKUP_ENCRYPTION_KEY']) await handleSave('BACKUP_ENCRYPTION_KEY');
+                                            if (secretValues['BACKUP_S3_ENDPOINT']) await handleSave('BACKUP_S3_ENDPOINT');
+                                            if (secretValues['BACKUP_S3_REGION']) await handleSave('BACKUP_S3_REGION');
+                                        }}
+                                        disabled={!secretValues['BACKUP_S3_BUCKET'] || !secretValues['BACKUP_ENCRYPTION_KEY'] || savingKey !== null}
+                                    >
+                                        {savingKey ? 'Saving...' : 'Save Backup Settings'}
+                                    </Button>
+
+                                    <p className="text-white/40 text-xs">
+                                        Endpoint and Region are optional — only needed for non-AWS providers (Oracle, MinIO, etc.).
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="space-y-3">
+                                    <div className="flex items-center gap-2">
+                                        <div className="flex-1 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center px-4">
+                                            <CheckCircle className="w-4 h-4 text-amber-400 mr-2" />
+                                            <span className="text-amber-200 text-sm">Backup storage configured</span>
+                                        </div>
+                                        <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, 'BACKUP_S3_BUCKET': '' }))}>
+                                            Change
+                                        </Button>
+                                    </div>
                                 </div>
                             )}
                         </div>
