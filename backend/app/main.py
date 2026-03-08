@@ -47,8 +47,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Control referrer information
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         
-        # Content Security Policy (basic)
-        response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+        # Content Security Policy - allow Swagger UI CDN for docs
+        if "/api/docs" in str(request.url):
+            response.headers["Content-Security-Policy"] = (
+                "frame-ancestors 'none'; "
+                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net"
+            )
+        else:
+            response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
         
         # Prevent caching of sensitive data
         if "/api/" in str(request.url):
@@ -141,11 +148,42 @@ app = FastAPI(
     title="Township 311 API",
     description="Open311-compliant civic engagement platform for municipal request management",
     version="1.0.0",
-    docs_url="/api/docs",
+    docs_url=None,  # Disable default - we serve custom below
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
     lifespan=lifespan
 )
+
+
+from fastapi.responses import HTMLResponse
+
+@app.get("/api/docs", include_in_schema=False)
+async def custom_swagger_ui():
+    """Custom Swagger UI that explicitly loads all required JS/CSS."""
+    return HTMLResponse("""
+<!DOCTYPE html>
+<html>
+<head>
+<title>Township 311 API - Swagger UI</title>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
+</head>
+<body>
+<div id="swagger-ui"></div>
+<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
+<script>
+SwaggerUIBundle({
+    url: '/api/openapi.json',
+    dom_id: '#swagger-ui',
+    presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
+    layout: 'StandaloneLayout'
+});
+</script>
+</body>
+</html>
+""")
 
 # Rate limiting
 app.state.limiter = limiter
