@@ -55,11 +55,11 @@ All variable costs are based on actual usage. Here's what a typical municipality
 
 ### Vertex AI (Gemini 3.1 Flash-Lite)
 
-| Model | Input (text/image/video) | Output (response + reasoning) | Typical Monthly |
-|-------|-------|--------|-----------------| 
-| **Gemini 3.1 Flash-Lite** | $0.025/1M tokens | $1.50/1M tokens | ~$0.50-2 |
+| Model | Input (text/image/video) | Cached Input | Output (response + reasoning) | Typical Monthly |
+|-------|-------|--------|--------|-----------------| 
+| **Gemini 3.1 Flash-Lite** | $0.25/1M tokens | $0.025/1M tokens | $1.50/1M tokens | ~$1-3 |
 
-> 🤖 AI analysis of 500 requests/month costs approximately **$0.50-2**.
+> 🤖 AI analysis of 500 requests/month costs approximately **$1-3**.
 
 ### Google Translate API
 
