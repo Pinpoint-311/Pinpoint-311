@@ -98,7 +98,7 @@ export default function TermsOfService() {
     const { settings } = useSettings();
 
     const content = settings?.terms_of_service || DEFAULT_TERMS_OF_SERVICE;
-    const townshipName = settings?.township_name || 'Your Township';
+    const townshipName = settings?.township_name || 'Your Municipality';
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">

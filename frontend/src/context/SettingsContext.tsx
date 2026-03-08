@@ -10,7 +10,7 @@ interface SettingsContextType {
 
 const defaultSettings: SystemSettings = {
     id: 0,
-    township_name: 'Your Township',
+    township_name: 'Your Municipality',
     logo_url: null,
     favicon_url: null,
     hero_text: 'How can we help?',

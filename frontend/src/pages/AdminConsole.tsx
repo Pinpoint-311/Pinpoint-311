@@ -532,11 +532,11 @@ export default function AdminConsole() {
             setOsmSearchResults(response.results);
 
             if (response.results.length === 0) {
-                alert("No matching townships found. Try a different search term.");
+                alert("No matching municipalities found. Try a different search term.");
             }
         } catch (err) {
             console.error('OSM search failed:', err);
-            alert("Failed to search for township");
+            alert("Failed to search for municipality");
         } finally {
             setIsSearchingTownship(false);
         }
@@ -570,7 +570,7 @@ export default function AdminConsole() {
 
             setTownshipBoundary(geojson);
             setSelectedOsmResult(null);
-            setSaveMessage('Township boundary saved successfully!');
+            setSaveMessage('Municipality boundary saved successfully!');
             setTimeout(() => setSaveMessage(null), 3000);
         } catch (err) {
             console.error('Failed to fetch boundary:', err);
@@ -1947,17 +1947,17 @@ export default function AdminConsole() {
                                     </Card>
                                 ) : (
                                     <>
-                                        {/* Township Boundary Search */}
+                                        {/* Municipality Boundary Search */}
                                         <Card>
-                                            <h3 className="text-lg font-semibold text-white mb-2">Township Boundary</h3>
+                                            <h3 className="text-lg font-semibold text-white mb-2">Municipality Boundary</h3>
                                             <p className="text-sm text-white/50 mb-4">
-                                                Search for your township using OpenStreetMap to get its boundary.
+                                                Search for your municipality using OpenStreetMap to get its boundary.
                                             </p>
 
                                             <div className="p-4 rounded-xl bg-primary-500/10 border border-primary-500/20 mb-4">
                                                 <p className="text-sm font-medium text-primary-300 mb-2">How it works:</p>
                                                 <ol className="text-xs text-white/60 space-y-1 list-decimal list-inside">
-                                                    <li>Search for your township name (e.g., "West Windsor Township, NJ")</li>
+                                                    <li>Search for your municipality name (e.g., "West Windsor Township, NJ")</li>
                                                     <li>Select from the search results</li>
                                                     <li>Click "Fetch Boundary" to get the GeoJSON boundary data</li>
                                                     <li>The boundary will be displayed on the resident portal map</li>
@@ -1970,8 +1970,8 @@ export default function AdminConsole() {
                                                     <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40 pointer-events-none z-10" />
                                                     <input
                                                         type="text"
-                                                        placeholder="Search for your township..."
-                                                        aria-label="Search for your township"
+                                                        placeholder="Search for your municipality..."
+                                                        aria-label="Search for your municipality"
                                                         value={townshipSearch}
                                                         onChange={(e) => setTownshipSearch(e.target.value)}
                                                         onKeyDown={(e) => {
@@ -1996,7 +1996,7 @@ export default function AdminConsole() {
                                             {/* Search Results */}
                                             {osmSearchResults.length > 0 && (
                                                 <div className="mb-4">
-                                                    <p className="text-sm text-white/60 mb-2">Select your township:</p>
+                                                    <p className="text-sm text-white/60 mb-2">Select your municipality:</p>
                                                     <div className="space-y-2 max-h-60 overflow-y-auto">
                                                         {osmSearchResults.map((result) => (
                                                             <button
@@ -2017,10 +2017,10 @@ export default function AdminConsole() {
                                                 </div>
                                             )}
 
-                                            {/* Selected Township */}
+                                            {/* Selected Municipality */}
                                             {selectedOsmResult && (
                                                 <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/30 mb-4">
-                                                    <p className="text-sm text-blue-300 mb-2">Selected Township</p>
+                                                    <p className="text-sm text-blue-300 mb-2">Selected Municipality</p>
                                                     <p className="text-white font-medium text-sm">{selectedOsmResult.display_name}</p>
                                                     <p className="text-xs text-white/50 mt-1">OSM ID: {selectedOsmResult.osm_id}</p>
                                                     <div className="mt-3">
@@ -2040,7 +2040,7 @@ export default function AdminConsole() {
                                                 <div className="p-4 rounded-xl bg-green-500/10 border border-green-500/30 mb-4">
                                                     <div className="flex justify-between items-start">
                                                         <div>
-                                                            <p className="text-sm text-green-300 mb-2">✓ Township Boundary Configured</p>
+                                                            <p className="text-sm text-green-300 mb-2">✓ Municipality Boundary Configured</p>
                                                             <p className="text-xs text-white/60">
                                                                 Boundary data is saved and will be displayed on the resident portal map.
                                                             </p>
@@ -2069,7 +2069,7 @@ export default function AdminConsole() {
                                                                 size="sm"
                                                                 variant="ghost"
                                                                 onClick={async () => {
-                                                                    if (confirm('Are you sure you want to clear the township boundary?')) {
+                                                                    if (confirm('Are you sure you want to clear the municipality boundary?')) {
                                                                         try {
                                                                             await api.saveTownshipBoundary({});
                                                                             setTownshipBoundary(null);
@@ -2099,12 +2099,12 @@ export default function AdminConsole() {
                                             {/* GeoJSON Upload */}
                                             <div className="p-4 rounded-xl bg-white/5 border border-white/10">
                                                 <p className="text-sm text-white/70 mb-3">
-                                                    Upload a GeoJSON file containing your township boundary
+                                                    Upload a GeoJSON file containing your municipality boundary
                                                 </p>
                                                 <input
                                                     type="file"
                                                     accept=".geojson,.json"
-                                                    aria-label="Upload GeoJSON township boundary file"
+                                                    aria-label="Upload GeoJSON municipality boundary file"
                                                     onChange={async (e) => {
                                                         const file = e.target.files?.[0];
                                                         if (!file) return;
@@ -2996,7 +2996,7 @@ export default function AdminConsole() {
                         <label className="block text-sm font-medium text-white/70">Routing Mode</label>
                         <div className="grid grid-cols-3 gap-2">
                             {[
-                                { value: 'township', label: 'Township Handles', desc: 'We process this request' },
+                                { value: 'township', label: 'Municipality Handles', desc: 'We process this request' },
                                 { value: 'third_party', label: '3rd Party Only', desc: 'Block & redirect' },
                                 { value: 'road_based', label: 'Road-Based', desc: 'Route by address' },
                             ].map(mode => (
@@ -3041,7 +3041,7 @@ export default function AdminConsole() {
                     {serviceRouting.routing_mode === 'township' && (
                         <div className="space-y-4 p-4 rounded-lg bg-green-500/10 border border-green-500/20">
                             <h4 className="font-medium text-green-300 flex items-center gap-2">
-                                <Check className="w-4 h-4" /> Township Handles This
+                                <Check className="w-4 h-4" /> Municipality Handles This
                             </h4>
 
                             <div className="space-y-2">
@@ -3216,14 +3216,14 @@ export default function AdminConsole() {
                                     className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
                                     aria-label="Default handler"
                                 >
-                                    <option value="township">Township handles by default</option>
+                                    <option value="township">Municipality handles by default</option>
                                     <option value="third_party">Third party handles by default</option>
                                 </select>
                             </div>
 
-                            {/* Township Department */}
+                            {/* Municipality Department */}
                             <div className="space-y-2">
-                                <label className="block text-sm font-medium text-white/70">Township Department</label>
+                                <label className="block text-sm font-medium text-white/70">Municipality Department</label>
                                 <select
                                     value={serviceRouting.assigned_department_id || ''}
                                     onChange={(e) => setServiceRouting(p => ({

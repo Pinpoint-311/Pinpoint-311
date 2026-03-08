@@ -491,7 +491,7 @@ export default function ResidentPortal() {
                             </div>
                         )}
                         <h1 className="text-lg md:text-xl font-semibold text-white hidden sm:block" data-no-translate>
-                            {settings?.township_name || 'Township 311'}
+                            {settings?.township_name || 'Municipality 311'}
                         </h1>
                     </button>
 
@@ -543,7 +543,7 @@ export default function ResidentPortal() {
                                 {settings?.logo_url ? (
                                     <img
                                         src={settings.logo_url}
-                                        alt={settings?.township_name || "Township"}
+                                        alt={settings?.township_name || "Municipality"}
                                         className="h-12 mx-auto mb-4 object-contain"
                                     />
                                 ) : (
@@ -1319,7 +1319,7 @@ export default function ResidentPortal() {
                                             </Button>
                                         ) : isLocationOutOfBounds ? (
                                             <div className="p-4 rounded-xl bg-red-500/20 border border-red-500/30 text-red-300 text-center">
-                                                <strong>Cannot submit:</strong> The selected location is outside the township boundary. Please choose a location within the jurisdiction.
+                                                <strong>Cannot submit:</strong> The selected location is outside the municipality boundary. Please choose a location within the jurisdiction.
                                             </div>
                                         ) : (
                                             <div className="p-4 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-300 text-center">
@@ -1377,7 +1377,7 @@ export default function ResidentPortal() {
                 <div className="max-w-6xl mx-auto flex flex-col items-center gap-4">
                     {/* Copyright */}
                     <p className="text-white/40 text-sm text-center">
-                        © {new Date().getFullYear()} {settings?.township_name || 'Township 311'}. {"All rights reserved"}
+                        © {new Date().getFullYear()} {settings?.township_name || 'Municipality 311'}. {"All rights reserved"}
                     </p>
 
                     {/* Social Links */}

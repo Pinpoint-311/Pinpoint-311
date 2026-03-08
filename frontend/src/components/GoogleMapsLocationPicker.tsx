@@ -833,7 +833,7 @@ export default function GoogleMapsLocationPicker({
                 <div className="flex items-center gap-2 text-sm bg-red-500/10 rounded-xl px-4 py-3 border border-red-500/30">
                     <span className="text-red-400">⚠️</span>
                     <span className="text-red-300">
-                        This location is outside the township boundary. Please select a location within the jurisdiction.
+                        This location is outside the municipality boundary. Please select a location within the jurisdiction.
                     </span>
                 </div>
             )}
