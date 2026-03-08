@@ -573,10 +573,42 @@ All research fields are computed on-the-fly using real APIs:
 
 ### Standards Compliance
 - **Open311 v2**: Compatible with the Open311 GeoReport v2 standard (JSON).
-    - `GET /api/open311/v2/requests.json`: Public feed (cached via Redis).
-    - `POST /api/open311/v2/requests.json`: Standard submission endpoint.
-    - `GET /api/open311/v2/services.json`: Service discovery endpoint.
+- **Interactive API Docs**: Available at `/api/docs` (Swagger UI) and `/api/redoc` (ReDoc).
 - **Audit Trails**: Every action (submission, comment, status change) is logged for accountability.
+
+#### Public Endpoints (No Authentication Required)
+
+| Method | Endpoint | Description | Rate Limit |
+|--------|----------|-------------|------------|
+| `GET` | `/api/open311/v2/services.json` | List available service categories | Global |
+| `POST` | `/api/open311/v2/requests.json` | Submit a new service request | **10/min per IP** |
+| `GET` | `/api/open311/v2/public/requests` | List all requests (PII stripped, cached via Redis) | Global |
+| `GET` | `/api/open311/v2/public/requests/{id}` | Get request detail (PII stripped) | Global |
+| `GET` | `/api/open311/v2/public/requests/{id}/comments` | Get public comments on a request | Global |
+| `POST` | `/api/open311/v2/public/requests/{id}/comments` | Add a public comment (anonymous) | **5/min per IP** |
+| `GET` | `/api/open311/v2/public/requests/{id}/audit-log` | Status change history (staff names redacted) | Global |
+
+#### Authenticated Endpoints (Staff/Admin Only)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/open311/v2/requests.json` | List all requests with full PII |
+| `GET` | `/api/open311/v2/requests/{id}.json` | Get full request detail with PII |
+| `PUT` | `/api/open311/v2/requests/{id}/status` | Update status, assignment, or priority |
+| `POST` | `/api/open311/v2/requests/manual` | Create request from phone/walk-in intake |
+| `DELETE` | `/api/open311/v2/requests/{id}` | Soft-delete a request (requires justification) |
+| `POST` | `/api/open311/v2/requests/{id}/restore` | Restore a soft-deleted request |
+| `POST` | `/api/open311/v2/requests/{id}/accept-ai-priority` | Accept AI-suggested priority score |
+| `GET` | `/api/open311/v2/requests/{id}/audit-log` | Full audit log with staff names |
+| `GET` | `/api/open311/v2/requests/asset/{id}/related` | Find all requests linked to an asset |
+
+#### API Security Notes
+
+- **Public endpoints never expose**: staff usernames, resident PII (email, phone, name), or internal department IDs
+- **Staff audit log entries** in public views show "Staff" instead of individual usernames
+- **Legal hold** (`flagged` field) can only be toggled by admin-role users
+- **Global rate limit**: 500 requests/minute per IP across all endpoints (via SlowAPI)
+- **Authentication**: Staff endpoints require a valid Auth0 JWT bearer token
 
 ### Tech Stack
 | Component | Technology | Description |
