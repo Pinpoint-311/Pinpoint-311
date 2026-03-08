@@ -7,7 +7,7 @@ geoalchemy2==0.14.3
 pydantic==2.5.3
 pydantic-settings==2.1.0
 email-validator==2.1.0
-python-jose[cryptography]==3.3.0
+python-jose[cryptography]==3.5.0
 bcrypt==4.0.1
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
