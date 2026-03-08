@@ -181,7 +181,6 @@ export default function Login() {
                                     className="text-primary-400/50 hover:text-primary-300 transition-colors inline-flex items-center gap-1"
                                     data-no-translate
                                 >
-                                    <img src="/pinpoint311_icon.png" alt="" className="h-3 w-3 inline-block" style={{ verticalAlign: '-1px' }} />
                                     Pinpoint 311
                                 </a>
                                 {' '}— Free &amp; Open Source
