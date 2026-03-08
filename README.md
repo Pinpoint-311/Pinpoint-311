@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/React-18-61DAFB.svg" alt="React 18">
   <img src="https://img.shields.io/badge/FastAPI-0.109-009688.svg" alt="FastAPI">
   <img src="https://img.shields.io/badge/PostgreSQL-15-336791.svg" alt="PostgreSQL 15">
-  <img src="https://img.shields.io/badge/AI-Gemini%203.0-8E24AA.svg" alt="Gemini 3.0 Flash">
+  <img src="https://img.shields.io/badge/AI-Gemini%203.1-8E24AA.svg" alt="Gemini 3.1 Flash-Lite">
   <img src="https://img.shields.io/badge/Geo-PostGIS-336791.svg" alt="PostGIS">
 </p>
 
@@ -52,7 +52,7 @@ Beyond the UI, it features a sophisticated **AI & Geospatial Engine** that autom
 | **Data Ownership** | ✅ You own | ❌ Vendor-hosted | **✅ Self-hosted** |
 | **Source Code** | N/A | ❌ Proprietary | **✅ MIT License** |
 | **Mobile Experience** | Non-responsive | Native apps | **Responsive Web App** |
-| **AI Triage** | ❌ Manual | ❌ Basic rules | **✅ Gemini 3.0 Flash** |
+| **AI Triage** | ❌ Manual | ❌ Basic rules | **✅ Gemini 3.1 Flash-Lite** |
 | **Photo Analysis** | ❌ None | ❌ None | **✅ Vision AI** |
 | **Multilingual** | ❌ English | ~10 languages | **✅ 109 languages** |
 | **Resident Login** | Required | Required | **✅ No account needed** |
@@ -248,7 +248,7 @@ graph LR
 
 ### 🧠 Advanced Intelligence
 - **Information Redaction**: Automatically strips PII (names, phones, emails) from public request logs.
-- **Visual Analysis**: Uses **Gemini 3.0 Flash** via Google Cloud **Vertex AI** to "see" uploaded photos and categorize hazards (e.g., "pothole caused by water damage").
+- **Visual Analysis**: Uses **Gemini 3.1 Flash-Lite** via Google Cloud **Vertex AI** to "see" uploaded photos and categorize hazards (e.g., "pothole caused by water damage").
 - **Multilingual AI Analysis**: When residents submit requests in non-English languages, the AI automatically provides a literal English translation first before performing its analysis, ensuring staff can understand all submissions regardless of language.
 - **Priority Scoring (Human-in-the-Loop)**: AI suggests a 1-10 urgency score, but scores are **never automatically saved**. Staff must explicitly accept or override the AI suggestion, ensuring human accountability for all priority decisions.
 
@@ -325,7 +325,7 @@ The Staff Dashboard is the command center for municipal operations, protected by
 - **Proximity Analysis**: Checks if the issue is near critical infrastructure (Schools, Hospitals, Fire Stations) via PostGIS, with a **Nominatim (OpenStreetMap)** fallback for unmapped areas.
 - **Sentiment Analysis**: Gauges the tone of the resident's description (Neutral, Frustrated, Urgent).
 - **Weather Context**: Automatically fetches real-time weather (e.g., "Heavy Rain, 45°F") to validiate hazards.
-- **Gemini Flash**: Powered by Google's latest model (`gemini-3-flash-preview`) with "Thinking Config" for deep reasoning.
+- **Gemini Flash**: Powered by Google's latest model (`gemini-3.1-flash-lite-preview`) with "Thinking Config" for deep reasoning.
 - **Similar Request Detection**: Surfaces nearby requests within 50m and a recent time window for staff awareness. The AI does not flag requests as duplicates or delete them—all requests are preserved and any action is left entirely to staff judgment.
 - **Human-in-the-Loop Priority**: AI priority suggestions are stored in a JSON field and displayed with an **"Accept AI Priority"** button. Staff must explicitly accept the score before it becomes the official priority, creating a complete audit trail.
 - **PostGIS Geospatial Analytics**:
@@ -334,7 +334,7 @@ The Staff Dashboard is the command center for municipal operations, protected by
     - **Jurisdiction Verification**: Real-time point-in-polygon checks against township boundaries.
 
 ### 5. AI Analytics Advisor (Conversational Intelligence)
-A full conversational AI interface powered by **Gemini 3.0 Flash** that lets staff ask questions about their data in natural language. Unlike traditional dashboards, it cross-references **all system data** with **research-grade analytics** to provide actionable insights.
+A full conversational AI interface powered by **Gemini 3.1 Flash-Lite** that lets staff ask questions about their data in natural language. Unlike traditional dashboards, it cross-references **all system data** with **research-grade analytics** to provide actionable insights.
 
 - **Natural Language Queries**: Ask questions like "What's our average triage time?" or "Are there equity gaps in our response times?" and get data-driven answers with specific numbers.
 - **Research-Grade Context**: The AI has access to aggregated metrics from the Research Suite:
@@ -619,7 +619,7 @@ All research fields are computed on-the-fly using real APIs:
 | **Database** | PostgreSQL 15 + PostGIS | Relational data with advanced spatial queries |
 | **Migrations** | Alembic | Version-controlled database schema changes |
 | **Caching** | Redis | High-speed caching for public request feeds (60s TTL) |
-| **AI** | Vertex AI (Gemini Flash) | Multimodal model for image/text analysis |
+| **AI** | Vertex AI (Gemini 3.1 Flash-Lite) | Multimodal model for image/text analysis |
 | **Queue** | Celery + Redis | Background processing for emails and reports |
 | **Reverse Proxy** | Caddy | Automatic HTTPS and SSL termination |
 

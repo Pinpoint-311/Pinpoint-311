@@ -53,13 +53,13 @@ All variable costs are based on actual usage. Here's what a typical municipality
 
 > 📍 **Most municipalities stay well within the free quotas.** A town with 500 requests/month typically uses ~500-1,000 map loads and ~500 geocoding calls — **$0/month**.
 
-### Vertex AI (Gemini 3.0 Flash)
+### Vertex AI (Gemini 3.1 Flash-Lite)
 
-| Model | Input | Output | Typical Monthly |
-|-------|-------|--------|-----------------|
-| **Gemini 3.0 Flash** | $0.50/1M tokens | $3.00/1M tokens | ~$2-5 |
+| Model | Input (text/image/video) | Output (response + reasoning) | Typical Monthly |
+|-------|-------|--------|-----------------| 
+| **Gemini 3.1 Flash-Lite** | $0.025/1M tokens | $1.50/1M tokens | ~$0.50-2 |
 
-> 🤖 AI analysis of 500 requests/month costs approximately **$2-5**.
+> 🤖 AI analysis of 500 requests/month costs approximately **$0.50-2**.
 
 ### Google Translate API
 

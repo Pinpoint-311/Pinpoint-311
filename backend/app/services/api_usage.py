@@ -24,9 +24,9 @@ logger = logging.getLogger(__name__)
 # IMPORTANT: Always verify costs with provider billing dashboards
 SERVICE_PRICING = {
     "vertex_ai": {
-        "description": "Gemini 3.0 Flash",
-        "input_tokens_per_million": 0.50,  # $0.50 per 1M input tokens
-        "output_tokens_per_million": 3.00,  # $3.00 per 1M output tokens
+        "description": "Gemini 3.1 Flash-Lite",
+        "input_tokens_per_million": 0.025,  # $0.025 per 1M input tokens (text/image/video)
+        "output_tokens_per_million": 1.50,  # $1.50 per 1M output tokens (response + reasoning)
         "unit": "tokens",
         "free_tier": {
             "monthly_limit": 0,  # No free tier for Vertex AI

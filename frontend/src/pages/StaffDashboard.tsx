@@ -1405,7 +1405,7 @@ export default function StaffDashboard() {
                                             <Send className="w-4 h-4" />
                                         </button>
                                     </div>
-                                    <p className="text-[10px] text-white/20 mt-1.5 text-center">Gemini 3.0 Flash · Equity metrics · Sentiment analysis · All system data except PII</p>
+                                    <p className="text-[10px] text-white/20 mt-1.5 text-center">Gemini 3.1 Flash-Lite · Equity metrics · Sentiment analysis · All system data except PII</p>
                                 </form>
                             </motion.div>
                         </>
@@ -1877,7 +1877,7 @@ export default function StaffDashboard() {
                                                                     </div>
                                                                     <div className="text-left">
                                                                         <span className="text-sm font-semibold text-white">AI Analysis</span>
-                                                                        <p className="text-[10px] text-white/40">Gemini 3 Flash</p>
+                                                                        <p className="text-[10px] text-white/40">Gemini 3.1 Flash-Lite</p>
                                                                     </div>
                                                                 </div>
                                                                 <ChevronDown className={`w-5 h-5 text-white/40 transition-transform ${isAIExpanded ? 'rotate-180' : ''}`} />
