@@ -35,6 +35,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response: Response = await call_next(request)
         
+        # Skip security headers for developer docs pages (they need CDN resources)
+        request_path = request.url.path
+        if request_path in ["/api/docs", "/api/redoc"]:
+            return response
+        
         # Prevent clickjacking
         response.headers["X-Frame-Options"] = "DENY"
         
@@ -47,18 +52,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Control referrer information
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         
-        # Content Security Policy - allow Swagger UI CDN for docs
-        if "/api/docs" in str(request.url):
-            response.headers["Content-Security-Policy"] = (
-                "frame-ancestors 'none'; "
-                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net"
-            )
-        else:
-            response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+        # Content Security Policy
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
         
         # Prevent caching of sensitive data
-        if "/api/" in str(request.url):
+        if "/api/" in request_path:
             response.headers["Cache-Control"] = "no-store, max-age=0"
         
         return response
