@@ -1433,7 +1433,6 @@ export default function ResidentPortal() {
                             className="text-primary-400/70 hover:text-primary-300 transition-colors inline-flex items-center gap-1"
                             data-no-translate
                         >
-                            <img src="/pinpoint311_icon.png" alt="" className="h-3.5 w-3.5 inline-block" style={{ verticalAlign: '-2px' }} />
                             Pinpoint 311
                         </a>
                         {' '}— {"Free & Open Source Municipal Platform"}
