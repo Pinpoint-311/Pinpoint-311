@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 SERVICE_PRICING = {
     "vertex_ai": {
         "description": "Gemini 3.1 Flash-Lite",
-        "input_tokens_per_million": 0.025,  # $0.025 per 1M input tokens (text/image/video)
+        "input_tokens_per_million": 0.25,  # $0.25 per 1M input tokens (text/image/video)
         "output_tokens_per_million": 1.50,  # $1.50 per 1M output tokens (response + reasoning)
         "unit": "tokens",
         "free_tier": {
