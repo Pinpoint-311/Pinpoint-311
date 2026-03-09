@@ -1,12 +1,16 @@
 """
 Translation service using Google Cloud Translation API with database caching.
+Uses the GCP Service Account (server-side only) for authentication.
+The Google Maps API key is public (sent to the browser) and should NOT be used here.
+
 Flow:
 1. Check database first for cached translation
-2. If not found, call Google Translate API
+2. If not found, call Google Translate API via service account auth
 3. Store result in database for future use (persistent cache)
 """
 from typing import Optional, Dict, List
 import logging
+import json
 import httpx
 from sqlalchemy import select, and_
 
@@ -15,16 +19,59 @@ logger = logging.getLogger(__name__)
 GOOGLE_TRANSLATE_API_URL = "https://translation.googleapis.com/language/translate/v2"
 
 
-async def get_api_key() -> Optional[str]:
-    """Get Google Maps API key (also used for Translation API) from Secret Manager."""
+async def _get_auth_headers() -> Optional[Dict[str, str]]:
+    """
+    Get OAuth2 authorization headers from GCP Service Account.
+    Uses the server-side service account JSON (never exposed to frontend).
+    """
     try:
         from app.services.secret_manager import get_secret
-        
-        api_key = await get_secret("GOOGLE_MAPS_API_KEY")
-        return api_key if api_key else None
+
+        sa_json = await get_secret("GCP_SERVICE_ACCOUNT_JSON")
+        if not sa_json:
+            logger.warning("GCP_SERVICE_ACCOUNT_JSON not configured, translation unavailable")
+            return None
+
+        # Use google-auth to generate an access token from the service account
+        from google.oauth2 import service_account
+        from google.auth.transport.requests import Request
+
+        sa_info = json.loads(sa_json) if isinstance(sa_json, str) else sa_json
+        credentials = service_account.Credentials.from_service_account_info(
+            sa_info,
+            scopes=["https://www.googleapis.com/auth/cloud-translation"]
+        )
+        credentials.refresh(Request())
+        return {"Authorization": f"Bearer {credentials.token}"}
+    except ImportError:
+        logger.warning("google-auth not installed, falling back to API key auth")
+        # Fallback: try the Maps API key (less secure, but works)
+        return await _get_api_key_fallback()
     except Exception as e:
-        logger.error(f"Failed to get Google API key: {e}")
+        logger.error(f"Failed to get GCP auth for translation: {e}")
         return None
+
+
+async def _get_api_key_fallback() -> Optional[Dict[str, str]]:
+    """Fallback: use API key if google-auth is not available."""
+    try:
+        from app.services.secret_manager import get_secret
+        api_key = await get_secret("GOOGLE_MAPS_API_KEY")
+        if api_key:
+            # Return as a special marker so callers know to use ?key= param
+            return {"_api_key": api_key}
+        return None
+    except Exception as e:
+        logger.error(f"Fallback API key retrieval failed: {e}")
+        return None
+
+
+async def get_api_key() -> Optional[str]:
+    """Check if translation is available (service account or API key)."""
+    auth = await _get_auth_headers()
+    if auth:
+        return "configured"  # Just indicates availability
+    return None
 
 
 
@@ -108,17 +155,26 @@ async def translate_text(
     if cached:
         return cached
     
-    # 2. Call Google Translate API
-    api_key = await get_api_key()
-    if not api_key:
-        logger.warning("Google Translate API key not configured")
+    # 2. Call Google Translate API using service account
+    auth = await _get_auth_headers()
+    if not auth:
+        logger.warning("Translation not configured (no service account or API key)")
         return None
     
     try:
+        # Build request with appropriate auth
+        headers = {}
+        params = {}
+        if "_api_key" in auth:
+            params["key"] = auth["_api_key"]
+        else:
+            headers = auth
+        
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
                 GOOGLE_TRANSLATE_API_URL,
-                params={"key": api_key},
+                params=params,
+                headers=headers,
                 json={
                     "q": text,
                     "source": source_lang,
@@ -189,19 +245,28 @@ async def translate_batch(
     if not uncached:
         return results
     
-    # 2. Call Google Translate API for uncached texts
-    api_key = await get_api_key()
-    if not api_key:
-        logger.warning("Google Translate API key not configured")
+    # 2. Call Google Translate API for uncached texts (via service account)
+    auth = await _get_auth_headers()
+    if not auth:
+        logger.warning("Translation not configured (no service account or API key)")
         for t in uncached:
             results[t] = t
         return results
     
     try:
+        # Build request with appropriate auth
+        headers = {}
+        params = {}
+        if "_api_key" in auth:
+            params["key"] = auth["_api_key"]
+        else:
+            headers = auth
+        
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 GOOGLE_TRANSLATE_API_URL,
-                params={"key": api_key},
+                params=params,
+                headers=headers,
                 json={
                     "q": uncached,
                     "source": source_lang,
