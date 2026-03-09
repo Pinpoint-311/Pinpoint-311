@@ -11,6 +11,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Catch unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[FATAL] Unhandled rejection:', reason);
+});
+
 // ====== Configuration ======
 const CONFIG = {
     MAX_INSTANCES: parseInt(process.env.MAX_INSTANCES || '3'),
@@ -106,13 +111,23 @@ async function tearDown(id, port) {
 async function waitForHealthy(port, maxWaitSec = 120) {
     const backendPort = CONFIG.BACKEND_BASE + (port - CONFIG.BASE_PORT);
     const start = Date.now();
+    console.log(`[health] Polling http://localhost:${backendPort}/api/health (max ${maxWaitSec}s)...`);
+    let attempt = 0;
     while (Date.now() - start < maxWaitSec * 1000) {
+        attempt++;
         try {
             const res = await fetch(`http://localhost:${backendPort}/api/health`);
-            if (res.ok) return true;
-        } catch { }
+            if (res.ok) {
+                console.log(`[health] Backend healthy after ${attempt} attempts`);
+                return true;
+            }
+            console.log(`[health] Attempt ${attempt}: status ${res.status}`);
+        } catch (err) {
+            if (attempt % 5 === 0) console.log(`[health] Attempt ${attempt}: ${err.message}`);
+        }
         await new Promise(r => setTimeout(r, 3000));
     }
+    console.error(`[health] Timed out after ${maxWaitSec}s (${attempt} attempts)`);
     return false;
 }
 
