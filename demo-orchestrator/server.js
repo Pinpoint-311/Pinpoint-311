@@ -15,19 +15,22 @@ app.use(express.json());
 const CONFIG = {
     MAX_INSTANCES: parseInt(process.env.MAX_INSTANCES || '3'),
     TTL_HOURS: parseInt(process.env.DEMO_TTL_HOURS || '24'),
-    BASE_PORT: parseInt(process.env.BASE_PORT || '9200'),      // Caddy combined port
-    BACKEND_BASE: parseInt(process.env.BACKEND_BASE || '9000'), // Direct backend port
-    FRONTEND_BASE: parseInt(process.env.FRONTEND_BASE || '9100'), // Direct frontend port
+    BASE_PORT: parseInt(process.env.BASE_PORT || '9200'),
+    BACKEND_BASE: parseInt(process.env.BACKEND_BASE || '9000'),
+    FRONTEND_BASE: parseInt(process.env.FRONTEND_BASE || '9100'),
     HOST: process.env.DEMO_HOST || 'localhost',
+    PUBLIC_DOMAIN: process.env.PUBLIC_DOMAIN || '311.westwindsorforward.org',
     DATA_DIR: join(__dirname, 'data'),
     COMPOSE_FILE: join(__dirname, 'docker-compose-demo.yml'),
-    // API keys passed through to demo instances
+    // Path to the MAIN production Caddyfile (to add demo routes)
+    CADDYFILE_PATH: process.env.CADDYFILE_PATH || '/home/ubuntu/WWF-Open-Source-311-Template/Caddyfile',
+    CADDY_CONTAINER: process.env.CADDY_CONTAINER || 'wwf-open-source-311-template-caddy-1',
+    // API keys
     GOOGLE_CLOUD_PROJECT: process.env.GOOGLE_CLOUD_PROJECT || '',
     GOOGLE_VERTEX_PROJECT: process.env.GOOGLE_VERTEX_PROJECT || '',
     GOOGLE_VERTEX_LOCATION: process.env.GOOGLE_VERTEX_LOCATION || 'us-central1',
 };
 
-// Ensure data directory exists
 if (!existsSync(CONFIG.DATA_DIR)) mkdirSync(CONFIG.DATA_DIR, { recursive: true });
 
 // ====== Instance Registry ======
@@ -43,7 +46,8 @@ function saveRegistry(r) {
 }
 
 function generateId() {
-    return 'demo_' + Math.random().toString(36).slice(2, 8) + '_' + Date.now().toString(36);
+    // Short IDs for cleaner URLs
+    return Math.random().toString(36).slice(2, 8);
 }
 
 function findAvailablePort(registry) {
@@ -55,7 +59,7 @@ function findAvailablePort(registry) {
 }
 
 // ====== Docker Compose Helpers ======
-function projectName(id) { return `p311demo_${id.replace(/[^a-z0-9_]/g, '')}`; }
+function projectName(id) { return `p311demo_${id}`; }
 
 function composeCmd(id, port, action) {
     const backendPort = CONFIG.BACKEND_BASE + (port - CONFIG.BASE_PORT);
@@ -75,7 +79,7 @@ async function spinUp(id, port) {
     return new Promise((resolve, reject) => {
         const cmd = composeCmd(id, port, 'up -d --pull missing');
         console.log(`[${id}] Spinning up on port ${port}...`);
-        exec(cmd, { timeout: 120000 }, (err, stdout, stderr) => {
+        exec(cmd, { timeout: 180000 }, (err, stdout, stderr) => {
             if (err) {
                 console.error(`[${id}] Failed to start:`, stderr);
                 reject(new Error(`Failed to start instance: ${stderr}`));
@@ -99,7 +103,7 @@ async function tearDown(id, port) {
     });
 }
 
-async function waitForHealthy(port, maxWaitSec = 90) {
+async function waitForHealthy(port, maxWaitSec = 120) {
     const backendPort = CONFIG.BACKEND_BASE + (port - CONFIG.BASE_PORT);
     const start = Date.now();
     while (Date.now() - start < maxWaitSec * 1000) {
@@ -117,7 +121,6 @@ async function seedDemoData(port, townName) {
     const baseUrl = `http://localhost:${backendPort}/api`;
 
     try {
-        // 1. Login as admin to get token
         const loginRes = await fetch(`${baseUrl}/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -130,7 +133,6 @@ async function seedDemoData(port, townName) {
         const { access_token } = await loginRes.json();
         const auth = { 'Authorization': `Bearer ${access_token}`, 'Content-Type': 'application/json' };
 
-        // 2. Update municipality name in settings
         await fetch(`${baseUrl}/settings`, {
             method: 'PUT', headers: auth,
             body: JSON.stringify({ municipality_name: townName }),
@@ -139,6 +141,59 @@ async function seedDemoData(port, townName) {
         console.log(`[seed] Configured municipality: ${townName}`);
     } catch (err) {
         console.error(`[seed] Error:`, err.message);
+    }
+}
+
+// ====== Dynamic Caddy Route Management ======
+// Instead of exposing demo ports externally (blocked by Oracle Cloud VCN),
+// we dynamically update the main Caddyfile to route /demo/{id}/* through
+// the already-open port 443.
+
+const CADDY_MARKER_START = '# === DEMO ROUTES START ===';
+const CADDY_MARKER_END = '# === DEMO ROUTES END ===';
+
+function generateDemoRoutes(registry) {
+    const routes = [];
+    for (const [id, inst] of Object.entries(registry)) {
+        if (inst.status === 'ready' || inst.status === 'booting') {
+            const port = inst.port;
+            routes.push(`    # Demo instance: ${id} (${inst.townName})`);
+            routes.push(`    handle_path /demo/${id}/* {`);
+            routes.push(`        reverse_proxy localhost:${port}`);
+            routes.push(`    }`);
+        }
+    }
+    return routes.join('\n');
+}
+
+function updateCaddyfile(registry) {
+    try {
+        let content = readFileSync(CONFIG.CADDYFILE_PATH, 'utf8');
+        const routes = generateDemoRoutes(registry);
+        const demoBlock = `${CADDY_MARKER_START}\n${routes}\n    ${CADDY_MARKER_END}`;
+
+        if (content.includes(CADDY_MARKER_START)) {
+            // Replace existing demo block
+            const re = new RegExp(`${CADDY_MARKER_START}[\\s\\S]*?${CADDY_MARKER_END}`, 'g');
+            content = content.replace(re, demoBlock);
+        } else {
+            // Insert demo block before the first handle block
+            content = content.replace(
+                /({\$DOMAIN:localhost}\s*\{)/,
+                `$1\n    ${demoBlock}\n`
+            );
+        }
+
+        writeFileSync(CONFIG.CADDYFILE_PATH, content);
+        console.log(`[caddy] Updated Caddyfile with ${Object.keys(registry).length} demo routes`);
+
+        // Reload Caddy
+        exec(`docker exec ${CONFIG.CADDY_CONTAINER} caddy reload --config /etc/caddy/Caddyfile`, (err) => {
+            if (err) console.error('[caddy] Reload warning:', err.message);
+            else console.log('[caddy] Reloaded successfully');
+        });
+    } catch (err) {
+        console.error('[caddy] Failed to update Caddyfile:', err.message);
     }
 }
 
@@ -160,11 +215,11 @@ async function cleanupExpired() {
 
     if (cleaned > 0) {
         saveRegistry(registry);
+        updateCaddyfile(registry);
         console.log(`[cleanup] Removed ${cleaned} expired instances`);
     }
 }
 
-// Run cleanup every 15 minutes
 cron.schedule('*/15 * * * *', () => {
     console.log('[cron] Running cleanup...');
     cleanupExpired().catch(err => console.error('[cron] Cleanup error:', err));
@@ -172,7 +227,6 @@ cron.schedule('*/15 * * * *', () => {
 
 // ====== API Routes ======
 
-// Create a new demo instance
 app.post('/api/demo/create', async (req, res) => {
     try {
         const { townName } = req.body;
@@ -194,7 +248,6 @@ app.post('/api/demo/create', async (req, res) => {
         const id = generateId();
         const port = findAvailablePort(registry);
 
-        // Register instance immediately
         registry[id] = {
             created: Date.now(),
             port,
@@ -203,7 +256,6 @@ app.post('/api/demo/create', async (req, res) => {
         };
         saveRegistry(registry);
 
-        // Respond immediately with instance ID — client will poll for status
         res.json({
             id,
             status: 'starting',
@@ -220,15 +272,17 @@ app.post('/api/demo/create', async (req, res) => {
             if (healthy) {
                 await seedDemoData(port, townName.trim());
                 registry[id].status = 'ready';
-                registry[id].url = `http://${CONFIG.HOST}:${port}`;
+                // URL goes through the main Caddy proxy — no firewall issues!
+                registry[id].url = `https://${CONFIG.PUBLIC_DOMAIN}/demo/${id}/`;
                 registry[id].credentials = {
                     username: 'admin',
                     password: 'DemoAdmin311!',
                 };
+                // Update Caddy to route traffic to this instance
+                updateCaddyfile(registry);
             } else {
                 registry[id].status = 'failed';
                 registry[id].error = 'Backend did not become healthy in time';
-                // Clean up failed instance
                 await tearDown(id, port);
             }
         } catch (err) {
@@ -244,7 +298,6 @@ app.post('/api/demo/create', async (req, res) => {
     }
 });
 
-// Check instance status
 app.get('/api/demo/:id/status', (req, res) => {
     const registry = loadRegistry();
     const inst = registry[req.params.id];
@@ -267,7 +320,6 @@ app.get('/api/demo/:id/status', (req, res) => {
     });
 });
 
-// Manually destroy an instance
 app.delete('/api/demo/:id', async (req, res) => {
     const registry = loadRegistry();
     const inst = registry[req.params.id];
@@ -276,11 +328,11 @@ app.delete('/api/demo/:id', async (req, res) => {
     await tearDown(req.params.id, inst.port);
     delete registry[req.params.id];
     saveRegistry(registry);
+    updateCaddyfile(registry);
 
     res.json({ status: 'destroyed', id: req.params.id });
 });
 
-// List all active instances (admin endpoint)
 app.get('/api/demo/instances', (req, res) => {
     const registry = loadRegistry();
     const instances = Object.entries(registry).map(([id, inst]) => ({
@@ -291,7 +343,6 @@ app.get('/api/demo/instances', (req, res) => {
     res.json({ count: instances.length, maxInstances: CONFIG.MAX_INSTANCES, instances });
 });
 
-// Health check
 app.get('/api/demo/health', (req, res) => {
     const registry = loadRegistry();
     res.json({
@@ -307,8 +358,6 @@ app.listen(PORT, () => {
     console.log(`🚀 Pinpoint 311 Demo Orchestrator running on port ${PORT}`);
     console.log(`   Max instances: ${CONFIG.MAX_INSTANCES}`);
     console.log(`   TTL: ${CONFIG.TTL_HOURS} hours`);
-    console.log(`   Base port: ${CONFIG.BASE_PORT}`);
-
-    // Run cleanup on startup
+    console.log(`   Public domain: ${CONFIG.PUBLIC_DOMAIN}`);
     cleanupExpired().catch(err => console.error('Startup cleanup error:', err));
 });
