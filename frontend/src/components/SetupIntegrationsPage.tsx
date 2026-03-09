@@ -5,7 +5,7 @@ import {
     Key, Shield, Cloud, MessageSquare, Mail, CheckCircle,
     AlertCircle, ChevronDown, ChevronUp, Copy, Check,
     ExternalLink, AlertTriangle, Database, BookOpen,
-    ListChecks, HardDrive
+    ListChecks, HardDrive, MapPin
 } from 'lucide-react';
 
 import { Card, Button, Input, Select, Badge } from './ui';
@@ -82,6 +82,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     }, [smsProviderFromSecrets]);
     const sentryConfigured = isConfigured('SENTRY_DSN');
     const gcpConfigured = isConfigured('GOOGLE_CLOUD_PROJECT');
+    const mapsConfigured = isConfigured('GOOGLE_MAPS_API_KEY');
     const smsConfigured = !!(localSmsProvider && localSmsProvider !== 'none');
     const backupConfigured = isConfigured('BACKUP_S3_BUCKET') && isConfigured('BACKUP_S3_ACCESS_KEY') && isConfigured('BACKUP_S3_SECRET_KEY') && isConfigured('BACKUP_ENCRYPTION_KEY');
 
@@ -90,6 +91,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         { label: 'Auth0 SSO', done: !!auth0Configured, required: true },
         { label: 'Email (SMTP)', done: !!smtpConfigured, required: false },
         { label: 'Google Cloud', done: !!gcpConfigured, required: false },
+        { label: 'Google Maps', done: !!mapsConfigured, required: false },
         { label: 'SMS Alerts', done: smsConfigured, required: false },
         { label: 'DB Backups', done: !!backupConfigured, required: false },
     ];
@@ -844,6 +846,107 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     <p className="text-white/40 text-xs">
                                         KMS fields are optional — the platform defaults to <code className="bg-black/20 px-1 rounded">us-central1</code> / <code className="bg-black/20 px-1 rounded">pinpoint311</code> / <code className="bg-black/20 px-1 rounded">pii-encryption</code> if left blank.
                                     </p>
+
+                                    {/* Divider */}
+                                    <div className="border-t border-white/10 my-4" />
+
+                                    {/* Google Maps API Key */}
+                                    <div>
+                                        <label className="text-sm text-white/60 mb-1.5 block flex items-center gap-2">
+                                            <MapPin className="w-4 h-4 text-green-400" />
+                                            Google Maps API Key
+                                            {isConfigured('GOOGLE_MAPS_API_KEY') && <CheckCircle className="w-3.5 h-3.5 text-green-400" />}
+                                        </label>
+                                        <div className="flex gap-2">
+                                            <Input
+                                                type="password"
+                                                placeholder="AIzaSy..."
+                                                value={secretValues['GOOGLE_MAPS_API_KEY'] || ''}
+                                                onChange={(e) => setSecretValues(p => ({ ...p, 'GOOGLE_MAPS_API_KEY': e.target.value }))}
+                                                className="flex-1 text-sm"
+                                            />
+                                            <Button
+                                                size="sm"
+                                                className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700"
+                                                onClick={() => handleSave('GOOGLE_MAPS_API_KEY')}
+                                                disabled={!secretValues['GOOGLE_MAPS_API_KEY'] || savingKey === 'GOOGLE_MAPS_API_KEY'}
+                                            >
+                                                {savingKey === 'GOOGLE_MAPS_API_KEY' ? '...' : 'Save'}
+                                            </Button>
+                                        </div>
+                                        <p className="text-white/30 text-xs mt-1">Required for maps in the resident portal and staff dashboard</p>
+                                    </div>
+
+                                    {/* Google Maps Map ID */}
+                                    <div>
+                                        <label className="text-sm text-white/60 mb-1.5 block">Google Maps Map ID <span className="text-white/30">(optional)</span></label>
+                                        <div className="flex gap-2">
+                                            <Input
+                                                type="text"
+                                                placeholder="Map ID for custom styling"
+                                                value={secretValues['GOOGLE_MAPS_MAP_ID'] || ''}
+                                                onChange={(e) => setSecretValues(p => ({ ...p, 'GOOGLE_MAPS_MAP_ID': e.target.value }))}
+                                                className="flex-1 text-sm"
+                                            />
+                                            <Button
+                                                size="sm"
+                                                onClick={() => handleSave('GOOGLE_MAPS_MAP_ID')}
+                                                disabled={!secretValues['GOOGLE_MAPS_MAP_ID'] || savingKey === 'GOOGLE_MAPS_MAP_ID'}
+                                            >
+                                                {savingKey === 'GOOGLE_MAPS_MAP_ID' ? '...' : 'Save'}
+                                            </Button>
+                                        </div>
+                                    </div>
+
+                                    {/* Divider */}
+                                    <div className="border-t border-white/10 my-4" />
+
+                                    {/* GCP Service Account JSON */}
+                                    <div>
+                                        <label className="text-sm text-white/60 mb-1.5 block flex items-center gap-2">
+                                            <Key className="w-4 h-4 text-amber-400" />
+                                            GCP Service Account JSON
+                                            {isConfigured('GCP_SERVICE_ACCOUNT_JSON') && <CheckCircle className="w-3.5 h-3.5 text-green-400" />}
+                                        </label>
+                                        <textarea
+                                            placeholder='{"type": "service_account", "project_id": "...", ...}'
+                                            value={secretValues['GCP_SERVICE_ACCOUNT_JSON'] || ''}
+                                            onChange={(e) => setSecretValues(p => ({ ...p, 'GCP_SERVICE_ACCOUNT_JSON': e.target.value }))}
+                                            rows={4}
+                                            className="w-full text-sm bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white placeholder-white/30 focus:outline-none focus:border-blue-500/50 resize-none font-mono"
+                                        />
+                                        <div className="flex gap-2 mt-2">
+                                            <label className="flex-1 cursor-pointer">
+                                                <div className="h-9 rounded-lg border border-dashed border-white/20 flex items-center justify-center text-white/40 text-xs hover:border-white/40 transition-colors">
+                                                    📁 Or drop / select a .json key file
+                                                </div>
+                                                <input
+                                                    type="file"
+                                                    accept=".json"
+                                                    className="hidden"
+                                                    onChange={(e) => {
+                                                        const file = e.target.files?.[0];
+                                                        if (file) {
+                                                            const reader = new FileReader();
+                                                            reader.onload = (ev) => {
+                                                                setSecretValues(p => ({ ...p, 'GCP_SERVICE_ACCOUNT_JSON': ev.target?.result as string || '' }));
+                                                            };
+                                                            reader.readAsText(file);
+                                                        }
+                                                    }}
+                                                />
+                                            </label>
+                                            <Button
+                                                size="sm"
+                                                className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
+                                                onClick={() => handleSave('GCP_SERVICE_ACCOUNT_JSON')}
+                                                disabled={!secretValues['GCP_SERVICE_ACCOUNT_JSON'] || savingKey === 'GCP_SERVICE_ACCOUNT_JSON'}
+                                            >
+                                                {savingKey === 'GCP_SERVICE_ACCOUNT_JSON' ? 'Saving...' : 'Save Key'}
+                                            </Button>
+                                        </div>
+                                        <p className="text-white/30 text-xs mt-1">Required for Vertex AI analysis, multi-language translation, and secure secrets storage</p>
+                                    </div>
                                 </div>
                             ) : (
                                 <div className="space-y-3">
