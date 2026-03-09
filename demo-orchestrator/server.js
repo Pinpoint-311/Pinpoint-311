@@ -137,18 +137,37 @@ async function seedDemoData(port, townName) {
     const baseUrl = `http://localhost:${backendPort}/api`;
 
     try {
-        const loginRes = await fetch(`${baseUrl}/auth/login`, {
+        // Step 1: Generate a bootstrap token (only works when Auth0 is NOT configured)
+        const bootstrapRes = await fetch(`${baseUrl}/auth/bootstrap`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'username=admin&password=DemoAdmin311!',
+            headers: { 'Content-Type': 'application/json' },
         });
-        if (!loginRes.ok) {
-            console.error(`[seed] Login failed: ${loginRes.status}`);
+        if (!bootstrapRes.ok) {
+            console.error(`[seed] Bootstrap failed: ${bootstrapRes.status}`);
             return;
         }
-        const { access_token } = await loginRes.json();
+        const bootstrapData = await bootstrapRes.json();
+        const bootstrapToken = bootstrapData.token;
+
+        // Step 2: Use the bootstrap token to get a JWT
+        // The GET endpoint returns HTML that sets localStorage, but we can extract the JWT
+        // by calling the endpoint and parsing the response
+        const tokenRes = await fetch(`${baseUrl}/auth/bootstrap/${bootstrapToken}`, {
+            method: 'GET',
+            redirect: 'manual',  // Don't follow redirects
+        });
+
+        // The response is HTML with the JWT embedded — extract it
+        const html = await tokenRes.text();
+        const tokenMatch = html.match(/localStorage\.setItem\('token',\s*'([^']+)'\)/);
+        if (!tokenMatch) {
+            console.error(`[seed] Could not extract JWT from bootstrap response`);
+            return;
+        }
+        const access_token = tokenMatch[1];
         const auth = { 'Authorization': `Bearer ${access_token}`, 'Content-Type': 'application/json' };
 
+        // Step 3: Set municipality name
         await fetch(`${baseUrl}/settings`, {
             method: 'PUT', headers: auth,
             body: JSON.stringify({ municipality_name: townName }),

@@ -114,7 +114,7 @@ services:
     restart: "no"
     ports:
       - "${DEMO_PORT:-9200}:80"
-    command: caddy reverse-proxy --from :80 --to frontend:80
+    command: caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     volumes:
       - ./Caddyfile.demo:/etc/caddy/Caddyfile
     depends_on:
