@@ -9,15 +9,20 @@ COMPOSE_FILE="$COMPOSE_DIR/docker-compose.demo.yml"
 
 echo "[$(date)] Starting demo reset..."
 
-# Stop demo stack
 cd "$COMPOSE_DIR"
-docker compose -f "$COMPOSE_FILE" down demo-backend demo-worker 2>/dev/null || true
 
-# Wipe and recreate database
+# Stop backend first
+docker compose -f "$COMPOSE_FILE" stop demo-backend demo-worker 2>/dev/null || true
+
+# Wipe and recreate database (preserve PostGIS extensions)
 docker compose -f "$COMPOSE_FILE" exec -T demo-db psql -U demo -d demo_db -c "
   DROP SCHEMA public CASCADE;
   CREATE SCHEMA public;
   GRANT ALL ON SCHEMA public TO demo;
+  CREATE EXTENSION IF NOT EXISTS postgis;
+  CREATE EXTENSION IF NOT EXISTS postgis_topology;
+  CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;
+  CREATE EXTENSION IF NOT EXISTS postgis_tiger_geocoder;
 " 2>/dev/null || true
 
 # Restart backend (will re-run migrations and seed)
