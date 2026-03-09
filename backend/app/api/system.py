@@ -1516,6 +1516,8 @@ async def switch_version(
     backup_dir = "/project/backups"
     
     # Auto-detect the Docker Compose project name from running containers
+    # IMPORTANT: Multiple compose projects may be running (production + demo instances).
+    # We must identify the production project by matching its ConfigFiles to our project_root.
     try:
         project_name_result = subprocess.run(
             ["docker", "compose", "ls", "--format", "json"],
@@ -1524,7 +1526,18 @@ async def switch_version(
         import json as _json
         if project_name_result.returncode == 0:
             projects = _json.loads(project_name_result.stdout)
-            compose_project = projects[0]["Name"] if projects else "wwf-open-source-311-template"
+            compose_project = "wwf-open-source-311-template"  # sensible default
+            
+            # Find the project whose config files match our project root
+            for proj in projects:
+                config_files = proj.get("ConfigFiles", "")
+                # The production project's docker-compose.yml lives in project_root's parent
+                # e.g. /home/ubuntu/WWF-Open-Source-311-Template/docker-compose.yml
+                if project_root in config_files or "WWF-Open-Source-311-Template/docker-compose.yml" in config_files:
+                    # Skip demo projects (their names contain "demo" or "p311demo")
+                    if "demo" not in proj["Name"].lower():
+                        compose_project = proj["Name"]
+                        break
         else:
             compose_project = "wwf-open-source-311-template"
     except Exception:
