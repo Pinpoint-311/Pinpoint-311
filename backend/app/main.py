@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 import os
+import json
 import sentry_sdk
 
 # Initialize Sentry for error tracking (optional - set SENTRY_DSN env var)
@@ -60,6 +61,50 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["Cache-Control"] = "no-store, max-age=0"
         
         return response
+
+
+class DemoModeMiddleware(BaseHTTPMiddleware):
+    """In DEMO_MODE, block mutating requests to admin/system routes.
+    
+    Resident portal submissions are allowed.
+    Staff dashboard reads are allowed.
+    Admin config changes are blocked.
+    """
+    
+    # Routes where mutations ARE allowed in demo mode
+    ALLOWED_MUTATION_PREFIXES = [
+        "/api/open311/",        # Public request submissions
+        "/api/auth/",           # Auth flows (demo-login, bootstrap)
+        "/api/gis/",            # Geocoding lookups
+        "/api/system/upload/",  # Image uploads for requests
+        "/api/system/translate/",  # Translation requests
+    ]
+    
+    async def dispatch(self, request: Request, call_next):
+        from app.core.config import get_settings
+        settings = get_settings()
+        
+        if not settings.demo_mode:
+            return await call_next(request)
+        
+        method = request.method.upper()
+        path = request.url.path
+        
+        # Allow all GET/HEAD/OPTIONS requests
+        if method in ("GET", "HEAD", "OPTIONS"):
+            return await call_next(request)
+        
+        # Allow mutations on whitelisted routes
+        for prefix in self.ALLOWED_MUTATION_PREFIXES:
+            if path.startswith(prefix):
+                return await call_next(request)
+        
+        # Block all other mutations
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Demo mode — this action is disabled. Deploy your own instance to configure settings."},
+        )
 
 
 @asynccontextmanager
@@ -190,6 +235,9 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Security headers middleware (added first, runs last)
 app.add_middleware(SecurityHeadersMiddleware)
 
+# Demo mode middleware — block admin mutations
+app.add_middleware(DemoModeMiddleware)
+
 # CORS middleware - use environment-based origins for production security
 # In production, set CORS_ORIGINS environment variable (comma-separated)
 import os
@@ -247,6 +295,17 @@ async def root():
         "message": "Township 311 API",
         "docs": "/api/docs",
         "health": "/api/health"
+    }
+
+
+@app.get("/api/demo/info")
+async def demo_info():
+    """Returns demo mode status and configuration for the frontend."""
+    from app.core.config import get_settings
+    settings = get_settings()
+    return {
+        "demo_mode": settings.demo_mode,
+        "message": "Welcome to the Pinpoint 311 demo! Explore the system freely." if settings.demo_mode else None,
     }
 
 

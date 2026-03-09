@@ -1,0 +1,130 @@
+# Pinpoint 311 — Single Shared Demo Instance
+# Deploy alongside production on the same server
+# Domain: demo.pinpoint311.org
+
+services:
+  demo-db:
+    image: ghcr.io/baosystems/postgis:15-3.3
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: ${DEMO_DB_PASSWORD:-demo_pass_secure_2026}
+      POSTGRES_DB: demo_db
+    volumes:
+      - demo_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U demo" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  demo-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 100mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: 128M
+
+  demo-backend:
+    image: wwf-open-source-311-template-backend:latest
+    restart: unless-stopped
+    command: >
+      sh -c "
+        echo 'Running migrations...' &&
+        alembic upgrade head 2>/dev/null || true &&
+        echo 'Starting demo server...' &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000
+      "
+    environment:
+      DATABASE_URL: postgresql+asyncpg://demo:${DEMO_DB_PASSWORD:-demo_pass_secure_2026}@demo-db/demo_db
+      REDIS_URL: redis://demo-redis:6379/0
+      SECRET_KEY: ${DEMO_SECRET_KEY:-demo-secret-key-pinpoint311-2026}
+      INITIAL_ADMIN_USER: admin
+      INITIAL_ADMIN_EMAIL: demo@pinpoint311.org
+      INITIAL_ADMIN_PASSWORD: DemoAdmin311!
+      DEMO_MODE: "true"
+      # Google API keys (set in .env.demo)
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+      GOOGLE_VERTEX_PROJECT: ${GOOGLE_VERTEX_PROJECT:-}
+      GOOGLE_VERTEX_LOCATION: ${GOOGLE_VERTEX_LOCATION:-us-central1}
+    depends_on:
+      demo-db:
+        condition: service_healthy
+      demo-redis:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/api/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  demo-worker:
+    image: wwf-open-source-311-template-backend:latest
+    restart: unless-stopped
+    command: celery -A app.core.celery_app worker --beat --loglevel=warning --concurrency=2
+    environment:
+      DATABASE_URL: postgresql+asyncpg://demo:${DEMO_DB_PASSWORD:-demo_pass_secure_2026}@demo-db/demo_db
+      REDIS_URL: redis://demo-redis:6379/0
+      SECRET_KEY: ${DEMO_SECRET_KEY:-demo-secret-key-pinpoint311-2026}
+      DEMO_MODE: "true"
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+      GOOGLE_VERTEX_PROJECT: ${GOOGLE_VERTEX_PROJECT:-}
+      GOOGLE_VERTEX_LOCATION: ${GOOGLE_VERTEX_LOCATION:-us-central1}
+    depends_on:
+      demo-db:
+        condition: service_healthy
+      demo-redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+
+  demo-frontend:
+    image: wwf-open-source-311-template-frontend:latest
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+
+  demo-caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "9300:80"
+    volumes:
+      - ./demo-orchestrator/Caddyfile.demo:/etc/caddy/Caddyfile
+    command: caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+    depends_on:
+      - demo-backend
+      - demo-frontend
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 64M
+
+volumes:
+  demo_pg_data:

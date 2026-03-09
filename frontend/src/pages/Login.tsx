@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { AlertCircle, Shield, LogIn } from 'lucide-react';
+import { AlertCircle, Shield, LogIn, Play } from 'lucide-react';
 import { Button, Card } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
@@ -15,6 +15,7 @@ export default function Login() {
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [authStatus, setAuthStatus] = useState<{ auth0_configured: boolean; message?: string } | null>(null);
+    const [demoMode, setDemoMode] = useState(false);
 
     // Set page title for accessibility
     useEffect(() => {
@@ -29,9 +30,16 @@ export default function Login() {
     useEffect(() => {
         const checkAuth = async () => {
             try {
-                const response = await fetch('/api/auth/status');
-                const data = await response.json();
-                setAuthStatus(data);
+                const [authRes, demoRes] = await Promise.all([
+                    fetch('/api/auth/status'),
+                    fetch('/api/demo/info'),
+                ]);
+                const authData = await authRes.json();
+                setAuthStatus(authData);
+                if (demoRes.ok) {
+                    const demoData = await demoRes.json();
+                    setDemoMode(demoData.demo_mode === true);
+                }
             } catch (err) {
                 console.error('Failed to check auth status:', err);
             }
@@ -110,8 +118,24 @@ export default function Login() {
                             <p className="text-white/50 mt-2">Staff Access Portal</p>
                         </div>
 
-                        {/* Auth Status */}
-                        {authStatus && !authStatus.auth0_configured ? (
+                        {/* Demo Mode Login */}
+                        {demoMode ? (
+                            <div className="space-y-4">
+                                <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-4 mb-2">
+                                    <p className="text-emerald-300 font-medium text-center">🎯 Live Demo Environment</p>
+                                    <p className="text-emerald-200/70 text-sm mt-1 text-center">
+                                        Explore the full staff dashboard and admin console.
+                                    </p>
+                                </div>
+                                <a
+                                    href="/api/auth/demo-login"
+                                    className="flex items-center justify-center gap-2 w-full px-6 py-3 rounded-xl font-medium text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 transition-all shadow-lg shadow-emerald-500/20"
+                                >
+                                    <Play className="w-5 h-5" />
+                                    Enter Demo
+                                </a>
+                            </div>
+                        ) : authStatus && !authStatus.auth0_configured ? (
                             <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-6">
                                 <div className="flex items-start gap-3">
                                     <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />

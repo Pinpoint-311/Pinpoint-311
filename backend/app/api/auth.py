@@ -379,3 +379,46 @@ async def get_me(
         "departments": [{"id": d.id, "name": d.name} for d in user.departments] if user.departments else []
     }
 
+
+@router.get("/demo-login")
+async def demo_login(
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Demo mode auto-login. Returns a JWT for the admin user.
+    Only works when DEMO_MODE=true.
+    """
+    from app.core.config import get_settings
+    
+    settings = get_settings()
+    if not settings.demo_mode:
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    # Find admin user
+    result = await db.execute(
+        select(User).where(User.role == "admin", User.is_active == True).limit(1)
+    )
+    admin = result.scalar_one_or_none()
+    
+    if not admin:
+        raise HTTPException(status_code=500, detail="No admin user found")
+    
+    access_token = create_access_token(data={"sub": admin.username, "role": admin.role})
+    
+    logger.info(f"Demo login for: {admin.username}")
+    
+    # Return HTML that stores token and redirects to staff dashboard
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(content=f"""
+    <!DOCTYPE html>
+    <html>
+    <head><title>Logging in to demo...</title></head>
+    <body>
+        <script>
+            localStorage.setItem('token', '{access_token}');
+            window.location.href = '/staff';
+        </script>
+        <p>Logging in... If not redirected, <a href="/staff">click here</a></p>
+    </body>
+    </html>
+    """)

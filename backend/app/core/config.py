@@ -28,8 +28,8 @@ class Settings(BaseSettings):
     app_name: str = "Township 311"
     debug: bool = False
     
-    # Research Suite (can also be toggled via Admin Console modules)
-    enable_research_suite: bool = False
+    # Demo mode - single shared demo environment
+    demo_mode: bool = False
 
     class Config:
         env_file = ".env"
