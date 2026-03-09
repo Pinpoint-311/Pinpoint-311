@@ -2,12 +2,12 @@
 :80 {
     # API routes
     handle /api/* {
-        reverse_proxy backend:8000
+        reverse_proxy demo-backend:8000
     }
 
     # Frontend (SPA)
     handle {
-        reverse_proxy frontend:80
+        reverse_proxy demo-frontend:80
     }
 
     encode gzip
