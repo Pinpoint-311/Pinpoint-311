@@ -175,7 +175,7 @@ function generateDemoSubdomains(registry) {
             const subdomain = `demo-${id}.${CONFIG.BASE_DOMAIN}`;
             blocks.push(`# Demo: ${id} (${inst.townName})`);
             blocks.push(`${subdomain} {`);
-            blocks.push(`    reverse_proxy localhost:${port}`);
+            blocks.push(`    reverse_proxy host.docker.internal:${port}`);
             blocks.push(`}`);
             blocks.push('');
         }
