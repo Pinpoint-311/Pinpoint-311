@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: ${DEMO_DB_PASSWORD:-demo_pass_123}
       POSTGRES_DB: demo_db
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U demo"]
+      test: [ "CMD-SHELL", "pg_isready -U demo" ]
       interval: 3s
       timeout: 3s
       retries: 10
@@ -25,7 +25,7 @@ services:
     restart: "no"
     command: redis-server --maxmemory 100mb --maxmemory-policy allkeys-lru
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 3s
       timeout: 3s
       retries: 10
@@ -36,7 +36,7 @@ services:
           memory: 128M
 
   backend:
-    image: ghcr.io/pinpoint-311/wwf-311-backend:latest
+    image: wwf-open-source-311-template-backend:latest
     restart: "no"
     command: >
       sh -c "
@@ -64,7 +64,7 @@ services:
     ports:
       - "${DEMO_BACKEND_PORT:-9000}:8000"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/api/health" ]
       interval: 5s
       timeout: 5s
       retries: 15
@@ -76,7 +76,7 @@ services:
           memory: 512M
 
   worker:
-    image: ghcr.io/pinpoint-311/wwf-311-backend:latest
+    image: wwf-open-source-311-template-backend:latest
     restart: "no"
     command: celery -A app.core.celery_app worker --beat --loglevel=warning --concurrency=2
     environment:
@@ -98,7 +98,7 @@ services:
           memory: 256M
 
   frontend:
-    image: ghcr.io/pinpoint-311/wwf-311-frontend:latest
+    image: wwf-open-source-311-template-frontend:latest
     restart: "no"
     ports:
       - "${DEMO_FRONTEND_PORT:-9100}:80"
