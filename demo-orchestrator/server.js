@@ -25,6 +25,7 @@ const CONFIG = {
     FRONTEND_BASE: parseInt(process.env.FRONTEND_BASE || '9100'),
     HOST: process.env.DEMO_HOST || 'localhost',
     PUBLIC_DOMAIN: process.env.PUBLIC_DOMAIN || '311.westwindsorforward.org',
+    BASE_DOMAIN: process.env.BASE_DOMAIN || 'westwindsorforward.org',
     DATA_DIR: join(__dirname, 'data'),
     COMPOSE_FILE: join(__dirname, 'docker-compose-demo.yml'),
     // Path to the MAIN production Caddyfile (to add demo routes)
@@ -159,48 +160,47 @@ async function seedDemoData(port, townName) {
     }
 }
 
-// ====== Dynamic Caddy Route Management ======
-// Instead of exposing demo ports externally (blocked by Oracle Cloud VCN),
-// we dynamically update the main Caddyfile to route /demo/{id}/* through
-// the already-open port 443.
+// ====== Dynamic Caddy Subdomain Management ======
+// Each demo instance gets its own subdomain: demo-{id}.westwindsorforward.org
+// This avoids the React SPA path-prefix issue entirely — each instance is at root /
 
-const CADDY_MARKER_START = '# === DEMO ROUTES START ===';
-const CADDY_MARKER_END = '# === DEMO ROUTES END ===';
+const CADDY_MARKER_START = '# === DEMO SUBDOMAINS START ===';
+const CADDY_MARKER_END = '# === DEMO SUBDOMAINS END ===';
 
-function generateDemoRoutes(registry) {
-    const routes = [];
+function generateDemoSubdomains(registry) {
+    const blocks = [];
     for (const [id, inst] of Object.entries(registry)) {
         if (inst.status === 'ready' || inst.status === 'booting') {
             const port = inst.port;
-            routes.push(`    # Demo instance: ${id} (${inst.townName})`);
-            routes.push(`    handle_path /demo/${id}/* {`);
-            routes.push(`        reverse_proxy localhost:${port}`);
-            routes.push(`    }`);
+            const subdomain = `demo-${id}.${CONFIG.BASE_DOMAIN}`;
+            blocks.push(`# Demo: ${id} (${inst.townName})`);
+            blocks.push(`${subdomain} {`);
+            blocks.push(`    tls internal`);
+            blocks.push(`    reverse_proxy localhost:${port}`);
+            blocks.push(`}`);
+            blocks.push('');
         }
     }
-    return routes.join('\n');
+    return blocks.join('\n');
 }
 
 function updateCaddyfile(registry) {
     try {
         let content = readFileSync(CONFIG.CADDYFILE_PATH, 'utf8');
-        const routes = generateDemoRoutes(registry);
-        const demoBlock = `${CADDY_MARKER_START}\n${routes}\n    ${CADDY_MARKER_END}`;
+        const subdomains = generateDemoSubdomains(registry);
+        const demoBlock = `\n${CADDY_MARKER_START}\n${subdomains}\n${CADDY_MARKER_END}`;
 
         if (content.includes(CADDY_MARKER_START)) {
-            // Replace existing demo block
-            const re = new RegExp(`${CADDY_MARKER_START}[\\s\\S]*?${CADDY_MARKER_END}`, 'g');
+            const re = new RegExp(`\\n?${CADDY_MARKER_START}[\\s\\S]*?${CADDY_MARKER_END}`, 'g');
             content = content.replace(re, demoBlock);
         } else {
-            // Insert demo block before the first handle block
-            content = content.replace(
-                /({\$DOMAIN:localhost}\s*\{)/,
-                `$1\n    ${demoBlock}\n`
-            );
+            // Append subdomain blocks at the END of the Caddyfile
+            content += demoBlock;
         }
 
         writeFileSync(CONFIG.CADDYFILE_PATH, content);
-        console.log(`[caddy] Updated Caddyfile with ${Object.keys(registry).length} demo routes`);
+        const count = Object.values(registry).filter(i => i.status === 'ready' || i.status === 'booting').length;
+        console.log(`[caddy] Updated Caddyfile with ${count} demo subdomain(s)`);
 
         // Reload Caddy
         exec(`docker exec ${CONFIG.CADDY_CONTAINER} caddy reload --config /etc/caddy/Caddyfile`, (err) => {
@@ -250,7 +250,7 @@ async function recoverStuckInstances() {
                     console.log(`[recovery] Instance ${id} backend is healthy — marking ready`);
                     await seedDemoData(inst.port, inst.townName);
                     registry[id].status = 'ready';
-                    registry[id].url = `https://${CONFIG.PUBLIC_DOMAIN}/demo/${id}/`;
+                    registry[id].url = `https://demo-${id}.${CONFIG.BASE_DOMAIN}`;
                     registry[id].credentials = { username: 'admin', password: 'DemoAdmin311!' };
                     recovered++;
                 }
@@ -324,7 +324,7 @@ app.post('/api/demo/create', async (req, res) => {
                 await seedDemoData(port, townName.trim());
                 registry[id].status = 'ready';
                 // URL goes through the main Caddy proxy — no firewall issues!
-                registry[id].url = `https://${CONFIG.PUBLIC_DOMAIN}/demo/${id}/`;
+                registry[id].url = `https://demo-${id}.${CONFIG.BASE_DOMAIN}`;
                 registry[id].credentials = {
                     username: 'admin',
                     password: 'DemoAdmin311!',
