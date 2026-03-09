@@ -378,6 +378,102 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                             Connected and operational
                         </div>
                     </Card>
+
+                    {/* Google Maps - Required Card */}
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.15 }}
+                        className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 col-span-full ${mapsConfigured
+                            ? 'bg-gradient-to-br from-green-500/10 via-emerald-500/5 to-teal-500/10 border-green-500/30 shadow-lg shadow-green-500/10'
+                            : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'
+                            }`}
+                    >
+                        {mapsConfigured && (
+                            <div className="absolute inset-0 bg-gradient-to-r from-green-500/5 via-transparent to-emerald-500/5 pointer-events-none" />
+                        )}
+
+                        <div className="relative">
+                            <div className="flex items-start justify-between mb-4">
+                                <div className="flex items-center gap-4">
+                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${mapsConfigured
+                                        ? 'bg-gradient-to-br from-green-400 to-emerald-500 shadow-lg shadow-green-500/30'
+                                        : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'
+                                        }`}>
+                                        <MapPin className="w-7 h-7 text-white" />
+                                    </div>
+                                    <div>
+                                        <h3 className="font-bold text-lg text-white">Google Maps</h3>
+                                        <p className="text-white/50 text-sm">Maps, geocoding, location picker</p>
+                                    </div>
+                                </div>
+                                {mapsConfigured ? (
+                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-green-500/20 to-emerald-500/20 text-green-300 border border-green-500/30 shadow-lg shadow-green-500/10">
+                                        <CheckCircle className="w-3.5 h-3.5" />
+                                        Configured
+                                    </span>
+                                ) : (
+                                    <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                        Required
+                                    </span>
+                                )}
+                            </div>
+
+                            <p className="text-white/60 text-sm mb-4">
+                                Powers the interactive map in the resident portal, staff dashboard, and location-based request submission.
+                            </p>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {/* Google Maps API Key */}
+                                <div>
+                                    <label className="text-sm text-white/60 mb-1.5 block flex items-center gap-2">
+                                        Google Maps API Key
+                                        {isConfigured('GOOGLE_MAPS_API_KEY') && <CheckCircle className="w-3.5 h-3.5 text-green-400" />}
+                                    </label>
+                                    <div className="flex gap-2">
+                                        <Input
+                                            type="password"
+                                            placeholder="AIzaSy..."
+                                            value={secretValues['GOOGLE_MAPS_API_KEY'] || ''}
+                                            onChange={(e) => setSecretValues(p => ({ ...p, 'GOOGLE_MAPS_API_KEY': e.target.value }))}
+                                            className="flex-1 text-sm"
+                                        />
+                                        <Button
+                                            size="sm"
+                                            className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700"
+                                            onClick={() => handleSave('GOOGLE_MAPS_API_KEY')}
+                                            disabled={!secretValues['GOOGLE_MAPS_API_KEY'] || savingKey === 'GOOGLE_MAPS_API_KEY'}
+                                        >
+                                            {savingKey === 'GOOGLE_MAPS_API_KEY' ? '...' : 'Save'}
+                                        </Button>
+                                    </div>
+                                    <p className="text-white/30 text-xs mt-1">Restrict to Maps JS API &amp; Geocoding API only</p>
+                                </div>
+
+                                {/* Google Maps Map ID */}
+                                <div>
+                                    <label className="text-sm text-white/60 mb-1.5 block">Google Maps Map ID <span className="text-white/30">(optional)</span></label>
+                                    <div className="flex gap-2">
+                                        <Input
+                                            type="text"
+                                            placeholder="Map ID for custom styling"
+                                            value={secretValues['GOOGLE_MAPS_MAP_ID'] || ''}
+                                            onChange={(e) => setSecretValues(p => ({ ...p, 'GOOGLE_MAPS_MAP_ID': e.target.value }))}
+                                            className="flex-1 text-sm"
+                                        />
+                                        <Button
+                                            size="sm"
+                                            onClick={() => handleSave('GOOGLE_MAPS_MAP_ID')}
+                                            disabled={!secretValues['GOOGLE_MAPS_MAP_ID'] || savingKey === 'GOOGLE_MAPS_MAP_ID'}
+                                        >
+                                            {savingKey === 'GOOGLE_MAPS_MAP_ID' ? '...' : 'Save'}
+                                        </Button>
+                                    </div>
+                                    <p className="text-white/30 text-xs mt-1">Optional — for custom map styling</p>
+                                </div>
+                            </div>
+                        </div>
+                    </motion.div>
                 </div>
             </div>
 
@@ -850,57 +946,6 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     {/* Divider */}
                                     <div className="border-t border-white/10 my-4" />
 
-                                    {/* Google Maps API Key */}
-                                    <div>
-                                        <label className="text-sm text-white/60 mb-1.5 block flex items-center gap-2">
-                                            <MapPin className="w-4 h-4 text-green-400" />
-                                            Google Maps API Key
-                                            {isConfigured('GOOGLE_MAPS_API_KEY') && <CheckCircle className="w-3.5 h-3.5 text-green-400" />}
-                                        </label>
-                                        <div className="flex gap-2">
-                                            <Input
-                                                type="password"
-                                                placeholder="AIzaSy..."
-                                                value={secretValues['GOOGLE_MAPS_API_KEY'] || ''}
-                                                onChange={(e) => setSecretValues(p => ({ ...p, 'GOOGLE_MAPS_API_KEY': e.target.value }))}
-                                                className="flex-1 text-sm"
-                                            />
-                                            <Button
-                                                size="sm"
-                                                className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700"
-                                                onClick={() => handleSave('GOOGLE_MAPS_API_KEY')}
-                                                disabled={!secretValues['GOOGLE_MAPS_API_KEY'] || savingKey === 'GOOGLE_MAPS_API_KEY'}
-                                            >
-                                                {savingKey === 'GOOGLE_MAPS_API_KEY' ? '...' : 'Save'}
-                                            </Button>
-                                        </div>
-                                        <p className="text-white/30 text-xs mt-1">Required for maps in the resident portal and staff dashboard</p>
-                                    </div>
-
-                                    {/* Google Maps Map ID */}
-                                    <div>
-                                        <label className="text-sm text-white/60 mb-1.5 block">Google Maps Map ID <span className="text-white/30">(optional)</span></label>
-                                        <div className="flex gap-2">
-                                            <Input
-                                                type="text"
-                                                placeholder="Map ID for custom styling"
-                                                value={secretValues['GOOGLE_MAPS_MAP_ID'] || ''}
-                                                onChange={(e) => setSecretValues(p => ({ ...p, 'GOOGLE_MAPS_MAP_ID': e.target.value }))}
-                                                className="flex-1 text-sm"
-                                            />
-                                            <Button
-                                                size="sm"
-                                                onClick={() => handleSave('GOOGLE_MAPS_MAP_ID')}
-                                                disabled={!secretValues['GOOGLE_MAPS_MAP_ID'] || savingKey === 'GOOGLE_MAPS_MAP_ID'}
-                                            >
-                                                {savingKey === 'GOOGLE_MAPS_MAP_ID' ? '...' : 'Save'}
-                                            </Button>
-                                        </div>
-                                    </div>
-
-                                    {/* Divider */}
-                                    <div className="border-t border-white/10 my-4" />
-
                                     {/* GCP Service Account JSON */}
                                     <div>
                                         <label className="text-sm text-white/60 mb-1.5 block flex items-center gap-2">
@@ -980,6 +1025,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                             )}
                         </div>
                     </motion.div>
+
 
                     {/* Sentry Error Tracking - Premium Card */}
                     <motion.div
