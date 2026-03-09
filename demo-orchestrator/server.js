@@ -235,6 +235,42 @@ async function cleanupExpired() {
     }
 }
 
+// ====== Recovery: Fix instances stuck in 'booting' or 'starting' ======
+async function recoverStuckInstances() {
+    const registry = loadRegistry();
+    let recovered = 0;
+
+    for (const [id, inst] of Object.entries(registry)) {
+        if (inst.status === 'booting' || inst.status === 'starting') {
+            const backendPort = CONFIG.BACKEND_BASE + (inst.port - CONFIG.BASE_PORT);
+            console.log(`[recovery] Checking stuck instance ${id} (status: ${inst.status})...`);
+            try {
+                const res = await fetch(`http://localhost:${backendPort}/api/health`);
+                if (res.ok) {
+                    console.log(`[recovery] Instance ${id} backend is healthy — marking ready`);
+                    await seedDemoData(inst.port, inst.townName);
+                    registry[id].status = 'ready';
+                    registry[id].url = `https://${CONFIG.PUBLIC_DOMAIN}/demo/${id}/`;
+                    registry[id].credentials = { username: 'admin', password: 'DemoAdmin311!' };
+                    recovered++;
+                }
+            } catch (err) {
+                console.log(`[recovery] Instance ${id} not healthy yet: ${err.message}`);
+            }
+        }
+    }
+
+    if (recovered > 0) {
+        saveRegistry(registry);
+        updateCaddyfile(registry);
+        console.log(`[recovery] Recovered ${recovered} stuck instances`);
+    }
+}
+
+cron.schedule('*/2 * * * *', () => {
+    recoverStuckInstances().catch(err => console.error('[cron] Recovery error:', err));
+});
+
 cron.schedule('*/15 * * * *', () => {
     console.log('[cron] Running cleanup...');
     cleanupExpired().catch(err => console.error('[cron] Cleanup error:', err));
@@ -375,4 +411,8 @@ app.listen(PORT, () => {
     console.log(`   TTL: ${CONFIG.TTL_HOURS} hours`);
     console.log(`   Public domain: ${CONFIG.PUBLIC_DOMAIN}`);
     cleanupExpired().catch(err => console.error('Startup cleanup error:', err));
+    // Recover instances stuck in booting/starting from previous crash
+    setTimeout(() => {
+        recoverStuckInstances().catch(err => console.error('Startup recovery error:', err));
+    }, 5000);
 });
