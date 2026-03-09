@@ -162,7 +162,7 @@ async function seedDemoData(port, townName) {
 
 // ====== Dynamic Caddy Subdomain Management ======
 // Each demo instance gets its own subdomain: demo-{id}.pinpoint311.org
-// Cloudflare handles SSL termination — origin serves HTTP only
+// Cloudflare DNS-only (grey cloud) — Caddy gets Let's Encrypt certs directly
 
 const CADDY_MARKER_START = '# === DEMO SUBDOMAINS START ===';
 const CADDY_MARKER_END = '# === DEMO SUBDOMAINS END ===';
@@ -174,7 +174,7 @@ function generateDemoSubdomains(registry) {
             const port = inst.port;
             const subdomain = `demo-${id}.${CONFIG.BASE_DOMAIN}`;
             blocks.push(`# Demo: ${id} (${inst.townName})`);
-            blocks.push(`http://${subdomain} {`);
+            blocks.push(`${subdomain} {`);
             blocks.push(`    reverse_proxy localhost:${port}`);
             blocks.push(`}`);
             blocks.push('');
