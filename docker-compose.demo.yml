@@ -8,7 +8,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: demo
-      POSTGRES_PASSWORD: ${DEMO_DB_PASSWORD:-demo_pass_secure_2026}
+      POSTGRES_PASSWORD: ${DEMO_DB_PASSWORD:?Set DEMO_DB_PASSWORD in .env.demo}
       POSTGRES_DB: demo_db
     volumes:
       - demo_pg_data:/var/lib/postgresql/data
@@ -49,12 +49,12 @@ services:
         uvicorn app.main:app --host 0.0.0.0 --port 8000
       "
     environment:
-      DATABASE_URL: postgresql+asyncpg://demo:${DEMO_DB_PASSWORD:-demo_pass_secure_2026}@demo-db/demo_db
+      DATABASE_URL: postgresql+asyncpg://demo:${DEMO_DB_PASSWORD}@demo-db/demo_db
       REDIS_URL: redis://demo-redis:6379/0
       SECRET_KEY: ${DEMO_SECRET_KEY:-demo-secret-key-pinpoint311-2026}
       INITIAL_ADMIN_USER: admin
       INITIAL_ADMIN_EMAIL: demo@pinpoint311.org
-      INITIAL_ADMIN_PASSWORD: DemoAdmin311!
+      INITIAL_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-Demo2026}
       DEMO_MODE: "true"
       # Google API keys (set in .env.demo)
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
@@ -82,7 +82,7 @@ services:
     restart: unless-stopped
     command: celery -A app.core.celery_app worker --beat --loglevel=warning --concurrency=2
     environment:
-      DATABASE_URL: postgresql+asyncpg://demo:${DEMO_DB_PASSWORD:-demo_pass_secure_2026}@demo-db/demo_db
+      DATABASE_URL: postgresql+asyncpg://demo:${DEMO_DB_PASSWORD}@demo-db/demo_db
       REDIS_URL: redis://demo-redis:6379/0
       SECRET_KEY: ${DEMO_SECRET_KEY:-demo-secret-key-pinpoint311-2026}
       DEMO_MODE: "true"
