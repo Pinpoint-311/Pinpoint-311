@@ -24,8 +24,8 @@ const CONFIG = {
     BACKEND_BASE: parseInt(process.env.BACKEND_BASE || '9000'),
     FRONTEND_BASE: parseInt(process.env.FRONTEND_BASE || '9100'),
     HOST: process.env.DEMO_HOST || 'localhost',
-    PUBLIC_DOMAIN: process.env.PUBLIC_DOMAIN || '311.westwindsorforward.org',
-    BASE_DOMAIN: process.env.BASE_DOMAIN || 'westwindsorforward.org',
+    PUBLIC_DOMAIN: process.env.PUBLIC_DOMAIN || 'pinpoint311.org',
+    BASE_DOMAIN: process.env.BASE_DOMAIN || 'pinpoint311.org',
     DATA_DIR: join(__dirname, 'data'),
     COMPOSE_FILE: join(__dirname, 'docker-compose-demo.yml'),
     // Path to the MAIN production Caddyfile (to add demo routes)
