@@ -1,0 +1,127 @@
+# Stripped-down Pinpoint 311 stack for demo instances
+# No Caddy (orchestrator handles routing), no Watchtower, prebuilt images only
+
+services:
+  db:
+    image: ghcr.io/baosystems/postgis:15-3.3
+    restart: "no"
+    environment:
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: ${DEMO_DB_PASSWORD:-demo_pass_123}
+      POSTGRES_DB: demo_db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  redis:
+    image: redis:7-alpine
+    restart: "no"
+    command: redis-server --maxmemory 100mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: 128M
+
+  backend:
+    image: ghcr.io/pinpoint-311/wwf-311-backend:latest
+    restart: "no"
+    command: >
+      sh -c "
+        echo 'Running migrations...' &&
+        alembic upgrade head 2>/dev/null || true &&
+        echo 'Starting server...' &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000
+      "
+    environment:
+      DATABASE_URL: postgresql+asyncpg://demo:${DEMO_DB_PASSWORD:-demo_pass_123}@db/demo_db
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${DEMO_SECRET_KEY:-demo-secret-key-not-for-production}
+      INITIAL_ADMIN_USER: admin
+      INITIAL_ADMIN_EMAIL: demo@pinpoint311.com
+      INITIAL_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-DemoAdmin311!}
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+      GOOGLE_VERTEX_PROJECT: ${GOOGLE_VERTEX_PROJECT:-}
+      GOOGLE_VERTEX_LOCATION: ${GOOGLE_VERTEX_LOCATION:-us-central1}
+      DEMO_MODE: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${DEMO_BACKEND_PORT:-9000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  worker:
+    image: ghcr.io/pinpoint-311/wwf-311-backend:latest
+    restart: "no"
+    command: celery -A app.core.celery_app worker --beat --loglevel=warning --concurrency=2
+    environment:
+      DATABASE_URL: postgresql+asyncpg://demo:${DEMO_DB_PASSWORD:-demo_pass_123}@db/demo_db
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${DEMO_SECRET_KEY:-demo-secret-key-not-for-production}
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+      GOOGLE_VERTEX_PROJECT: ${GOOGLE_VERTEX_PROJECT:-}
+      GOOGLE_VERTEX_LOCATION: ${GOOGLE_VERTEX_LOCATION:-us-central1}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+
+  frontend:
+    image: ghcr.io/pinpoint-311/wwf-311-frontend:latest
+    restart: "no"
+    ports:
+      - "${DEMO_FRONTEND_PORT:-9100}:80"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+
+  # Caddy as reverse proxy — combines frontend + backend under one URL
+  caddy:
+    image: caddy:2-alpine
+    restart: "no"
+    ports:
+      - "${DEMO_PORT:-9200}:80"
+    command: caddy reverse-proxy --from :80 --to frontend:80
+    volumes:
+      - ./Caddyfile.demo:/etc/caddy/Caddyfile
+    depends_on:
+      - backend
+      - frontend
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 64M

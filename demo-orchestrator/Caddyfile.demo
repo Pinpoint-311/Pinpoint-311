@@ -1,0 +1,14 @@
+# Demo Caddyfile — merges frontend + backend under one port
+:80 {
+    # API routes
+    handle /api/* {
+        reverse_proxy backend:8000
+    }
+
+    # Frontend (SPA)
+    handle {
+        reverse_proxy frontend:80
+    }
+
+    encode gzip
+}

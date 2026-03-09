@@ -1,0 +1,15 @@
+{
+    "name": "pinpoint311-demo-orchestrator",
+    "version": "1.0.0",
+    "description": "Spins up ephemeral Pinpoint 311 instances for live demos",
+    "type": "module",
+    "scripts": {
+        "start": "node server.js",
+        "cleanup": "node cleanup.js"
+    },
+    "dependencies": {
+        "cors": "^2.8.5",
+        "express": "^4.18.2",
+        "node-cron": "^3.0.3"
+    }
+}
