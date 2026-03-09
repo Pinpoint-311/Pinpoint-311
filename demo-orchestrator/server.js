@@ -161,8 +161,8 @@ async function seedDemoData(port, townName) {
 }
 
 // ====== Dynamic Caddy Subdomain Management ======
-// Each demo instance gets its own subdomain: demo-{id}.westwindsorforward.org
-// This avoids the React SPA path-prefix issue entirely — each instance is at root /
+// Each demo instance gets its own subdomain: demo-{id}.pinpoint311.org
+// Cloudflare handles SSL termination — origin serves HTTP only
 
 const CADDY_MARKER_START = '# === DEMO SUBDOMAINS START ===';
 const CADDY_MARKER_END = '# === DEMO SUBDOMAINS END ===';
@@ -174,8 +174,7 @@ function generateDemoSubdomains(registry) {
             const port = inst.port;
             const subdomain = `demo-${id}.${CONFIG.BASE_DOMAIN}`;
             blocks.push(`# Demo: ${id} (${inst.townName})`);
-            blocks.push(`${subdomain} {`);
-            blocks.push(`    tls internal`);
+            blocks.push(`http://${subdomain} {`);
             blocks.push(`    reverse_proxy localhost:${port}`);
             blocks.push(`}`);
             blocks.push('');
