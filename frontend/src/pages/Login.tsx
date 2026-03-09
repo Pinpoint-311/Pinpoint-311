@@ -175,7 +175,7 @@ export default function Login() {
                             <p className="text-white/20 text-xs mt-4">
                                 Powered by{' '}
                                 <a
-                                    href="https://github.com/Pinpoint-311/Pinpoint-311"
+                                    href="https://pinpoint311.org"
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="text-primary-400/50 hover:text-primary-300 transition-colors inline-flex items-center gap-1"
