@@ -78,7 +78,7 @@ DEFAULT_SECRETS = [
     
     
     # Google Maps / GIS
-    {"key_name": "GOOGLE_MAPS_API_KEY", "description": "Google Maps API key for geocoding, maps, and translation"},
+    {"key_name": "GOOGLE_MAPS_API_KEY", "description": "Google Maps API key for geocoding and maps (public, browser-facing)"},
     {"key_name": "GOOGLE_MAPS_MAP_ID", "description": "Google Maps Map ID (from Cloud Console, with Feature Layers enabled)"},
     {"key_name": "TOWNSHIP_PLACE_ID", "description": "Google Places ID of the township boundary"},
     
