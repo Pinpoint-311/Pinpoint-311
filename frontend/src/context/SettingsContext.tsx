@@ -5,6 +5,7 @@ import { api } from '../services/api';
 interface SettingsContextType {
     settings: SystemSettings | null;
     isLoading: boolean;
+    demoMode: boolean;
     refreshSettings: () => Promise<void>;
 }
 
@@ -24,6 +25,7 @@ const SettingsContext = createContext<SettingsContextType | undefined>(undefined
 export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [settings, setSettings] = useState<SystemSettings | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [demoMode, setDemoMode] = useState(false);
 
     const refreshSettings = async () => {
         try {
@@ -44,10 +46,15 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     useEffect(() => {
         refreshSettings();
+        // Check demo mode
+        fetch('/api/demo/info')
+            .then(r => r.json())
+            .then(d => setDemoMode(d.demo_mode === true))
+            .catch(() => { });
     }, []);
 
     return (
-        <SettingsContext.Provider value={{ settings, isLoading, refreshSettings }}>
+        <SettingsContext.Provider value={{ settings, isLoading, demoMode, refreshSettings }}>
             {children}
         </SettingsContext.Provider>
     );
@@ -60,3 +67,4 @@ export const useSettings = (): SettingsContextType => {
     }
     return context;
 };
+

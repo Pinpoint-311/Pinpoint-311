@@ -67,6 +67,7 @@ import {
     type LucideIcon,
     DollarSign,
     FlaskConical,
+    LockKeyhole,
 } from 'lucide-react';
 import { Button, Card, Modal, Input, Select, Badge, AccordionSection } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
@@ -195,7 +196,17 @@ function SidebarItem({ icon: Icon, label, isActive, onClick }: SidebarItemProps)
 export default function AdminConsole() {
     const navigate = useNavigate();
     const { user, logout } = useAuth();
-    const { settings, refreshSettings } = useSettings();
+    const { settings, refreshSettings, demoMode } = useSettings();
+
+    // Demo mode guard — shows toast and blocks action
+    const demoGuard = () => {
+        if (demoMode) {
+            setSaveMessage('🔒 Demo mode — changes are disabled. Deploy your own instance to configure.');
+            setTimeout(() => setSaveMessage(null), 4000);
+            return true;
+        }
+        return false;
+    };
     const dialog = useDialog();
 
     const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -506,6 +517,7 @@ export default function AdminConsole() {
     };
 
     const handleSaveBranding = async () => {
+        if (demoGuard()) return;
         setIsLoading(true);
         try {
             await api.updateSettings(brandingForm);
@@ -521,6 +533,7 @@ export default function AdminConsole() {
 
     // OSM Search and Boundary handlers for Maps tab
     const handleOsmSearch = async () => {
+        if (demoGuard()) return;
         if (!townshipSearch.trim()) return;
 
         setIsSearchingTownship(true);
@@ -543,6 +556,7 @@ export default function AdminConsole() {
     };
 
     const handleFetchBoundary = async () => {
+        if (demoGuard()) return;
         if (!selectedOsmResult) return;
 
         setIsFetchingBoundary(true);
@@ -583,8 +597,8 @@ export default function AdminConsole() {
 
 
     const handleCreateUser = async (e: React.FormEvent) => {
-
         e.preventDefault();
+        if (demoGuard()) return;
         try {
             // Clean up data - send proper format for SSO users (no password needed)
             const userData = {
@@ -605,6 +619,7 @@ export default function AdminConsole() {
     };
 
     const handleDeleteUser = async (userId: number) => {
+        if (demoGuard()) return;
         const confirmed = await dialog.confirm({
             title: 'Delete User',
             message: 'Are you sure you want to delete this user?\n\nThis action cannot be undone.',
@@ -622,6 +637,7 @@ export default function AdminConsole() {
 
     const handleCreateService = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (demoGuard()) return;
         try {
             await api.createService(newService);
             setShowServiceModal(false);
@@ -633,6 +649,7 @@ export default function AdminConsole() {
     };
 
     const handleDeleteService = async (serviceId: number) => {
+        if (demoGuard()) return;
         const confirmed = await dialog.confirm({
             title: 'Delete Service',
             message: 'Are you sure you want to delete this service?\n\nThis action cannot be undone.',
@@ -689,6 +706,7 @@ export default function AdminConsole() {
 
     const handleSaveServiceRouting = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (demoGuard()) return;
         if (!editingService) return;
 
         try {
@@ -734,6 +752,7 @@ export default function AdminConsole() {
     // Department handlers
     const handleCreateDepartment = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (demoGuard()) return;
         try {
             if (editingDepartment) {
                 await api.updateDepartment(editingDepartment.id, newDepartment);
@@ -760,6 +779,7 @@ export default function AdminConsole() {
     };
 
     const handleDeleteDepartment = async (deptId: number) => {
+        if (demoGuard()) return;
         const confirmed = await dialog.confirm({
             title: 'Delete Department',
             message: 'Are you sure you want to delete this department?\n\nThis action cannot be undone.',
@@ -776,6 +796,7 @@ export default function AdminConsole() {
     };
 
     const handleUpdateSecret = async (keyName: string) => {
+        if (demoGuard()) return;
         const value = secretValues[keyName];
         if (!value) return;
         try {
@@ -788,6 +809,7 @@ export default function AdminConsole() {
     };
 
     const handleSaveSecretDirect = async (keyName: string, value: string) => {
+        if (demoGuard()) return;
         try {
             await api.updateSecret(keyName, value);
             loadTabData();
@@ -797,6 +819,7 @@ export default function AdminConsole() {
     };
 
     const handleSaveModules = async () => {
+        if (demoGuard()) return;
         setIsLoading(true);
         try {
             await api.updateSettings({ modules });
@@ -811,6 +834,7 @@ export default function AdminConsole() {
     };
 
     const handleSystemUpdate = async () => {
+        if (demoGuard()) return;
         if (!confirm('This will pull updates from GitHub and rebuild the system. Continue?')) return;
         setIsUpdating(true);
         setUpdateMessage('Pulling updates...');
@@ -1029,6 +1053,17 @@ export default function AdminConsole() {
                 {/* Content */}
                 <div ref={contentRef} className="flex-1 p-4 md:p-6 overflow-auto">
                     <div className="max-w-4xl mx-auto">
+                        {/* Demo mode banner */}
+                        {demoMode && (
+                            <div className="mb-6 flex items-center gap-3 p-4 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300">
+                                <LockKeyhole className="w-5 h-5 flex-shrink-0" />
+                                <div>
+                                    <span className="font-semibold">Demo Mode — View Only</span>
+                                    <span className="text-amber-200/70 ml-2 text-sm">Browse freely, but changes are disabled. Deploy your own instance to configure.</span>
+                                </div>
+                            </div>
+                        )}
+
                         {/* Save message */}
                         <AnimatePresence>
                             {saveMessage && (

@@ -39,6 +39,7 @@ import {
     Settings,
     Download,
     FlaskConical,
+    LockKeyhole,
 } from 'lucide-react';
 import { Button, Card, Modal, Input, Textarea, Select, StatusBadge, Badge } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
@@ -59,8 +60,19 @@ export default function StaffDashboard() {
     const navigate = useNavigate();
     const { requestId: urlRequestId } = useParams<{ requestId?: string }>();
     const { user, logout } = useAuth();
-    const { settings } = useSettings();
+    const { settings, demoMode } = useSettings();
     const contentRef = useRef<HTMLDivElement>(null);
+    const [demoToast, setDemoToast] = useState<string | null>(null);
+
+    // Demo mode guard — shows toast and blocks action
+    const demoGuard = () => {
+        if (demoMode) {
+            setDemoToast('🔒 Demo mode — changes are disabled. Deploy your own instance to manage requests.');
+            setTimeout(() => setDemoToast(null), 4000);
+            return true;
+        }
+        return false;
+    };
 
     // Handle browser back/forward navigation
     const handleHashChange = useCallback((hash: string) => {
@@ -513,6 +525,7 @@ export default function StaffDashboard() {
     };
 
     const handleStatusChange = async (status: string) => {
+        if (demoGuard()) return;
         if (!selectedRequest) return;
 
         // If closing, show modal to select substatus
@@ -534,6 +547,7 @@ export default function StaffDashboard() {
     };
 
     const handleCloseWithSubstatus = async () => {
+        if (demoGuard()) return;
         if (!selectedRequest) return;
         try {
             const updated = await api.updateRequest(selectedRequest.service_request_id, {
@@ -576,6 +590,7 @@ export default function StaffDashboard() {
     };
 
     const handleAddComment = async () => {
+        if (demoGuard()) return;
         if (!selectedRequest || !newComment.trim()) return;
         setIsSubmittingComment(true);
         try {
@@ -590,6 +605,7 @@ export default function StaffDashboard() {
     };
 
     const handleDeleteRequest = async () => {
+        if (demoGuard()) return;
         if (!selectedRequest || !deleteJustification.trim()) return;
         setIsDeleting(true);
         try {
@@ -607,6 +623,7 @@ export default function StaffDashboard() {
 
     const handleCreateIntake = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (demoGuard()) return;
         try {
             await api.createManualIntake({
                 ...intakeData,
@@ -876,6 +893,19 @@ export default function StaffDashboard() {
                     <h1 className="font-semibold text-white">Staff Dashboard</h1>
                     <div className="w-10" aria-hidden="true" />
                 </header>
+
+                {/* Demo mode banner */}
+                {demoMode && (
+                    <div className="mx-4 lg:mx-6 mt-4 flex items-center gap-3 p-3 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-sm">
+                        <LockKeyhole className="w-4 h-4 flex-shrink-0" />
+                        <span><strong>Demo Mode — View Only.</strong> Browse freely, but changes are disabled.</span>
+                    </div>
+                )}
+                {demoToast && (
+                    <div className="mx-4 lg:mx-6 mt-2 flex items-center gap-3 p-3 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-200 text-sm animate-pulse">
+                        {demoToast}
+                    </div>
+                )}
 
                 {/* Dashboard View */}
                 {currentView === 'dashboard' && (
@@ -1748,6 +1778,7 @@ export default function StaffDashboard() {
                                             </select>
                                             {editAssignment && (
                                                 <button onClick={async () => {
+                                                    if (demoGuard()) return;
                                                     setIsSavingAssignment(true);
                                                     try {
                                                         const updated = await api.updateRequest(selectedRequest.service_request_id, {
@@ -1773,6 +1804,7 @@ export default function StaffDashboard() {
                                         {user?.role === 'admin' && (
                                             <button
                                                 onClick={async () => {
+                                                    if (demoGuard()) return;
                                                     if (selectedRequest.flagged !== true) {
                                                         // Show confirmation before placing on legal hold
                                                         if (window.confirm('Place this request under Legal Hold?\n\nThis will prevent the record from being archived or deleted by the retention policy.\n\nContinue?')) {
@@ -1997,6 +2029,7 @@ export default function StaffDashboard() {
                                                                             <div className="flex gap-2">
                                                                                 <button
                                                                                     onClick={async () => {
+                                                                                        if (demoGuard()) return;
                                                                                         if (!pendingPriority) return;
                                                                                         setIsUpdatingPriority(true);
                                                                                         try {
@@ -2032,6 +2065,7 @@ export default function StaffDashboard() {
                                                                             {selectedRequest.manual_priority_score && (
                                                                                 <button
                                                                                     onClick={async () => {
+                                                                                        if (demoGuard()) return;
                                                                                         setIsUpdatingPriority(true);
                                                                                         try {
                                                                                             await api.updateRequest(
