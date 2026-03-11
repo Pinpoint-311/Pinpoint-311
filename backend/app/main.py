@@ -81,6 +81,8 @@ class DemoModeMiddleware(BaseHTTPMiddleware):
         "/api/gis/",            # Geocoding lookups
         "/api/system/upload/",  # Image uploads for requests
         "/api/system/translate/",  # Translation requests
+        "/api/research/",       # Research suite
+        "/api/system/analytics-chat", # AI Analytics Advisor
     ]
     
     async def dispatch(self, request: Request, call_next):

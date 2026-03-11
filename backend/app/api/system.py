@@ -2768,29 +2768,53 @@ async def analytics_chat(
                 income_dist = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
                 density_dist = {"low": 0, "medium": 0, "high": 0}
                 renter_pcts = []
+                import asyncio
                 
-                for r in geo_requests:
+                async def fetch_equity_data(r):
                     try:
                         zone_id = generate_zone_id(r.lat, r.long)
-                        geoid = get_census_tract_geoid(r.lat, r.long)
+                        geoid = await get_census_tract_geoid(r.lat, r.long)
                         
-                        svi = get_social_vulnerability_index(geoid)
-                        if svi is not None:
-                            svi_values.append(svi)
+                        if not geoid:
+                            return None
                         
-                        iq = get_income_quintile_from_zone(zone_id, geoid)
-                        if iq and iq in income_dist:
-                            income_dist[iq] += 1
+                        # Fetch all metrics for this geoid concurrently
+                        svi_task = get_social_vulnerability_index(geoid)
+                        iq_task = get_income_quintile_from_zone(zone_id, geoid)
+                        pd_cat_task = get_population_density_category(zone_id, geoid)
+                        ht_task = get_housing_tenure_mix(geoid)
                         
-                        pd_cat = get_population_density_category(zone_id, geoid)
-                        if pd_cat and pd_cat in density_dist:
-                            density_dist[pd_cat] += 1
+                        svi, iq, pd_cat, ht = await asyncio.gather(
+                            svi_task, iq_task, pd_cat_task, ht_task, 
+                            return_exceptions=True
+                        )
                         
-                        ht = get_housing_tenure_mix(geoid)
-                        if ht is not None:
-                            renter_pcts.append(ht)
-                    except Exception:
-                        continue
+                        return {
+                            "svi": svi if not isinstance(svi, Exception) else None,
+                            "iq": iq if not isinstance(iq, Exception) else None,
+                            "pd_cat": pd_cat if not isinstance(pd_cat, Exception) else None,
+                            "ht": ht if not isinstance(ht, Exception) else None
+                        }
+                    except Exception as e:
+                        return None
+                
+                # Fetch all requests concurrently, with an overall timeout of 8 seconds
+                tasks = [fetch_equity_data(r) for r in geo_requests]
+                try:
+                    results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=8.0)
+                except asyncio.TimeoutError:
+                    results = []
+                
+                for res in results:
+                    if isinstance(res, dict):
+                        if res.get("svi") is not None:
+                            svi_values.append(res["svi"])
+                        if res.get("iq") and res["iq"] in income_dist:
+                            income_dist[res["iq"]] += 1
+                        if res.get("pd_cat") and res["pd_cat"] in density_dist:
+                            density_dist[res["pd_cat"]] += 1
+                        if res.get("ht") is not None:
+                            renter_pcts.append(res["ht"])
                 
                 avg_svi = sum(svi_values) / len(svi_values) if svi_values else None
                 avg_renter = sum(renter_pcts) / len(renter_pcts) if renter_pcts else None

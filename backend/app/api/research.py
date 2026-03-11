@@ -242,7 +242,7 @@ def get_season(dt: datetime) -> str:
         return "fall"
 
 
-def get_income_quintile_from_zone(zone_id: str, census_geoid: str = None) -> int:
+async def get_income_quintile_from_zone(zone_id: str, census_geoid: str = None) -> int:
     """
     Get income quintile (1-5) from Census ACS median household income data.
     Uses Census ACS 5-year estimates table B19013 (Median Household Income).
@@ -254,7 +254,7 @@ def get_income_quintile_from_zone(zone_id: str, census_geoid: str = None) -> int
         return None
     
     # Try to get from ACS data cache
-    acs_data = get_census_acs_data(census_geoid)
+    acs_data = await get_census_acs_data(census_geoid)
     if acs_data and acs_data.get("median_income"):
         income = acs_data["median_income"]
         if income < 30000:
@@ -275,7 +275,7 @@ def get_income_quintile_from_zone(zone_id: str, census_geoid: str = None) -> int
 _census_acs_cache: dict = {}
 
 
-def get_census_acs_data(census_geoid: str) -> Optional[dict]:
+async def get_census_acs_data(census_geoid: str) -> Optional[dict]:
     """
     Get Census ACS 5-year estimates for a census tract.
     Includes: median income, total population, housing tenure, and land area.
@@ -297,7 +297,7 @@ def get_census_acs_data(census_geoid: str) -> Optional[dict]:
         return _census_acs_cache[census_geoid]
     
     try:
-        import requests
+        import httpx
         
         # Parse GEOID: SSCCCTTTTTT (State 2 + County 3 + Tract 6)
         state_fips = census_geoid[:2]
@@ -315,7 +315,8 @@ def get_census_acs_data(census_geoid: str) -> Optional[dict]:
         # For production, add: &key={api_key}
         url = f"{base_url}?get={variables}&for=tract:{tract}&in=state:{state_fips}&in=county:{county_fips}"
         
-        response = requests.get(url, timeout=5)
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=5)
         
         if response.status_code == 200:
             data = response.json()
@@ -349,7 +350,7 @@ def get_census_acs_data(census_geoid: str) -> Optional[dict]:
     return None
 
 
-def get_population_density_category(zone_id: str, census_geoid: str = None) -> str:
+async def get_population_density_category(zone_id: str, census_geoid: str = None) -> str:
     """
     Get population density category from Census ACS population data.
     Uses Census ACS B01003 (Total Population) and tract land area.
@@ -362,7 +363,7 @@ def get_population_density_category(zone_id: str, census_geoid: str = None) -> s
     if not census_geoid:
         return None
     
-    acs_data = get_census_acs_data(census_geoid)
+    acs_data = await get_census_acs_data(census_geoid)
     if acs_data and acs_data.get("total_population"):
         pop = acs_data["total_population"]
         
@@ -387,7 +388,7 @@ def get_population_density_category(zone_id: str, census_geoid: str = None) -> s
 # Cache for Census GEOID lookups to avoid repeated API calls
 _census_geoid_cache: dict = {}
 
-def get_census_tract_geoid(lat: float, lng: float) -> Optional[str]:
+async def get_census_tract_geoid(lat: float, lng: float) -> Optional[str]:
     """
     Get 11-digit FIPS code (Census Tract GEOID) from coordinates.
     Uses US Census Bureau Geocoder API (free, no key required).
@@ -395,6 +396,12 @@ def get_census_tract_geoid(lat: float, lng: float) -> Optional[str]:
     
     Results are cached to avoid repeated API calls for same location.
     """
+    if getattr(settings, 'demo_mode', False):
+        # Return a deterministic mock GEOID based on coordinates
+        cache_key_hash = sum(ord(c) for c in f"{lat},{lng}")
+        tract_num = 10000 + (cache_key_hash % 90000)
+        return f"340210{tract_num}"
+
     if lat is None or lng is None:
         return None
     
@@ -405,19 +412,20 @@ def get_census_tract_geoid(lat: float, lng: float) -> Optional[str]:
         return _census_geoid_cache[cache_key]
     
     try:
-        import requests
-        response = requests.get(
-            "https://geocoding.geo.census.gov/geocoder/geographies/coordinates",
-            params={
-                "x": lng,
-                "y": lat,
-                "benchmark": "Public_AR_Current",
-                "vintage": "Current_Current",
-                "layers": "Census Tracts",
-                "format": "json"
-            },
-            timeout=3
-        )
+        import httpx
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://geocoding.geo.census.gov/geocoder/geographies/coordinates",
+                params={
+                    "x": lng,
+                    "y": lat,
+                    "benchmark": "Public_AR_Current",
+                    "vintage": "Current_Current",
+                    "layers": "Census Tracts",
+                    "format": "json"
+                },
+                timeout=3
+            )
         if response.status_code == 200:
             data = response.json()
             geographies = data.get("result", {}).get("geographies", {})
@@ -433,7 +441,7 @@ def get_census_tract_geoid(lat: float, lng: float) -> Optional[str]:
     return None
 
 
-def get_social_vulnerability_index(census_geoid: str) -> Optional[float]:
+async def get_social_vulnerability_index(census_geoid: str) -> Optional[float]:
     """
     Calculate CDC-style Social Vulnerability Index (SVI) for a census tract.
     SVI ranges from 0 (lowest vulnerability) to 1 (highest vulnerability).
@@ -449,7 +457,7 @@ def get_social_vulnerability_index(census_geoid: str) -> Optional[float]:
     if not census_geoid:
         return None
     
-    acs_data = get_census_acs_data(census_geoid)
+    acs_data = await get_census_acs_data(census_geoid)
     if not acs_data:
         return None
     
@@ -483,7 +491,7 @@ def get_social_vulnerability_index(census_geoid: str) -> Optional[float]:
     return None
 
 
-def get_housing_tenure_mix(census_geoid: str) -> Optional[float]:
+async def get_housing_tenure_mix(census_geoid: str) -> Optional[float]:
     """
     Get percentage of renters vs owners in census tract.
     Returns renter percentage (0.0 to 1.0).
@@ -497,7 +505,7 @@ def get_housing_tenure_mix(census_geoid: str) -> Optional[float]:
     if not census_geoid:
         return None
     
-    acs_data = get_census_acs_data(census_geoid)
+    acs_data = await get_census_acs_data(census_geoid)
     if acs_data and acs_data.get("renter_pct") is not None:
         return acs_data["renter_pct"]
     
