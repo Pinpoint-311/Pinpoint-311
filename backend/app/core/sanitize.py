@@ -43,6 +43,7 @@ def sanitize_path_component(name: str) -> str:
     name = os.path.basename(name)
     # Only allow alphanumeric, hyphens, underscores, dots
     sanitized = re.sub(r'[^a-zA-Z0-9._-]', '', name)
-    if not sanitized:
+    # Explicitly reject traversal-like components
+    if sanitized in (".", "..") or not sanitized:
         raise ValueError("Invalid path component")
     return sanitized

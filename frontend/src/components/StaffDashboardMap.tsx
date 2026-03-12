@@ -74,7 +74,7 @@ export default function StaffDashboardMap({
             setShowFilters(false);
         }
     }, []);
-    const [mapType, setMapType] = useState<string>('hybrid');
+    const [_mapType, setMapType] = useState<string>('hybrid');
     const [expandedSections, setExpandedSections] = useState({
         status: true,
         categories: false,

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 import logging
 import httpx
 import json
@@ -204,7 +204,6 @@ async def configure_gcp(
                     raise
             
             # Create encryption key
-            key_name = f"{keyring_name}/cryptoKeys/{kms_key}"
             try:
                 kms_client.create_crypto_key(
                     request={
@@ -463,7 +462,7 @@ async def configure_auth0(
                 except Exception:
                     pass  # Custom text may require specific plan
                 
-                branding_configured = True
+                # Branding configured successfully
                 logger.info(f"Auth0 branding configured with primary color {primary_color}")
                 
             except Exception as e:

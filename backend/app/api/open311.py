@@ -5,6 +5,7 @@ from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from datetime import datetime
 import uuid
+import logging
 
 from app.db.session import get_db
 from app.models import ServiceRequest, ServiceDefinition, User, RequestAuditLog, Department
@@ -17,6 +18,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 limiter = Limiter(key_func=get_remote_address)
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -474,7 +476,7 @@ async def update_request_status(
                 value = value.value  # Convert enum to string
             # Special handling for boolean flagged field
             if field == "flagged":
-                print(f"[LEGAL HOLD DEBUG] Setting flagged from {request.flagged} to {value} for request {request.service_request_id}")
+                logger.debug(f"[LEGAL HOLD] Setting flagged from {request.flagged} to {value} for request {request.service_request_id}")
             setattr(request, field, value)
     
     request.updated_datetime = datetime.utcnow()

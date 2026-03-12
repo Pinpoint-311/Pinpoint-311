@@ -144,7 +144,7 @@ def _get_secret_from_gcp(secret_name: str) -> Optional[Dict[str, str]]:
                     )
             
             try:
-                loop = asyncio.get_running_loop()
+                _loop = asyncio.get_running_loop()  # noqa: F841
                 asyncio.create_task(_track())
             except RuntimeError:
                 asyncio.run(_track())
@@ -300,7 +300,6 @@ def _get_bundle_name(key_name: str) -> str:
 def _create_secret_if_not_exists(client, project: str, secret_id: str) -> bool:
     """Create a secret in Secret Manager if it doesn't exist."""
     try:
-        
         parent = f"projects/{project}"
         secret_name = f"{parent}/secrets/{secret_id}"
         

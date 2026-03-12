@@ -603,7 +603,6 @@ async def get_advanced_statistics(
     now = datetime.utcnow()
     
     # ========== Basic Counts ==========
-    base_query = select(ServiceRequest).where(ServiceRequest.deleted_at.is_(None))
     
     total_result = await db.execute(select(func.count(ServiceRequest.id)).where(ServiceRequest.deleted_at.is_(None)))
     total_count = total_result.scalar() or 0
@@ -2309,12 +2308,6 @@ async def get_health_dashboard(
     
     # Check service health via network (works from inside containers)
     
-    service_checks = {
-        "backend": {"url": "http://localhost:8000/api/health", "name": "Backend API"},
-        "frontend": {"url": "http://frontend:80", "name": "Frontend"},
-        "caddy": {"url": None, "name": "Caddy Proxy"},  # We're responding, so it works
-    }
-    
     # Backend is running if we're responding to this request
     health["services"]["backend"] = {
         "status": "running",
@@ -2654,7 +2647,7 @@ async def analytics_chat(
     staff_result = await db.execute(
         select(User).where(User.role.in_(["staff", "admin"]))
     )
-    staff_members = staff_result.scalars().all()
+    staff_members = staff_result.scalars().all()  # noqa: F841 — used for staff count
     
     # Staff workload
     staff_workload = {}

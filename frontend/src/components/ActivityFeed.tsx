@@ -251,7 +251,7 @@ export function useActivityFeedCount(
     userId: string,
     userDepartmentIds: number[]
 ): number {
-    const [readItems, setReadItems] = useState<Set<string>>(() => {
+    const [readItems] = useState<Set<string>>(() => {
         const stored = localStorage.getItem('activityFeedRead');
         return stored ? new Set(JSON.parse(stored)) : new Set();
     });

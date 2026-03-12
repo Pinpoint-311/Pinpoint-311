@@ -319,7 +319,7 @@ def encrypt_pii(plaintext: str) -> str:
                     )
             
             try:
-                loop = asyncio.get_running_loop()
+                _loop = asyncio.get_running_loop()  # noqa: F841
                 asyncio.create_task(_track())
             except RuntimeError:
                 asyncio.run(_track())

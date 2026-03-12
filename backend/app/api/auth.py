@@ -35,10 +35,6 @@ async def generate_bootstrap_token(
     
     Requires the INITIAL_ADMIN_PASSWORD from environment to authorize.
     """
-    from app.core.config import get_settings
-    
-    settings = get_settings()
-    
     # Check if Auth0 is already configured
     status_info = await Auth0Service.check_status(db)
     if status_info["status"] == "configured":
