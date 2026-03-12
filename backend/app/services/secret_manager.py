@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Cache for secrets (they don't change often)
 _secret_cache: Dict[str, Dict[str, str]] = {}
-_use_gcp: Optional[bool] = None
+_config: Dict[str, Any] = {"use_gcp": None}
 _sm_client = None
 
 
@@ -90,26 +90,24 @@ def _get_sm_client():
 
 def _is_gcp_available() -> bool:
     """Check if Google Cloud Secret Manager is available."""
-    global _use_gcp
-    
-    if _use_gcp is not None:
-        return _use_gcp
+    if _config["use_gcp"] is not None:
+        return _config["use_gcp"]
     
     # Check for project ID in env or database
     project = os.getenv("GOOGLE_CLOUD_PROJECT") or _get_project_from_db()
     if not project:
-        _use_gcp = False
+        _config["use_gcp"] = False
         logger.info("Google Cloud Project not set, using database for secrets")
         return False
     
     # Try to get a client
     client = _get_sm_client()
     if client:
-        _use_gcp = True
+        _config["use_gcp"] = True
         logger.info(f"Using Google Secret Manager for project: {project}")
         return True
     
-    _use_gcp = False
+    _config["use_gcp"] = False
     return False
 
 

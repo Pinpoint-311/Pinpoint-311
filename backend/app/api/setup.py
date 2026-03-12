@@ -61,7 +61,6 @@ async def get_setup_status(
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     
-    from sqlalchemy import select
     
     # Check GCP status (check if we have project_id secret configured)
     gcp_result = await db.execute(
@@ -145,7 +144,6 @@ async def configure_gcp(
             logger.warning("Project ID mismatch between request and service account JSON")
             # Use the one from the service account JSON as it's authoritative
         
-        from sqlalchemy import select
         
         # Store credentials in database
         for key, value in [
@@ -531,7 +529,6 @@ async def configure_auth0(
                     logger.warning(f"Failed to enable {conn_name} social connection: {conn_err}")
             
         # Store credentials in database
-        from sqlalchemy import select
         
         for key, value in [
             ("AUTH0_DOMAIN", request.domain),
@@ -619,7 +616,6 @@ async def verify_setup(
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     
-    from sqlalchemy import select
     from app.core.encryption import decrypt_safe
     
     results = {
