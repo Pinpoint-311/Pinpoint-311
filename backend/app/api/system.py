@@ -267,7 +267,7 @@ async def migrate_secrets_to_encrypted(
             secret.key_value = encrypt(secret.key_value)
             migrated.append(secret.key_name)
         except Exception as e:
-            errors.append({"key": secret.key_name, "error": str(e)})
+            errors.append({"key": secret.key_name, "error": "Migration failed"})
     
     await db.commit()
     
@@ -2227,7 +2227,7 @@ async def create_backup_endpoint(
     
     result = await create_backup()
     if result["status"] == "error":
-        raise HTTPException(status_code=500, detail=result.get("message", "Backup failed"))
+        raise HTTPException(status_code=500, detail="Backup failed")
     
     return result
 
@@ -2252,7 +2252,7 @@ async def delete_backup_endpoint(
     
     result = await delete_backup(backup_name)
     if result["status"] == "error":
-        raise HTTPException(status_code=500, detail=result.get("message", "Delete failed"))
+        raise HTTPException(status_code=500, detail="Delete failed")
     
     return result
 
@@ -2279,7 +2279,7 @@ async def restore_backup_endpoint(
     
     result = await restore_backup(backup_name)
     if result["status"] == "error":
-        raise HTTPException(status_code=500, detail=result.get("message", "Restore failed"))
+        raise HTTPException(status_code=500, detail="Restore failed")
     
     return result
 
