@@ -109,7 +109,7 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/api/health" ]
       interval: 30s
@@ -202,8 +202,8 @@ services:
     image: caddy:2-alpine
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
     environment:
       DOMAIN: ${DOMAIN:-localhost}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@localhost}
