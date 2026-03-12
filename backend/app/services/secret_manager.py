@@ -144,7 +144,7 @@ def _get_secret_from_gcp(secret_name: str) -> Optional[Dict[str, str]]:
                     )
             
             try:
-                _loop = asyncio.get_running_loop()  # noqa: F841
+                asyncio.get_running_loop()  # Check if loop is running
                 asyncio.create_task(_track())
             except RuntimeError:
                 asyncio.run(_track())

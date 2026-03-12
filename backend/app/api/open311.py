@@ -290,8 +290,6 @@ async def create_request(
     db: AsyncSession = Depends(get_db)
 ):
     """Open311 v2 compatible - Create a new service request (public)"""
-    import logging
-    logger = logging.getLogger(__name__)
     from app.core.sanitize import sanitize_for_log
     logger.info(f"[CREATE REQUEST] Received: service_code={sanitize_for_log(request_data.service_code)}")
     

@@ -257,7 +257,7 @@ class NotificationService:
                 
                 # Run in new event loop if needed
                 try:
-                    _loop = asyncio.get_running_loop()  # noqa: F841
+                    asyncio.get_running_loop()  # Check if loop is running
                     asyncio.create_task(_track())
                 except RuntimeError:
                     asyncio.run(_track())

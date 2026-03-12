@@ -161,7 +161,6 @@ async def check_secret_manager(db: AsyncSession) -> Dict[str, Any]:
     try:
         # Check for GCP project (from env OR database via Admin Console)
         project = await get_config_value(db, "GOOGLE_CLOUD_PROJECT")
-        use_sm = os.getenv("USE_SECRET_MANAGER", "").lower() == "true"  # noqa: F841
         
         # If GCP is configured via wizard, Secret Manager is available
         has_gcp_credentials = await get_config_value(db, "GCP_SERVICE_ACCOUNT_JSON") is not None
@@ -185,7 +184,7 @@ async def check_secret_manager(db: AsyncSession) -> Dict[str, Any]:
         from app.services.secret_manager import get_secrets_bundle
         
         # Try to fetch any secrets
-        _secrets = await get_secrets_bundle("TEST_")  # noqa: F841
+        await get_secrets_bundle("TEST_")  # Test connectivity
         
         return {
             "status": "healthy",

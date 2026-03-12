@@ -2647,7 +2647,7 @@ async def analytics_chat(
     staff_result = await db.execute(
         select(User).where(User.role.in_(["staff", "admin"]))
     )
-    staff_members = staff_result.scalars().all()  # noqa: F841 — used for staff count
+    staff_result.scalars().all()  # Materialize query results
     
     # Staff workload
     staff_workload = {}
@@ -3011,7 +3011,6 @@ Season: {'Winter' if now.month in [12,1,2] else 'Spring' if now.month in [3,4,5]
         if not project_id:
             raise HTTPException(status_code=503, detail="Vertex AI not configured — VERTEX_AI_PROJECT not set")
         
-        location = os.getenv("GOOGLE_VERTEX_LOCATION", "us-central1")
         service_account_json = await sm_get_secret("VERTEX_AI_SERVICE_ACCOUNT_KEY")
         
         # Build the full conversation prompt

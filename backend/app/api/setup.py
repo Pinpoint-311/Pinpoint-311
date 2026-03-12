@@ -406,7 +406,6 @@ async def configure_auth0(
                 logger.warning(f"Failed to configure brute force protection: {e}")
             
             # Configure branding to match township branding
-            branding_configured = False
             try:
                 # Get current system settings for branding
                 from app.models import SystemSettings
