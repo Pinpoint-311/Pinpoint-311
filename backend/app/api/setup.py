@@ -4,7 +4,7 @@ Setup API endpoints for Auth0 and Google Cloud configuration.
 Security: All endpoints require admin authentication and log actions to audit trail.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, Field
@@ -12,7 +12,6 @@ from typing import Optional, Dict, Any
 import logging
 import httpx
 import json
-import os
 
 from app.db.session import get_db
 from app.core.auth import get_current_user
@@ -644,7 +643,6 @@ async def verify_setup(
                 )
                 sa_secret = sa_result.scalar_one_or_none()
                 if sa_secret and sa_secret.key_value:
-                    import json
                     sa_json = decrypt_safe(sa_secret.key_value)
                     sa_data = json.loads(sa_json)
                     # If we can parse the service account JSON, credentials are valid

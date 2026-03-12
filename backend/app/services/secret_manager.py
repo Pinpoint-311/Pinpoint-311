@@ -41,7 +41,7 @@ def _get_project_from_db() -> Optional[str]:
                 from app.core.encryption import decrypt
                 return decrypt(row[0])
     except Exception:
-        pass
+        pass  # Database not available yet during startup
     return None
 
 
@@ -298,7 +298,6 @@ def _get_bundle_name(key_name: str) -> str:
 def _create_secret_if_not_exists(client, project: str, secret_id: str) -> bool:
     """Create a secret in Secret Manager if it doesn't exist."""
     try:
-        from google.cloud import secretmanager
         
         parent = f"projects/{project}"
         secret_name = f"{parent}/secrets/{secret_id}"
@@ -337,7 +336,6 @@ def set_secret_sync(key_name: str, value: str) -> bool:
         return False
     
     try:
-        from google.cloud import secretmanager
         
         project = os.getenv("GOOGLE_CLOUD_PROJECT") or _get_project_from_db()
         client = _get_sm_client()

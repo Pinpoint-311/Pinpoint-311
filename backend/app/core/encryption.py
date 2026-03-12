@@ -191,10 +191,9 @@ def _get_config_sync(key_name: str) -> Optional[str]:
             )
             row = result.fetchone()
             if row and row[0]:
-                from app.core.encryption import decrypt
                 return decrypt(row[0])
     except Exception:
-        pass
+        pass  # Database not available, fall back to None
     
     return None
 
@@ -253,8 +252,6 @@ def _get_kms_client():
                 )
                 row = result.fetchone()
                 if row and row[0]:
-                    # Decrypt the stored value
-                    from app.core.encryption import decrypt
                     sa_json = decrypt(row[0])
                     sa_data = json.loads(sa_json)
                     credentials = service_account.Credentials.from_service_account_info(sa_data)
@@ -383,6 +380,4 @@ def decrypt_pii(ciphertext: str) -> str:
         
     except Exception as e:
         logger.error(f"KMS decryption failed: {e}")
-        return ""
-
         return ""

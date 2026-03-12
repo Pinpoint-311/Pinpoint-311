@@ -6,13 +6,9 @@ Clean abstraction with no Auth0 SDK dependencies.
 import httpx
 import jwt
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import select
 
-from app.models import SystemSecret
-from app.core.encryption import decrypt_safe
 
 
 class Auth0Service:

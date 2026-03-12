@@ -4,8 +4,7 @@ Branded Email Templates for Township 311 System
 Generates beautiful, responsive HTML email templates with township branding.
 Pulls configuration from SystemSettings for logo, colors, and township name.
 """
-from typing import Optional, Dict, Any
-from datetime import datetime
+from typing import Optional, Dict
 
 
 # Email template translations for common languages

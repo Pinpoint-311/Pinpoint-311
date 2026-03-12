@@ -4,7 +4,7 @@ Uses Google Cloud Translation API to translate email and SMS content.
 """
 import httpx
 import logging
-from typing import List, Optional
+from typing import List
 
 logger = logging.getLogger(__name__)
 

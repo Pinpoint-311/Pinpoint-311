@@ -18,9 +18,9 @@ All endpoints:
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, text, extract
+from sqlalchemy import select, func, extract
 from sqlalchemy.orm import selectinload
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime, date, timedelta
 import csv
 import io
@@ -30,7 +30,7 @@ import re
 import hashlib
 
 from app.db.session import get_db
-from app.models import ServiceRequest, RequestAuditLog, SystemSettings, ResearchAccessLog, Department, RequestComment
+from app.models import ServiceRequest, SystemSettings, ResearchAccessLog
 from app.core.auth import get_current_researcher
 from app.core.config import get_settings
 
@@ -242,7 +242,7 @@ def get_season(dt: datetime) -> str:
         return "fall"
 
 
-async def get_income_quintile_from_zone(zone_id: str, census_geoid: str = None) -> int:
+async def get_income_quintile_from_zone(zone_id: str, census_geoid: str = None) -> Optional[int]:
     """
     Get income quintile (1-5) from Census ACS median household income data.
     Uses Census ACS 5-year estimates table B19013 (Median Household Income).
@@ -350,7 +350,7 @@ async def get_census_acs_data(census_geoid: str) -> Optional[dict]:
     return None
 
 
-async def get_population_density_category(zone_id: str, census_geoid: str = None) -> str:
+async def get_population_density_category(zone_id: str, census_geoid: str = None) -> Optional[str]:
     """
     Get population density category from Census ACS population data.
     Uses Census ACS B01003 (Total Population) and tract land area.
@@ -530,7 +530,6 @@ def get_weather_context(requested_datetime: datetime, lat: float, lng: float) ->
     date_str = requested_datetime.strftime("%Y-%m-%d")
     
     try:
-        import httpx
         # Open-Meteo Archive API (free, no key required) - for dates up to 5 days ago
         # For very recent dates, use forecast API with past_days parameter
         days_ago = (datetime.now() - requested_datetime).days
@@ -631,10 +630,10 @@ def get_asset_age_years(matched_asset: dict) -> Optional[float]:
                     try:
                         parsed = datetime.strptime(install_date[:10], fmt)
                         return round((datetime.now() - parsed).days / 365.25, 1)
-                    except:
+                    except Exception:
                         continue
-        except:
-            pass
+        except Exception:
+            pass  # Date parsing failed entirely
     
     return None
 

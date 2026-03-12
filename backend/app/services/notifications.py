@@ -1,7 +1,6 @@
 """
 Notification services for SMS and Email with configurable providers.
 """
-import os
 import httpx
 import logging
 import smtplib
@@ -282,7 +281,7 @@ class NotificationService:
         language: str = "en"
     ):
         """Send branded confirmation for a new service request (sync - uses static translations only)"""
-        from app.services.email_templates import build_confirmation_email, build_sms_confirmation
+        from app.services.email_templates import build_confirmation_email
         
         # Build branded email with translation
         email_content = build_confirmation_email(

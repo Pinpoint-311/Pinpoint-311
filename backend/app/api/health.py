@@ -14,7 +14,6 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text, select, Integer
 from typing import Dict, Any, Optional
-import httpx
 import os
 
 from app.db.session import get_db
@@ -45,7 +44,7 @@ async def get_config_value(db: AsyncSession, key_name: str, env_name: Optional[s
         if secret and secret.is_configured and secret.key_value:
             return decrypt_safe(secret.key_value)
     except Exception:
-        pass
+        pass  # Database secret not available, return None
     
     return None
 
@@ -214,7 +213,6 @@ async def check_vertex_ai(db: AsyncSession) -> Dict[str, Any]:
             }
         
         # Try a simple test call
-        from app.services.vertex_ai_service import analyze_with_gemini
         
         # Don't actually call the API to save costs, just check if it's importable
         return {
@@ -238,7 +236,6 @@ async def check_translation_api(db: AsyncSession) -> Dict[str, Any]:
     """Test Google Translation API"""
     try:
         from app.services.secret_manager import get_secret
-        from app.services.translation import translate_text
         
         # Check if API key is configured
         api_key = await get_secret("GOOGLE_MAPS_API_KEY")
@@ -347,7 +344,7 @@ async def quick_health_check():
 # ==================== UPTIME MONITORING ====================
 
 from datetime import datetime, timedelta
-from sqlalchemy import desc, and_
+from sqlalchemy import desc
 from app.models import UptimeRecord
 
 

@@ -9,9 +9,8 @@ import os
 import logging
 import tempfile
 import subprocess
-import hashlib
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 import boto3
 from botocore.config import Config as BotoConfig
 
@@ -271,7 +270,7 @@ async def list_backups() -> Dict[str, Any]:
                     # Extract timestamp: db_backup_20260127_020000.sql.gpg
                     ts_str = name.replace(BACKUP_PREFIX, "").replace(BACKUP_EXTENSION, "")
                     created_at = datetime.strptime(ts_str, "%Y%m%d_%H%M%S")
-                except:
+                except Exception:
                     created_at = obj.get('LastModified', datetime.utcnow())
                 
                 backups.append({

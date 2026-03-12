@@ -9,7 +9,12 @@ from alembic import context
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.db.session import Base
-from app.models import *  # Import all models to register them with Base.metadata
+from app.models import (  # noqa: F401 - must import all models to register with Base.metadata
+    User, Department, ServiceRequest, ServiceDefinition, SystemSettings,
+    SystemSecret, RequestAuditLog, MapLayer, RequestComment, AuditLog,
+    DisclaimerAcknowledgment, UptimeRecord, APIUsageRecord, ResearchAccessLog,
+    TranslationCache,
+)
 
 config = context.config
 
