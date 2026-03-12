@@ -979,19 +979,19 @@ export default function StaffDashboard() {
 
                 {/* Statistics View — Dark Glassmorphism Design */}
                 {currentView === 'statistics' && (
-                    <div className="flex-1 p-6 lg:p-8 overflow-auto">
-                        <div className="max-w-7xl mx-auto space-y-6">
+                    <div className="flex-1 p-3 sm:p-6 lg:p-8 overflow-auto">
+                        <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
                             {/* Header */}
-                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                                 <div>
-                                    <h1 className="text-2xl lg:text-3xl font-bold text-white">Analytics Dashboard</h1>
+                                    <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-white">Analytics Dashboard</h1>
                                     {advancedStats?.cached_at && (
                                         <p className="text-sm text-white/40 mt-1">
                                             Updated {new Date(advancedStats.cached_at.endsWith('Z') ? advancedStats.cached_at : advancedStats.cached_at + 'Z').toLocaleString()}
                                         </p>
                                     )}
                                 </div>
-                                <div className="flex items-center gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
                                     <button
                                         onClick={() => setChatOpen(true)}
                                         className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 transition-all text-sm font-medium shadow-lg shadow-emerald-500/20"
@@ -1029,31 +1029,31 @@ export default function StaffDashboard() {
                             </div>
 
                             {/* Overview Stats Row */}
-                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5">
-                                    <div className="text-xs font-medium text-white/70 uppercase tracking-wider">Total Requests</div>
-                                    <div className="text-3xl font-bold text-white mt-2">{advancedStats?.total_requests || 0}</div>
-                                    <div className="text-xs text-white/60 mt-1">All time</div>
+                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4">
+                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-3 sm:p-5">
+                                    <div className="text-[10px] sm:text-xs font-medium text-white/70 uppercase tracking-wider">Total Requests</div>
+                                    <div className="text-2xl sm:text-3xl font-bold text-white mt-1 sm:mt-2">{advancedStats?.total_requests || 0}</div>
+                                    <div className="text-[10px] sm:text-xs text-white/60 mt-1">All time</div>
                                 </div>
-                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5">
-                                    <div className="text-xs font-medium text-white/70 uppercase tracking-wider">Open</div>
-                                    <div className="text-3xl font-bold text-amber-300 mt-2">{advancedStats?.open_requests || 0}</div>
-                                    <div className="text-xs text-white/60 mt-1">Awaiting action</div>
+                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-3 sm:p-5">
+                                    <div className="text-[10px] sm:text-xs font-medium text-white/70 uppercase tracking-wider">Open</div>
+                                    <div className="text-2xl sm:text-3xl font-bold text-amber-300 mt-1 sm:mt-2">{advancedStats?.open_requests || 0}</div>
+                                    <div className="text-[10px] sm:text-xs text-white/60 mt-1">Awaiting action</div>
                                 </div>
-                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5">
-                                    <div className="text-xs font-medium text-white/70 uppercase tracking-wider">In Progress</div>
-                                    <div className="text-3xl font-bold text-blue-300 mt-2">{advancedStats?.in_progress_requests || 0}</div>
-                                    <div className="text-xs text-white/60 mt-1">Being worked on</div>
+                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-3 sm:p-5">
+                                    <div className="text-[10px] sm:text-xs font-medium text-white/70 uppercase tracking-wider">In Progress</div>
+                                    <div className="text-2xl sm:text-3xl font-bold text-blue-300 mt-1 sm:mt-2">{advancedStats?.in_progress_requests || 0}</div>
+                                    <div className="text-[10px] sm:text-xs text-white/60 mt-1">Being worked on</div>
                                 </div>
-                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5">
-                                    <div className="text-xs font-medium text-white/70 uppercase tracking-wider">Closed</div>
-                                    <div className="text-3xl font-bold text-emerald-300 mt-2">{advancedStats?.closed_requests || 0}</div>
-                                    <div className="text-xs text-white/60 mt-1">{advancedStats?.resolution_rate?.toFixed(0) || 0}% resolution rate</div>
+                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-3 sm:p-5">
+                                    <div className="text-[10px] sm:text-xs font-medium text-white/70 uppercase tracking-wider">Closed</div>
+                                    <div className="text-2xl sm:text-3xl font-bold text-emerald-300 mt-1 sm:mt-2">{advancedStats?.closed_requests || 0}</div>
+                                    <div className="text-[10px] sm:text-xs text-white/60 mt-1">{advancedStats?.resolution_rate?.toFixed(0) || 0}% resolution</div>
                                 </div>
                             </div>
 
                             {/* Priority Distribution */}
-                            <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6">
+                            <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
                                 <h2 className="text-lg font-semibold text-white mb-4">Priority Distribution</h2>
                                 {(() => {
                                     const highPriority = allRequests.filter(r => {
@@ -1082,7 +1082,7 @@ export default function StaffDashboard() {
                                                     {lowPriority > 0 && `${Math.round((lowPriority / total) * 100)}%`}
                                                 </div>
                                             </div>
-                                            <div className="flex justify-between text-sm">
+                                            <div className="flex flex-col sm:flex-row justify-between text-xs sm:text-sm gap-1">
                                                 <span className="text-red-300">● High (8-10): <strong>{highPriority}</strong></span>
                                                 <span className="text-amber-300">● Medium (5-7): <strong>{mediumPriority}</strong></span>
                                                 <span className="text-emerald-300">● Low (1-4): <strong>{lowPriority}</strong></span>
@@ -1093,33 +1093,33 @@ export default function StaffDashboard() {
                             </div>
 
                             {/* KPI Cards */}
-                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                                <div className="bg-gradient-to-br from-purple-500/20 to-purple-500/5 border border-purple-500/30 rounded-xl p-5">
-                                    <div className="text-xs font-medium text-purple-200 uppercase tracking-wider">Next Week Forecast</div>
-                                    <div className="text-3xl font-bold text-white mt-2">{advancedStats?.predictive_insights?.volume_forecast_next_week || 0}</div>
-                                    <div className="text-xs text-white/60 mt-1 capitalize">Trend: {advancedStats?.predictive_insights?.trend_direction || 'stable'}</div>
+                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4">
+                                <div className="bg-gradient-to-br from-purple-500/20 to-purple-500/5 border border-purple-500/30 rounded-xl p-3 sm:p-5">
+                                    <div className="text-[10px] sm:text-xs font-medium text-purple-200 uppercase tracking-wider">Next Week Forecast</div>
+                                    <div className="text-2xl sm:text-3xl font-bold text-white mt-1 sm:mt-2">{advancedStats?.predictive_insights?.volume_forecast_next_week || 0}</div>
+                                    <div className="text-[10px] sm:text-xs text-white/60 mt-1 capitalize">Trend: {advancedStats?.predictive_insights?.trend_direction || 'stable'}</div>
                                 </div>
-                                <div className="bg-gradient-to-br from-emerald-500/20 to-emerald-500/5 border border-emerald-500/30 rounded-xl p-5">
-                                    <div className="text-xs font-medium text-emerald-200 uppercase tracking-wider">Avg Resolution</div>
-                                    <div className="text-3xl font-bold text-white mt-2">{advancedStats?.avg_resolution_hours ? `${advancedStats.avg_resolution_hours.toFixed(1)}h` : 'N/A'}</div>
-                                    <div className="text-xs text-white/60 mt-1">{advancedStats?.resolution_rate?.toFixed(0) || 0}% completion</div>
+                                <div className="bg-gradient-to-br from-emerald-500/20 to-emerald-500/5 border border-emerald-500/30 rounded-xl p-3 sm:p-5">
+                                    <div className="text-[10px] sm:text-xs font-medium text-emerald-200 uppercase tracking-wider">Avg Resolution</div>
+                                    <div className="text-2xl sm:text-3xl font-bold text-white mt-1 sm:mt-2">{advancedStats?.avg_resolution_hours ? `${advancedStats.avg_resolution_hours.toFixed(1)}h` : 'N/A'}</div>
+                                    <div className="text-[10px] sm:text-xs text-white/60 mt-1">{advancedStats?.resolution_rate?.toFixed(0) || 0}% completion</div>
                                 </div>
-                                <div className="bg-gradient-to-br from-red-500/20 to-red-500/5 border border-red-500/30 rounded-xl p-5">
-                                    <div className="text-xs font-medium text-red-200 uppercase tracking-wider">High Priority Aging</div>
-                                    <div className="text-3xl font-bold text-white mt-2">{advancedStats?.aging_high_priority_count || 0}</div>
-                                    <div className="text-xs text-white/60 mt-1">P1-P3 open &gt; 7 days</div>
+                                <div className="bg-gradient-to-br from-red-500/20 to-red-500/5 border border-red-500/30 rounded-xl p-3 sm:p-5">
+                                    <div className="text-[10px] sm:text-xs font-medium text-red-200 uppercase tracking-wider">High Priority Aging</div>
+                                    <div className="text-2xl sm:text-3xl font-bold text-white mt-1 sm:mt-2">{advancedStats?.aging_high_priority_count || 0}</div>
+                                    <div className="text-[10px] sm:text-xs text-white/60 mt-1">P1-P3 open &gt; 7 days</div>
                                 </div>
-                                <div className="bg-gradient-to-br from-blue-500/20 to-blue-500/5 border border-blue-500/30 rounded-xl p-5">
-                                    <div className="text-xs font-medium text-blue-200 uppercase tracking-wider">Peak Activity</div>
-                                    <div className="text-3xl font-bold text-white mt-2">{advancedStats?.predictive_insights?.seasonal_peak_day || 'N/A'}</div>
-                                    <div className="text-xs text-white/60 mt-1">Peak: {advancedStats?.predictive_insights?.seasonal_peak_month || 'N/A'}</div>
+                                <div className="bg-gradient-to-br from-blue-500/20 to-blue-500/5 border border-blue-500/30 rounded-xl p-3 sm:p-5">
+                                    <div className="text-[10px] sm:text-xs font-medium text-blue-200 uppercase tracking-wider">Peak Activity</div>
+                                    <div className="text-2xl sm:text-3xl font-bold text-white mt-1 sm:mt-2">{advancedStats?.predictive_insights?.seasonal_peak_day || 'N/A'}</div>
+                                    <div className="text-[10px] sm:text-xs text-white/60 mt-1">Peak: {advancedStats?.predictive_insights?.seasonal_peak_month || 'N/A'}</div>
                                 </div>
                             </div>
 
                             {/* Two-Column: Categories + Weekly Trend */}
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
                                 {/* Requests by Category — Horizontal Bars */}
-                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6">
+                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
                                     <h3 className="text-lg font-semibold text-white mb-4">Requests by Category</h3>
                                     <div className="space-y-3">
                                         {(() => {
@@ -1145,9 +1145,9 @@ export default function StaffDashboard() {
                                 </div>
 
                                 {/* Weekly Trend Chart */}
-                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6">
+                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
                                     <h3 className="text-lg font-semibold text-white mb-4">Weekly Trend</h3>
-                                    <div className="h-64">
+                                    <div className="h-48 sm:h-64">
                                         <ResponsiveContainer width="100%" height="100%">
                                             <AreaChart data={advancedStats?.weekly_trend || []}>
                                                 <XAxis dataKey="period" stroke="rgba(255,255,255,0.3)" style={{ fontSize: '11px' }} tick={{ fill: 'rgba(255,255,255,0.5)' }} />
@@ -1167,10 +1167,10 @@ export default function StaffDashboard() {
                             </div>
 
                             {/* Two-Column: Hotspots + Staff */}
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
                                 {/* Problem Areas — Compact Table */}
                                 {advancedStats?.hotspots && advancedStats.hotspots.length > 0 && (
-                                    <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6">
+                                    <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
                                         <h3 className="text-lg font-semibold text-white mb-1">Problem Areas</h3>
                                         <p className="text-xs text-white/40 mb-4">Top locations by request volume</p>
                                         <div className="space-y-2">
@@ -1197,7 +1197,7 @@ export default function StaffDashboard() {
                                 )}
 
                                 {/* Staff Performance + Workload */}
-                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6">
+                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
                                     <h3 className="text-lg font-semibold text-white mb-1">Staff Activity</h3>
                                     <p className="text-xs text-white/40 mb-4">Resolutions and current workload</p>
 
