@@ -155,7 +155,8 @@ def _get_secret_from_gcp(secret_name: str) -> Optional[Dict[str, str]]:
         _secret_cache[secret_name] = secret_data
         return secret_data
     except Exception as e:
-        logger.warning(f"Failed to get secret {secret_name} from GCP: {e}")
+        from app.core.sanitize import sanitize_for_log
+        logger.warning(f"Failed to get secret from GCP: {sanitize_for_log(str(e))}")
         return None
 
 
@@ -213,7 +214,8 @@ async def _get_secret_from_db(key_name: str) -> Optional[str]:
                 return decrypt_safe(secret.key_value)
             return None
     except Exception as e:
-        logger.error(f"Failed to get secret {key_name} from database: {e}")
+        from app.core.sanitize import sanitize_for_log
+        logger.error(f"Failed to get secret from database: {sanitize_for_log(str(e))}")
         return None
 
 

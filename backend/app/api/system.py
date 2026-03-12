@@ -97,7 +97,8 @@ async def log_disclaimer_acknowledgment(
     db.add(acknowledgment)
     await db.commit()
     
-    logger.info(f"Disclaimer acknowledged: session={session_id}, ip={ip_address}")
+    from app.core.sanitize import sanitize_for_log
+    logger.info(f"Disclaimer acknowledged: session={sanitize_for_log(session_id)}, ip={sanitize_for_log(ip_address)}")
     
     return {"status": "acknowledged", "session_id": session_id}
 
@@ -1227,9 +1228,10 @@ async def update_system(_: User = Depends(get_current_admin)):
             detail="Update operation timed out"
         )
     except Exception as e:
+        logger.error(f"Update operation failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Update operation failed"
         )
 
 
@@ -1399,6 +1401,11 @@ async def get_release_security(ref: str, _: User = Depends(get_current_admin)):
     }
     
     try:
+        import re
+        # Validate ref to prevent SSRF via URL manipulation
+        if not re.match(r'^[a-zA-Z0-9._\-/]+$', ref):
+            raise HTTPException(status_code=400, detail="Invalid ref format")
+        
         async with httpx.AsyncClient(timeout=15.0) as client:
             # First, resolve the ref to a commit SHA if it's a tag
             commit_sha = ref
@@ -1485,7 +1492,7 @@ async def get_release_security(ref: str, _: User = Depends(get_current_admin)):
         logger.error(f"Failed to fetch security status: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to fetch security status"
         )
 
 
@@ -1957,7 +1964,7 @@ async def configure_domain(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to write Caddyfile: {str(e)}"
+            detail="Failed to write Caddyfile"
         )
     
     # Try to reload Caddy via its admin API
@@ -2542,7 +2549,7 @@ async def execute_runbook(
     except Exception as e:
         result["status"] = "error"
         result["details"]["error"] = str(e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Operation failed")
 
 
 # ============ AI Analytics Chat ============
@@ -3100,5 +3107,5 @@ Season: {'Winter' if now.month in [12,1,2] else 'Spring' if now.month in [3,4,5]
         raise
     except Exception as e:
         logger.error(f"Analytics chat error: {e}")
-        raise HTTPException(status_code=500, detail=f"AI analytics chat failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="AI analytics chat failed")
 

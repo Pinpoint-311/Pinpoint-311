@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # Request/Response Models
 class Auth0SetupRequest(BaseModel):
     """Request body for Auth0 automated setup"""
-    domain: str = Field(..., description="Auth0 tenant domain (e.g., yourorg.us.auth0.com)")
+    domain: str = Field(..., description="Auth0 tenant domain (e.g., yourorg.us.auth0.com)", pattern=r'^[a-zA-Z0-9][a-zA-Z0-9.-]*\.auth0\.com$')
     management_client_id: str = Field(..., description="Management API client ID")
     management_client_secret: str = Field(..., description="Management API client secret")
     callback_url: str = Field(..., description="Application callback URL")
@@ -142,7 +142,7 @@ async def configure_gcp(
         
         # Verify the project ID matches
         if sa_data["project_id"] != request.project_id:
-            logger.warning(f"Project ID mismatch: {request.project_id} vs {sa_data['project_id']}")
+            logger.warning("Project ID mismatch between request and service account JSON")
             # Use the one from the service account JSON as it's authoritative
         
         from sqlalchemy import select

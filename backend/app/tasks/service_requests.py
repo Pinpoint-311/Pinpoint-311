@@ -41,7 +41,7 @@ async def configure_notifications(db):
     
     # Configure SMS provider
     sms_provider = await get_secret(db, "SMS_PROVIDER")
-    logger.info(f"[SMS Config] SMS_PROVIDER secret value: '{sms_provider}'")
+    logger.info(f"[SMS Config] SMS_PROVIDER: {'set' if sms_provider else 'empty'}")
     
     if sms_provider == "twilio":
         notification_service.configure_sms("twilio", {
@@ -53,7 +53,7 @@ async def configure_notifications(db):
     elif sms_provider == "http":
         api_url = await get_secret(db, "SMS_HTTP_API_URL")
         api_key = await get_secret(db, "SMS_HTTP_API_KEY")
-        logger.info(f"[SMS Config] Configuring HTTP provider with URL: {api_url[:50] if api_url else 'EMPTY'}...")
+        logger.info(f"[SMS Config] Configuring HTTP provider with URL: {'set' if api_url else 'EMPTY'}")
         notification_service.configure_sms("http", {
             "api_url": api_url,
             "api_key": api_key,
@@ -61,7 +61,7 @@ async def configure_notifications(db):
         })
         logger.info("[SMS Config] Configured HTTP/Textbelt provider")
     else:
-        logger.warning(f"[SMS Config] Unknown or empty SMS_PROVIDER: '{sms_provider}' - SMS will not work")
+        logger.warning("[SMS Config] Unknown or empty SMS_PROVIDER - SMS will not work")
     
     # Configure Email provider
     email_enabled = await get_secret(db, "EMAIL_ENABLED")
@@ -116,7 +116,7 @@ def analyze_request(self, request_id: int):
                 logger.warning(msg)
                 return {"status": "skipped", "reason": "VERTEX_AI_PROJECT not configured"}
             
-            logger.info(f"[AI Analysis] Project ID found: {project_id}")
+            logger.info("[AI Analysis] Project ID found: <set>")
             
             location = "global"  # Gemini 3.1 Flash-Lite is available on global endpoints
             service_account_json = await get_secret(db, "VERTEX_AI_SERVICE_ACCOUNT_KEY")

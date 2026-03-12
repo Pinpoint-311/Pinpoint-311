@@ -95,7 +95,7 @@ export default function ResidentPortal() {
 
         // Generate session ID for logging
         const sessionId = localStorage.getItem('session_id') ||
-            `sess_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            `sess_${Date.now()}_${Array.from(crypto.getRandomValues(new Uint8Array(6))).map(b => b.toString(36).padStart(2, '0')).join('').slice(0, 9)}`;
         localStorage.setItem('session_id', sessionId);
 
         // Log acknowledgment to backend

@@ -93,7 +93,8 @@ async def get_cached_translation(text: str, target_lang: str) -> Optional[str]:
             cached = result.scalar_one_or_none()
             
             if cached:
-                logger.debug(f"DB cache hit: '{text[:30]}...' -> '{target_lang}'")
+                from app.core.sanitize import sanitize_for_log
+                logger.debug(f"DB cache hit: '{text[:30]}...' -> '{sanitize_for_log(target_lang)}'")
                 return cached.translated_text
             return None
     except Exception as e:
@@ -128,7 +129,8 @@ async def save_translation_to_cache(text: str, target_lang: str, translated: str
                 )
                 db.add(translation)
                 await db.commit()
-                logger.info(f"Cached translation: '{text[:30]}...' -> '{translated[:30]}...' ({target_lang})")
+                from app.core.sanitize import sanitize_for_log
+                logger.info(f"Cached translation: '{text[:30]}...' -> '{translated[:30]}...' ({sanitize_for_log(target_lang)})")
     except Exception as e:
         logger.error(f"Failed to save translation to cache: {e}")
 
@@ -208,7 +210,8 @@ async def translate_text(
                 return translated
             return None
     except Exception as e:
-        logger.error(f"Translation failed ({source_lang} -> {target_lang}): {e}")
+        from app.core.sanitize import sanitize_for_log
+        logger.error(f"Translation failed ({sanitize_for_log(source_lang)} -> {sanitize_for_log(target_lang)}): {e}")
         return None
 
 

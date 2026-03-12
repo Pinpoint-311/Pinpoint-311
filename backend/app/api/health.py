@@ -58,9 +58,11 @@ async def check_database(db: AsyncSession) -> Dict[str, Any]:
             "message": "Database connection successful"
         }
     except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Database health check failed: {e}")
         return {
             "status": "error",
-            "message": f"Database error: {str(e)}"
+            "message": "Database connection failed"
         }
 
 
@@ -72,9 +74,11 @@ async def check_auth0(db: AsyncSession) -> Dict[str, Any]:
         status_info = await Auth0Service.check_status(db)
         return status_info
     except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Auth0 health check failed: {e}")
         return {
             "status": "error",
-            "message": f"Auth0 check failed: {str(e)}"
+            "message": "Auth0 check failed"
         }
 
 
@@ -143,11 +147,12 @@ async def check_google_kms(db: AsyncSession) -> Dict[str, Any]:
             }
             
     except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"KMS health check failed: {e}")
         return {
             "status": "error",
-            "message": f"KMS check failed: {str(e)}",
-            "project": os.getenv("GOOGLE_CLOUD_PROJECT"),
-            "error_details": str(e)[:200]
+            "message": "KMS check failed",
+            "project": os.getenv("GOOGLE_CLOUD_PROJECT")
         }
 
 
@@ -190,11 +195,12 @@ async def check_secret_manager(db: AsyncSession) -> Dict[str, Any]:
         }
         
     except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Secret Manager health check failed: {e}")
         return {
             "status": "error",
-            "message": f"Secret Manager check failed: {str(e)}",
-            "project": os.getenv("GOOGLE_CLOUD_PROJECT"),
-            "error_details": str(e)[:200]
+            "message": "Secret Manager check failed",
+            "project": os.getenv("GOOGLE_CLOUD_PROJECT")
         }
 
 
@@ -224,11 +230,12 @@ async def check_vertex_ai(db: AsyncSession) -> Dict[str, Any]:
         }
         
     except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Vertex AI health check failed: {e}")
         return {
             "status": "error",
-            "message": f"Vertex AI check failed: {str(e)}",
-            "project": os.getenv("GOOGLE_VERTEX_PROJECT"),
-            "error_details": str(e)[:200]
+            "message": "Vertex AI check failed",
+            "project": os.getenv("GOOGLE_VERTEX_PROJECT")
         }
 
 
@@ -255,10 +262,11 @@ async def check_translation_api(db: AsyncSession) -> Dict[str, Any]:
         }
         
     except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Translation API health check failed: {e}")
         return {
             "status": "error",
-            "message": f"Translation API check failed: {str(e)}",
-            "error_details": str(e)[:200]
+            "message": "Translation API check failed"
         }
 
 
@@ -284,9 +292,11 @@ async def check_gcp_auth(db: AsyncSession) -> Dict[str, Any]:
         }
         
     except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"GCP auth check failed: {e}")
         return {
             "status": "error",
-            "message": f"GCP auth check failed: {str(e)}"
+            "message": "GCP auth check failed"
         }
 
 @router.get("/")

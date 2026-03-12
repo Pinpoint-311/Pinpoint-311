@@ -302,14 +302,16 @@ async def delete_backup(backup_name: str) -> Dict[str, Any]:
     
     try:
         s3 = get_s3_client(config)
-        s3.delete_object(Bucket=config["BACKUP_S3_BUCKET"], Key=backup_name)
+        from app.core.sanitize import sanitize_path_component, sanitize_for_log
+        safe_name = sanitize_path_component(backup_name)
+        s3.delete_object(Bucket=config["BACKUP_S3_BUCKET"], Key=safe_name)
         
-        logger.info(f"Deleted backup: {backup_name}")
-        return {"status": "success", "deleted": backup_name}
+        logger.info(f"Deleted backup: {sanitize_for_log(safe_name)}")
+        return {"status": "success", "deleted": safe_name}
         
     except Exception as e:
-        logger.error(f"Failed to delete backup {backup_name}: {e}")
-        return {"status": "error", "message": str(e)}
+        logger.error(f"Failed to delete backup: {e}")
+        return {"status": "error", "message": "Failed to delete backup"}
 
 
 async def cleanup_old_backups(retention_days: int = None) -> Dict[str, Any]:
@@ -498,12 +500,14 @@ async def restore_backup(backup_name: str) -> Dict[str, Any]:
     
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
-            encrypted_path = os.path.join(tmpdir, backup_name)
+            # Step 1: Download from S3
+            from app.core.sanitize import sanitize_path_component, sanitize_for_log
+            safe_backup_name = sanitize_path_component(backup_name)
+            encrypted_path = os.path.join(tmpdir, safe_backup_name)
             decrypted_path = os.path.join(tmpdir, "backup.sql")
             
-            # Step 1: Download from S3
-            logger.info(f"Downloading backup: {backup_name}...")
-            if not await download_backup(backup_name, encrypted_path):
+            logger.info(f"Downloading backup: {sanitize_for_log(safe_backup_name)}...")
+            if not await download_backup(safe_backup_name, encrypted_path):
                 return {"status": "error", "message": "Failed to download backup from S3"}
             
             encrypted_size = os.path.getsize(encrypted_path)
@@ -520,7 +524,7 @@ async def restore_backup(backup_name: str) -> Dict[str, Any]:
             if not restore_database_dump(decrypted_path):
                 return {"status": "error", "message": "Failed to restore database - check pg_restore logs"}
             
-            logger.info(f"Database restored from backup: {backup_name}")
+            logger.info(f"Database restored from backup: {sanitize_for_log(safe_backup_name)}")
             
             return {
                 "status": "success",

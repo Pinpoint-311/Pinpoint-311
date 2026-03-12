@@ -290,7 +290,8 @@ async def create_request(
     """Open311 v2 compatible - Create a new service request (public)"""
     import logging
     logger = logging.getLogger(__name__)
-    logger.info(f"[CREATE REQUEST] Received: service_code={request_data.service_code}")
+    from app.core.sanitize import sanitize_for_log
+    logger.info(f"[CREATE REQUEST] Received: service_code={sanitize_for_log(request_data.service_code)}")
     
     # Validate service code
     result = await db.execute(
@@ -302,7 +303,7 @@ async def create_request(
     service = result.scalar_one_or_none()
     
     if not service:
-        logger.error(f"[CREATE REQUEST] Invalid service code: {request_data.service_code}")
+        logger.error(f"[CREATE REQUEST] Invalid service code: {sanitize_for_log(request_data.service_code)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid service code: {request_data.service_code}"

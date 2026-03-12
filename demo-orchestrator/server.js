@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { exec } from 'child_process';
+import crypto from 'crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -16,6 +17,23 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('[FATAL] Unhandled rejection:', reason);
 });
 
+// ====== Security Helpers ======
+function sanitizeForLog(str) {
+    if (typeof str !== 'string') return String(str);
+    return str.replace(/[\r\n\t]/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 200);
+}
+
+function validateId(id) {
+    return typeof id === 'string' && /^[a-z0-9]{4,8}$/.test(id);
+}
+
+function validateConfigValue(value, name) {
+    if (typeof value === 'string' && /[;&|`$(){}\n\r]/.test(value)) {
+        throw new Error(`Invalid characters in config value: ${name}`);
+    }
+    return value;
+}
+
 // ====== Configuration ======
 const CONFIG = {
     MAX_INSTANCES: parseInt(process.env.MAX_INSTANCES || '3'),
@@ -23,18 +41,18 @@ const CONFIG = {
     BASE_PORT: parseInt(process.env.BASE_PORT || '9200'),
     BACKEND_BASE: parseInt(process.env.BACKEND_BASE || '9000'),
     FRONTEND_BASE: parseInt(process.env.FRONTEND_BASE || '9100'),
-    HOST: process.env.DEMO_HOST || 'localhost',
-    PUBLIC_DOMAIN: process.env.PUBLIC_DOMAIN || 'pinpoint311.org',
-    BASE_DOMAIN: process.env.BASE_DOMAIN || 'pinpoint311.org',
+    HOST: validateConfigValue(process.env.DEMO_HOST || 'localhost', 'DEMO_HOST'),
+    PUBLIC_DOMAIN: validateConfigValue(process.env.PUBLIC_DOMAIN || 'pinpoint311.org', 'PUBLIC_DOMAIN'),
+    BASE_DOMAIN: validateConfigValue(process.env.BASE_DOMAIN || 'pinpoint311.org', 'BASE_DOMAIN'),
     DATA_DIR: join(__dirname, 'data'),
     COMPOSE_FILE: join(__dirname, 'docker-compose-demo.yml'),
     // Path to the MAIN production Caddyfile (to add demo routes)
-    CADDYFILE_PATH: process.env.CADDYFILE_PATH || '/home/ubuntu/WWF-Open-Source-311-Template/Caddyfile',
-    CADDY_CONTAINER: process.env.CADDY_CONTAINER || 'wwf-open-source-311-template-caddy-1',
+    CADDYFILE_PATH: validateConfigValue(process.env.CADDYFILE_PATH || '/home/ubuntu/WWF-Open-Source-311-Template/Caddyfile', 'CADDYFILE_PATH'),
+    CADDY_CONTAINER: validateConfigValue(process.env.CADDY_CONTAINER || 'wwf-open-source-311-template-caddy-1', 'CADDY_CONTAINER'),
     // API keys
-    GOOGLE_CLOUD_PROJECT: process.env.GOOGLE_CLOUD_PROJECT || '',
-    GOOGLE_VERTEX_PROJECT: process.env.GOOGLE_VERTEX_PROJECT || '',
-    GOOGLE_VERTEX_LOCATION: process.env.GOOGLE_VERTEX_LOCATION || 'us-central1',
+    GOOGLE_CLOUD_PROJECT: validateConfigValue(process.env.GOOGLE_CLOUD_PROJECT || '', 'GOOGLE_CLOUD_PROJECT'),
+    GOOGLE_VERTEX_PROJECT: validateConfigValue(process.env.GOOGLE_VERTEX_PROJECT || '', 'GOOGLE_VERTEX_PROJECT'),
+    GOOGLE_VERTEX_LOCATION: validateConfigValue(process.env.GOOGLE_VERTEX_LOCATION || 'us-central1', 'GOOGLE_VERTEX_LOCATION'),
 };
 
 if (!existsSync(CONFIG.DATA_DIR)) mkdirSync(CONFIG.DATA_DIR, { recursive: true });
@@ -52,8 +70,10 @@ function saveRegistry(r) {
 }
 
 function generateId() {
-    // Short IDs for cleaner URLs
-    return Math.random().toString(36).slice(2, 8);
+    // Cryptographically random short IDs for cleaner URLs
+    const bytes = new Uint8Array(6);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes).map(b => b.toString(36).padStart(2, '0')).join('').slice(0, 8);
 }
 
 function findAvailablePort(registry) {
@@ -82,15 +102,17 @@ function composeCmd(id, port, action) {
 }
 
 async function spinUp(id, port) {
+    if (!validateId(id)) throw new Error('Invalid instance ID');
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid port');
     return new Promise((resolve, reject) => {
         const cmd = composeCmd(id, port, 'up -d --pull missing');
-        console.log(`[${id}] Spinning up on port ${port}...`);
+        console.log('[%s] Spinning up on port %d...', sanitizeForLog(id), port);
         exec(cmd, { timeout: 180000 }, (err, stdout, stderr) => {
             if (err) {
-                console.error(`[${id}] Failed to start:`, stderr);
-                reject(new Error(`Failed to start instance: ${stderr}`));
+                console.error('[%s] Failed to start: %s', sanitizeForLog(id), sanitizeForLog(stderr));
+                reject(new Error('Failed to start instance'));
             } else {
-                console.log(`[${id}] Started successfully`);
+                console.log('[%s] Started successfully', sanitizeForLog(id));
                 resolve();
             }
         });
@@ -98,12 +120,14 @@ async function spinUp(id, port) {
 }
 
 async function tearDown(id, port) {
+    if (!validateId(id)) throw new Error('Invalid instance ID');
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid port');
     return new Promise((resolve) => {
         const cmd = composeCmd(id, port, 'down -v --remove-orphans');
-        console.log(`[${id}] Tearing down...`);
+        console.log('[%s] Tearing down...', sanitizeForLog(id));
         exec(cmd, { timeout: 60000 }, (err) => {
-            if (err) console.error(`[${id}] Teardown warning:`, err.message);
-            else console.log(`[${id}] Torn down successfully`);
+            if (err) console.error('[%s] Teardown warning: %s', sanitizeForLog(id), sanitizeForLog(err.message));
+            else console.log('[%s] Torn down successfully', sanitizeForLog(id));
             resolve();
         });
     });
@@ -173,9 +197,9 @@ async function seedDemoData(port, townName) {
             body: JSON.stringify({ municipality_name: townName }),
         });
 
-        console.log(`[seed] Configured municipality: ${townName}`);
+        console.log('[seed] Configured municipality: %s', sanitizeForLog(townName));
     } catch (err) {
-        console.error(`[seed] Error:`, err.message);
+        console.error('[seed] Error: %s', sanitizeForLog(err.message));
     }
 }
 
@@ -221,7 +245,7 @@ function updateCaddyfile(registry) {
         console.log(`[caddy] Updated Caddyfile with ${count} demo subdomain(s)`);
 
         // Reload Caddy
-        exec(`docker exec ${CONFIG.CADDY_CONTAINER} caddy reload --config /etc/caddy/Caddyfile`, (err) => {
+        exec(`docker exec ${CONFIG.CADDY_CONTAINER} caddy reload --config /etc/caddy/Caddyfile`, { timeout: 15000 }, (err) => {
             if (err) console.error('[caddy] Reload warning:', err.message);
             else console.log('[caddy] Reloaded successfully');
         });
@@ -368,16 +392,18 @@ app.post('/api/demo/create', async (req, res) => {
 });
 
 app.get('/api/demo/:id/status', (req, res) => {
+    const id = req.params.id;
+    if (!validateId(id)) return res.status(400).json({ error: 'Invalid instance ID' });
     const registry = loadRegistry();
-    const inst = registry[req.params.id];
-    if (!inst) return res.status(404).json({ error: 'Instance not found' });
+    if (!Object.hasOwn(registry, id)) return res.status(404).json({ error: 'Instance not found' });
+    const inst = registry[id];
 
     const ttlMs = CONFIG.TTL_HOURS * 3600 * 1000;
     const expiresAt = new Date(inst.created + ttlMs).toISOString();
     const timeRemaining = Math.max(0, inst.created + ttlMs - Date.now());
 
     res.json({
-        id: req.params.id,
+        id,
         status: inst.status,
         url: inst.url || null,
         credentials: inst.status === 'ready' ? inst.credentials : null,
@@ -390,16 +416,18 @@ app.get('/api/demo/:id/status', (req, res) => {
 });
 
 app.delete('/api/demo/:id', async (req, res) => {
+    const id = req.params.id;
+    if (!validateId(id)) return res.status(400).json({ error: 'Invalid instance ID' });
     const registry = loadRegistry();
-    const inst = registry[req.params.id];
-    if (!inst) return res.status(404).json({ error: 'Instance not found' });
+    if (!Object.hasOwn(registry, id)) return res.status(404).json({ error: 'Instance not found' });
+    const inst = registry[id];
 
-    await tearDown(req.params.id, inst.port);
-    delete registry[req.params.id];
+    await tearDown(id, inst.port);
+    delete registry[id];
     saveRegistry(registry);
     updateCaddyfile(registry);
 
-    res.json({ status: 'destroyed', id: req.params.id });
+    res.json({ status: 'destroyed', id });
 });
 
 app.get('/api/demo/instances', (req, res) => {
