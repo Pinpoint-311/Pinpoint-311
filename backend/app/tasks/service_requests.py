@@ -1,6 +1,6 @@
 from app.core.celery_app import celery_app
 from app.db.session import SessionLocal
-from app.models import ServiceRequest, SystemSecret
+from app.models import ServiceRequest
 from app.services.notifications import notification_service
 from app.services.geocoding import get_geocoding_service
 from sqlalchemy import select

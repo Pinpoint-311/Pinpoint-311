@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { execSync, exec } from 'child_process';
+import { exec } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';

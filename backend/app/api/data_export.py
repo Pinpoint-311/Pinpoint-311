@@ -8,16 +8,16 @@ in various formats (CSV, JSON, GeoJSON) for reporting and integration.
 import csv
 import io
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query, HTTPException
-from fastapi.responses import StreamingResponse, JSONResponse
-from sqlalchemy import select, func, and_
+from fastapi.responses import StreamingResponse
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models import ServiceRequest, ServiceDefinition, User, Department, SystemSettings
-from app.core.auth import get_current_user, get_current_staff
+from app.models import ServiceRequest, User, SystemSettings
+from app.core.auth import get_current_staff
 from app.core.encryption import decrypt_pii
 
 router = APIRouter(prefix="/export", tags=["data-export"])

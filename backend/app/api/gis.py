@@ -4,16 +4,14 @@ GIS and Geocoding API endpoints
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Optional, List
+from typing import Optional
 import json
 import httpx
 
 from app.db.session import get_db
-from app.models import User, SystemSecret, SystemSettings
-from app.core.auth import get_current_admin, get_current_staff
-from app.core.encryption import decrypt_safe
+from app.models import User, SystemSettings
+from app.core.auth import get_current_admin
 from app.services.geocoding import (
-    GeocodingService, BoundaryService,
     get_geocoding_service, get_boundary_service
 )
 

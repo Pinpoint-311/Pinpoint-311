@@ -14,8 +14,8 @@ from app.db.session import get_db
 from app.models import SystemSettings, SystemSecret, ServiceRequest, User, DisclaimerAcknowledgment, AuditLog
 from app.schemas import (
     SystemSettingsBase, SystemSettingsResponse,
-    SecretCreate, SecretUpdate, SecretResponse,
-    StatisticsResponse, ServiceRequestResponse
+    SecretCreate, SecretResponse,
+    StatisticsResponse
 )
 from app.core.auth import get_current_admin, get_current_staff
 
@@ -561,8 +561,7 @@ async def get_statistics(
 
 # ============ Advanced Statistics (PostGIS-powered) ============
 
-from sqlalchemy import text, extract, case
-from sqlalchemy.sql.expression import literal_column
+from sqlalchemy import text, extract
 from datetime import timedelta
 import json
 from app.schemas import (
@@ -1109,8 +1108,8 @@ async def get_advanced_statistics(
         try:
             from datetime import datetime as dt
             peak_month = dt.strptime(peak_month, "%Y-%m").strftime("%B")
-        except:
-            pass
+        except Exception:
+            pass  # Month format conversion failed, keep original
     
     predictive_insights = PredictiveInsights(
         volume_forecast_next_week=volume_forecast_next_week,
@@ -1164,7 +1163,7 @@ async def get_advanced_statistics(
             cache_data["cached_at"] = now.isoformat()
             await redis_client.setex(cache_key, STATS_CACHE_TTL, json.dumps(cache_data, default=str))
     except Exception:
-        pass
+        pass  # Redis cache write failed, non-critical
     
     return response_data
 
@@ -1794,7 +1793,7 @@ async def switch_version(
                         health_ok = True
                         break
             except Exception:
-                pass
+                pass  # Health check attempt failed, will retry
             await asyncio.sleep(5)
         
         if not health_ok:
@@ -2290,7 +2289,6 @@ async def get_health_dashboard(
     Comprehensive system health dashboard for non-technical administrators.
     Returns status of all services, database metrics, and last backup info.
     """
-    import asyncio
     from datetime import datetime
     
     health = {
@@ -2303,7 +2301,6 @@ async def get_health_dashboard(
     }
     
     # Check service health via network (works from inside containers)
-    import httpx
     
     service_checks = {
         "backend": {"url": "http://localhost:8000/api/health", "name": "Backend API"},
@@ -2551,7 +2548,6 @@ async def execute_runbook(
 # ============ AI Analytics Chat ============
 
 from pydantic import BaseModel
-from typing import Optional
 from datetime import timedelta
 
 class ChatMessage(BaseModel):
@@ -2579,7 +2575,6 @@ async def analytics_chat(
     and uses Gemini 3.1 Flash-Lite to answer questions.
     """
     from datetime import datetime
-    from sqlalchemy import extract, text
     
     context_used = []
     now = datetime.utcnow()
@@ -2841,7 +2836,6 @@ async def analytics_chat(
                 calculate_time_to_triage, count_reassignments,
                 is_off_hours_submission, calculate_escalation_occurred
             )
-            from sqlalchemy.orm import selectinload
             
             # Load audit logs for a sample of requests
             sample_ids = [r.id for r in all_requests[:100]]
@@ -3007,7 +3001,6 @@ Season: {'Winter' if now.month in [12,1,2] else 'Spring' if now.month in [3,4,5]
 
     # ========== Build Conversation & Call Vertex AI ==========
     try:
-        from app.services.vertex_ai_service import analyze_with_gemini
         from app.services.secret_manager import get_secret as sm_get_secret
         
         project_id = await sm_get_secret("VERTEX_AI_PROJECT")
@@ -3096,7 +3089,7 @@ Season: {'Winter' if now.month in [12,1,2] else 'Spring' if now.month in [3,4,5]
             from app.services.api_usage import track_api_call
             await track_api_call(db, "vertex_ai", endpoint="analytics_chat", tokens_used=len(conversation) // 4 + len(ai_response) // 4)
         except Exception:
-            pass
+            pass  # API usage tracking is non-critical
         
         return AnalyticsChatResponse(
             response=ai_response.strip(),

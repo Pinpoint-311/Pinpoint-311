@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -8,7 +8,6 @@ import logging
 
 from app.db.session import get_db
 from app.models import User
-from app.schemas import Token
 from app.core.auth import create_access_token, get_current_user
 from app.services.auth0_service import Auth0Service
 from app.services.audit_service import AuditService
@@ -315,8 +314,8 @@ async def logout(
             import jwt as jwt_lib
             decoded = jwt_lib.decode(token, options={"verify_signature": False})
             session_id = decoded.get("jti", "unknown")
-        except:
-            pass
+        except Exception:
+            pass  # JWT decode failed, session_id stays "unknown"
     
     # Log logout event
     await AuditService.log_logout(

@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link, useParams } from 'react-router-dom';
 import {
-    Search,
     ArrowLeft,
     MapPin,
     CheckCircle2,
@@ -28,7 +27,6 @@ import {
     Twitter,
     Linkedin,
     AlertTriangle,
-    Shield,
 } from 'lucide-react';
 import { Button, Input, Textarea, Card } from '../components/ui';
 import GoogleMapsLocationPicker from '../components/GoogleMapsLocationPicker';

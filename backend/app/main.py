@@ -1,11 +1,10 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 import os
-import json
 import sentry_sdk
 
 # Initialize Sentry for error tracking (optional - set SENTRY_DSN env var)
@@ -188,7 +187,7 @@ async def lifespan(app: FastAPI):
     try:
         await uptime_task
     except asyncio.CancelledError:
-        pass
+        pass  # Expected during shutdown
     print("[Uptime Monitor] Stopped background health monitoring")
 
 

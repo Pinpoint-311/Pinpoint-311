@@ -1,6 +1,5 @@
 import logging
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import User, Department, ServiceDefinition, SystemSettings, SystemSecret
 from app.core.auth import get_password_hash
 from app.core.config import get_settings

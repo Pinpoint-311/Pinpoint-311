@@ -78,7 +78,7 @@ def get_google_auth_url(redirect_uri: str, state: str) -> Optional[str]:
                 future = executor.submit(asyncio.run, _get())
                 return future.result()
         return asyncio.run(_get())
-    except:
+    except Exception:
         return asyncio.run(_get())
 
 
@@ -165,7 +165,7 @@ def get_microsoft_auth_url(redirect_uri: str, state: str) -> Optional[str]:
                 future = executor.submit(asyncio.run, _get())
                 return future.result()
         return asyncio.run(_get())
-    except:
+    except Exception:
         return asyncio.run(_get())
 
 

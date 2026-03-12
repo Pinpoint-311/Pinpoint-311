@@ -10,8 +10,7 @@ from app.db.session import get_db
 from app.models import ServiceRequest, ServiceDefinition, User, RequestAuditLog, Department
 from app.schemas import (
     ServiceRequestCreate, ServiceRequestResponse, ServiceRequestDetailResponse,
-    ServiceRequestUpdate, ServiceRequestDelete, ManualIntakeCreate, PublicServiceRequestResponse,
-    RequestAuditLogResponse
+    ServiceRequestUpdate, ServiceRequestDelete, ManualIntakeCreate, RequestAuditLogResponse
 )
 from app.core.auth import get_current_staff
 from slowapi import Limiter
@@ -143,7 +142,7 @@ async def get_public_request_detail(request_id: str, db: AsyncSession = Depends(
 
 
 from app.models import RequestComment
-from app.schemas import RequestCommentCreate, RequestCommentResponse
+from app.schemas import RequestCommentResponse
 
 
 @router.get("/public/requests/{request_id}/comments", response_model=List[RequestCommentResponse])

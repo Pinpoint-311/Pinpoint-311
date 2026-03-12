@@ -9,7 +9,6 @@ This service analyzes service requests using Google's Gemini model to provide:
 """
 
 import json
-import base64
 import re
 import logging
 from datetime import datetime
@@ -344,7 +343,7 @@ async def get_historical_context(db, address: str, service_code: str, lat: Optio
     """
     Query historical data for context including chronic recurrence and nodal reporting.
     """
-    from sqlalchemy import select, func, text, and_
+    from sqlalchemy import select, func
     from app.models import ServiceRequest
     from datetime import datetime, timedelta
     
@@ -510,7 +509,6 @@ async def get_spatial_context(db, lat: float, long: float, service_code: str) ->
                         # Check each feature in the GeoJSON for proximity
                         for feature in layer.geojson.get("features", [])[:50]:  # Limit to 50 features per layer
                             if feature.get("geometry"):
-                                import json
                                 geom_json = json.dumps(feature["geometry"])
                                 # Use raw SQL to check distance with PostGIS
                                 proximity_query = text("""
@@ -527,19 +525,14 @@ async def get_spatial_context(db, lat: float, long: float, service_code: str) ->
                                     spatial_info["critical_infrastructure"].append(f"{layer.name}: {feature_name} ({int(row.distance_m)}m)")
                                     break  # Only need one match per layer
                     except Exception as e:
-                        # If PostGIS query fails, log but continue
-                        import logging
-                        logging.warning(f"Failed to check spatial proximity for layer {layer.name}: {e}")
+                        logger.warning(f"Failed to check spatial proximity for layer {layer.name}: {e}")
 
         # Fallback: If no critical infrastructure found from GeoJSON layers, use Nominatim (OSM)
         if not spatial_info["critical_infrastructure"]:
             try:
-                import httpx
-                import logging
                 import math
-                import asyncio
                 
-                logging.info(f"[Critical Infrastructure] Using Nominatim fallback for {lat},{long}")
+                logger.info(f"[Critical Infrastructure] Using Nominatim fallback for {lat},{long}")
                 
                 # Search radius in degrees (~500m at this latitude)
                 # 1 degree lat ≈ 111km, 1 degree lon ≈ 111km * cos(lat)
@@ -564,7 +557,7 @@ async def get_spatial_context(db, lat: float, long: float, service_code: str) ->
                         }
                         
                         response = await client.get(nominatim_url, params=params, headers=headers)
-                        logging.info(f"[Critical Infrastructure] Nominatim search for '{search_term}': status {response.status_code}")
+                        logger.info(f"[Critical Infrastructure] Nominatim search for '{search_term}': status {response.status_code}")
                         
                         if response.status_code == 200:
                             results = response.json()
@@ -591,7 +584,7 @@ async def get_spatial_context(db, lat: float, long: float, service_code: str) ->
                                         spatial_info["critical_infrastructure"].append(
                                             f"{place_type}: {place_name} ({int(distance_m)}m)"
                                         )
-                                        logging.info(f"[Critical Infrastructure] Detected via Nominatim: {place_name} at {int(distance_m)}m")
+                                        logger.info(f"[Critical Infrastructure] Detected via Nominatim: {place_name} at {int(distance_m)}m")
                                         break  # Take first match within 300m for this type
                                 # Continue searching for other infrastructure types (don't break outer loop)
                         
@@ -599,11 +592,10 @@ async def get_spatial_context(db, lat: float, long: float, service_code: str) ->
                         await asyncio.sleep(0.2)
                 
                 if not spatial_info["critical_infrastructure"]:
-                    logging.info("[Critical Infrastructure] No critical infrastructure found within 300m via Nominatim")
+                    logger.info("[Critical Infrastructure] No critical infrastructure found within 300m via Nominatim")
                     
             except Exception as e:
-                import logging
-                logging.warning(f"Nominatim critical infrastructure search failed: {e}")
+                logger.warning(f"Nominatim critical infrastructure search failed: {e}")
 
         # 2. Lighting / Outages (Streetlight reports within 100m)
         outage_query = select(func.count(ServiceRequest.id)).where(
