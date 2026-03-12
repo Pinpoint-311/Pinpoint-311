@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, FormEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -28,6 +28,9 @@ import {
     Database,
     Microscope,
     GraduationCap,
+    Sparkles,
+    Send,
+    X,
 } from 'lucide-react';
 import { Button, Card } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
@@ -214,6 +217,37 @@ export const ResearchLab: React.FC = () => {
     const [expandedPack, setExpandedPack] = useState<string | null>('social_equity');
     const [showCoreFields, setShowCoreFields] = useState(false);
 
+    // AI Chat state
+    const [showChat, setShowChat] = useState(false);
+    const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([
+        { role: 'assistant', content: '👋 Hi! I\'m the Research Data Assistant. I can help you understand our data fields, suggest statistical analyses, explain methodology, and provide code snippets. What would you like to know?' }
+    ]);
+    const [chatInput, setChatInput] = useState('');
+    const [chatLoading, setChatLoading] = useState(false);
+    const chatEndRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }, [chatMessages, chatLoading]);
+
+    const sendResearchChat = async (e?: FormEvent) => {
+        e?.preventDefault();
+        const msg = chatInput.trim();
+        if (!msg || chatLoading) return;
+        const newMessages = [...chatMessages, { role: 'user' as const, content: msg }];
+        setChatMessages(newMessages);
+        setChatInput('');
+        setChatLoading(true);
+        try {
+            const result = await api.researchChat(msg, newMessages.slice(0, -1));
+            setChatMessages(prev => [...prev, { role: 'assistant', content: result.response }]);
+        } catch (err: any) {
+            setChatMessages(prev => [...prev, { role: 'assistant', content: `⚠️ ${err.message || 'Failed to get AI response'}` }]);
+        } finally {
+            setChatLoading(false);
+        }
+    };
+
     // Check if research suite is enabled
     useEffect(() => {
         checkEnabled();
@@ -379,6 +413,14 @@ export const ResearchLab: React.FC = () => {
                         </div>
                     </div>
                     <div className="flex items-center gap-4">
+                        <Button
+                            variant="ghost"
+                            onClick={() => setShowChat(!showChat)}
+                            className={`flex items-center gap-2 ${showChat ? 'bg-amber-500/20 text-amber-300' : ''}`}
+                        >
+                            <Sparkles className="w-4 h-4" />
+                            Ask AI
+                        </Button>
                         <div className="flex items-center gap-2 text-sm text-white/60">
                             <GraduationCap className="w-4 h-4" />
                             <span>{user?.username} ({user?.role})</span>
@@ -841,6 +883,111 @@ export const ResearchLab: React.FC = () => {
                     </div>
                 </div>
             </main>
+
+            {/* AI Chat Panel */}
+            <AnimatePresence>
+                {showChat && (
+                    <motion.div
+                        initial={{ x: 400, opacity: 0 }}
+                        animate={{ x: 0, opacity: 1 }}
+                        exit={{ x: 400, opacity: 0 }}
+                        transition={{ type: 'spring', damping: 25, stiffness: 250 }}
+                        className="fixed right-0 top-0 bottom-0 w-full sm:w-[520px] bg-gray-950/95 backdrop-blur-xl border-l border-white/10 z-[60] flex flex-col shadow-2xl"
+                    >
+                        {/* Header */}
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-gray-950/80">
+                            <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center">
+                                    <Sparkles className="w-4 h-4 text-white" />
+                                </div>
+                                <div>
+                                    <h3 className="font-semibold text-white text-sm">Research Assistant</h3>
+                                    <p className="text-xs text-white/40">Powered by Vertex AI</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setShowChat(false)}
+                                className="p-2 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        {/* Suggested Questions */}
+                        {chatMessages.length <= 1 && (
+                            <div className="px-4 py-3 border-b border-white/5 flex flex-wrap gap-2">
+                                {[
+                                    'What fields measure social vulnerability?',
+                                    'How is sentiment calculated?',
+                                    'Best analyses for equity research?',
+                                    'Explain the privacy modes',
+                                ].map(q => (
+                                    <button
+                                        key={q}
+                                        onClick={() => { setChatInput(q); setTimeout(() => { setChatMessages(prev => [...prev, { role: 'user', content: q }]); setChatLoading(true); api.researchChat(q, chatMessages).then(r => setChatMessages(p => [...p, { role: 'assistant', content: r.response }])).catch(err => setChatMessages(p => [...p, { role: 'assistant', content: '⚠️ ' + (err.message || 'Error') }])).finally(() => setChatLoading(false)); }, 0); }}
+                                        className="px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs hover:bg-amber-500/20 transition-colors"
+                                    >
+                                        {q}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* Messages */}
+                        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+                            {chatMessages.map((msg, i) => (
+                                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                    <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                                        msg.role === 'user'
+                                            ? 'bg-amber-500/20 border border-amber-500/25 text-amber-100 rounded-br-md'
+                                            : 'bg-white/5 border border-white/8 text-white/80 rounded-bl-md'
+                                    }`}>
+                                        <div className="whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: msg.content
+                                            .replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre class="bg-black/40 rounded-lg p-3 my-2 overflow-x-auto text-xs text-amber-300"><code>$2</code></pre>')
+                                            .replace(/`([^`]+)`/g, '<code class="bg-black/30 px-1.5 py-0.5 rounded text-xs text-amber-300">$1</code>')
+                                            .replace(/\*\*([^*]+)\*\*/g, '<strong class="text-white">$1</strong>')
+                                            .replace(/^- (.+)$/gm, '• $1')
+                                        }} />
+                                    </div>
+                                </div>
+                            ))}
+                            {chatLoading && (
+                                <div className="flex justify-start">
+                                    <div className="bg-white/5 border border-white/8 rounded-2xl rounded-bl-md px-4 py-3">
+                                        <div className="flex gap-1.5">
+                                            <span className="w-2 h-2 bg-amber-400/60 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                            <span className="w-2 h-2 bg-amber-400/60 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                            <span className="w-2 h-2 bg-amber-400/60 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                            <div ref={chatEndRef} />
+                        </div>
+
+                        {/* Input */}
+                        <form onSubmit={sendResearchChat} className="px-4 py-3 border-t border-white/10 bg-gray-950/80">
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={chatInput}
+                                    onChange={(e) => setChatInput(e.target.value)}
+                                    placeholder="Ask about data fields, methodology, analyses..."
+                                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500/30"
+                                    disabled={chatLoading}
+                                />
+                                <button
+                                    type="submit"
+                                    disabled={chatLoading || !chatInput.trim()}
+                                    className="p-2.5 bg-gradient-to-r from-amber-500 to-orange-500 rounded-xl text-white hover:opacity-90 disabled:opacity-40 transition-opacity"
+                                >
+                                    <Send className="w-4 h-4" />
+                                </button>
+                            </div>
+                        </form>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     );
 };

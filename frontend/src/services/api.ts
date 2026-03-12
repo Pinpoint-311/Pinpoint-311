@@ -619,6 +619,14 @@ class ApiClient {
         return response.blob();
     }
 
+    // Research AI Chat
+    async researchChat(message: string, history: { role: string; content: string }[]): Promise<{ response: string; context_used: string[] }> {
+        return this.request<{ response: string; context_used: string[] }>('/research/chat', {
+            method: 'POST',
+            body: JSON.stringify({ message, history }),
+        });
+    }
+
     // ========== Document Retention ==========
 
     async getRetentionStates(): Promise<RetentionState[]> {

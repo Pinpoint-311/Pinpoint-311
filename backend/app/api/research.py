@@ -2124,3 +2124,289 @@ async def get_access_logs(
         }
         for log in logs
     ]
+
+
+# ============================================================================
+# RESEARCH AI CHAT — Conversational AI for researchers
+# ============================================================================
+
+from pydantic import BaseModel
+from typing import List
+
+class ResearchChatMessage(BaseModel):
+    role: str
+    content: str
+
+class ResearchChatRequest(BaseModel):
+    message: str
+    history: List[ResearchChatMessage] = []
+
+class ResearchChatResponse(BaseModel):
+    response: str
+    context_used: List[str]
+
+
+@router.post("/chat", response_model=ResearchChatResponse)
+async def research_chat(
+    body: ResearchChatRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_researcher)
+):
+    """
+    Conversational AI assistant for researchers — answers questions about
+    data fields, methodology, research packs, export formats, and analysis techniques.
+    Uses the township's Vertex AI (Gemini) credentials.
+    """
+    if not await check_research_enabled(db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Research Suite is not enabled")
+
+    context_used = []
+
+    # Get township info
+    settings_result = await db.execute(select(SystemSettings).limit(1))
+    sys_settings = settings_result.scalar_one_or_none()
+    township_name = getattr(sys_settings, 'township_name', 'the municipality') or 'the municipality'
+    context_used.append("system_settings")
+
+    # Get basic analytics for context
+    all_requests_result = await db.execute(
+        select(ServiceRequest).where(ServiceRequest.deleted_at.is_(None))
+    )
+    all_requests = all_requests_result.scalars().all()
+    total = len(all_requests)
+    open_count = sum(1 for r in all_requests if r.status == "open")
+    closed_count = sum(1 for r in all_requests if r.status == "closed")
+
+    categories = {}
+    for r in all_requests:
+        cat = r.service_name or "Unknown"
+        categories[cat] = categories.get(cat, 0) + 1
+
+    context_used.append("request_analytics")
+
+    # Count fields
+    core_field_count = 26
+    research_field_count = 30
+    total_field_count = core_field_count + research_field_count
+
+    system_prompt = f"""You are a research data assistant for the {township_name} Pinpoint 311 Research Data Lab. You help academic researchers understand the available data, methodology, and analysis techniques.
+
+## YOUR ROLE
+- Help researchers understand the {total_field_count} available data fields
+- Explain research methodology and data sources
+- Suggest analyses and statistical approaches
+- Answer questions about data formats, privacy modes, and export options
+- Be precise about field definitions — researchers need exact specifications
+
+## CURRENT DATASET
+- **Township:** {township_name}
+- **Total service requests:** {total}
+- **Open:** {open_count} | **Closed:** {closed_count}
+- **Categories:** {json.dumps(dict(sorted(categories.items(), key=lambda x: x[1], reverse=True)[:10]))}
+
+## CORE FIELDS ({core_field_count} fields, always included)
+| Field | Type | Description |
+|-------|------|-------------|
+| request_id | string | Unique identifier |
+| service_code | string | Category code (e.g., pothole) |
+| service_name | string | Human-readable category |
+| infrastructure_category | string | Grouped type (roads_pavement, lighting, etc.) |
+| matched_asset_type | string | Type of matched infrastructure asset |
+| description_sanitized | string | Issue description (PII redacted) |
+| description_word_count | int | Word count |
+| has_photos / photo_count | bool/int | Photo attachments |
+| status | string | open, in_progress, closed |
+| closed_substatus | string | Resolution type |
+| priority | int (1-10) | Priority level (1=highest) |
+| resolution_outcome | string | Standardized resolution category |
+| address_anonymized | string | Generalized address |
+| latitude / longitude | float | Coordinates (fuzzed in privacy mode) |
+| zone_id | string | Geographic zone identifier |
+| submitted_datetime / closed_datetime | ISO | Timestamps |
+| submission_hour / day_of_week | int | Temporal fields |
+| is_weekend / is_business_hours | bool | Temporal flags |
+| submission_channel | string | How submitted |
+| department_id | int | Assigned department |
+| comment_count / public_comment_count | int | Comment counts |
+
+## RESEARCH PACK: Social Equity (Sociologists, Equity Researchers)
+| Field | Type | Source |
+|-------|------|--------|
+| census_tract_geoid | string | US Census Geocoder API (real) — 11-digit FIPS code |
+| social_vulnerability_index | float (0-1) | Derived from Census ACS — CDC SVI approximation |
+| housing_tenure_renter_pct | float (0-1) | Census ACS B25003 |
+| income_quintile | int (1-5) | Census ACS B19013 median household income |
+| population_density | string (low/medium/high) | Census ACS B01003 |
+
+## RESEARCH PACK: Environmental Context (Urban Planners, Civil Engineers)
+| Field | Type | Source |
+|-------|------|--------|
+| weather_precip_24h_mm | float | Open-Meteo Archive API |
+| weather_temp_max_c / min_c | float | Open-Meteo Archive API |
+| weather_code | int | WMO weather code |
+| nearby_asset_age_years | float | GeoJSON asset properties |
+| matched_asset_attributes | JSON string | Full asset properties |
+| season | string | Calculated from timestamp |
+
+## RESEARCH PACK: Sentiment & Trust (Political Scientists)
+| Field | Type | Source |
+|-------|------|--------|
+| sentiment_score | float (-1 to +1) | Word-based NLP analysis |
+| is_repeat_report | bool | Regex detection |
+| prior_report_mentioned | bool | Regex — references ticket/case numbers |
+| frustration_expressed | bool | Regex — trust erosion indicators |
+
+## RESEARCH PACK: Bureaucratic Friction (Public Administration)
+| Field | Type | Source |
+|-------|------|--------|
+| time_to_triage_hours | float | Audit logs — submission to first "In Progress" |
+| reassignment_count | int | Audit logs — department bounces |
+| off_hours_submission | bool | Before 6am or after 10pm |
+| escalation_occurred | bool | Priority manually increased |
+| total_hours_to_resolve | float | Submission to closure |
+| business_hours_to_resolve | float | Mon-Fri 8am-5pm only |
+| days_to_first_update | float | Days until first staff action |
+| status_change_count | int | Number of status changes |
+
+## RESEARCH PACK: AI/ML Research (Data Scientists)
+| Field | Type | Source |
+|-------|------|--------|
+| ai_flagged | bool | Vertex AI flagged for review |
+| ai_flag_reason | string | Safety, urgent, etc. |
+| ai_priority_score | float (1-10) | AI-generated priority |
+| ai_classification | string | AI-assigned category |
+| ai_summary_sanitized | string | AI summary (PII redacted) |
+| ai_analyzed | bool | Whether AI processed this request |
+| ai_vs_manual_priority_diff | float | manual - ai priority difference |
+
+## PRIVACY MODES
+- **Fuzzed (default):** Coordinates snapped to ~100ft grid, house numbers removed. Safe for most research.
+- **Exact (admin only):** Full precision coordinates and full addresses. Required IRB approval recommended.
+
+## EXPORT FORMATS
+- **CSV:** Standard tabular format with all {total_field_count} fields. UTF-8 encoded.
+- **GeoJSON:** Spatial data with geometry + properties. For QGIS, ArcGIS, Folium, etc.
+- **Data Dictionary:** Column descriptions CSV for codebook generation.
+
+## METHODOLOGY NOTES
+- Sentiment analysis uses word-based NLP (not LLM) — scores are deterministic and reproducible
+- Census data uses ACS 5-year estimates (most stable for tract-level analysis)
+- SVI is a simplified 3-component approximation of the CDC's 16-variable index
+- Location fuzzing uses grid-snapping (not random noise) — maintains relative spatial patterns
+- Weather data from Open-Meteo Archive API (free, reliable for historical dates)
+- Infrastructure categories are mapped from service_code via keyword matching
+
+## SUGGESTED ANALYSES
+- SVI vs response time regression (equity research)
+- Freeze-thaw cycle pothole correlation (civil engineering)
+- Sentiment vs income quintile (political science)
+- AI-human priority alignment study (AI/ML research)
+- Department routing efficiency audit (public administration)
+- Renter vs owner reporting rate comparison (housing research)
+
+## RESPONSE RULES
+- Be precise about field definitions and data types
+- Suggest specific statistical methods (e.g., "use Welch's t-test" not "compare means")
+- Include code snippets in Python (pandas) or R when helpful
+- Recommend appropriate visualization types
+- Cite data source limitations honestly
+- Never fabricate field names or capabilities"""
+
+    # Build conversation
+    conversation = system_prompt + "\n\n## CONVERSATION\n"
+    for msg in body.history[-20:]:
+        role_label = "Researcher" if msg.role == "user" else "Research Assistant"
+        conversation += f"\n**{role_label}:** {msg.content}\n"
+    conversation += f"\n**Researcher:** {body.message}\n\n**Research Assistant:**"
+
+    # Call Vertex AI
+    try:
+        import os
+        from app.services.secret_manager import get_secret as sm_get_secret
+
+        project_id = await sm_get_secret("VERTEX_AI_PROJECT")
+        if not project_id:
+            project_id = os.getenv("GOOGLE_VERTEX_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+
+        if not project_id:
+            raise HTTPException(status_code=503, detail="Vertex AI not configured")
+
+        service_account_json = await sm_get_secret("VERTEX_AI_SERVICE_ACCOUNT_KEY")
+
+        import google.auth
+        from google.auth.transport.requests import Request
+        from google.oauth2 import service_account as sa_module
+        import aiohttp
+
+        if service_account_json:
+            sa_info = json.loads(service_account_json)
+            credentials = sa_module.Credentials.from_service_account_info(
+                sa_info,
+                scopes=['https://www.googleapis.com/auth/cloud-platform']
+            )
+        else:
+            credentials, _ = google.auth.default(
+                scopes=['https://www.googleapis.com/auth/cloud-platform']
+            )
+
+        credentials.refresh(Request())
+
+        endpoint = f"https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/gemini-3.1-flash-lite-preview:generateContent"
+
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": conversation}]}],
+            "generationConfig": {
+                "temperature": 0.3,
+                "topP": 0.8,
+                "maxOutputTokens": 4096,
+            },
+            "safetySettings": [
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+            ]
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                endpoint,
+                headers={
+                    "Authorization": f"Bearer {credentials.token}",
+                    "Content-Type": "application/json"
+                },
+                json=payload
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.error(f"Vertex AI research chat error: {error_text}")
+                    raise HTTPException(status_code=502, detail=f"AI service error: {response.status}")
+
+                result = await response.json()
+
+        # Extract response text
+        ai_response = ""
+        if 'candidates' in result and result['candidates']:
+            parts = result['candidates'][0].get('content', {}).get('parts', [])
+            for part in parts:
+                if 'text' in part:
+                    ai_response += part['text']
+
+        if not ai_response:
+            ai_response = "I wasn't able to generate a response. Please try rephrasing your question."
+
+        # Log the research chat access
+        await log_research_access(
+            db, current_user.id, current_user.username,
+            "ai_chat", {"message_preview": body.message[:100]},
+            0, "n/a"
+        )
+
+        return ResearchChatResponse(response=ai_response, context_used=context_used)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Research chat error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get AI response")
+
