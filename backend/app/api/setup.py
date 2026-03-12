@@ -283,7 +283,7 @@ async def configure_gcp(
             "kms_configured": kms_created,
             "kms_keyring": kms_keyring if kms_created else None,
             "kms_key": kms_key if kms_created else None,
-            "kms_note": None if kms_created else f"KMS not auto-created ({kms_error}), using Fernet encryption"
+            "kms_note": None if kms_created else "KMS not auto-created, using Fernet encryption"
         }
         
     except HTTPException:

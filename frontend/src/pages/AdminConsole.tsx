@@ -7,8 +7,6 @@ import {
     Palette,
     Users,
     Grid3X3,
-    Key,
-
     LogOut,
     Save,
     Trash2,
@@ -54,8 +52,8 @@ import {
     Upload,
     BarChart3,
     Terminal,
-    Copy,
-    ExternalLink,
+
+
     ChevronDown,
     User as UserIcon,
     Globe,
@@ -300,7 +298,7 @@ export default function AdminConsole() {
 
     // Secrets state
     const [secrets, setSecrets] = useState<SystemSecret[]>([]);
-    const [secretValues, setSecretValues] = useState<Record<string, string>>({});
+
 
     // Modules state
     const [modules, setModules] = useState({ ai_analysis: false, sms_alerts: false, email_notifications: false, research_portal: false });
@@ -357,9 +355,8 @@ export default function AdminConsole() {
 
     // SSO users don't have passwords - authentication handled by Auth0
 
-    // Update in progress
-    const [isUpdating, setIsUpdating] = useState(false);
-    const [updateMessage, setUpdateMessage] = useState<string | null>(null);
+
+    // SSO users don't have passwords - authentication handled by Auth0
 
     // Document Retention state
     const [retentionStates, setRetentionStates] = useState<Array<{
@@ -795,18 +792,6 @@ export default function AdminConsole() {
         }
     };
 
-    const handleUpdateSecret = async (keyName: string) => {
-        if (demoGuard()) return;
-        const value = secretValues[keyName];
-        if (!value) return;
-        try {
-            await api.updateSecret(keyName, value);
-            setSecretValues((prev) => ({ ...prev, [keyName]: '' }));
-            loadTabData();
-        } catch (err) {
-            console.error('Failed to update secret:', err);
-        }
-    };
 
     const handleSaveSecretDirect = async (keyName: string, value: string) => {
         if (demoGuard()) return;
@@ -830,21 +815,6 @@ export default function AdminConsole() {
             console.error('Failed to save modules:', err);
         } finally {
             setIsLoading(false);
-        }
-    };
-
-    const handleSystemUpdate = async () => {
-        if (demoGuard()) return;
-        if (!confirm('This will pull updates from GitHub and rebuild the system. Continue?')) return;
-        setIsUpdating(true);
-        setUpdateMessage('Pulling updates...');
-        try {
-            const result = await api.updateSystem();
-            setUpdateMessage(result.message);
-        } catch (err) {
-            setUpdateMessage('Update failed: ' + (err as Error).message);
-        } finally {
-            setIsUpdating(false);
         }
     };
 

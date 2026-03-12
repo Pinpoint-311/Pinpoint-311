@@ -372,6 +372,10 @@ async def fetch_osm_boundary(
     _: User = Depends(get_current_admin)
 ):
     """Fetch GeoJSON boundary from polygons.openstreetmap.fr for an OSM relation"""
+    # Validate osm_id to prevent SSRF
+    if not isinstance(osm_id, int) or osm_id < 1 or osm_id > 999_999_999:
+        raise HTTPException(status_code=400, detail="Invalid OSM ID")
+    
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             # Fetch GeoJSON from polygons.openstreetmap.fr
@@ -389,10 +393,10 @@ async def fetch_osm_boundary(
             
             return {"geojson": geojson, "osm_id": osm_id}
             
-    except httpx.RequestError as e:
+    except httpx.RequestError:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to fetch boundary: {str(e)}"
+            detail="Failed to fetch boundary from OpenStreetMap"
         )
 
 
