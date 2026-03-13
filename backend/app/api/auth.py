@@ -132,6 +132,70 @@ async def use_bootstrap_token(
     return HTMLResponse(content=html_response)
 
 
+@router.get("/bootstrap/auto")
+async def auto_bootstrap(
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    One-click browser-based bootstrap — navigate to this URL to auto-login as admin.
+    
+    ONLY works when Auth0 is NOT configured. This is the recommended way for
+    first-time setup. The login page shows a button that links here.
+    """
+    import time as time_module
+    
+    # Check if Auth0 is already configured
+    status_info = await Auth0Service.check_status(db)
+    if status_info["status"] == "configured":
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(
+            content="""<!DOCTYPE html><html><head><title>Setup Complete</title></head>
+            <body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#151929;color:white;text-align:center">
+            <div><h2>Auth0 is already configured</h2><p>Use SSO to log in.</p>
+            <a href="/login" style="color:#6366f1">Go to Login</a></div></body></html>""",
+            status_code=403
+        )
+    
+    # Find admin user
+    result = await db.execute(
+        select(User).where(User.role == "admin", User.is_active == True).limit(1)
+    )
+    admin = result.scalar_one_or_none()
+    
+    if not admin:
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(
+            content="""<!DOCTYPE html><html><head><title>Setup Error</title></head>
+            <body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#151929;color:white;text-align:center">
+            <div><h2>No admin user found</h2><p>The database may not be initialized yet.</p>
+            <a href="/login" style="color:#6366f1">Go back</a></div></body></html>""",
+            status_code=404
+        )
+    
+    # Create JWT directly
+    access_token = create_access_token(data={"sub": admin.username, "role": admin.role})
+    
+    logger.info(f"Auto-bootstrap login successful for: {admin.username}")
+    
+    # Return HTML that stores token and redirects to admin console
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(content=f"""<!DOCTYPE html>
+    <html>
+    <head><title>Setting up...</title></head>
+    <body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#151929;color:white;text-align:center">
+        <div>
+            <div style="font-size:2rem;margin-bottom:1rem">✦</div>
+            <h2 style="margin:0 0 .5rem">Welcome to Pinpoint 311</h2>
+            <p style="color:rgba(255,255,255,.5)">Setting up your admin console...</p>
+        </div>
+        <script>
+            localStorage.setItem('token', '{access_token}');
+            window.location.href = '/admin';
+        </script>
+    </body>
+    </html>""")
+
+
 
 
 

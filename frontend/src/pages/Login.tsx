@@ -136,16 +136,24 @@ export default function Login() {
                                 </a>
                             </div>
                         ) : authStatus && !authStatus.auth0_configured ? (
-                            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-6">
-                                <div className="flex items-start gap-3">
-                                    <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
-                                    <div>
-                                        <p className="text-amber-300 font-medium">Authentication Not Configured</p>
-                                        <p className="text-amber-200/70 text-sm mt-1">
-                                            An administrator needs to configure SSO in the Admin Console before staff can log in.
-                                        </p>
-                                    </div>
+                            <div className="space-y-4">
+                                <div className="bg-primary-500/10 border border-primary-500/30 rounded-xl p-5 text-center">
+                                    <div className="text-2xl mb-2">✦</div>
+                                    <p className="text-primary-300 font-semibold text-lg">Welcome to Pinpoint 311</p>
+                                    <p className="text-white/50 text-sm mt-2">
+                                        Your system is ready for initial setup. Enter the Admin Console to configure your municipality, maps, AI, and authentication.
+                                    </p>
                                 </div>
+                                <a
+                                    href="/api/auth/bootstrap/auto"
+                                    className="flex items-center justify-center gap-2 w-full px-6 py-3 rounded-xl font-medium text-white bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 transition-all shadow-lg shadow-indigo-500/20"
+                                >
+                                    <Shield className="w-5 h-5" />
+                                    Enter Admin Console
+                                </a>
+                                <p className="text-white/30 text-xs text-center">
+                                    This button is only available during initial setup
+                                </p>
                             </div>
                         ) : (
                             <>
