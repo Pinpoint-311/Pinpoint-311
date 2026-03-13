@@ -613,7 +613,8 @@ def send_department_notification(request_id: int, department_email: str):
                         notification_service.send_email(
                             to=staff.email,
                             subject=subject,
-                            body_html=body_html
+                            body_html=body_html,
+                            from_name=f"{township_name} 311"
                         )
                         notified_staff.append({"email": staff.email, "type": "email"})
                     
@@ -650,7 +651,8 @@ New Request: {request.service_name}
                 notification_service.send_email(
                     to=department_email,
                     subject=subject,
-                    body_html=body_html
+                    body_html=body_html,
+                    from_name=f"{township_name} 311"
                 )
                 notified_staff.append({"email": department_email, "type": "fallback"})
             

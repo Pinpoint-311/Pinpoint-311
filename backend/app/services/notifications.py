@@ -129,14 +129,16 @@ class EmailProvider:
         to: str,
         subject: str,
         body_html: str,
-        body_text: Optional[str] = None
+        body_text: Optional[str] = None,
+        from_name: Optional[str] = None
     ) -> bool:
         try:
-            logger.info(f"[Email] Sending email to {to} with subject: {subject[:50]}...")
+            sender_name = from_name or self.from_name
+            logger.info(f"[Email] Sending email to {to} from '{sender_name}' with subject: {subject[:50]}...")
             
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
-            msg["From"] = f"{self.from_name} <{self.from_email}>"
+            msg["From"] = f"{sender_name} <{self.from_email}>"
             msg["To"] = to
             
             if body_text:
@@ -231,13 +233,14 @@ class NotificationService:
         to: str,
         subject: str,
         body_html: str,
-        body_text: Optional[str] = None
+        body_text: Optional[str] = None,
+        from_name: Optional[str] = None
     ) -> bool:
-        """Send email notification"""
+        """Send email notification. Optionally override sender name for branded emails."""
         if not self._email_provider:
             logger.warning("Email provider not configured")
             return False
-        success = self._email_provider.send_email(to, subject, body_html, body_text)
+        success = self._email_provider.send_email(to, subject, body_html, body_text, from_name=from_name)
         
         # Track email usage if successful (sync version)
         if success:
@@ -296,9 +299,10 @@ class NotificationService:
             language=language
         )
         
-        # Send email
+        # Send email with township name as sender
         if email:
-            self.send_email(email, email_content["subject"], email_content["html"], email_content["text"])
+            self.send_email(email, email_content["subject"], email_content["html"], email_content["text"],
+                          from_name=f"{township_name} 311")
         
         # Send SMS - removed as not in scope for confirmation
     
@@ -335,9 +339,10 @@ class NotificationService:
             language=language
         )
         
-        # Send email
+        # Send email with township name as sender
         if email:
-            self.send_email(email, email_content["subject"], email_content["html"], email_content["text"])
+            self.send_email(email, email_content["subject"], email_content["html"], email_content["text"],
+                          from_name=f"{township_name} 311")
     
     
     def send_request_confirmation(self, request_id: str, email: str, phone: Optional[str] = None):
@@ -403,7 +408,8 @@ class NotificationService:
         )
         
         if email:
-            self.send_email(email, email_content["subject"], email_content["html"], email_content["text"])
+            self.send_email(email, email_content["subject"], email_content["html"], email_content["text"],
+                          from_name=f"{township_name} 311")
         
         if phone:
             sms_message = await build_sms_status_update_async(
@@ -476,7 +482,8 @@ class NotificationService:
         )
         
         if email:
-            self.send_email(email, email_content["subject"], email_content["html"], email_content["text"])
+            self.send_email(email, email_content["subject"], email_content["html"], email_content["text"],
+                          from_name=f"{township_name} 311")
     
     def send_comment_notification(
         self,
@@ -505,7 +512,8 @@ class NotificationService:
         )
         
         if email:
-            self.send_email(email, email_content["subject"], email_content["html"], email_content["text"])
+            self.send_email(email, email_content["subject"], email_content["html"], email_content["text"],
+                          from_name=f"{township_name} 311")
 
 
 # Singleton instance
