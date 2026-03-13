@@ -12,8 +12,8 @@ from app.db.session import Base
 from app.models import (  # noqa: F401 - must import all models to register with Base.metadata
     User, Department, ServiceRequest, ServiceDefinition, SystemSettings,
     SystemSecret, RequestAuditLog, MapLayer, RequestComment, AuditLog,
-    DisclaimerAcknowledgment, UptimeRecord, APIUsageRecord, ResearchAccessLog,
-    TranslationCache,
+    DisclaimerAcknowledgment, UptimeRecord, ApiUsageRecord, ResearchAccessLog,
+    Translation,
 )
 
 config = context.config
