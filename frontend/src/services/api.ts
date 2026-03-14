@@ -114,6 +114,13 @@ class ApiClient {
         });
     }
 
+    async reorderServices(order: { id: number; display_order: number }[]): Promise<{ status: string; count: number }> {
+        return this.request<{ status: string; count: number }>('/services/reorder', {
+            method: 'PUT',
+            body: JSON.stringify(order),
+        });
+    }
+
     // Departments
     async getDepartments(): Promise<Department[]> {
         return this.request<Department[]>('/departments/');

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func as sa_func
 from sqlalchemy.orm import selectinload
 from typing import List
 
@@ -24,7 +24,7 @@ async def list_services(
         select(ServiceDefinition)
         .where(ServiceDefinition.is_active == True)
         .options(selectinload(ServiceDefinition.departments))
-        .order_by(ServiceDefinition.service_name)
+        .order_by(ServiceDefinition.display_order, ServiceDefinition.service_name)
     )
     services = result.scalars().all()
     
@@ -69,7 +69,7 @@ async def list_all_services(
     result = await db.execute(
         select(ServiceDefinition)
         .options(selectinload(ServiceDefinition.departments))
-        .order_by(ServiceDefinition.service_name)
+        .order_by(ServiceDefinition.display_order, ServiceDefinition.service_name)
     )
     return result.scalars().all()
 
@@ -100,11 +100,18 @@ async def create_service(
             if dept:
                 departments.append(dept)
     
+    # Get the highest display_order to place new service at end
+    max_order_result = await db.execute(
+        select(sa_func.coalesce(sa_func.max(ServiceDefinition.display_order), -1))
+    )
+    max_order = max_order_result.scalar() or 0
+    
     service = ServiceDefinition(
         service_code=service_data.service_code,
         service_name=service_data.service_name,
         description=service_data.description,
-        icon=service_data.icon
+        icon=service_data.icon,
+        display_order=service_data.display_order if service_data.display_order else max_order + 1
     )
     service.departments = departments
     
@@ -170,6 +177,8 @@ async def update_service(
         service.routing_config = service_data.routing_config
     if service_data.assigned_department_id is not None:
         service.assigned_department_id = service_data.assigned_department_id
+    if service_data.display_order is not None:
+        service.display_order = service_data.display_order
     
     # Update departments
     if service_data.department_ids is not None:
@@ -231,3 +240,24 @@ async def toggle_service(
     await db.commit()
     await db.refresh(service)
     return service
+
+
+@router.put("/reorder")
+async def reorder_services(
+    order: List[dict],
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin)
+):
+    """Reorder service categories (admin only). Accepts list of {id, display_order}."""
+    for item in order:
+        service_id = item.get("id")
+        display_order = item.get("display_order")
+        if service_id is not None and display_order is not None:
+            result = await db.execute(
+                select(ServiceDefinition).where(ServiceDefinition.id == service_id)
+            )
+            service = result.scalar_one_or_none()
+            if service:
+                service.display_order = display_order
+    await db.commit()
+    return {"status": "updated", "count": len(order)}
