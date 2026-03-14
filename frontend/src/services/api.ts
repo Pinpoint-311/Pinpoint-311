@@ -117,7 +117,7 @@ class ApiClient {
     async reorderServices(order: { id: number; display_order: number }[]): Promise<{ status: string; count: number }> {
         return this.request<{ status: string; count: number }>('/services/reorder', {
             method: 'PUT',
-            body: JSON.stringify(order),
+            body: JSON.stringify({ order }),
         });
     }
 

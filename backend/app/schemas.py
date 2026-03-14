@@ -166,6 +166,10 @@ class ServiceReorderItem(BaseModel):
     display_order: int
 
 
+class ServiceReorderRequest(BaseModel):
+    order: List[ServiceReorderItem]
+
+
 # ============ Service Request (Open311) ============
 class ServiceRequestCreate(BaseModel):
     service_code: str
