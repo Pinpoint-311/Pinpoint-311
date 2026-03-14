@@ -150,6 +150,35 @@ async def _run_pii_migrations():
         logger.warning(f"Could not run PII migrations (may not exist yet): {e}")
 
 
+async def _run_schema_migrations():
+    """
+    Automatically add missing columns to existing tables on startup.
+    Uses 'ADD COLUMN IF NOT EXISTS' (PostgreSQL 9.6+) so it's idempotent.
+    Add new column migrations here — they'll apply on next deploy.
+    """
+    from app.db.session import sync_engine
+    from sqlalchemy import text
+    
+    migrations = [
+        # Service category ordering (added 2026-03-14)
+        "ALTER TABLE service_definitions ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0",
+    ]
+    
+    try:
+        with sync_engine.connect() as conn:
+            for sql in migrations:
+                try:
+                    conn.execute(text(sql))
+                    conn.commit()
+                    logger.info(f"Migration OK: {sql[:60]}...")
+                except Exception as e:
+                    logger.debug(f"Migration note: {e}")
+                    conn.rollback()
+        logger.info(f"Schema migrations completed ({len(migrations)} checked)")
+    except Exception as e:
+        logger.warning(f"Could not run schema migrations: {e}")
+
+
 async def seed_database():
     """Initialize database with default data"""
     
@@ -158,6 +187,9 @@ async def seed_database():
     
     # Run migrations for PII encryption (increase column sizes)
     await _run_pii_migrations()
+    
+    # Run schema migrations (add missing columns to existing tables)
+    await _run_schema_migrations()
     
     async with SessionLocal() as db:
         # Check if already seeded
