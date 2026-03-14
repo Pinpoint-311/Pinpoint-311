@@ -12,8 +12,6 @@ from app.core.auth import get_current_admin
 router = APIRouter()
 
 
-
-
 @router.get("/", response_model=List[ServiceResponse])
 async def list_services(
     request: Request,
@@ -37,7 +35,6 @@ async def list_services(
         from app.services.translation import translate_service_response
         translated_services = []
         for service in services:
-            # Convert to dict, translate, add back
             service_dict = {
                 "id": service.id,
                 "service_code": service.service_code,
@@ -58,8 +55,6 @@ async def list_services(
     return services
 
 
-
-
 @router.get("/all", response_model=List[ServiceResponse])
 async def list_all_services(
     db: AsyncSession = Depends(get_db),
@@ -74,6 +69,26 @@ async def list_all_services(
     return result.scalars().all()
 
 
+# NOTE: /reorder MUST be defined BEFORE /{service_id} routes,
+# otherwise FastAPI matches "reorder" as a service_id int and returns 422.
+@router.put("/reorder")
+async def reorder_services(
+    body: ServiceReorderRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin)
+):
+    """Reorder service categories (admin only). Accepts {order: [{id, display_order}]}."""
+    for item in body.order:
+        result = await db.execute(
+            select(ServiceDefinition).where(ServiceDefinition.id == item.id)
+        )
+        service = result.scalar_one_or_none()
+        if service:
+            service.display_order = item.display_order
+    await db.commit()
+    return {"status": "updated", "count": len(body.order)}
+
+
 @router.post("/", response_model=ServiceResponse, status_code=status.HTTP_201_CREATED)
 async def create_service(
     service_data: ServiceCreate,
@@ -81,7 +96,6 @@ async def create_service(
     _: User = Depends(get_current_admin)
 ):
     """Create a new service category (admin only)"""
-    # Check for duplicate service code
     result = await db.execute(
         select(ServiceDefinition).where(ServiceDefinition.service_code == service_data.service_code)
     )
@@ -91,7 +105,6 @@ async def create_service(
             detail="Service code already exists"
         )
     
-    # Get departments for relationship
     departments = []
     if service_data.department_ids:
         for dept_id in service_data.department_ids:
@@ -100,7 +113,6 @@ async def create_service(
             if dept:
                 departments.append(dept)
     
-    # Get the highest display_order to place new service at end
     max_order_result = await db.execute(
         select(sa_func.coalesce(sa_func.max(ServiceDefinition.display_order), -1))
     )
@@ -119,7 +131,6 @@ async def create_service(
     await db.commit()
     await db.refresh(service)
     
-    # Reload with relationships
     result = await db.execute(
         select(ServiceDefinition)
         .where(ServiceDefinition.id == service.id)
@@ -160,7 +171,6 @@ async def update_service(
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
     
-    # Update basic fields
     if service_data.service_name is not None:
         service.service_name = service_data.service_name
     if service_data.description is not None:
@@ -169,8 +179,6 @@ async def update_service(
         service.icon = service_data.icon
     if service_data.is_active is not None:
         service.is_active = service_data.is_active
-    
-    # Update routing configuration
     if service_data.routing_mode is not None:
         service.routing_mode = service_data.routing_mode
     if service_data.routing_config is not None:
@@ -180,7 +188,6 @@ async def update_service(
     if service_data.display_order is not None:
         service.display_order = service_data.display_order
     
-    # Update departments
     if service_data.department_ids is not None:
         departments = []
         for dept_id in service_data.department_ids:
@@ -192,7 +199,6 @@ async def update_service(
     
     await db.commit()
     
-    # Reload with relationships
     result = await db.execute(
         select(ServiceDefinition)
         .where(ServiceDefinition.id == service_id)
@@ -240,21 +246,3 @@ async def toggle_service(
     await db.commit()
     await db.refresh(service)
     return service
-
-
-@router.put("/reorder")
-async def reorder_services(
-    body: ServiceReorderRequest,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin)
-):
-    """Reorder service categories (admin only). Accepts {order: [{id, display_order}]}."""
-    for item in body.order:
-        result = await db.execute(
-            select(ServiceDefinition).where(ServiceDefinition.id == item.id)
-        )
-        service = result.scalar_one_or_none()
-        if service:
-            service.display_order = item.display_order
-    await db.commit()
-    return {"status": "updated", "count": len(body.order)}
