@@ -283,15 +283,21 @@ function ServiceCategoriesTab({ services, setServices, loadTabData, setShowServi
         const { active, over } = event;
         if (!over || active.id === over.id) return;
 
-        const oldIndex = services.findIndex(s => s.id === active.id);
-        const newIndex = services.findIndex(s => s.id === over.id);
+        // @dnd-kit may convert IDs to strings — coerce back to numbers
+        const activeId = Number(active.id);
+        const overId = Number(over.id);
+
+        const oldIndex = services.findIndex(s => s.id === activeId);
+        const newIndex = services.findIndex(s => s.id === overId);
+        if (oldIndex === -1 || newIndex === -1) return;
+
         const newServices = arrayMove(services, oldIndex, newIndex);
         setServices(newServices);
 
         // Persist to backend
         try {
             await api.reorderServices(
-                newServices.map((s, i) => ({ id: s.id, display_order: i }))
+                newServices.map((s, i) => ({ id: Number(s.id), display_order: i }))
             );
         } catch (err) {
             console.error('Failed to reorder services:', err);
