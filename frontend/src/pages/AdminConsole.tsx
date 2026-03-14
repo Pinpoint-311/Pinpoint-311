@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
-import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -198,9 +198,8 @@ function SidebarItem({ icon: Icon, label, isActive, onClick }: SidebarItemProps)
 
 // ============ Drag-and-Drop Service Reorder ============
 
-function SortableServiceCard({ service, index, onEdit, onDelete }: {
+function SortableServiceCard({ service, onEdit, onDelete }: {
     service: ServiceDefinition;
-    index: number;
     onEdit: (s: ServiceDefinition) => void;
     onDelete: (id: number) => void;
 }) {
@@ -210,37 +209,30 @@ function SortableServiceCard({ service, index, onEdit, onDelete }: {
         transform: CSS.Transform.toString(transform),
         transition,
         zIndex: isDragging ? 50 : undefined,
-        opacity: isDragging ? 0.8 : 1,
+        opacity: isDragging ? 0.85 : 1,
     };
 
     return (
         <div ref={setNodeRef} style={style} className={`group ${isDragging ? 'relative' : ''}`}>
             <Card className={`relative ${isDragging ? 'ring-2 ring-primary-500/50 shadow-2xl shadow-primary-500/20' : ''}`}>
-                <div className="flex items-center gap-3">
-                    {/* Drag handle */}
-                    <button
-                        {...attributes}
-                        {...listeners}
-                        className="p-1.5 rounded-lg text-white/20 hover:text-white/60 hover:bg-white/5 cursor-grab active:cursor-grabbing transition-colors touch-none"
-                        aria-label={`Drag to reorder ${service.service_name}`}
-                    >
-                        <GripVertical className="w-5 h-5" />
-                    </button>
+                {/* Drag handle - top right corner */}
+                <button
+                    {...attributes}
+                    {...listeners}
+                    className="absolute top-3 right-3 p-1 rounded-md text-white/15 hover:text-white/50 hover:bg-white/5 cursor-grab active:cursor-grabbing transition-colors touch-none z-10"
+                    aria-label={`Drag to reorder ${service.service_name}`}
+                >
+                    <GripVertical className="w-4 h-4" />
+                </button>
 
-                    {/* Position badge */}
-                    <div className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center text-xs font-bold text-white/40 shrink-0">
-                        {index + 1}
+                <div className="flex items-start gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-primary-500/20 flex items-center justify-center text-primary-300">
+                        <Grid3X3 className="w-6 h-6" />
                     </div>
-
-                    {/* Service icon */}
-                    <div className="w-10 h-10 rounded-xl bg-primary-500/20 flex items-center justify-center text-primary-300 shrink-0">
-                        <Grid3X3 className="w-5 h-5" />
-                    </div>
-
-                    {/* Service info */}
-                    <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold text-white text-sm">{service.service_name}</h3>
-                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                    <div className="flex-1 min-w-0 pr-8">
+                        <h3 className="font-semibold text-white">{service.service_name}</h3>
+                        <p className="text-sm text-white/50 mt-1 line-clamp-2">{service.description}</p>
+                        <div className="flex items-center gap-2 mt-2 flex-wrap">
                             <span className="text-xs text-white/30 font-mono">{service.service_code}</span>
                             {service.routing_mode && service.routing_mode !== 'township' && (
                                 <Badge variant={service.routing_mode === 'third_party' ? 'warning' : 'info'}>
@@ -252,9 +244,7 @@ function SortableServiceCard({ service, index, onEdit, onDelete }: {
                             )}
                         </div>
                     </div>
-
-                    {/* Actions */}
-                    <div className="flex gap-1 shrink-0">
+                    <div className="flex gap-1 mt-6">
                         <button
                             onClick={() => onEdit(service)}
                             className="opacity-0 group-hover:opacity-100 p-2 hover:bg-white/10 rounded-lg transition-all"
@@ -322,13 +312,12 @@ function ServiceCategoriesTab({ services, setServices, loadTabData, setShowServi
             </div>
 
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                <SortableContext items={services.map(s => s.id)} strategy={verticalListSortingStrategy}>
-                    <div className="space-y-2">
-                        {services.map((service, index) => (
+                <SortableContext items={services.map(s => s.id)} strategy={rectSortingStrategy}>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {services.map((service) => (
                             <SortableServiceCard
                                 key={service.id}
                                 service={service}
-                                index={index}
                                 onEdit={handleEditService}
                                 onDelete={handleDeleteService}
                             />

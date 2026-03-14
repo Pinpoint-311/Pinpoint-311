@@ -82,6 +82,7 @@ class DemoModeMiddleware(BaseHTTPMiddleware):
         "/api/system/translate/",  # Translation requests
         "/api/research/",       # Research suite
         "/api/system/analytics-chat", # AI Analytics Advisor
+        "/api/services/reorder",  # Service category reordering
     ]
     
     async def dispatch(self, request: Request, call_next):
