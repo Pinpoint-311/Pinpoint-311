@@ -46,6 +46,7 @@ export interface ServiceDefinition {
     description: string | null;
     icon: string;
     is_active: boolean;
+    display_order: number;
     departments: Department[];
     routing_mode?: 'township' | 'third_party' | 'road_based';
     routing_config?: {

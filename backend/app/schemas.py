@@ -132,6 +132,7 @@ class ServiceCreate(ServiceBase):
     routing_mode: Optional[str] = "township"  # township, third_party, road_based
     routing_config: Optional[Dict[str, Any]] = {}
     assigned_department_id: Optional[int] = None
+    display_order: Optional[int] = 0
 
 
 class ServiceUpdate(BaseModel):
@@ -143,11 +144,13 @@ class ServiceUpdate(BaseModel):
     routing_mode: Optional[str] = None
     routing_config: Optional[Dict[str, Any]] = None
     assigned_department_id: Optional[int] = None
+    display_order: Optional[int] = None
 
 
 class ServiceResponse(ServiceBase):
     id: int
     is_active: bool
+    display_order: int = 0
     departments: List[DepartmentResponse] = []
     routing_mode: Optional[str] = "township"
     routing_config: Optional[Dict[str, Any]] = {}

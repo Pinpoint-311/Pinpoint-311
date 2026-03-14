@@ -93,6 +93,7 @@ class ServiceDefinition(Base):
     description = Column(Text)
     icon = Column(String(50), default="AlertCircle")  # Lucide icon name
     is_active = Column(Boolean, default=True)
+    display_order = Column(Integer, default=0)  # Controls display ordering (lower = first)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     # Routing configuration

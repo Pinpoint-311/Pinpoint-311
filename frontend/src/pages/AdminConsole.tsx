@@ -55,6 +55,7 @@ import {
 
 
     ChevronDown,
+    ChevronUp,
     User as UserIcon,
     Globe,
     Facebook,
@@ -659,6 +660,28 @@ export default function AdminConsole() {
             loadTabData();
         } catch (err) {
             console.error('Failed to delete service:', err);
+        }
+    };
+
+    const handleMoveService = async (serviceId: number, direction: 'up' | 'down') => {
+        const idx = services.findIndex(s => s.id === serviceId);
+        if (idx === -1) return;
+        const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+        if (swapIdx < 0 || swapIdx >= services.length) return;
+        
+        // Swap in local state
+        const newServices = [...services];
+        [newServices[idx], newServices[swapIdx]] = [newServices[swapIdx], newServices[idx]];
+        setServices(newServices);
+        
+        // Save new order to backend
+        try {
+            await api.reorderServices(
+                newServices.map((s, i) => ({ id: s.id, display_order: i }))
+            );
+        } catch (err) {
+            console.error('Failed to reorder services:', err);
+            loadTabData(); // Revert on failure
         }
     };
 
@@ -1738,23 +1761,59 @@ export default function AdminConsole() {
                         {currentTab === 'services' && (
                             <div className="space-y-6">
                                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                                    <h1 className="text-xl sm:text-2xl font-bold text-white">Service Categories</h1>
+                                    <div>
+                                        <h1 className="text-xl sm:text-2xl font-bold text-white">Service Categories</h1>
+                                        <p className="text-sm text-white/50 mt-1">Use arrows to change the order categories appear in the resident portal</p>
+                                    </div>
                                     <Button className="w-full sm:w-auto" leftIcon={<Plus className="w-4 h-4" />} onClick={() => setShowServiceModal(true)}>
                                         Add Category
                                     </Button>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    {services.map((service) => (
+                                <div className="space-y-2">
+                                    {services.map((service, index) => (
                                         <Card key={service.id} className="relative group">
-                                            <div className="flex items-start gap-4">
-                                                <div className="w-12 h-12 rounded-xl bg-primary-500/20 flex items-center justify-center text-primary-300">
-                                                    <Grid3X3 className="w-6 h-6" />
+                                            <div className="flex items-center gap-3">
+                                                {/* Order controls */}
+                                                <div className="flex flex-col gap-0.5">
+                                                    <button
+                                                        onClick={() => handleMoveService(service.id, 'up')}
+                                                        disabled={index === 0}
+                                                        className={`p-1 rounded-md transition-all ${index === 0
+                                                            ? 'text-white/10 cursor-not-allowed'
+                                                            : 'text-white/40 hover:text-white hover:bg-white/10'
+                                                        }`}
+                                                        aria-label={`Move ${service.service_name} up`}
+                                                    >
+                                                        <ChevronUp className="w-4 h-4" />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleMoveService(service.id, 'down')}
+                                                        disabled={index === services.length - 1}
+                                                        className={`p-1 rounded-md transition-all ${index === services.length - 1
+                                                            ? 'text-white/10 cursor-not-allowed'
+                                                            : 'text-white/40 hover:text-white hover:bg-white/10'
+                                                        }`}
+                                                        aria-label={`Move ${service.service_name} down`}
+                                                    >
+                                                        <ChevronDown className="w-4 h-4" />
+                                                    </button>
                                                 </div>
+
+                                                {/* Position badge */}
+                                                <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-xs font-bold text-white/40 shrink-0">
+                                                    {index + 1}
+                                                </div>
+
+                                                {/* Service icon */}
+                                                <div className="w-10 h-10 rounded-xl bg-primary-500/20 flex items-center justify-center text-primary-300 shrink-0">
+                                                    <Grid3X3 className="w-5 h-5" />
+                                                </div>
+
+                                                {/* Service info */}
                                                 <div className="flex-1 min-w-0">
-                                                    <h3 className="font-semibold text-white">{service.service_name}</h3>
-                                                    <p className="text-sm text-white/50 mt-1 line-clamp-2">{service.description}</p>
-                                                    <div className="flex items-center gap-2 mt-2 flex-wrap">
+                                                    <h3 className="font-semibold text-white text-sm">{service.service_name}</h3>
+                                                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                                                         <span className="text-xs text-white/30 font-mono">{service.service_code}</span>
                                                         {service.routing_mode && service.routing_mode !== 'township' && (
                                                             <Badge variant={service.routing_mode === 'third_party' ? 'warning' : 'info'}>
@@ -1766,7 +1825,9 @@ export default function AdminConsole() {
                                                         )}
                                                     </div>
                                                 </div>
-                                                <div className="flex gap-1">
+
+                                                {/* Actions */}
+                                                <div className="flex gap-1 shrink-0">
                                                     <button
                                                         onClick={() => handleEditService(service)}
                                                         className="opacity-0 group-hover:opacity-100 p-2 hover:bg-white/10 rounded-lg transition-all"
