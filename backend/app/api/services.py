@@ -6,7 +6,7 @@ from typing import List
 
 from app.db.session import get_db
 from app.models import ServiceDefinition, Department, User
-from app.schemas import ServiceCreate, ServiceResponse, ServiceUpdate
+from app.schemas import ServiceCreate, ServiceResponse, ServiceUpdate, ServiceReorderItem
 from app.core.auth import get_current_admin
 
 router = APIRouter()
@@ -244,20 +244,17 @@ async def toggle_service(
 
 @router.put("/reorder")
 async def reorder_services(
-    order: List[dict],
+    order: List[ServiceReorderItem],
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
     """Reorder service categories (admin only). Accepts list of {id, display_order}."""
     for item in order:
-        service_id = item.get("id")
-        display_order = item.get("display_order")
-        if service_id is not None and display_order is not None:
-            result = await db.execute(
-                select(ServiceDefinition).where(ServiceDefinition.id == service_id)
-            )
-            service = result.scalar_one_or_none()
-            if service:
-                service.display_order = display_order
+        result = await db.execute(
+            select(ServiceDefinition).where(ServiceDefinition.id == item.id)
+        )
+        service = result.scalar_one_or_none()
+        if service:
+            service.display_order = item.display_order
     await db.commit()
     return {"status": "updated", "count": len(order)}

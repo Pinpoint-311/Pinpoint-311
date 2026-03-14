@@ -161,6 +161,11 @@ class ServiceResponse(ServiceBase):
         from_attributes = True
 
 
+class ServiceReorderItem(BaseModel):
+    id: int
+    display_order: int
+
+
 # ============ Service Request (Open311) ============
 class ServiceRequestCreate(BaseModel):
     service_code: str
