@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { useNavigate } from 'react-router-dom';
 import {
     Menu,
@@ -55,7 +58,7 @@ import {
 
 
     ChevronDown,
-    ChevronUp,
+    GripVertical,
     User as UserIcon,
     Globe,
     Facebook,
@@ -191,6 +194,152 @@ function SidebarItem({ icon: Icon, label, isActive, onClick }: SidebarItemProps)
         </button>
     );
 }
+
+
+// ============ Drag-and-Drop Service Reorder ============
+
+function SortableServiceCard({ service, index, onEdit, onDelete }: {
+    service: ServiceDefinition;
+    index: number;
+    onEdit: (s: ServiceDefinition) => void;
+    onDelete: (id: number) => void;
+}) {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: service.id });
+    
+    const style = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+        zIndex: isDragging ? 50 : undefined,
+        opacity: isDragging ? 0.8 : 1,
+    };
+
+    return (
+        <div ref={setNodeRef} style={style} className={`group ${isDragging ? 'relative' : ''}`}>
+            <Card className={`relative ${isDragging ? 'ring-2 ring-primary-500/50 shadow-2xl shadow-primary-500/20' : ''}`}>
+                <div className="flex items-center gap-3">
+                    {/* Drag handle */}
+                    <button
+                        {...attributes}
+                        {...listeners}
+                        className="p-1.5 rounded-lg text-white/20 hover:text-white/60 hover:bg-white/5 cursor-grab active:cursor-grabbing transition-colors touch-none"
+                        aria-label={`Drag to reorder ${service.service_name}`}
+                    >
+                        <GripVertical className="w-5 h-5" />
+                    </button>
+
+                    {/* Position badge */}
+                    <div className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center text-xs font-bold text-white/40 shrink-0">
+                        {index + 1}
+                    </div>
+
+                    {/* Service icon */}
+                    <div className="w-10 h-10 rounded-xl bg-primary-500/20 flex items-center justify-center text-primary-300 shrink-0">
+                        <Grid3X3 className="w-5 h-5" />
+                    </div>
+
+                    {/* Service info */}
+                    <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold text-white text-sm">{service.service_name}</h3>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            <span className="text-xs text-white/30 font-mono">{service.service_code}</span>
+                            {service.routing_mode && service.routing_mode !== 'township' && (
+                                <Badge variant={service.routing_mode === 'third_party' ? 'warning' : 'info'}>
+                                    {service.routing_mode === 'third_party' ? '3rd Party' : 'Road-Based'}
+                                </Badge>
+                            )}
+                            {service.assigned_department && (
+                                <Badge variant="default">{service.assigned_department.name}</Badge>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex gap-1 shrink-0">
+                        <button
+                            onClick={() => onEdit(service)}
+                            className="opacity-0 group-hover:opacity-100 p-2 hover:bg-white/10 rounded-lg transition-all"
+                            aria-label={`Configure ${service.service_name} routing`}
+                        >
+                            <Edit className="w-4 h-4 text-white/60" aria-hidden="true" />
+                        </button>
+                        <button
+                            onClick={() => onDelete(service.id)}
+                            className="opacity-0 group-hover:opacity-100 p-2 hover:bg-red-500/20 rounded-lg transition-all"
+                            aria-label={`Delete ${service.service_name}`}
+                        >
+                            <Trash2 className="w-4 h-4 text-red-400" aria-hidden="true" />
+                        </button>
+                    </div>
+                </div>
+            </Card>
+        </div>
+    );
+}
+
+function ServiceCategoriesTab({ services, setServices, loadTabData, setShowServiceModal, handleEditService, handleDeleteService }: {
+    services: ServiceDefinition[];
+    setServices: (s: ServiceDefinition[]) => void;
+    loadTabData: () => void;
+    setShowServiceModal: (v: boolean) => void;
+    handleEditService: (s: ServiceDefinition) => void;
+    handleDeleteService: (id: number) => void;
+}) {
+    const sensors = useSensors(
+        useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+        useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+    );
+
+    const handleDragEnd = async (event: DragEndEvent) => {
+        const { active, over } = event;
+        if (!over || active.id === over.id) return;
+
+        const oldIndex = services.findIndex(s => s.id === active.id);
+        const newIndex = services.findIndex(s => s.id === over.id);
+        const newServices = arrayMove(services, oldIndex, newIndex);
+        setServices(newServices);
+
+        // Persist to backend
+        try {
+            await api.reorderServices(
+                newServices.map((s, i) => ({ id: s.id, display_order: i }))
+            );
+        } catch (err) {
+            console.error('Failed to reorder services:', err);
+            loadTabData(); // Revert on failure
+        }
+    };
+
+    return (
+        <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                    <h1 className="text-xl sm:text-2xl font-bold text-white">Service Categories</h1>
+                    <p className="text-sm text-white/50 mt-1">Drag to reorder how categories appear in the resident portal</p>
+                </div>
+                <Button className="w-full sm:w-auto" leftIcon={<Plus className="w-4 h-4" />} onClick={() => setShowServiceModal(true)}>
+                    Add Category
+                </Button>
+            </div>
+
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <SortableContext items={services.map(s => s.id)} strategy={verticalListSortingStrategy}>
+                    <div className="space-y-2">
+                        {services.map((service, index) => (
+                            <SortableServiceCard
+                                key={service.id}
+                                service={service}
+                                index={index}
+                                onEdit={handleEditService}
+                                onDelete={handleDeleteService}
+                            />
+                        ))}
+                    </div>
+                </SortableContext>
+            </DndContext>
+        </div>
+    );
+}
+
 
 export default function AdminConsole() {
     const navigate = useNavigate();
@@ -660,28 +809,6 @@ export default function AdminConsole() {
             loadTabData();
         } catch (err) {
             console.error('Failed to delete service:', err);
-        }
-    };
-
-    const handleMoveService = async (serviceId: number, direction: 'up' | 'down') => {
-        const idx = services.findIndex(s => s.id === serviceId);
-        if (idx === -1) return;
-        const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
-        if (swapIdx < 0 || swapIdx >= services.length) return;
-        
-        // Swap in local state
-        const newServices = [...services];
-        [newServices[idx], newServices[swapIdx]] = [newServices[swapIdx], newServices[idx]];
-        setServices(newServices);
-        
-        // Save new order to backend
-        try {
-            await api.reorderServices(
-                newServices.map((s, i) => ({ id: s.id, display_order: i }))
-            );
-        } catch (err) {
-            console.error('Failed to reorder services:', err);
-            loadTabData(); // Revert on failure
         }
     };
 
@@ -1759,95 +1886,14 @@ export default function AdminConsole() {
 
                         {/* Services Tab */}
                         {currentTab === 'services' && (
-                            <div className="space-y-6">
-                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                                    <div>
-                                        <h1 className="text-xl sm:text-2xl font-bold text-white">Service Categories</h1>
-                                        <p className="text-sm text-white/50 mt-1">Use arrows to change the order categories appear in the resident portal</p>
-                                    </div>
-                                    <Button className="w-full sm:w-auto" leftIcon={<Plus className="w-4 h-4" />} onClick={() => setShowServiceModal(true)}>
-                                        Add Category
-                                    </Button>
-                                </div>
-
-                                <div className="space-y-2">
-                                    {services.map((service, index) => (
-                                        <Card key={service.id} className="relative group">
-                                            <div className="flex items-center gap-3">
-                                                {/* Order controls */}
-                                                <div className="flex flex-col gap-0.5">
-                                                    <button
-                                                        onClick={() => handleMoveService(service.id, 'up')}
-                                                        disabled={index === 0}
-                                                        className={`p-1 rounded-md transition-all ${index === 0
-                                                            ? 'text-white/10 cursor-not-allowed'
-                                                            : 'text-white/40 hover:text-white hover:bg-white/10'
-                                                        }`}
-                                                        aria-label={`Move ${service.service_name} up`}
-                                                    >
-                                                        <ChevronUp className="w-4 h-4" />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleMoveService(service.id, 'down')}
-                                                        disabled={index === services.length - 1}
-                                                        className={`p-1 rounded-md transition-all ${index === services.length - 1
-                                                            ? 'text-white/10 cursor-not-allowed'
-                                                            : 'text-white/40 hover:text-white hover:bg-white/10'
-                                                        }`}
-                                                        aria-label={`Move ${service.service_name} down`}
-                                                    >
-                                                        <ChevronDown className="w-4 h-4" />
-                                                    </button>
-                                                </div>
-
-                                                {/* Position badge */}
-                                                <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-xs font-bold text-white/40 shrink-0">
-                                                    {index + 1}
-                                                </div>
-
-                                                {/* Service icon */}
-                                                <div className="w-10 h-10 rounded-xl bg-primary-500/20 flex items-center justify-center text-primary-300 shrink-0">
-                                                    <Grid3X3 className="w-5 h-5" />
-                                                </div>
-
-                                                {/* Service info */}
-                                                <div className="flex-1 min-w-0">
-                                                    <h3 className="font-semibold text-white text-sm">{service.service_name}</h3>
-                                                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                                                        <span className="text-xs text-white/30 font-mono">{service.service_code}</span>
-                                                        {service.routing_mode && service.routing_mode !== 'township' && (
-                                                            <Badge variant={service.routing_mode === 'third_party' ? 'warning' : 'info'}>
-                                                                {service.routing_mode === 'third_party' ? '3rd Party' : 'Road-Based'}
-                                                            </Badge>
-                                                        )}
-                                                        {service.assigned_department && (
-                                                            <Badge variant="default">{service.assigned_department.name}</Badge>
-                                                        )}
-                                                    </div>
-                                                </div>
-
-                                                {/* Actions */}
-                                                <div className="flex gap-1 shrink-0">
-                                                    <button
-                                                        onClick={() => handleEditService(service)}
-                                                        className="opacity-0 group-hover:opacity-100 p-2 hover:bg-white/10 rounded-lg transition-all"
-                                                        aria-label={`Configure ${service.service_name} routing`}
-                                                    >
-                                                        <Edit className="w-4 h-4 text-white/60" aria-hidden="true" />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleDeleteService(service.id)}
-                                                        className="opacity-0 group-hover:opacity-100 p-2 hover:bg-red-500/20 rounded-lg transition-all"
-                                                        aria-label={`Delete ${service.service_name}`}
-                                                    >
-                                                        <Trash2 className="w-4 h-4 text-red-400" aria-hidden="true" />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </Card>
-                                    ))}
-                                </div>
-                            </div>
+                            <ServiceCategoriesTab
+                                services={services}
+                                setServices={setServices}
+                                loadTabData={loadTabData}
+                                setShowServiceModal={setShowServiceModal}
+                                handleEditService={handleEditService}
+                                handleDeleteService={handleDeleteService}
+                            />
                         )}
 
 
