@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import {
     MapPin,
@@ -18,6 +18,7 @@ import {
     Shield,
     User,
     X,
+    Star,
 } from 'lucide-react';
 import { Card, Input, Button, Textarea } from './ui';
 import { api } from '../services/api';
@@ -73,6 +74,14 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
     const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
     const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
     const [mapsApiKey, setMapsApiKey] = useState<string | null>(null);
+
+    // Read "my requests" IDs from localStorage
+    const myRequestIds = useMemo<Set<string>>(() => {
+        try {
+            const stored = JSON.parse(localStorage.getItem('my_requests') || '[]');
+            return new Set(Array.isArray(stored) ? stored : []);
+        } catch { return new Set(); }
+    }, [requests]); // re-read when requests reload (after submission)
 
     // Load Maps API key on mount
     useEffect(() => {
@@ -697,6 +706,85 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
         );
     }
 
+    // Split filtered requests into "mine" and "community"
+    const myFilteredRequests = filteredRequests.filter(r => myRequestIds.has(r.service_request_id));
+    const communityFilteredRequests = filteredRequests.filter(r => !myRequestIds.has(r.service_request_id));
+
+    // Shared card renderer
+    const renderRequestCard = (request: PublicServiceRequest, index: number, isMine: boolean) => {
+        const status = statusColors[request.status] || statusColors.open;
+        return (
+            <motion.div
+                key={request.service_request_id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: Math.min(index * 0.01, 0.2) }}
+                onClick={() => handleSelectRequest(request)}
+                className="cursor-pointer group"
+            >
+                <Card className={`p-5 hover:ring-2 transition-all group-hover:bg-white/[0.03] ${
+                    isMine
+                        ? 'hover:ring-purple-500/50 border-purple-500/20'
+                        : 'hover:ring-primary-500/50'
+                }`}>
+                    <div className="flex gap-5">
+                        {(request.photo_count || 0) > 0 && (
+                            <div className="w-20 h-20 flex-shrink-0 rounded-xl overflow-hidden bg-primary-500/20 flex flex-col items-center justify-center">
+                                <Image className="w-8 h-8 text-primary-400" />
+                                <span className="text-primary-300 text-xs mt-1">{request.photo_count} {request.photo_count !== 1 ? "photos" : "photo"}</span>
+                            </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-4 mb-3">
+                                <div>
+                                    <div className="flex items-center gap-2">
+                                        <h3 className="font-semibold text-white text-xl group-hover:text-primary-300 transition-colors">
+                                            <TranslatedContent
+                                                text={request.service_name}
+                                                contentId={`service_${request.service_code}`}
+                                            />
+                                        </h3>
+                                        {isMine && (
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase tracking-wider">
+                                                <Star className="w-3 h-3" />
+                                                Yours
+                                            </span>
+                                        )}
+                                    </div>
+                                    <p className="text-xs text-primary-400/70 font-mono mt-1">
+                                        {request.service_request_id}
+                                    </p>
+                                </div>
+                                <span className={`flex-shrink-0 inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium ${status.bg} ${status.text} ${status.border} border`}>
+                                    {status.icon}
+                                    {status.label}
+                                </span>
+                            </div>
+                            {request.address && (
+                                <div className="flex items-center gap-2 text-white/60 mb-3">
+                                    <MapPin className="w-4 h-4 flex-shrink-0" />
+                                    <span className="truncate">{request.address}</span>
+                                </div>
+                            )}
+                            <p className="text-white/50 line-clamp-2 mb-4">
+                                <TranslatedContent
+                                    text={request.description}
+                                    contentId={`list_desc_${request.service_request_id}`}
+                                />
+                            </p>
+                            <div className="flex items-center gap-4 text-sm text-white/40">
+                                <span className="flex items-center gap-1.5">
+                                    <Calendar className="w-4 h-4" />
+                                    {formatShortDate(request.requested_datetime)}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </Card>
+            </motion.div>
+        );
+    };
+
     // List View
     return (
         <div className="min-h-screen">
@@ -786,74 +874,47 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                     </div>
                 </Card>
             ) : (
-                <div className="space-y-4">
-                    {filteredRequests.map((request, index) => {
-                        const status = statusColors[request.status] || statusColors.open;
-                        return (
-                            <motion.div
-                                key={request.service_request_id}
-                                initial={{ opacity: 0, y: 20 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: Math.min(index * 0.01, 0.2) }}
-                                onClick={() => handleSelectRequest(request)}
-                                className="cursor-pointer group"
-                            >
-                                <Card className="p-5 hover:ring-2 hover:ring-primary-500/50 transition-all group-hover:bg-white/[0.03]">
-                                    <div className="flex gap-5">
-                                        {/* Photo indicator if has photos */}
-                                        {(request.photo_count || 0) > 0 && (
-                                            <div className="w-20 h-20 flex-shrink-0 rounded-xl overflow-hidden bg-primary-500/20 flex flex-col items-center justify-center">
-                                                <Image className="w-8 h-8 text-primary-400" />
-                                                <span className="text-primary-300 text-xs mt-1">{request.photo_count} {request.photo_count !== 1 ? "photos" : "photo"}</span>
-                                            </div>
-                                        )}
+                <div className="space-y-6">
+                    {/* Your Submissions Section */}
+                    {myRequestIds.size > 0 && (
+                        <div>
+                            <div className="flex items-center gap-3 mb-4">
+                                <div className="p-2 rounded-xl bg-gradient-to-br from-purple-500/20 to-indigo-500/20 border border-purple-500/20">
+                                    <Star className="w-5 h-5 text-purple-400" />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-bold text-white">Your Submissions</h3>
+                                    <p className="text-xs text-white/40">{myFilteredRequests.length} of {myRequestIds.size} matching filters</p>
+                                </div>
+                            </div>
+                            {myFilteredRequests.length > 0 ? (
+                                <div className="space-y-4 pl-0 md:pl-1">
+                                    {myFilteredRequests.map((request, index) => renderRequestCard(request, index, true))}
+                                </div>
+                            ) : (
+                                <div className="p-4 rounded-xl bg-white/5 border border-white/10 text-center">
+                                    <p className="text-white/40 text-sm">None of your submissions match the current filters</p>
+                                </div>
+                            )}
+                        </div>
+                    )}
 
-                                        {/* Content */}
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-start justify-between gap-4 mb-3">
-                                                <div>
-                                                    <h3 className="font-semibold text-white text-xl group-hover:text-primary-300 transition-colors">
-                                                        <TranslatedContent
-                                                            text={request.service_name}
-                                                            contentId={`service_${request.service_code}`}
-                                                        />
-                                                    </h3>
-                                                    <p className="text-xs text-primary-400/70 font-mono mt-1">
-                                                        {request.service_request_id}
-                                                    </p>
-                                                </div>
-                                                <span className={`flex-shrink-0 inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium ${status.bg} ${status.text} ${status.border} border`}>
-                                                    {status.icon}
-                                                    {status.label}
-                                                </span>
-                                            </div>
-
-                                            {request.address && (
-                                                <div className="flex items-center gap-2 text-white/60 mb-3">
-                                                    <MapPin className="w-4 h-4 flex-shrink-0" />
-                                                    <span className="truncate">{request.address}</span>
-                                                </div>
-                                            )}
-
-                                            <p className="text-white/50 line-clamp-2 mb-4">
-                                                <TranslatedContent
-                                                    text={request.description}
-                                                    contentId={`list_desc_${request.service_request_id}`}
-                                                />
-                                            </p>
-
-                                            <div className="flex items-center gap-4 text-sm text-white/40">
-                                                <span className="flex items-center gap-1.5">
-                                                    <Calendar className="w-4 h-4" />
-                                                    {formatShortDate(request.requested_datetime)}
-                                                </span>
-                                            </div>
-                                        </div>
+                    {/* Community Requests Section */}
+                    {communityFilteredRequests.length > 0 && (
+                        <div>
+                            {myRequestIds.size > 0 && (
+                                <div className="flex items-center gap-3 mb-4 pt-2">
+                                    <div className="p-2 rounded-xl bg-white/5 border border-white/10">
+                                        <User className="w-5 h-5 text-white/40" />
                                     </div>
-                                </Card>
-                            </motion.div>
-                        );
-                    })}
+                                    <h3 className="text-lg font-bold text-white/70">Community Requests</h3>
+                                </div>
+                            )}
+                            <div className="space-y-4">
+                                {communityFilteredRequests.map((request, index) => renderRequestCard(request, index, false))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 

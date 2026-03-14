@@ -400,6 +400,14 @@ export default function ResidentPortal() {
                 custom_fields: customAnswers,
             });
             setSubmittedId(result.service_request_id);
+            // Save to localStorage so Track Requests can identify "your" submissions
+            try {
+                const myRequests: string[] = JSON.parse(localStorage.getItem('my_requests') || '[]');
+                if (!myRequests.includes(result.service_request_id)) {
+                    myRequests.push(result.service_request_id);
+                    localStorage.setItem('my_requests', JSON.stringify(myRequests));
+                }
+            } catch { /* ignore localStorage errors */ }
             setStep('success');
             updateHash('success');
             scrollToTop('instant');
