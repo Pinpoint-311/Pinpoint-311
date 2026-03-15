@@ -942,12 +942,30 @@ export const ResearchLab: React.FC = () => {
                                             ? 'bg-amber-500/20 border border-amber-500/25 text-amber-100 rounded-br-md'
                                             : 'bg-white/5 border border-white/8 text-white/80 rounded-bl-md'
                                     }`}>
-                                        <div className="whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: msg.content
-                                            .replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre class="bg-black/40 rounded-lg p-3 my-2 overflow-x-auto text-xs text-amber-300"><code>$2</code></pre>')
-                                            .replace(/`([^`]+)`/g, '<code class="bg-black/30 px-1.5 py-0.5 rounded text-xs text-amber-300">$1</code>')
-                                            .replace(/\*\*([^*]+)\*\*/g, '<strong class="text-white">$1</strong>')
-                                            .replace(/^- (.+)$/gm, '• $1')
-                                        }} />
+                                        <div className="whitespace-pre-wrap">
+                                            {msg.content.split(/(```\w*\n?[\s\S]*?```)/g).map((segment, si) => {
+                                                // Code blocks
+                                                const codeBlockMatch = segment.match(/```\w*\n?([\s\S]*?)```/);
+                                                if (codeBlockMatch) {
+                                                    return <pre key={si} className="bg-black/40 rounded-lg p-3 my-2 overflow-x-auto text-xs text-amber-300"><code>{codeBlockMatch[1]}</code></pre>;
+                                                }
+                                                // Process inline formatting
+                                                return segment.split('\n').map((line, li) => {
+                                                    const bulletLine = line.replace(/^- (.+)$/, '• $1');
+                                                    // Split by inline code and bold
+                                                    const parts = bulletLine.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).map((part, pi) => {
+                                                        if (part.startsWith('`') && part.endsWith('`')) {
+                                                            return <code key={pi} className="bg-black/30 px-1.5 py-0.5 rounded text-xs text-amber-300">{part.slice(1, -1)}</code>;
+                                                        }
+                                                        if (part.startsWith('**') && part.endsWith('**')) {
+                                                            return <strong key={pi} className="text-white">{part.slice(2, -2)}</strong>;
+                                                        }
+                                                        return <span key={pi}>{part}</span>;
+                                                    });
+                                                    return <span key={`${si}-${li}`}>{parts}{li < segment.split('\n').length - 1 && '\n'}</span>;
+                                                });
+                                            })}
+                                        </div>
                                     </div>
                                 </div>
                             ))}
