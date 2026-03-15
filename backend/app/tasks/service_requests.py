@@ -5,6 +5,7 @@ from app.services.notifications import notification_service
 from app.services.geocoding import get_geocoding_service
 from sqlalchemy import select
 import asyncio
+import os
 
 
 def run_async(coro):
@@ -212,9 +213,13 @@ def analyze_request(self, request_id: int):
             # NOTE: We no longer auto-set request.priority or request.vertex_ai_priority_score
             # The AI suggestion is stored in ai_analysis['priority_score'] 
             # Staff must click "Accept AI Score" or manually set priority
-            request.flagged = len(analysis_result.get("safety_flags", [])) > 0
+            # Flag for legal hold only on content moderation issues, NOT safety hazards
+            # content_flags = inappropriate_content, malicious_intent, obscene_language
+            # safety_flags = legitimate infrastructure hazards (tripping_hazard, etc.) — NOT legal holds
+            content_flags = [f for f in analysis_result.get("content_flags", []) if f and f != "none"]
+            request.flagged = len(content_flags) > 0
             if request.flagged:
-                request.flag_reason = ", ".join(analysis_result.get("safety_flags", [])[:3])
+                request.flag_reason = ", ".join(content_flags[:3])
             
             # Store summary and timestamp for display (but NOT the priority score)
             request.vertex_ai_summary = analysis_result.get("qualitative_analysis", "")
@@ -343,7 +348,9 @@ def send_branded_notification(request_id: int, notification_type: str, old_statu
             
             # Get custom domain for portal URL
             custom_domain = settings.custom_domain if settings else None
-            portal_url = f"https://{custom_domain}" if custom_domain else "http://localhost:5173"
+            if not custom_domain:
+                custom_domain = os.environ.get('DOMAIN', '')
+            portal_url = f"https://{custom_domain}" if custom_domain and custom_domain != 'localhost' else "http://localhost:5173"
             
             # Get the request
             result = await db.execute(
@@ -466,7 +473,9 @@ def send_comment_notification_task(request_id: int, comment_author: str, comment
             logo_url = settings.logo_url if settings else None
             primary_color = settings.primary_color if settings else "#6366f1"
             custom_domain = settings.custom_domain if settings else None
-            portal_url = f"https://{custom_domain}" if custom_domain else "http://localhost:5173"
+            if not custom_domain:
+                custom_domain = os.environ.get('DOMAIN', '')
+            portal_url = f"https://{custom_domain}" if custom_domain and custom_domain != 'localhost' else "http://localhost:5173"
             
             # Get the request
             result = await db.execute(
@@ -542,7 +551,9 @@ def send_department_notification(request_id: int, department_email: str):
             
             township_name = settings.township_name if settings else "Your Township"
             custom_domain = settings.custom_domain if settings else None
-            portal_url = f"https://{custom_domain}" if custom_domain else "http://localhost:5173"
+            if not custom_domain:
+                custom_domain = os.environ.get('DOMAIN', '')
+            portal_url = f"https://{custom_domain}" if custom_domain and custom_domain != 'localhost' else "http://localhost:5173"
             
             # Get the request
             result = await db.execute(
@@ -830,7 +841,9 @@ def send_weekly_digest():
             logo_url = settings.logo_url if settings else None
             primary_color = settings.primary_color if settings else "#6366f1"
             custom_domain = settings.custom_domain if settings else None
-            portal_url = f"https://{custom_domain}" if custom_domain else "http://localhost:5173"
+            if not custom_domain:
+                custom_domain = os.environ.get('DOMAIN', '')
+            portal_url = f"https://{custom_domain}" if custom_domain and custom_domain != 'localhost' else "http://localhost:5173"
             
             # Check if email notifications are enabled
             modules = settings.modules if settings else {}
