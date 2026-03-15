@@ -213,13 +213,8 @@ def analyze_request(self, request_id: int):
             # NOTE: We no longer auto-set request.priority or request.vertex_ai_priority_score
             # The AI suggestion is stored in ai_analysis['priority_score'] 
             # Staff must click "Accept AI Score" or manually set priority
-            # Flag for legal hold only on content moderation issues, NOT safety hazards
-            # content_flags = inappropriate_content, malicious_intent, obscene_language
-            # safety_flags = legitimate infrastructure hazards (tripping_hazard, etc.) — NOT legal holds
-            content_flags = [f for f in analysis_result.get("content_flags", []) if f and f != "none"]
-            request.flagged = len(content_flags) > 0
-            if request.flagged:
-                request.flag_reason = ", ".join(content_flags[:3])
+            # Legal hold (flagged) is admin-only — AI never auto-triggers it
+            # Safety and content flags are stored in ai_analysis JSON for staff reference only
             
             # Store summary and timestamp for display (but NOT the priority score)
             request.vertex_ai_summary = analysis_result.get("qualitative_analysis", "")
