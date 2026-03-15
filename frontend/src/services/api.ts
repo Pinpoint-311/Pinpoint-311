@@ -379,6 +379,7 @@ class ApiClient {
     async getMapsConfig(): Promise<{
         has_google_maps: boolean;
         google_maps_api_key: string | null;
+        google_maps_map_id: string | null;
         township_boundary: object | null;
         default_center: { lat: number; lng: number };
         default_zoom: number;

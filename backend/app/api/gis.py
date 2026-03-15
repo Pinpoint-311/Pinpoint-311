@@ -172,6 +172,14 @@ async def get_maps_config(db: AsyncSession = Depends(get_db)):
     """Get maps configuration for frontend"""
     api_key = await get_google_api_key(db)
     
+    # Get Map ID for vector maps (enables 45° tilt, rotation, 3D buildings)
+    map_id = None
+    try:
+        from app.services.secret_manager import get_secret
+        map_id = await get_secret("GOOGLE_MAPS_MAP_ID")
+    except Exception:
+        pass
+    
     # Get township settings
     result = await db.execute(select(SystemSettings).limit(1))
     settings = result.scalar_one_or_none()
@@ -179,6 +187,7 @@ async def get_maps_config(db: AsyncSession = Depends(get_db)):
     return {
         "has_google_maps": bool(api_key),
         "google_maps_api_key": api_key if api_key else None,
+        "google_maps_map_id": map_id,
         "township_boundary": settings.township_boundary if settings else None,
         "default_center": {
             "lat": 40.4168,  # Default to a central location

@@ -127,7 +127,7 @@ export default function StaffDashboard() {
     const [departments, setDepartments] = useState<Department[]>([]);
     const [users, setUsers] = useState<UserType[]>([]);
     const [mapLayers, setMapLayers] = useState<MapLayer[]>([]);
-    const [mapsConfig, setMapsConfig] = useState<{ google_maps_api_key: string | null; township_boundary: object | null; default_center?: { lat: number; lng: number } } | null>(null);
+    const [mapsConfig, setMapsConfig] = useState<{ google_maps_api_key: string | null; google_maps_map_id: string | null; township_boundary: object | null; default_center?: { lat: number; lng: number } } | null>(null);
 
     // Intake form state
     const [intakeData, setIntakeData] = useState({
@@ -925,6 +925,7 @@ export default function StaffDashboard() {
                             {mapsConfig?.google_maps_api_key ? (
                                 <StaffDashboardMap
                                     apiKey={mapsConfig.google_maps_api_key}
+                                    mapId={mapsConfig.google_maps_map_id}
                                     requests={mapFilteredRequests}
                                     services={services}
                                     departments={departments}

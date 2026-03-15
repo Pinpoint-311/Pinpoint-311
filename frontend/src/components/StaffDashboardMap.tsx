@@ -13,6 +13,7 @@ declare global {
 
 interface StaffDashboardMapProps {
     apiKey: string;
+    mapId?: string | null;
     requests: ServiceRequest[];
     services: ServiceDefinition[];
     departments: Department[];
@@ -33,6 +34,7 @@ const STATUS_COLORS = {
 
 export default function StaffDashboardMap({
     apiKey,
+    mapId,
     requests,
     services,
     departments,
@@ -161,7 +163,7 @@ export default function StaffDashboardMap({
             return;
         }
 
-        const map = new window.google.maps.Map(mapRef.current, {
+        const mapOptions: google.maps.MapOptions = {
             center: defaultCenter,
             zoom: defaultZoom,
             mapTypeId: 'hybrid', // Satellite with labels
@@ -177,7 +179,17 @@ export default function StaffDashboardMap({
             zoomControlOptions: {
                 position: window.google.maps.ControlPosition.LEFT_BOTTOM,
             },
-        });
+        };
+
+        // Enable 45° tilt and rotation if Map ID is configured (vector maps)
+        if (mapId) {
+            (mapOptions as any).mapId = mapId;
+            mapOptions.tilt = 45;
+            mapOptions.heading = 0;
+            (mapOptions as any).rotateControl = true;
+        }
+
+        const map = new window.google.maps.Map(mapRef.current, mapOptions);
 
         mapInstanceRef.current = map;
         infoWindowRef.current = new window.google.maps.InfoWindow();

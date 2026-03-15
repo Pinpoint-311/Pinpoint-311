@@ -24,6 +24,7 @@ interface MapRequest {
 
 interface ResidentMapViewProps {
     apiKey: string;
+    mapId?: string | null;
     requests: MapRequest[];
     townshipBoundary?: object | null;
     defaultCenter?: { lat: number; lng: number };
@@ -46,6 +47,7 @@ const STATUS_LABELS = {
 
 export default function ResidentMapView({
     apiKey,
+    mapId,
     requests,
     townshipBoundary,
     defaultCenter = { lat: 40.3573, lng: -74.6672 },
@@ -130,7 +132,7 @@ export default function ResidentMapView({
     const initMap = useCallback(() => {
         if (!mapRef.current || !window.google) return;
 
-        const map = new window.google.maps.Map(mapRef.current, {
+        const mapOptions: google.maps.MapOptions = {
             center: defaultCenter,
             zoom: defaultZoom,
             mapTypeId: 'roadmap',
@@ -149,7 +151,17 @@ export default function ResidentMapView({
             styles: [
                 { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
             ],
-        });
+        };
+
+        // Enable 45° tilt and rotation if Map ID is configured (vector maps)
+        if (mapId) {
+            (mapOptions as any).mapId = mapId;
+            mapOptions.tilt = 45;
+            mapOptions.heading = 0;
+            (mapOptions as any).rotateControl = true;
+        }
+
+        const map = new window.google.maps.Map(mapRef.current, mapOptions);
 
         mapInstanceRef.current = map;
         infoWindowRef.current = new window.google.maps.InfoWindow();
