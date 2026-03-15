@@ -14,7 +14,7 @@ import {
     SignpostBig,
     Volume2,
     HelpCircle,
-    Sparkles,
+    Sparkles, Home,
     Camera,
     X,
     Phone,
@@ -493,7 +493,7 @@ export default function ResidentPortal() {
                             <img src={settings.logo_url} alt="Logo" className="h-8 md:h-10 w-auto" />
                         ) : (
                             <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
-                                <Sparkles className="w-4 h-4 md:w-6 md:h-6 text-white" />
+                                <Home className="w-4 h-4 md:w-6 md:h-6 text-white" />
                             </div>
                         )}
                         <h1 className="text-lg md:text-xl font-semibold text-white hidden sm:block" data-no-translate>
