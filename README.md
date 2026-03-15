@@ -902,6 +902,18 @@ In Admin Console → Setup & Integration:
 #### Step 5: (Optional) Enable Google Secret Manager
 For enterprise-grade secret storage, configure GCP in the Setup & Integration page. Secrets will be migrated from the database to Google Secret Manager.
 
+#### Step 6: (Optional) Enable 45° Map Tilt & Rotation
+For an immersive bird's eye map experience with 3D buildings, configure a **Google Maps Map ID**:
+
+1. Go to [Google Cloud Console → Maps → Map Management](https://console.cloud.google.com/google/maps-apis/studio/maps)
+2. Click **Create Map ID**
+3. Select **Map type: Vector** and give it a name (e.g., "Pinpoint 311")
+4. Copy the generated Map ID
+5. In Admin Console → Secrets, add the key `GOOGLE_MAPS_MAP_ID` with the Map ID value
+
+> [!TIP]
+> Map ID enables the WebGL renderer with 45° tilt, compass rotation, and 3D buildings at no extra cost — same Dynamic Maps pricing ($7/1,000 loads, $200/month free credit).
+
 ### Security Storage
 
 | Secret | Default Storage | Enterprise Storage |
