@@ -13,7 +13,7 @@ jobs:
     steps:
       - name: Check API Health
         run: |
-          response=$(curl -s -o /dev/null -w "%{http_code}" https://311.westwindsorforward.org/api/health || echo "000")
+          response=$(curl -s -o /dev/null -w "%{http_code}" https://demo.pinpoint311.org/api/health || echo "000")
           
           if [ "$response" != "200" ]; then
             echo "::error::API health check failed with status: $response"
@@ -24,7 +24,7 @@ jobs:
 
       - name: Check Frontend
         run: |
-          response=$(curl -s -o /dev/null -w "%{http_code}" https://311.westwindsorforward.org || echo "000")
+          response=$(curl -s -o /dev/null -w "%{http_code}" https://demo.pinpoint311.org || echo "000")
           
           if [ "$response" != "200" ]; then
             echo "::error::Frontend health check failed with status: $response"
@@ -60,7 +60,7 @@ jobs:
         id: recheck
         run: |
           sleep 60
-          response=$(curl -s -o /dev/null -w "%{http_code}" https://311.westwindsorforward.org/api/health || echo "000")
+          response=$(curl -s -o /dev/null -w "%{http_code}" https://demo.pinpoint311.org/api/health || echo "000")
           if [ "$response" = "200" ]; then
             echo "✅ System self-healed successfully"
             echo "healed=true" >> $GITHUB_OUTPUT
