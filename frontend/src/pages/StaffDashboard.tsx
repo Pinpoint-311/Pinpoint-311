@@ -40,6 +40,7 @@ import {
     Download,
     FlaskConical,
     LockKeyhole,
+    Home,
 } from 'lucide-react';
 import { Button, Card, Modal, Input, Textarea, Select, StatusBadge, Badge } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
@@ -749,18 +750,27 @@ export default function StaffDashboard() {
                                     setSelectedRequest(null);
                                     window.location.hash = '';
                                 }}
-                                className="flex items-center gap-3 hover:opacity-80 transition-opacity cursor-pointer"
+                                className="group flex items-center gap-3 hover:opacity-80 transition-opacity cursor-pointer"
                                 aria-label="Go to dashboard home"
+                                title="Go to Home"
                             >
                                 {settings?.logo_url ? (
-                                    <img src={settings.logo_url} alt={`${settings?.township_name || 'Municipality'} logo`} className="h-8 w-auto" />
+                                    <div className="relative">
+                                        <img src={settings.logo_url} alt={`${settings?.township_name || 'Municipality'} logo`} className="h-8 w-auto" />
+                                        <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <Home className="w-4 h-4 text-white" />
+                                        </div>
+                                    </div>
                                 ) : (
                                     <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
-                                        <Sparkles className="w-5 h-5 text-white" />
+                                        <Home className="w-5 h-5 text-white" />
                                     </div>
                                 )}
                                 <div className="text-left" data-no-translate>
-                                    <h2 className="font-semibold text-white">Staff Command</h2>
+                                    <h2 className="font-semibold text-white flex items-center gap-1.5">
+                                        Staff Command
+                                        <Home className="w-3.5 h-3.5 text-white/40 group-hover:text-white/70 transition-colors" />
+                                    </h2>
                                     <p className="text-xs text-white/50">{settings?.township_name}</p>
                                 </div>
                             </button>
