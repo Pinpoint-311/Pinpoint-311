@@ -27,7 +27,6 @@ import {
     Twitter,
     Linkedin,
     AlertTriangle,
-    LogIn,
 } from 'lucide-react';
 import { Button, Input, Textarea, Card } from '../components/ui';
 import GoogleMapsLocationPicker from '../components/GoogleMapsLocationPicker';
@@ -509,11 +508,9 @@ export default function ResidentPortal() {
                         </div>
                         <Link
                             to="/login"
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-500/20 hover:bg-primary-500/30 text-primary-200 hover:text-white text-xs md:text-sm font-semibold transition-all border border-primary-400/30 hover:border-primary-400/50 no-underline decoration-transparent shadow-sm shadow-primary-500/10"
+                            className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white/70 hover:text-white text-xs md:text-sm font-medium transition-all border border-white/10 hover:border-white/20 no-underline decoration-transparent"
                         >
-                            <LogIn className="w-3.5 h-3.5" />
                             Staff Login
-                            <span className="text-primary-300/60 ml-0.5">&rarr;</span>
                         </Link>
                     </div>
                 </nav>
