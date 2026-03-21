@@ -545,21 +545,20 @@ export default function ResidentPortal() {
                                             width: 0, height: 0,
                                             borderLeft: '8px solid transparent',
                                             borderRight: '8px solid transparent',
-                                            borderBottom: '8px solid rgba(99,102,241,0.3)',
+                                            borderBottom: '8px solid rgb(49, 46, 129)',
                                         }}
                                     />
                                     <div
-                                        className="rounded-xl p-3 border border-primary-400/30 shadow-lg shadow-primary-500/20"
+                                        className="rounded-xl p-3.5 border border-primary-400/50 shadow-xl shadow-black/40"
                                         style={{
-                                            background: 'linear-gradient(135deg, rgba(99,102,241,0.15) 0%, rgba(34,211,165,0.08) 100%)',
-                                            backdropFilter: 'blur(12px)',
+                                            background: 'rgb(30, 27, 75)',
                                             animation: 'demoTooltipBounce 2s ease-in-out infinite',
                                         }}
                                     >
                                         <div className="flex items-start gap-2">
                                             <div className="flex-1">
-                                                <p className="text-sm font-semibold text-white mb-0.5">Explore the full system</p>
-                                                <p className="text-xs text-white/60 leading-relaxed">Click <strong className="text-primary-300">Staff Login</strong> to see the staff dashboard & admin console.</p>
+                                                <p className="text-xs font-bold text-primary-300 uppercase tracking-wider mb-1">Demo Tip</p>
+                                                <p className="text-sm text-white leading-relaxed">Click <strong className="text-primary-200">Staff Login</strong> to explore the staff dashboard & admin console.</p>
                                             </div>
                                             <button
                                                 onClick={dismissDemoTooltip}
