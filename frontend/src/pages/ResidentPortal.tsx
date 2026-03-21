@@ -74,6 +74,25 @@ export default function ResidentPortal() {
     const [submittedId, setSubmittedId] = useState<string | null>(null);
     const contentRef = useRef<HTMLDivElement>(null);
 
+    // Demo mode - show tooltip pointing to Staff Login
+    const [showDemoTooltip, setShowDemoTooltip] = useState(false);
+
+    useEffect(() => {
+        fetch('/api/demo/info').then(r => r.ok ? r.json() : null).then(data => {
+            if (data?.demo_mode) {
+                // Show tooltip if not previously dismissed
+                if (!localStorage.getItem('demo_tooltip_dismissed')) {
+                    setShowDemoTooltip(true);
+                }
+            }
+        }).catch(() => {});
+    }, []);
+
+    const dismissDemoTooltip = () => {
+        setShowDemoTooltip(false);
+        localStorage.setItem('demo_tooltip_dismissed', '1');
+    };
+
     // Non-emergency disclaimer modal state
     const [showDisclaimerModal, setShowDisclaimerModal] = useState(false);
     const [disclaimerChecked, setDisclaimerChecked] = useState(false);
@@ -506,12 +525,54 @@ export default function ResidentPortal() {
                         <div className="scale-90 md:scale-100 origin-right">
                             <LanguageSelector />
                         </div>
-                        <Link
-                            to="/login"
-                            className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white/70 hover:text-white text-xs md:text-sm font-medium transition-all border border-white/10 hover:border-white/20 no-underline decoration-transparent"
-                        >
-                            Staff Login
-                        </Link>
+                        <div className="relative">
+                            <Link
+                                to="/login"
+                                className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white/70 hover:text-white text-xs md:text-sm font-medium transition-all border border-white/10 hover:border-white/20 no-underline decoration-transparent"
+                            >
+                                Staff Login
+                            </Link>
+                            {/* Demo-only tooltip pointing to Staff Login */}
+                            {showDemoTooltip && (
+                                <div
+                                    className="absolute top-full right-0 mt-3 z-50"
+                                    style={{ minWidth: '220px' }}
+                                >
+                                    {/* Arrow pointing up */}
+                                    <div
+                                        className="absolute -top-2 right-4"
+                                        style={{
+                                            width: 0, height: 0,
+                                            borderLeft: '8px solid transparent',
+                                            borderRight: '8px solid transparent',
+                                            borderBottom: '8px solid rgba(99,102,241,0.3)',
+                                        }}
+                                    />
+                                    <div
+                                        className="rounded-xl p-3 border border-primary-400/30 shadow-lg shadow-primary-500/20"
+                                        style={{
+                                            background: 'linear-gradient(135deg, rgba(99,102,241,0.15) 0%, rgba(34,211,165,0.08) 100%)',
+                                            backdropFilter: 'blur(12px)',
+                                            animation: 'demoTooltipBounce 2s ease-in-out infinite',
+                                        }}
+                                    >
+                                        <div className="flex items-start gap-2">
+                                            <div className="flex-1">
+                                                <p className="text-sm font-semibold text-white mb-0.5">Explore the full system</p>
+                                                <p className="text-xs text-white/60 leading-relaxed">Click <strong className="text-primary-300">Staff Login</strong> to see the staff dashboard & admin console.</p>
+                                            </div>
+                                            <button
+                                                onClick={dismissDemoTooltip}
+                                                className="text-white/40 hover:text-white text-lg leading-none mt-0.5 flex-shrink-0"
+                                                aria-label="Dismiss"
+                                            >
+                                                &times;
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </nav>
 

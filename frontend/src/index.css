@@ -263,6 +263,11 @@ body {
     animation: fadeInUp 0.5s ease-out forwards;
 }
 
+@keyframes demoTooltipBounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(6px); }
+}
+
 .animate-delay-100 {
     animation-delay: 100ms;
 }
