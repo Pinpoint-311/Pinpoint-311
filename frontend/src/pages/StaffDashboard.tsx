@@ -54,7 +54,6 @@ import { usePageNavigation } from '../hooks/usePageNavigation';
 import NotificationSettings from '../components/NotificationSettings';
 import ActivityFeed from '../components/ActivityFeed';
 import PrintWorkOrder from '../components/PrintWorkOrder';
-import DemoTour from '../components/DemoTour';
 
 type View = 'dashboard' | 'active' | 'in_progress' | 'resolved' | 'statistics';
 
@@ -722,8 +721,6 @@ export default function StaffDashboard() {
 
     return (
         <div className="h-screen flex overflow-hidden">
-            {/* Demo-only guided tour */}
-            {demoMode && <DemoTour />}
             {/* Mobile sidebar backdrop */}
             <AnimatePresence>
                 {sidebarOpen && (
