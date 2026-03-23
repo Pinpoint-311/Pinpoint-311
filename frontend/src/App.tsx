@@ -5,15 +5,52 @@ import { AccessibilityProvider } from './context/AccessibilityContext';
 import { TranslationProvider } from './context/TranslationContext';
 import { DialogProvider } from './components/DialogProvider';
 import { AutoTranslate } from './components/AutoTranslate';
+import ErrorBoundary from './components/ErrorBoundary';
 import ResidentPortal from './pages/ResidentPortal';
 import StaffDashboard from './pages/StaffDashboard';
 import AdminConsole from './pages/AdminConsole';
 import { ResearchLab } from './pages/ResearchLab';
+import NotFoundPage from './pages/NotFoundPage';
 
 import Login from './pages/Login';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsOfService from './pages/TermsOfService';
 import AccessibilityPage from './pages/AccessibilityPage';
+
+// Global error handlers — report unhandled errors to backend
+function reportError(payload: Record<string, unknown>) {
+    try {
+        fetch('/api/system/client-errors', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                ...payload,
+                url: window.location.href,
+                timestamp: new Date().toISOString(),
+                userAgent: navigator.userAgent,
+            }),
+        }).catch(() => {});
+    } catch {}
+}
+
+window.onerror = (message, source, lineno, colno, error) => {
+    reportError({
+        type: 'unhandled_error',
+        message: String(message),
+        source,
+        lineno,
+        colno,
+        stack: error?.stack,
+    });
+};
+
+window.onunhandledrejection = (event: PromiseRejectionEvent) => {
+    reportError({
+        type: 'unhandled_promise_rejection',
+        message: event.reason?.message || String(event.reason),
+        stack: event.reason?.stack,
+    });
+};
 
 // Protected route wrapper
 function ProtectedRoute({
@@ -90,27 +127,29 @@ function AppRoutes() {
             <Route path="/privacy" element={<PrivacyPolicy />} />
             <Route path="/terms" element={<TermsOfService />} />
             <Route path="/accessibility" element={<AccessibilityPage />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<NotFoundPage />} />
         </Routes>
     );
 }
 
 export default function App() {
     return (
-        <BrowserRouter>
-            <AccessibilityProvider>
-                <SettingsProvider>
-                    <TranslationProvider>
-                        <DialogProvider>
-                            <AutoTranslate>
-                                <AuthProvider>
-                                    <AppRoutes />
-                                </AuthProvider>
-                            </AutoTranslate>
-                        </DialogProvider>
-                    </TranslationProvider>
-                </SettingsProvider>
-            </AccessibilityProvider>
-        </BrowserRouter>
+        <ErrorBoundary>
+            <BrowserRouter>
+                <AccessibilityProvider>
+                    <SettingsProvider>
+                        <TranslationProvider>
+                            <DialogProvider>
+                                <AutoTranslate>
+                                    <AuthProvider>
+                                        <AppRoutes />
+                                    </AuthProvider>
+                                </AutoTranslate>
+                            </DialogProvider>
+                        </TranslationProvider>
+                    </SettingsProvider>
+                </AccessibilityProvider>
+            </BrowserRouter>
+        </ErrorBoundary>
     );
 }

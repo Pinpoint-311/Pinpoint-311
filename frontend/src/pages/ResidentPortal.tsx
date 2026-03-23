@@ -791,8 +791,15 @@ export default function ResidentPortal() {
 
                                 {/* Service Categories Grid */}
                                 {isLoading ? (
-                                    <div className="flex justify-center py-12" role="status" aria-label="Loading services">
-                                        <div className="w-10 h-10 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" aria-hidden="true" />
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" role="status" aria-label="Loading services">
+                                        {Array.from({ length: 8 }).map((_, i) => (
+                                            <div key={i} className="rounded-2xl border border-white/10 bg-white/5 p-6 animate-pulse">
+                                                <div className="w-12 h-12 rounded-xl bg-white/10 mb-4" />
+                                                <div className="h-4 bg-white/10 rounded w-3/4 mb-2" />
+                                                <div className="h-3 bg-white/[.06] rounded w-full mb-1" />
+                                                <div className="h-3 bg-white/[.06] rounded w-2/3" />
+                                            </div>
+                                        ))}
                                         <span className="sr-only">Loading service categories...</span>
                                     </div>
                                 ) : (

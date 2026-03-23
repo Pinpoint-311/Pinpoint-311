@@ -83,6 +83,7 @@ class DemoModeMiddleware(BaseHTTPMiddleware):
         "/api/research/",       # Research suite
         "/api/system/analytics-chat", # AI Analytics Advisor
         "/api/services/reorder",  # Service category reordering
+        "/api/system/client-errors",  # Frontend error reporting
     ]
     
     async def dispatch(self, request: Request, call_next):
@@ -322,3 +323,34 @@ async def sentry_debug():
     # Intentional error for testing
     raise Exception("Sentry test error - this is intentional!")
 
+
+# Client error logging endpoint
+from pydantic import BaseModel
+from typing import Optional
+import logging
+
+client_error_logger = logging.getLogger("client_errors")
+
+class ClientError(BaseModel):
+    type: str
+    message: str
+    stack: Optional[str] = None
+    componentStack: Optional[str] = None
+    source: Optional[str] = None
+    lineno: Optional[int] = None
+    colno: Optional[int] = None
+    url: Optional[str] = None
+    timestamp: Optional[str] = None
+    userAgent: Optional[str] = None
+
+@app.post("/api/system/client-errors", status_code=204)
+async def log_client_error(error: ClientError):
+    """Log frontend errors for monitoring."""
+    client_error_logger.error(
+        f"[CLIENT {error.type}] {error.message} | url={error.url} | "
+        f"source={error.source}:{error.lineno}:{error.colno} | "
+        f"ua={error.userAgent[:60] if error.userAgent else 'unknown'}"
+    )
+    if error.stack:
+        client_error_logger.debug(f"Stack: {error.stack[:500]}")
+    return Response(status_code=204)
