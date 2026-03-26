@@ -1926,6 +1926,17 @@ export default function StaffDashboard() {
                                                                 <ChevronDown className={`w-5 h-5 text-white/40 transition-transform ${isAIExpanded ? 'rotate-180' : ''}`} />
                                                             </button>
 
+                                                            {/* Translation block for non-English submissions */}
+                                                            {ai?.translation && ai.translation.detected_language && ai.translation.detected_language !== 'English' && ai.translation.english_translation && (
+                                                                <div className="mb-4 p-3 rounded-xl bg-blue-500/10 border border-blue-500/20">
+                                                                    <p className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">
+                                                                        🌐 Translation ({ai.translation.detected_language})
+                                                                    </p>
+                                                                    <p className="text-xs text-white/40 italic mb-1">"{ai.translation.original_text}"</p>
+                                                                    <p className="text-sm text-white/80">"{ai.translation.english_translation}"</p>
+                                                                </div>
+                                                            )}
+
                                                             {/* Summary Text - Always visible */}
                                                             {qualitativeText && !hasError && (
                                                                 <p className={`text-sm text-white/70 leading-relaxed mb-4 ${!isAIExpanded ? 'line-clamp-2' : ''}`}>
