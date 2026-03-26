@@ -133,7 +133,11 @@ def build_analysis_prompt(
 
 ## Analysis Required
 
-**IMPORTANT**: If the text is not in English, provide a literal English translation first.
+**CRITICAL — NON-ENGLISH SUBMISSIONS**: If the resident's description is NOT in English, you MUST:
+1. Detect the language (e.g., "Spanish", "Chinese", "Hindi")
+2. Provide a VERBATIM English translation of the ENTIRE description
+3. Include both in the "translation" field of the JSON response
+4. Then proceed with your full analysis as normal, using the translated content
 
 Analyze the provided description, photos, and deep context to provide a professional triage assessment.
 
@@ -149,6 +153,11 @@ Provide your analysis in the following JSON format ONLY:
 
 ```json
 {{
+  "translation": {{
+    "detected_language": "<language name or 'English' if already English>",
+    "original_text": "<verbatim original description if not English, else null>",
+    "english_translation": "<full English translation if not English, else null>"
+  }},
   "priority_score": <float 1.0-10.0>,
   "priority_justification": "<brief explanation covering scale, effort, and context multipliers>",
   "qualitative_analysis": "<assessment of issue, root cause, and systemic impact>",
