@@ -1,15 +1,16 @@
-import { ServiceRequestDetail, AuditLogEntry } from '../types';
+import { ServiceRequestDetail, AuditLogEntry, RequestComment } from '../types';
 import { Printer } from 'lucide-react';
 
 interface PrintWorkOrderProps {
     request: ServiceRequestDetail;
     auditLog?: AuditLogEntry[];
+    comments?: RequestComment[];
     townshipName?: string;
     logoUrl?: string;
     mapsApiKey?: string | null;
 }
 
-export default function PrintWorkOrder({ request, auditLog, townshipName, logoUrl, mapsApiKey }: PrintWorkOrderProps) {
+export default function PrintWorkOrder({ request, auditLog, comments, townshipName, logoUrl, mapsApiKey }: PrintWorkOrderProps) {
     const handlePrint = () => {
         // Create a new window for printing
         const printWindow = window.open('', '_blank', 'width=800,height=600');
@@ -49,6 +50,17 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
             return status.toUpperCase().replace('_', ' ');
         };
 
+        // Source label
+        const getSourceLabel = (source: string) => {
+            switch (source) {
+                case 'resident_portal': return 'Resident Portal';
+                case 'phone': return 'Phone Call';
+                case 'walk_in': return 'Walk-In';
+                case 'email': return 'Email';
+                default: return source || 'Resident Portal';
+            }
+        };
+
         // SVG Icons for formal look
         const icons = {
             location: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`,
@@ -61,6 +73,9 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
             check: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
             clipboard: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>`,
             alert: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+            notes: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`,
+            comment: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
+            flag: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>`,
         };
 
         // Build photos HTML
@@ -198,6 +213,40 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
             </div>
         ` : '';
 
+        // Build staff notes HTML
+        const staffNotesHtml = request.staff_notes ? `
+            <div class="section staff-notes">
+                <h3>${icons.notes} Staff Notes</h3>
+                <div class="notes-content">${request.staff_notes.replace(/\n/g, '<br/>')}</div>
+            </div>
+        ` : '';
+
+        // Build comments HTML (internal only - for field staff use)
+        const internalComments = comments?.filter(c => c.visibility === 'internal') || [];
+        const commentsHtml = internalComments.length ? `
+            <div class="section comments-section">
+                <h3>${icons.comment} Internal Comments (${internalComments.length})</h3>
+                <div class="comments-list">
+                    ${internalComments.map(c => `
+                        <div class="comment-item">
+                            <div class="comment-header">
+                                <strong>${c.username}</strong>
+                                <span class="comment-date">${formatDate(c.created_at)}</span>
+                            </div>
+                            <div class="comment-body">${c.content.replace(/\n/g, '<br/>')}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        ` : '';
+
+        // Legal hold banner
+        const legalHoldHtml = request.flagged ? `
+            <div class="legal-hold-banner">
+                ${icons.flag} <strong>LEGAL HOLD</strong> — This record is under legal hold and exempt from retention policy.
+            </div>
+        ` : '';
+
         const html = `
             <!DOCTYPE html>
             <html>
@@ -218,7 +267,7 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         align-items: flex-start;
                         border-bottom: 3px solid #1e40af;
                         padding-bottom: 15px;
-                        margin-bottom: 20px;
+                        margin-bottom: 15px;
                     }
                     .header-left {
                         display: flex;
@@ -266,11 +315,24 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         margin-left: 5px;
                         color: white;
                     }
+                    .legal-hold-banner {
+                        background: #fef3c7;
+                        border: 2px solid #f59e0b;
+                        border-radius: 6px;
+                        padding: 8px 14px;
+                        margin-bottom: 15px;
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: #92400e;
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                    }
                     .meta-grid {
                         display: grid;
-                        grid-template-columns: repeat(4, 1fr);
-                        gap: 10px;
-                        margin-bottom: 20px;
+                        grid-template-columns: repeat(3, 1fr);
+                        gap: 8px;
+                        margin-bottom: 15px;
                         background: #f9fafb;
                         padding: 12px;
                         border-radius: 6px;
@@ -288,7 +350,7 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         font-weight: 600;
                     }
                     .section {
-                        margin-bottom: 15px;
+                        margin-bottom: 12px;
                         page-break-inside: avoid;
                     }
                     .section h3 {
@@ -384,7 +446,7 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         margin-bottom: 8px;
                     }
                     .asset-properties {
-                        border-top: 1px solid #10b981/30;
+                        border-top: 1px solid rgba(16, 185, 129, 0.3);
                         padding-top: 8px;
                         margin-top: 8px;
                     }
@@ -462,6 +524,47 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         border-radius: 6px;
                         border-left: 4px solid #0284c7;
                     }
+                    .staff-notes {
+                        background: #fefce8;
+                        padding: 12px;
+                        border-radius: 6px;
+                        border-left: 4px solid #eab308;
+                    }
+                    .staff-notes .notes-content {
+                        background: #fefce8;
+                        padding: 8px;
+                        border-radius: 4px;
+                        white-space: pre-wrap;
+                    }
+                    .comments-section {
+                        background: #f0fdf4;
+                        padding: 12px;
+                        border-radius: 6px;
+                        border-left: 4px solid #22c55e;
+                    }
+                    .comments-list {
+                        display: flex;
+                        flex-direction: column;
+                        gap: 8px;
+                    }
+                    .comment-item {
+                        padding: 8px;
+                        background: rgba(255,255,255,0.7);
+                        border-radius: 4px;
+                        border: 1px solid #e5e7eb;
+                    }
+                    .comment-header {
+                        display: flex;
+                        justify-content: space-between;
+                        margin-bottom: 4px;
+                        font-size: 10px;
+                    }
+                    .comment-date {
+                        color: #6b7280;
+                    }
+                    .comment-body {
+                        font-size: 11px;
+                    }
                     table {
                         width: 100%;
                         border-collapse: collapse;
@@ -477,8 +580,8 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         font-weight: 600;
                     }
                     .footer {
-                        margin-top: 30px;
-                        padding-top: 15px;
+                        margin-top: 20px;
+                        padding-top: 10px;
                         border-top: 1px solid #e5e7eb;
                         display: flex;
                         justify-content: space-between;
@@ -486,7 +589,7 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         color: #9ca3af;
                     }
                     .signature-box {
-                        margin-top: 30px;
+                        margin-top: 20px;
                         display: grid;
                         grid-template-columns: 1fr 1fr;
                         gap: 30px;
@@ -496,6 +599,34 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         padding-top: 5px;
                         font-size: 10px;
                         color: #6b7280;
+                    }
+                    .field-notes {
+                        margin-top: 15px;
+                        page-break-inside: avoid;
+                    }
+                    .field-notes h3 {
+                        font-size: 12px;
+                        color: #374151;
+                        border-bottom: 1px solid #e5e7eb;
+                        padding-bottom: 5px;
+                        margin-bottom: 8px;
+                        display: flex;
+                        align-items: center;
+                        gap: 6px;
+                    }
+                    .field-notes-lines {
+                        border: 1px solid #e5e7eb;
+                        border-radius: 6px;
+                        padding: 8px;
+                        min-height: 80px;
+                        background: #fafafa;
+                    }
+                    .field-notes-lines .line {
+                        border-bottom: 1px solid #e5e7eb;
+                        height: 22px;
+                    }
+                    .field-notes-lines .line:last-child {
+                        border-bottom: none;
                     }
                     @media print {
                         body { padding: 0; }
@@ -519,6 +650,8 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                     </div>
                 </div>
 
+                ${legalHoldHtml}
+
                 <div class="meta-grid">
                     <div class="meta-item">
                         <label>Category</label>
@@ -529,12 +662,20 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         <span>${formatDate(request.requested_datetime)}</span>
                     </div>
                     <div class="meta-item">
+                        <label>Source</label>
+                        <span>${getSourceLabel(request.source)}</span>
+                    </div>
+                    <div class="meta-item">
                         <label>Department</label>
                         <span>${request.assigned_department?.name || 'Unassigned'}</span>
                     </div>
                     <div class="meta-item">
                         <label>Assigned To</label>
                         <span>${request.assigned_to || 'Unassigned'}</span>
+                    </div>
+                    <div class="meta-item">
+                        <label>Last Updated</label>
+                        <span>${formatDate(request.updated_datetime)}</span>
                     </div>
                 </div>
 
@@ -583,6 +724,8 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                 ${assetHtml}
                 ${photosHtml}
                 ${aiHtml}
+                ${staffNotesHtml}
+                ${commentsHtml}
                 ${completionHtml}
 
                 <div class="section reporter">
@@ -591,10 +734,21 @@ export default function PrintWorkOrder({ request, auditLog, townshipName, logoUr
                         <div><strong>Name:</strong> ${request.first_name || ''} ${request.last_name || ''}</div>
                         <div><strong>Email:</strong> ${request.email}</div>
                         ${request.phone ? `<div><strong>Phone:</strong> ${request.phone}</div>` : ''}
+                        <div><strong>Preferred Language:</strong> ${(request as any).preferred_language || 'en'}</div>
                     </div>
                 </div>
 
                 ${timelineHtml}
+
+                <div class="field-notes">
+                    <h3>${icons.notes} Field Notes</h3>
+                    <div class="field-notes-lines">
+                        <div class="line"></div>
+                        <div class="line"></div>
+                        <div class="line"></div>
+                        <div class="line"></div>
+                    </div>
+                </div>
 
                 <div class="signature-box">
                     <div>

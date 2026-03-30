@@ -45,6 +45,8 @@ services:
         echo 'Starting server...' &&
         uvicorn app.main:app --host 0.0.0.0 --port 8000
       "
+    volumes:
+      - uploads:/project/uploads
     environment:
       DATABASE_URL: postgresql+asyncpg://demo:${DEMO_DB_PASSWORD:-demo_pass_123}@db/demo_db
       REDIS_URL: redis://redis:6379/0
@@ -79,6 +81,8 @@ services:
     image: wwf-open-source-311-template-backend:latest
     restart: "no"
     command: celery -A app.core.celery_app worker --beat --loglevel=warning --concurrency=2
+    volumes:
+      - uploads:/project/uploads
     environment:
       DATABASE_URL: postgresql+asyncpg://demo:${DEMO_DB_PASSWORD:-demo_pass_123}@db/demo_db
       REDIS_URL: redis://redis:6379/0
@@ -125,3 +129,7 @@ services:
         limits:
           cpus: '0.1'
           memory: 64M
+
+volumes:
+  uploads:
+

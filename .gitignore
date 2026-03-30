@@ -33,6 +33,9 @@ postgres_data/
 caddy_data/
 caddy_config/
 
+# Uploaded files (persisted via Docker volumes, must survive git operations)
+uploads/
+
 # Credentials
 *.pem
 *.key

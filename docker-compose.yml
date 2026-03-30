@@ -91,6 +91,7 @@ services:
     volumes:
       - ./backend:/app
       - .:/project
+      - uploads_data:/project/uploads
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       DATABASE_URL: postgresql+asyncpg://${DB_USER:-township}:${DB_PASSWORD:?Set DB_PASSWORD}@db/${DB_NAME:-township_db}
@@ -236,5 +237,4 @@ volumes:
   postgres_data:
   caddy_data:
   caddy_config:
-
-
+  uploads_data:

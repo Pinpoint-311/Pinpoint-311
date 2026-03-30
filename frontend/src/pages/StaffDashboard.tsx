@@ -993,37 +993,38 @@ export default function StaffDashboard() {
                     <div className="flex-1 p-3 sm:p-6 lg:p-8 overflow-auto">
                         <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
                             {/* Header */}
-                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                            <div className="space-y-3">
                                 <div>
                                     <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-white">Analytics Dashboard</h1>
                                     {advancedStats?.cached_at && (
-                                        <p className="text-sm text-white/40 mt-1">
+                                        <p className="text-xs sm:text-sm text-white/40 mt-1">
                                             Updated {new Date(advancedStats.cached_at.endsWith('Z') ? advancedStats.cached_at : advancedStats.cached_at + 'Z').toLocaleString()}
                                         </p>
                                     )}
                                 </div>
-                                <div className="flex flex-wrap items-center gap-2">
+                                <div className="grid grid-cols-3 sm:flex sm:flex-wrap items-center gap-2">
                                     <button
                                         onClick={() => setChatOpen(true)}
-                                        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 transition-all text-sm font-medium shadow-lg shadow-emerald-500/20"
+                                        className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 sm:py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 transition-all text-xs sm:text-sm font-medium shadow-lg shadow-emerald-500/20"
                                     >
                                         <Sparkles className="w-4 h-4" />
-                                        Ask AI
+                                        <span>Ask AI</span>
                                     </button>
                                     <button
                                         onClick={() => window.location.href = '/research'}
-                                        className="flex items-center gap-2 px-4 py-2 bg-white/10 border border-white/20 text-white rounded-lg hover:bg-white/20 transition-all text-sm font-medium"
+                                        className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 sm:py-2 bg-white/10 border border-white/20 text-white rounded-lg hover:bg-white/20 transition-all text-xs sm:text-sm font-medium"
                                     >
                                         <FlaskConical className="w-4 h-4" />
-                                        Research Portal
+                                        <span className="hidden sm:inline">Research Portal</span>
+                                        <span className="sm:hidden">Research</span>
                                     </button>
                                     <div className="relative group">
-                                        <button className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all text-sm font-medium">
+                                        <button className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 sm:py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all text-xs sm:text-sm font-medium w-full">
                                             <Download className="w-4 h-4" />
-                                            Export
+                                            <span>Export</span>
                                             <ChevronDown className="w-3 h-3" />
                                         </button>
-                                        <div className="absolute right-0 mt-2 w-52 bg-gray-900 border border-white/20 rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                                        <div className="absolute right-0 sm:right-0 mt-2 w-52 bg-gray-900 border border-white/20 rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
                                             <div className="p-1.5">
                                                 <p className="px-3 py-1.5 text-xs font-semibold text-white/40 uppercase">Requests</p>
                                                 <button onClick={() => handleExportRequests('csv')} className="w-full text-left px-3 py-2 text-sm text-white/80 hover:bg-white/10 rounded-md">📄 CSV</button>
@@ -1280,7 +1281,7 @@ export default function StaffDashboard() {
                                 animate={{ x: 0 }}
                                 exit={{ x: '100%' }}
                                 transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                                className="fixed right-0 top-0 bottom-0 w-full sm:w-[520px] bg-gray-950/95 backdrop-blur-xl border-l border-white/10 z-[70] flex flex-col shadow-2xl shadow-black/50"
+                                className="fixed right-0 top-0 bottom-0 w-full sm:w-[520px] bg-gray-950/95 backdrop-blur-xl border-l border-white/10 z-[70] flex flex-col shadow-2xl shadow-black/50 safe-area-inset"
                             >
                                 {/* Chat Header */}
                                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-gradient-to-r from-emerald-600/20 to-teal-600/20">
@@ -1746,6 +1747,7 @@ export default function StaffDashboard() {
                                             <PrintWorkOrder
                                                 request={selectedRequest}
                                                 auditLog={auditLog}
+                                                comments={comments}
                                                 townshipName={settings?.township_name}
                                                 logoUrl={settings?.logo_url || undefined}
                                                 mapsApiKey={mapsConfig?.google_maps_api_key}
