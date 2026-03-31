@@ -1281,7 +1281,8 @@ export default function StaffDashboard() {
                                 animate={{ x: 0 }}
                                 exit={{ x: '100%' }}
                                 transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                                className="fixed right-0 top-0 bottom-0 w-full sm:w-[520px] bg-gray-950/95 backdrop-blur-xl border-l border-white/10 z-[70] flex flex-col shadow-2xl shadow-black/50 safe-area-inset"
+                                className="fixed right-0 top-0 w-full sm:w-[520px] bg-gray-950/95 backdrop-blur-xl border-l border-white/10 z-[70] flex flex-col shadow-2xl shadow-black/50"
+                                style={{ height: '100dvh' }}
                             >
                                 {/* Chat Header */}
                                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-gradient-to-r from-emerald-600/20 to-teal-600/20">
@@ -1314,17 +1315,17 @@ export default function StaffDashboard() {
                                 </div>
 
                                 {/* Messages Area */}
-                                <div className="flex-1 overflow-auto p-4 space-y-4" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.1) transparent' }}>
+                                <div className="flex-1 overflow-auto p-4 space-y-4 min-h-0" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.1) transparent' }}>
                                     {chatMessages.length === 0 && !chatLoading && (
-                                        <div className="flex flex-col items-center justify-center h-full text-center px-6">
-                                            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/20 flex items-center justify-center mb-4">
-                                                <Sparkles className="w-8 h-8 text-emerald-400" />
+                                        <div className="flex flex-col items-center text-center px-4 sm:px-6 pt-4 sm:pt-8">
+                                            <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/20 flex items-center justify-center mb-3 sm:mb-4">
+                                                <Sparkles className="w-6 h-6 sm:w-8 sm:h-8 text-emerald-400" />
                                             </div>
-                                            <h4 className="text-white font-semibold mb-2">Ask anything about your data</h4>
-                                            <p className="text-white/40 text-sm mb-6 max-w-xs">
-                                                I analyze all requests, staff data, geographic patterns, social equity metrics, resident sentiment, and government responsiveness — everything except resident PII.
+                                            <h4 className="text-white font-semibold mb-1 sm:mb-2 text-sm sm:text-base">Ask anything about your data</h4>
+                                            <p className="text-white/40 text-xs sm:text-sm mb-4 sm:mb-6 max-w-xs">
+                                                I analyze all requests, geographic patterns, equity metrics, sentiment, and responsiveness — everything except resident PII.
                                             </p>
-                                            <div className="space-y-2 w-full max-w-xs">
+                                            <div className="space-y-1.5 sm:space-y-2 w-full max-w-xs">
                                                 {[
                                                     'Which neighborhoods have the highest social vulnerability?',
                                                     'How does resident sentiment vary by category?',
@@ -1335,7 +1336,7 @@ export default function StaffDashboard() {
                                                     <button
                                                         key={i}
                                                         onClick={() => { setChatInput(q); }}
-                                                        className="w-full text-left px-3 py-2.5 text-sm text-white/70 bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 hover:border-emerald-500/30 transition-all"
+                                                        className="w-full text-left px-3 py-2 sm:py-2.5 text-xs sm:text-sm text-white/70 bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 hover:border-emerald-500/30 transition-all active:bg-white/15"
                                                     >
                                                         {q}
                                                     </button>
@@ -1428,26 +1429,26 @@ export default function StaffDashboard() {
                                 </div>
 
                                 {/* Input Area */}
-                                <form onSubmit={sendChatMessage} className="px-4 py-3 border-t border-white/10 bg-gray-950/80">
+                                <form onSubmit={sendChatMessage} className="shrink-0 px-3 sm:px-4 py-2 sm:py-3 border-t border-white/10 bg-gray-950" style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}>
                                     <div className="flex items-center gap-2">
                                         <input
                                             type="text"
                                             value={chatInput}
                                             onChange={(e) => setChatInput(e.target.value)}
                                             placeholder="Ask about your data..."
-                                            className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-white/30 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/25 transition-all"
+                                            className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/25 transition-all"
                                             disabled={chatLoading}
                                             autoFocus
                                         />
                                         <button
                                             type="submit"
                                             disabled={!chatInput.trim() || chatLoading}
-                                            className="w-10 h-10 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 flex items-center justify-center text-white disabled:opacity-30 disabled:cursor-not-allowed hover:from-emerald-700 hover:to-teal-700 transition-all shadow-lg shadow-emerald-500/20"
+                                            className="w-11 h-11 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 flex items-center justify-center text-white disabled:opacity-30 disabled:cursor-not-allowed hover:from-emerald-700 hover:to-teal-700 transition-all shadow-lg shadow-emerald-500/20 shrink-0"
                                         >
                                             <Send className="w-4 h-4" />
                                         </button>
                                     </div>
-                                    <p className="text-[10px] text-white/20 mt-1.5 text-center">Gemini 3.1 Flash-Lite · Equity metrics · Sentiment analysis · All system data except PII</p>
+                                    <p className="text-[10px] text-white/20 mt-1 text-center hidden sm:block">Gemini 3.1 Flash-Lite · Equity metrics · Sentiment analysis · All system data except PII</p>
                                 </form>
                             </motion.div>
                         </>
