@@ -141,10 +141,10 @@ async def create_service(
 
 @router.get("/{service_id}", response_model=ServiceResponse)
 async def get_service(service_id: int, db: AsyncSession = Depends(get_db)):
-    """Get service by ID"""
+    """Get service by ID (only returns active services for public access)"""
     result = await db.execute(
         select(ServiceDefinition)
-        .where(ServiceDefinition.id == service_id)
+        .where(ServiceDefinition.id == service_id, ServiceDefinition.is_active == True)
         .options(selectinload(ServiceDefinition.departments))
     )
     service = result.scalar_one_or_none()

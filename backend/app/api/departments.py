@@ -6,14 +6,17 @@ from typing import List
 from app.db.session import get_db
 from app.models import Department, User
 from app.schemas import DepartmentCreate, DepartmentResponse
-from app.core.auth import get_current_admin
+from app.core.auth import get_current_admin, get_current_staff
 
 router = APIRouter()
 
 
 @router.get("/", response_model=List[DepartmentResponse])
-async def list_departments(db: AsyncSession = Depends(get_db)):
-    """List all departments"""
+async def list_departments(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_staff)
+):
+    """List all departments (staff only — routing_email is internal)"""
     result = await db.execute(select(Department).where(Department.is_active == True))
     return result.scalars().all()
 
@@ -40,8 +43,12 @@ async def create_department(
 
 
 @router.get("/{dept_id}", response_model=DepartmentResponse)
-async def get_department(dept_id: int, db: AsyncSession = Depends(get_db)):
-    """Get department by ID"""
+async def get_department(
+    dept_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_staff)
+):
+    """Get department by ID (staff only)"""
     result = await db.execute(select(Department).where(Department.id == dept_id))
     dept = result.scalar_one_or_none()
     if not dept:
