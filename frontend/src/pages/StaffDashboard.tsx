@@ -207,27 +207,7 @@ export default function StaffDashboard() {
     const [chatInput, setChatInput] = useState('');
     const [chatLoading, setChatLoading] = useState(false);
     const chatEndRef = useRef<HTMLDivElement>(null);
-    const [chatPanelStyle, setChatPanelStyle] = useState<{ height: string; top: string }>({ height: '100%', top: '0px' });
 
-    // VisualViewport listener — resizes AI chat panel when mobile keyboard opens
-    useEffect(() => {
-        if (!chatOpen) return;
-        const vv = window.visualViewport;
-        if (!vv) return;
-        const update = () => {
-            setChatPanelStyle({
-                height: `${vv.height}px`,
-                top: `${vv.offsetTop}px`,
-            });
-        };
-        update();
-        vv.addEventListener('resize', update);
-        vv.addEventListener('scroll', update);
-        return () => {
-            vv.removeEventListener('resize', update);
-            vv.removeEventListener('scroll', update);
-        };
-    }, [chatOpen]);
 
     // Scroll chat to bottom when new messages arrive
     useEffect(() => {
@@ -1296,24 +1276,27 @@ export default function StaffDashboard() {
                                 className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60]"
                                 onClick={() => setChatOpen(false)}
                             />
-                            {/* Panel */}
+                            {/* Panel - Bottom sheet on mobile, side panel on desktop */}
                             <motion.div
-                                initial={{ x: '100%' }}
-                                animate={{ x: 0 }}
-                                exit={{ x: '100%' }}
-                                transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                                className="fixed right-0 w-full sm:w-[520px] bg-gray-950/95 backdrop-blur-xl border-l border-white/10 z-[70] flex flex-col shadow-2xl shadow-black/50"
-                                style={{ height: chatPanelStyle.height, top: chatPanelStyle.top }}
+                                initial={{ y: '100%' }}
+                                animate={{ y: 0 }}
+                                exit={{ y: '100%' }}
+                                transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+                                className="fixed bottom-0 left-0 right-0 sm:left-auto sm:top-0 sm:right-0 sm:bottom-0 w-full sm:w-[520px] max-h-[75vh] sm:max-h-none bg-gray-950 sm:bg-gray-950/95 backdrop-blur-xl border-t sm:border-t-0 sm:border-l border-white/10 z-[70] flex flex-col shadow-2xl shadow-black/50 rounded-t-2xl sm:rounded-none"
                             >
+                                {/* Drag Handle (mobile only) */}
+                                <div className="sm:hidden flex justify-center pt-2 pb-1">
+                                    <div className="w-10 h-1 bg-white/20 rounded-full" />
+                                </div>
                                 {/* Chat Header */}
-                                <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-gradient-to-r from-emerald-600/20 to-teal-600/20">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/30">
-                                            <Sparkles className="w-5 h-5 text-white" />
+                                <div className="flex items-center justify-between px-4 sm:px-5 py-3 sm:py-4 border-b border-white/10 bg-gradient-to-r from-emerald-600/20 to-teal-600/20">
+                                    <div className="flex items-center gap-2.5 sm:gap-3">
+                                        <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/30">
+                                            <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
                                         </div>
                                         <div>
                                             <h3 className="text-white font-semibold text-sm">AI Analytics Advisor</h3>
-                                            <p className="text-white/40 text-xs">Gemini 3.0 · Research-grade insights</p>
+                                            <p className="text-white/40 text-xs hidden sm:block">Gemini 3.0 · Research-grade insights</p>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-1.5">
@@ -1336,17 +1319,17 @@ export default function StaffDashboard() {
                                 </div>
 
                                 {/* Messages Area */}
-                                <div className="flex-1 overflow-auto p-4 space-y-4 min-h-0" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.1) transparent' }}>
+                                <div className="flex-1 overflow-auto p-3 sm:p-4 space-y-3 sm:space-y-4 min-h-0" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.1) transparent' }}>
                                     {chatMessages.length === 0 && !chatLoading && (
-                                        <div className="flex flex-col items-center text-center px-4 sm:px-6 pt-4 sm:pt-8">
-                                            <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/20 flex items-center justify-center mb-3 sm:mb-4">
-                                                <Sparkles className="w-6 h-6 sm:w-8 sm:h-8 text-emerald-400" />
+                                        <div className="flex flex-col items-center text-center px-4 sm:px-6 pt-2 sm:pt-8">
+                                            <div className="w-10 h-10 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/20 flex items-center justify-center mb-2 sm:mb-4">
+                                                <Sparkles className="w-5 h-5 sm:w-8 sm:h-8 text-emerald-400" />
                                             </div>
                                             <h4 className="text-white font-semibold mb-1 sm:mb-2 text-sm sm:text-base">Ask anything about your data</h4>
-                                            <p className="text-white/40 text-xs sm:text-sm mb-4 sm:mb-6 max-w-xs">
+                                            <p className="text-white/40 text-xs mb-3 sm:mb-6 max-w-xs hidden sm:block">
                                                 I analyze all requests, geographic patterns, equity metrics, sentiment, and responsiveness — everything except resident PII.
                                             </p>
-                                            <div className="space-y-1.5 sm:space-y-2 w-full max-w-xs">
+                                            <div className="space-y-1.5 w-full max-w-xs">
                                                 {[
                                                     'Which neighborhoods have the highest social vulnerability?',
                                                     'How does resident sentiment vary by category?',
@@ -1357,7 +1340,7 @@ export default function StaffDashboard() {
                                                     <button
                                                         key={i}
                                                         onClick={() => { setChatInput(q); }}
-                                                        className="w-full text-left px-3 py-2 sm:py-2.5 text-xs sm:text-sm text-white/70 bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 hover:border-emerald-500/30 transition-all active:bg-white/15"
+                                                        className="w-full text-left px-3 py-2 text-xs text-white/70 bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 hover:border-emerald-500/30 transition-all active:bg-white/15"
                                                     >
                                                         {q}
                                                     </button>
@@ -1380,21 +1363,15 @@ export default function StaffDashboard() {
                                                         dangerouslySetInnerHTML={{
                                                             __html: (() => {
                                                                 let html = msg.content;
-                                                                // Escape HTML entities first (except our markdown)
                                                                 html = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                                                                // Headers (must be before bold processing)
                                                                 html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
                                                                 html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
                                                                 html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-                                                                // Horizontal rules
                                                                 html = html.replace(/^---+$/gm, '<hr />');
-                                                                // Bold and italic
                                                                 html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
                                                                 html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
                                                                 html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-                                                                // Inline code
                                                                 html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-                                                                // Tables
                                                                 html = html.replace(/^(\|.+\|)\n(\|[-| :]+\|)\n((?:\|.+\|\n?)+)/gm, (_match, headerRow: string, _sepRow: string, bodyRows: string) => {
                                                                     const headers = headerRow.split('|').filter((c: string) => c.trim()).map((c: string) => `<th>${c.trim()}</th>`).join('');
                                                                     const rows = bodyRows.trim().split('\n').map((row: string) => {
@@ -1403,20 +1380,15 @@ export default function StaffDashboard() {
                                                                     }).join('');
                                                                     return `<table><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table>`;
                                                                 });
-                                                                // Numbered lists
                                                                 html = html.replace(/^(\d+)\. (.+)$/gm, '<li data-ol>$2</li>');
-                                                                // Unordered lists
                                                                 html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
-                                                                // Wrap consecutive <li> tags in <ul> or <ol>
                                                                 html = html.replace(/((?:<li data-ol>[^]*?<\/li>\n?)+)/g, (match) => {
                                                                     const clean = match.replace(/ data-ol/g, '');
                                                                     return `<ol>${clean}</ol>`;
                                                                 });
                                                                 html = html.replace(/((?:<li>[^]*?<\/li>\n?)+)/g, '<ul>$1</ul>');
-                                                                // Paragraphs: wrap remaining text lines
                                                                 html = html.replace(/\n\n/g, '</p><p>');
                                                                 html = html.replace(/\n/g, '<br />');
-                                                                // Clean up empty paragraphs and extra breaks around block elements
                                                                 html = html.replace(/<br \/>\s*(<h[123]>)/g, '$1');
                                                                 html = html.replace(/(<\/h[123]>)\s*<br \/>/g, '$1');
                                                                 html = html.replace(/<br \/>\s*(<ul>|<ol>|<table>|<hr \/>)/g, '$1');
@@ -1459,7 +1431,6 @@ export default function StaffDashboard() {
                                             placeholder="Ask about your data..."
                                             className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/25 transition-all"
                                             disabled={chatLoading}
-                                            autoFocus
                                         />
                                         <button
                                             type="submit"
