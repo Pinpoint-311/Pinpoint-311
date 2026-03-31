@@ -262,6 +262,219 @@ async def get_public_audit_log(request_id: str, db: AsyncSession = Depends(get_d
 
 
 
+@router.get("/discovery.json")
+async def open311_discovery(request: Request):
+    """
+    Open311 v2 Discovery endpoint — API metadata and capability advertisement.
+    
+    Per the Open311 GeoReport v2 specification, this endpoint allows consumers
+    to discover what this API supports, what endpoints are available, and
+    the changeset/versioning information.
+    """
+    base_url = str(request.base_url).rstrip("/")
+    
+    return {
+        "changeset": "2026-03-31T00:00:00Z",
+        "contact": "You may email support@pinpoint311.org for any questions or issues.",
+        "key_service": f"{base_url}/api/auth/login",
+        "type": "production",
+        "endpoints": [
+            {
+                "specification": "http://wiki.open311.org/GeoReport_v2",
+                "url": f"{base_url}/api/open311/v2",
+                "changeset": "2026-03-31T00:00:00Z",
+                "type": "production",
+                "formats": ["application/json"]
+            }
+        ],
+        "extensions": {
+            "public_portal": {
+                "description": "Public request tracking with PII redaction",
+                "endpoints": [
+                    "GET /public/requests",
+                    "GET /public/requests/{id}",
+                    "GET /public/requests/{id}/comments",
+                    "POST /public/requests/{id}/comments",
+                    "GET /public/requests/{id}/audit-log"
+                ]
+            },
+            "ai_triage": {
+                "description": "Automated Vertex AI priority scoring on submission",
+                "endpoints": [
+                    "POST /requests/{id}/accept-ai-priority"
+                ]
+            },
+            "asset_linking": {
+                "description": "Link requests to infrastructure assets",
+                "endpoints": [
+                    "GET /requests/asset/{id}/related"
+                ]
+            }
+        }
+    }
+
+
+@router.get("/services/{service_code}.json")
+async def get_service_definition(service_code: str, db: AsyncSession = Depends(get_db)):
+    """
+    Open311 v2 Service Definition endpoint.
+    
+    Returns extended attributes for a service type, including metadata
+    about what fields are required/optional for request submission.
+    
+    This enables external clients to dynamically build intake forms
+    for any service category.
+    """
+    result = await db.execute(
+        select(ServiceDefinition)
+        .where(
+            ServiceDefinition.service_code == service_code,
+            ServiceDefinition.is_active == True
+        )
+        .options(selectinload(ServiceDefinition.departments))
+    )
+    service = result.scalar_one_or_none()
+    
+    if not service:
+        raise HTTPException(status_code=404, detail=f"Service not found: {service_code}")
+    
+    # Build Open311 v2 service_definition response with extended attributes
+    return {
+        "service_code": service.service_code,
+        "service_name": service.service_name,
+        "description": service.description,
+        "metadata": True,  # Indicates this service has custom attributes
+        "type": "realtime",
+        "keywords": service.service_name.lower(),
+        "group": "municipal",
+        "attributes": [
+            {
+                "variable": True,
+                "code": "description",
+                "datatype": "text",
+                "required": True,
+                "datatype_description": "Detailed description of the issue (min 10 chars)",
+                "order": 1,
+                "description": "Please describe the issue"
+            },
+            {
+                "variable": True,
+                "code": "address",
+                "datatype": "string",
+                "required": False,
+                "datatype_description": "Street address of the issue",
+                "order": 2,
+                "description": "Location address"
+            },
+            {
+                "variable": True,
+                "code": "lat",
+                "datatype": "number",
+                "required": False,
+                "datatype_description": "Latitude coordinate",
+                "order": 3,
+                "description": "GPS latitude"
+            },
+            {
+                "variable": True,
+                "code": "long",
+                "datatype": "number",
+                "required": False,
+                "datatype_description": "Longitude coordinate",
+                "order": 4,
+                "description": "GPS longitude"
+            },
+            {
+                "variable": True,
+                "code": "email",
+                "datatype": "string",
+                "required": True,
+                "datatype_description": "Submitter's email address",
+                "order": 5,
+                "description": "Contact email"
+            },
+            {
+                "variable": True,
+                "code": "first_name",
+                "datatype": "string",
+                "required": False,
+                "order": 6,
+                "description": "First name"
+            },
+            {
+                "variable": True,
+                "code": "last_name",
+                "datatype": "string",
+                "required": False,
+                "order": 7,
+                "description": "Last name"
+            },
+            {
+                "variable": True,
+                "code": "phone",
+                "datatype": "string",
+                "required": False,
+                "order": 8,
+                "description": "Contact phone number"
+            },
+            {
+                "variable": True,
+                "code": "media_urls",
+                "datatype": "text",
+                "required": False,
+                "datatype_description": "Up to 3 photo URLs or base64-encoded images",
+                "order": 9,
+                "description": "Photos of the issue"
+            }
+        ],
+        "routing_mode": service.routing_mode or "township",
+        "translations_available": list((service.translations or {}).keys()),
+        "departments": [d.name for d in (service.departments or [])]
+    }
+
+
+@router.get("/tokens/{service_request_id}.json")
+async def lookup_request_by_token(service_request_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Open311 v2 Token Lookup endpoint.
+    
+    Allows anonymous tracking of a service request using only the
+    service_request_id (the token given at submission). No authentication
+    required — returns only non-PII data.
+    
+    This enables residents to check the status of their request without
+    needing an account.
+    """
+    result = await db.execute(
+        select(ServiceRequest).where(
+            ServiceRequest.service_request_id == service_request_id,
+            ServiceRequest.deleted_at.is_(None)
+        )
+    )
+    request_obj = result.scalar_one_or_none()
+    
+    if not request_obj:
+        raise HTTPException(status_code=404, detail="Service request not found")
+    
+    return {
+        "service_request_id": request_obj.service_request_id,
+        "status": request_obj.status,
+        "status_notes": request_obj.completion_message if request_obj.status == "closed" else None,
+        "service_code": request_obj.service_code,
+        "service_name": request_obj.service_name,
+        "description": request_obj.description,
+        "address": request_obj.address,
+        "lat": request_obj.lat,
+        "long": request_obj.long,
+        "requested_datetime": request_obj.requested_datetime.isoformat() if request_obj.requested_datetime else None,
+        "updated_datetime": request_obj.updated_datetime.isoformat() if request_obj.updated_datetime else None,
+        "closed_substatus": request_obj.closed_substatus,
+        "media_urls": request_obj.media_urls or [],
+        "completion_photo_url": request_obj.completion_photo_url,
+        "token": service_request_id
+    }
+
+
 @router.get("/services.json")
 async def list_open311_services(db: AsyncSession = Depends(get_db)):
     """Open311 v2 compatible - List services"""
