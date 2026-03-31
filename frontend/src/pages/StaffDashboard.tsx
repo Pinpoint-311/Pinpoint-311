@@ -207,6 +207,27 @@ export default function StaffDashboard() {
     const [chatInput, setChatInput] = useState('');
     const [chatLoading, setChatLoading] = useState(false);
     const chatEndRef = useRef<HTMLDivElement>(null);
+    const [chatPanelStyle, setChatPanelStyle] = useState<{ height: string; top: string }>({ height: '100%', top: '0px' });
+
+    // VisualViewport listener — resizes AI chat panel when mobile keyboard opens
+    useEffect(() => {
+        if (!chatOpen) return;
+        const vv = window.visualViewport;
+        if (!vv) return;
+        const update = () => {
+            setChatPanelStyle({
+                height: `${vv.height}px`,
+                top: `${vv.offsetTop}px`,
+            });
+        };
+        update();
+        vv.addEventListener('resize', update);
+        vv.addEventListener('scroll', update);
+        return () => {
+            vv.removeEventListener('resize', update);
+            vv.removeEventListener('scroll', update);
+        };
+    }, [chatOpen]);
 
     // Scroll chat to bottom when new messages arrive
     useEffect(() => {
@@ -1281,8 +1302,8 @@ export default function StaffDashboard() {
                                 animate={{ x: 0 }}
                                 exit={{ x: '100%' }}
                                 transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                                className="fixed right-0 top-0 w-full sm:w-[520px] bg-gray-950/95 backdrop-blur-xl border-l border-white/10 z-[70] flex flex-col shadow-2xl shadow-black/50"
-                                style={{ height: '100dvh' }}
+                                className="fixed right-0 w-full sm:w-[520px] bg-gray-950/95 backdrop-blur-xl border-l border-white/10 z-[70] flex flex-col shadow-2xl shadow-black/50"
+                                style={{ height: chatPanelStyle.height, top: chatPanelStyle.top }}
                             >
                                 {/* Chat Header */}
                                 <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-gradient-to-r from-emerald-600/20 to-teal-600/20">
