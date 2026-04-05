@@ -235,8 +235,10 @@ async def initiate_login(
 @router.get("/callback")
 async def auth0_callback(
     request: Request,
-    code: str = Query(...),
     state: str = Query(...),
+    code: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -251,6 +253,16 @@ async def auth0_callback(
     redirect_uri = _pending_states.pop(state, None)
     if not redirect_uri:
         raise HTTPException(status_code=400, detail="Invalid or expired state token")
+        
+    # Handle Auth0 errors (user cancellation, access denied, etc.)
+    if error or not code:
+        err_msg = error_description or error or "Authentication cancelled or failed."
+        import urllib.parse
+        safe_error = urllib.parse.quote(err_msg)
+        return RedirectResponse(
+            url=f"{redirect_uri}?error={safe_error}",
+            status_code=302
+        )
     
     # Build callback URL (must match what we sent to Auth0)
     callback_url = redirect_uri.rsplit("/", 1)[0] + "/api/auth/callback"
@@ -268,7 +280,10 @@ async def auth0_callback(
         user_info = await Auth0Service.verify_token(id_token, db)
         
         if not user_info.get("email"):
-            raise HTTPException(status_code=400, detail="Email not provided by identity provider")
+            return RedirectResponse(
+                url=f"{redirect_uri}?error=Email+not+provided+by+identity+provider",
+                status_code=302
+            )
         
         email = user_info["email"].lower()
         
@@ -292,9 +307,9 @@ async def auth0_callback(
                 user_agent=user_agent,
                 reason="Account not found in system"
             )
-            raise HTTPException(
-                status_code=403,
-                detail="Account not found. Please contact an administrator to be added to the system."
+            return RedirectResponse(
+                url=f"{redirect_uri}?error=Account+not+found.+Please+contact+an+administrator+to+be+added+to+the+system.",
+                status_code=302
             )
         
         if not user.is_active:
@@ -306,7 +321,10 @@ async def auth0_callback(
                 user_agent=user_agent,
                 reason="Account is disabled"
             )
-            raise HTTPException(status_code=403, detail="Account is disabled")
+            return RedirectResponse(
+                url=f"{redirect_uri}?error=Account+is+disabled.+Please+contact+an+administrator.",
+                status_code=302
+            )
         
         # Create our own JWT token
         access_token = create_access_token(data={"sub": user.username, "role": user.role})

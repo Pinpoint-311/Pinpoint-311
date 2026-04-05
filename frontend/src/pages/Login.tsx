@@ -47,12 +47,18 @@ export default function Login() {
         checkAuth();
     }, []);
 
-    // Handle callback with token from Auth0
+    // Handle callback with token or error from Auth0
     useEffect(() => {
         const token = searchParams.get('token');
+        const urlError = searchParams.get('error');
+        
         if (token) {
             setToken(token);
             // Remove token from URL
+            navigate('/login', { replace: true });
+        } else if (urlError) {
+            setError(decodeURIComponent(urlError));
+            // Remove error from URL
             navigate('/login', { replace: true });
         }
     }, [searchParams, setToken, navigate]);
