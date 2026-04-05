@@ -21,9 +21,15 @@ const API_BASE = '/api';
 
 class ApiClient {
     private token: string | null = null;
+    private onUnauthorized: (() => void) | null = null;
 
     setToken(token: string | null) {
         this.token = token;
+    }
+
+    /** Register a callback invoked on any 401 response (e.g. auto-logout). */
+    setOnUnauthorized(callback: (() => void) | null) {
+        this.onUnauthorized = callback;
     }
 
     private async request<T>(
@@ -50,6 +56,10 @@ class ApiClient {
         });
 
         if (!response.ok) {
+            // Auto-redirect on session expiry (401)
+            if (response.status === 401 && this.onUnauthorized) {
+                this.onUnauthorized();
+            }
             const error = await response.json().catch(() => ({ detail: 'Request failed' }));
             // Handle FastAPI validation errors (422)
             if (error.detail && Array.isArray(error.detail)) {
@@ -770,6 +780,15 @@ class ApiClient {
         gcp: { configured: boolean; reachable: boolean; error: string | null };
     }> {
         return this.request('/setup/verify', { method: 'POST' });
+    }
+
+    async reencryptPii(): Promise<{
+        total: number;
+        reencrypted: number;
+        migrated_from_fernet: number;
+        errors: number;
+    }> {
+        return this.request('/setup/reencrypt-pii', { method: 'POST' });
     }
 
     // ========== Health Dashboard & Runbook (Bus Factor Mitigation) ==========

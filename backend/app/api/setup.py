@@ -676,3 +676,121 @@ async def verify_setup(
         results["auth0"]["error"] = str(e)
     
     return results
+
+
+@router.post("/reencrypt-pii")
+async def reencrypt_pii(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Re-encrypt all PII data using the current primary KMS key version.
+
+    After KMS key rotation, historical PII remains encrypted with old key versions.
+    This endpoint decrypts each value (KMS transparently handles old versions)
+    and re-encrypts with the current primary key version.
+
+    Also handles Fernet→KMS migration for dev data (gAAAA → kms:).
+
+    Admin only. Processes in batches of 100.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    from app.core.encryption import decrypt_pii, encrypt_pii, KMS_ENCRYPTED_PREFIX, ENCRYPTED_PREFIX, _is_kms_available
+    from app.models import ServiceRequest
+
+    if not _is_kms_available():
+        raise HTTPException(
+            status_code=400,
+            detail="Google Cloud KMS is not configured. Configure GCP first."
+        )
+
+    # Count total rows with PII
+    count_result = await db.execute(
+        select(ServiceRequest.id).where(
+            (ServiceRequest._first_name_encrypted.isnot(None)) |
+            (ServiceRequest._last_name_encrypted.isnot(None)) |
+            (ServiceRequest._email_encrypted.isnot(None)) |
+            (ServiceRequest._phone_encrypted.isnot(None))
+        )
+    )
+    all_ids = [row[0] for row in count_result.all()]
+    total = len(all_ids)
+
+    reencrypted = 0
+    errors = 0
+    migrated_from_fernet = 0
+    batch_size = 100
+
+    for i in range(0, total, batch_size):
+        batch_ids = all_ids[i:i + batch_size]
+        batch_result = await db.execute(
+            select(ServiceRequest).where(ServiceRequest.id.in_(batch_ids))
+        )
+        rows = batch_result.scalars().all()
+
+        for row in rows:
+            try:
+                changed = False
+                pii_columns = [
+                    ("_first_name_encrypted", row._first_name_encrypted),
+                    ("_last_name_encrypted", row._last_name_encrypted),
+                    ("_email_encrypted", row._email_encrypted),
+                    ("_phone_encrypted", row._phone_encrypted),
+                ]
+
+                for col_name, encrypted_val in pii_columns:
+                    if not encrypted_val:
+                        continue
+
+                    is_fernet = encrypted_val.startswith(ENCRYPTED_PREFIX) and not encrypted_val.startswith(KMS_ENCRYPTED_PREFIX)
+
+                    # Decrypt (KMS handles old key versions transparently; Fernet uses app key)
+                    plaintext = decrypt_pii(encrypted_val)
+                    if not plaintext:
+                        continue  # Decryption failed, skip
+
+                    # Re-encrypt with current primary KMS key
+                    new_encrypted = encrypt_pii(plaintext)
+                    if new_encrypted != encrypted_val:
+                        setattr(row, col_name, new_encrypted)
+                        changed = True
+                        if is_fernet:
+                            migrated_from_fernet += 1
+
+                if changed:
+                    reencrypted += 1
+            except Exception as e:
+                logger.warning(f"Re-encryption failed for row {row.id}: {e}")
+                errors += 1
+
+        await db.commit()
+
+    # Audit log
+    await AuditService.log_event(
+        db=db,
+        event_type="pii_reencryption",
+        success=True,
+        user_id=current_user.id,
+        username=current_user.username,
+        details={
+            "total_rows": total,
+            "reencrypted": reencrypted,
+            "migrated_from_fernet": migrated_from_fernet,
+            "errors": errors,
+        }
+    )
+
+    logger.info(
+        f"PII re-encryption complete: {reencrypted}/{total} rows re-encrypted, "
+        f"{migrated_from_fernet} migrated from Fernet, {errors} errors"
+    )
+
+    return {
+        "total": total,
+        "reencrypted": reencrypted,
+        "migrated_from_fernet": migrated_from_fernet,
+        "errors": errors,
+    }
+

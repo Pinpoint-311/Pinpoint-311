@@ -1021,6 +1021,33 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                             )}
                                         </div>
                                     )}
+
+                                    {/* Re-encrypt PII after KMS key rotation */}
+                                    <div className="border-t border-white/10 pt-3 mt-3">
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="w-full text-xs text-white/50 hover:text-white hover:bg-white/10"
+                                            onClick={async () => {
+                                                try {
+                                                    setSaveMessage('Re-encrypting PII data...');
+                                                    const result = await api.reencryptPii();
+                                                    setSaveMessage(
+                                                        `✅ Done: ${result.reencrypted}/${result.total} rows re-encrypted` +
+                                                        (result.migrated_from_fernet > 0 ? `, ${result.migrated_from_fernet} migrated from Fernet` : '') +
+                                                        (result.errors > 0 ? `, ${result.errors} errors` : '')
+                                                    );
+                                                } catch (err: any) {
+                                                    setSaveMessage(`❌ ${err.message || 'Re-encryption failed'}`);
+                                                }
+                                            }}
+                                        >
+                                            🔐 Re-encrypt All PII Data (after key rotation)
+                                        </Button>
+                                        <p className="text-white/30 text-[10px] mt-1 text-center">
+                                            Migrates historical PII to the current primary KMS key version
+                                        </p>
+                                    </div>
                                 </div>
                             )}
                         </div>

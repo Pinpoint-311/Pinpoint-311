@@ -1932,15 +1932,13 @@ export default function AdminConsole() {
                                             </div>
                                             <button
                                                 onClick={() => setModules((p) => ({ ...p, ai_analysis: !p.ai_analysis }))}
-                                                className={`w-14 h-8 rounded-full transition-colors shrink-0 ${modules.ai_analysis ? 'bg-primary-500' : 'bg-white/20'
-                                                    }`}
+                                                className={`relative w-12 h-7 rounded-full transition-all duration-200 shrink-0 ${modules.ai_analysis ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-white/15'}`}
                                                 role="switch"
                                                 aria-checked={modules.ai_analysis}
                                                 aria-label="Toggle AI Analysis"
                                             >
                                                 <div
-                                                    className={`w-6 h-6 rounded-full bg-white transition-transform ${modules.ai_analysis ? 'translate-x-7' : 'translate-x-1'
-                                                        }`}
+                                                    className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-200 ${modules.ai_analysis ? 'left-6' : 'left-1'}`}
                                                     aria-hidden="true"
                                                 />
                                             </button>
@@ -1960,15 +1958,13 @@ export default function AdminConsole() {
                                             </div>
                                             <button
                                                 onClick={() => setModules((p) => ({ ...p, sms_alerts: !p.sms_alerts }))}
-                                                className={`w-14 h-8 rounded-full transition-colors shrink-0 ${modules.sms_alerts ? 'bg-primary-500' : 'bg-white/20'
-                                                    }`}
+                                                className={`relative w-12 h-7 rounded-full transition-all duration-200 shrink-0 ${modules.sms_alerts ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-white/15'}`}
                                                 role="switch"
                                                 aria-checked={modules.sms_alerts}
                                                 aria-label="Toggle SMS Alerts"
                                             >
                                                 <div
-                                                    className={`w-6 h-6 rounded-full bg-white transition-transform ${modules.sms_alerts ? 'translate-x-7' : 'translate-x-1'
-                                                        }`}
+                                                    className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-200 ${modules.sms_alerts ? 'left-6' : 'left-1'}`}
                                                     aria-hidden="true"
                                                 />
                                             </button>
@@ -1988,15 +1984,13 @@ export default function AdminConsole() {
                                             </div>
                                             <button
                                                 onClick={() => setModules((p) => ({ ...p, email_notifications: !p.email_notifications }))}
-                                                className={`w-14 h-8 rounded-full transition-colors shrink-0 ${modules.email_notifications ? 'bg-primary-500' : 'bg-white/20'
-                                                    }`}
+                                                className={`relative w-12 h-7 rounded-full transition-all duration-200 shrink-0 ${modules.email_notifications ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-white/15'}`}
                                                 role="switch"
                                                 aria-checked={modules.email_notifications}
                                                 aria-label="Toggle Email Notifications"
                                             >
                                                 <div
-                                                    className={`w-6 h-6 rounded-full bg-white transition-transform ${modules.email_notifications ? 'translate-x-7' : 'translate-x-1'
-                                                        }`}
+                                                    className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-200 ${modules.email_notifications ? 'left-6' : 'left-1'}`}
                                                     aria-hidden="true"
                                                 />
                                             </button>
@@ -2016,15 +2010,13 @@ export default function AdminConsole() {
                                             </div>
                                             <button
                                                 onClick={() => setModules((p) => ({ ...p, research_portal: !p.research_portal }))}
-                                                className={`w-14 h-8 rounded-full transition-colors shrink-0 ${modules.research_portal ? 'bg-primary-500' : 'bg-white/20'
-                                                    }`}
+                                                className={`relative w-12 h-7 rounded-full transition-all duration-200 shrink-0 ${modules.research_portal ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-white/15'}`}
                                                 role="switch"
                                                 aria-checked={modules.research_portal}
                                                 aria-label="Toggle Research Portal"
                                             >
                                                 <div
-                                                    className={`w-6 h-6 rounded-full bg-white transition-transform ${modules.research_portal ? 'translate-x-7' : 'translate-x-1'
-                                                        }`}
+                                                    className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-200 ${modules.research_portal ? 'left-6' : 'left-1'}`}
                                                     aria-hidden="true"
                                                 />
                                             </button>
