@@ -1264,188 +1264,233 @@ export default function StaffDashboard() {
                     </div>
                 )} {/* This closes the conditional for currentView === 'statistics' || currentView === 'dashboard' */}
 
-                {/* AI Analytics Chat Panel */}
+                {/* AI Analytics Chat — Floating Popup (matches marketing site design) */}
                 <AnimatePresence>
                     {chatOpen && (
                         <>
-                            {/* Backdrop */}
+                            {/* Subtle backdrop — click to close */}
                             <motion.div
                                 initial={{ opacity: 0 }}
                                 animate={{ opacity: 1 }}
                                 exit={{ opacity: 0 }}
-                                className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60]"
+                                className="fixed inset-0 z-[60]"
                                 onClick={() => setChatOpen(false)}
                             />
-                            {/* Panel - Bottom sheet on mobile, side panel on desktop */}
+                            {/* Floating popup card */}
                             <motion.div
-                                initial={{ y: '100%' }}
-                                animate={{ y: 0 }}
-                                exit={{ y: '100%' }}
-                                transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-                                className="fixed bottom-0 left-0 right-0 sm:left-auto sm:top-0 sm:right-0 sm:bottom-0 w-full sm:w-[520px] max-h-[75vh] sm:max-h-none bg-gray-950 sm:bg-gray-950/95 backdrop-blur-xl border-t sm:border-t-0 sm:border-l border-white/10 z-[70] flex flex-col shadow-2xl shadow-black/50 rounded-t-2xl sm:rounded-none"
+                                initial={{ opacity: 0, y: 16, scale: 0.97 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, y: 16, scale: 0.97 }}
+                                transition={{ duration: 0.2, ease: 'easeOut' }}
+                                className="fixed z-[70] flex flex-col overflow-hidden"
+                                style={{
+                                    bottom: 'calc(5rem + env(safe-area-inset-bottom, 0px))',
+                                    right: '1.25rem',
+                                    left: 'auto',
+                                    width: 'min(380px, calc(100vw - 2rem))',
+                                    maxHeight: 'min(540px, 70vh)',
+                                    background: 'rgba(21, 25, 41, 0.97)',
+                                    backdropFilter: 'blur(24px)',
+                                    border: '1px solid rgba(255,255,255,0.12)',
+                                    borderRadius: '18px',
+                                    boxShadow: '0 20px 60px rgba(0,0,0,0.5), 0 0 40px rgba(16,185,129,0.1)',
+                                }}
                             >
-                                {/* Drag Handle (mobile only) */}
-                                <div className="sm:hidden flex justify-center pt-2 pb-1">
-                                    <div className="w-10 h-1 bg-white/20 rounded-full" />
-                                </div>
-                                {/* Chat Header */}
-                                <div className="flex items-center justify-between px-4 sm:px-5 py-3 sm:py-4 border-b border-white/10 bg-gradient-to-r from-emerald-600/20 to-teal-600/20">
-                                    <div className="flex items-center gap-2.5 sm:gap-3">
-                                        <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/30">
-                                            <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
-                                        </div>
-                                        <div>
-                                            <h3 className="text-white font-semibold text-sm">AI Analytics Advisor</h3>
-                                            <p className="text-white/40 text-xs hidden sm:block">Gemini 3.0 · Research-grade insights</p>
-                                        </div>
-                                    </div>
+                                {/* Header */}
+                                <div className="flex items-center justify-between px-5 py-3.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                    <h3 className="text-[0.92rem] font-bold flex items-center gap-2">
+                                        <span className="text-white">✦</span>
+                                        <span style={{ background: 'linear-gradient(135deg, #a5b4fc, #22d3a5)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Analytics Advisor</span>
+                                    </h3>
                                     <div className="flex items-center gap-1.5">
                                         {chatMessages.length > 0 && (
                                             <button
                                                 onClick={() => { setChatMessages([]); setChatInput(''); }}
-                                                className="w-8 h-8 rounded-lg bg-white/5 hover:bg-red-500/20 flex items-center justify-center transition-colors group"
+                                                className="flex items-center justify-center transition-colors"
                                                 title="Clear conversation"
+                                                style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '8px', width: '30px', height: '30px', cursor: 'pointer' }}
                                             >
-                                                <Trash2 className="w-3.5 h-3.5 text-white/40 group-hover:text-red-400 transition-colors" />
+                                                <Trash2 className="w-3.5 h-3.5 text-white/40 hover:text-red-400" />
                                             </button>
                                         )}
                                         <button
                                             onClick={() => setChatOpen(false)}
-                                            className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
+                                            className="flex items-center justify-center transition-colors"
+                                            style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '8px', width: '30px', height: '30px', cursor: 'pointer', color: 'rgba(255,255,255,0.5)', fontSize: '0.85rem' }}
                                         >
-                                            <X className="w-4 h-4 text-white/70" />
+                                            ✕
                                         </button>
                                     </div>
                                 </div>
 
-                                {/* Messages Area */}
-                                <div className="flex-1 overflow-auto p-3 sm:p-4 space-y-3 sm:space-y-4 min-h-0" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.1) transparent' }}>
+                                {/* Messages */}
+                                <div
+                                    className="flex-1 overflow-y-auto flex flex-col gap-3 min-h-[200px]"
+                                    style={{ padding: '1rem 1.25rem', maxHeight: '340px', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.1) transparent' }}
+                                >
                                     {chatMessages.length === 0 && !chatLoading && (
-                                        <div className="flex flex-col items-center text-center px-4 sm:px-6 pt-2 sm:pt-8">
-                                            <div className="w-10 h-10 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/20 flex items-center justify-center mb-2 sm:mb-4">
-                                                <Sparkles className="w-5 h-5 sm:w-8 sm:h-8 text-emerald-400" />
-                                            </div>
-                                            <h4 className="text-white font-semibold mb-1 sm:mb-2 text-sm sm:text-base">Ask anything about your data</h4>
-                                            <p className="text-white/40 text-xs mb-3 sm:mb-6 max-w-xs hidden sm:block">
-                                                I analyze all requests, geographic patterns, equity metrics, sentiment, and responsiveness — everything except resident PII.
-                                            </p>
-                                            <div className="space-y-1.5 w-full max-w-xs">
-                                                {[
-                                                    'Which neighborhoods have the highest social vulnerability?',
-                                                    'How does resident sentiment vary by category?',
-                                                    'What\'s our average triage time and how can we improve?',
-                                                    'Are there equity gaps in our response times?',
-                                                    'What trends should I watch for this season?',
-                                                ].map((q, i) => (
-                                                    <button
-                                                        key={i}
-                                                        onClick={() => { setChatInput(q); }}
-                                                        className="w-full text-left px-3 py-2 text-xs text-white/70 bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 hover:border-emerald-500/30 transition-all active:bg-white/15"
-                                                    >
-                                                        {q}
-                                                    </button>
-                                                ))}
-                                            </div>
+                                        <div
+                                            className="text-[0.82rem] leading-relaxed"
+                                            style={{ 
+                                                maxWidth: '90%', padding: '0.65rem 0.9rem', borderRadius: '14px', borderBottomLeftRadius: '4px',
+                                                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.8)', alignSelf: 'flex-start'
+                                            }}
+                                        >
+                                            👋 Hi! I'm the AI Analytics Advisor. I can help you understand your data — trends, equity metrics, response times, sentiment, and more. What would you like to know?
                                         </div>
                                     )}
 
                                     {chatMessages.map((msg, i) => (
-                                        <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                            <div
-                                                className={`max-w-[90%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === 'user'
-                                                    ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-br-md shadow-lg shadow-emerald-500/10'
-                                                    : 'bg-white/[0.03] border border-white/10 text-white/90 rounded-bl-md'
-                                                    }`}
-                                            >
-                                                {msg.role === 'assistant' ? (
-                                                    <div
-                                                        className="prose prose-invert prose-sm max-w-none [&_p]:mb-2.5 [&_p]:leading-relaxed [&_ul]:mb-2.5 [&_ul]:pl-4 [&_ol]:mb-2.5 [&_ol]:pl-4 [&_li]:mb-1 [&_li]:leading-relaxed [&_h1]:text-lg [&_h1]:font-bold [&_h1]:text-white [&_h1]:mt-4 [&_h1]:mb-2 [&_h2]:text-[15px] [&_h2]:font-semibold [&_h2]:text-emerald-300 [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:border-b [&_h2]:border-white/10 [&_h2]:pb-1 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-white/90 [&_h3]:mt-3 [&_h3]:mb-1 [&_code]:bg-white/10 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-emerald-300 [&_code]:text-xs [&_strong]:text-emerald-300 [&_strong]:font-semibold [&_em]:text-white/70 [&_table]:w-full [&_table]:my-3 [&_table]:text-xs [&_th]:text-left [&_th]:px-2 [&_th]:py-1.5 [&_th]:border-b [&_th]:border-white/20 [&_th]:text-emerald-300 [&_th]:font-semibold [&_td]:px-2 [&_td]:py-1.5 [&_td]:border-b [&_td]:border-white/5 [&_hr]:border-white/10 [&_hr]:my-3"
-                                                        dangerouslySetInnerHTML={{
-                                                            __html: (() => {
-                                                                let html = msg.content;
-                                                                html = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                                                                html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-                                                                html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-                                                                html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-                                                                html = html.replace(/^---+$/gm, '<hr />');
-                                                                html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-                                                                html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-                                                                html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-                                                                html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-                                                                html = html.replace(/^(\|.+\|)\n(\|[-| :]+\|)\n((?:\|.+\|\n?)+)/gm, (_match, headerRow: string, _sepRow: string, bodyRows: string) => {
-                                                                    const headers = headerRow.split('|').filter((c: string) => c.trim()).map((c: string) => `<th>${c.trim()}</th>`).join('');
-                                                                    const rows = bodyRows.trim().split('\n').map((row: string) => {
-                                                                        const cells = row.split('|').filter((c: string) => c.trim()).map((c: string) => `<td>${c.trim()}</td>`).join('');
-                                                                        return `<tr>${cells}</tr>`;
-                                                                    }).join('');
-                                                                    return `<table><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table>`;
-                                                                });
-                                                                html = html.replace(/^(\d+)\. (.+)$/gm, '<li data-ol>$2</li>');
-                                                                html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
-                                                                html = html.replace(/((?:<li data-ol>[^]*?<\/li>\n?)+)/g, (match) => {
-                                                                    const clean = match.replace(/ data-ol/g, '');
-                                                                    return `<ol>${clean}</ol>`;
-                                                                });
-                                                                html = html.replace(/((?:<li>[^]*?<\/li>\n?)+)/g, '<ul>$1</ul>');
-                                                                html = html.replace(/\n\n/g, '</p><p>');
-                                                                html = html.replace(/\n/g, '<br />');
-                                                                html = html.replace(/<br \/>\s*(<h[123]>)/g, '$1');
-                                                                html = html.replace(/(<\/h[123]>)\s*<br \/>/g, '$1');
-                                                                html = html.replace(/<br \/>\s*(<ul>|<ol>|<table>|<hr \/>)/g, '$1');
-                                                                html = html.replace(/(<\/ul>|<\/ol>|<\/table>|<hr \/>)\s*<br \/>/g, '$1');
-                                                                return html;
-                                                            })()
-                                                        }}
-                                                    />
-                                                ) : (
-                                                    <span>{msg.content}</span>
-                                                )}
-                                            </div>
+                                        <div
+                                            key={i}
+                                            className="text-[0.82rem] leading-relaxed"
+                                            style={{
+                                                maxWidth: '90%',
+                                                padding: '0.65rem 0.9rem',
+                                                borderRadius: '14px',
+                                                wordBreak: 'break-word',
+                                                alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                                                ...(msg.role === 'user' ? {
+                                                    background: 'rgba(16,185,129,0.2)',
+                                                    border: '1px solid rgba(16,185,129,0.25)',
+                                                    color: '#a7f3d0',
+                                                    borderBottomRightRadius: '4px',
+                                                } : {
+                                                    background: 'rgba(255,255,255,0.06)',
+                                                    border: '1px solid rgba(255,255,255,0.08)',
+                                                    color: 'rgba(255,255,255,0.8)',
+                                                    borderBottomLeftRadius: '4px',
+                                                }),
+                                            }}
+                                        >
+                                            {msg.role === 'assistant' ? (
+                                                <div
+                                                    dangerouslySetInnerHTML={{
+                                                        __html: (() => {
+                                                            let html = msg.content;
+                                                            html = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                                                            html = html.replace(/^### (.+)$/gm, '<strong style="display:block;margin:.5rem 0 .2rem">$1</strong>');
+                                                            html = html.replace(/^## (.+)$/gm, '<strong style="display:block;margin:.6rem 0 .2rem;font-size:.9rem">$1</strong>');
+                                                            html = html.replace(/^# (.+)$/gm, '<strong style="display:block;margin:.7rem 0 .3rem;font-size:1rem">$1</strong>');
+                                                            html = html.replace(/\*\*(.+?)\*\*/g, '<strong style="color:white;font-weight:600">$1</strong>');
+                                                            html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+                                                            html = html.replace(/`([^`]+)`/g, '<code style="background:rgba(0,0,0,0.35);padding:.15rem .35rem;border-radius:4px;font-size:.78rem;color:#a5b4fc">$1</code>');
+                                                            html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+                                                            html = html.replace(/^(\d+)\. (.+)$/gm, '<li>$2</li>');
+                                                            html = html.replace(/((?:<li>[^]*?<\/li>\s*(?:<br\s*\/?>)?)+)/g, (m) => '<ul style="padding-left:1rem;margin:.3rem 0">' + m.replace(/<br\s*\/?>/g, '') + '</ul>');
+                                                            html = html.replace(/\n\n/g, '<br/><br/>');
+                                                            html = html.replace(/\n/g, '<br/>');
+                                                            return html;
+                                                        })()
+                                                    }}
+                                                />
+                                            ) : (
+                                                <span>{msg.content}</span>
+                                            )}
                                         </div>
                                     ))}
 
                                     {chatLoading && (
-                                        <div className="flex justify-start">
-                                            <div className="bg-white/[0.03] border border-white/10 rounded-2xl rounded-bl-md px-4 py-3">
-                                                <div className="flex items-center gap-2">
-                                                    <div className="flex items-center gap-1">
-                                                        <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                                                        <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                                                        <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                                                    </div>
-                                                    <span className="text-xs text-white/30 ml-1">Analyzing data...</span>
-                                                </div>
-                                            </div>
+                                        <div className="flex gap-1 self-start" style={{ padding: '0.65rem 0.9rem' }}>
+                                            {[0, 1, 2].map(j => (
+                                                <div
+                                                    key={j}
+                                                    className="rounded-full"
+                                                    style={{
+                                                        width: '6px', height: '6px', background: 'rgba(255,255,255,0.3)',
+                                                        animation: 'bounce 1.2s ease-in-out infinite',
+                                                        animationDelay: `${j * 0.2}s`,
+                                                    }}
+                                                />
+                                            ))}
+                                            <span className="text-xs text-white/30 ml-1.5">Analyzing...</span>
                                         </div>
                                     )}
                                     <div ref={chatEndRef} />
                                 </div>
 
-                                {/* Input Area */}
-                                <form onSubmit={sendChatMessage} className="shrink-0 px-3 sm:px-4 py-2 sm:py-3 border-t border-white/10 bg-gray-950" style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}>
-                                    <div className="flex items-center gap-2">
-                                        <input
-                                            type="text"
-                                            value={chatInput}
-                                            onChange={(e) => setChatInput(e.target.value)}
-                                            placeholder="Ask about your data..."
-                                            className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/25 transition-all"
-                                            disabled={chatLoading}
-                                        />
-                                        <button
-                                            type="submit"
-                                            disabled={!chatInput.trim() || chatLoading}
-                                            className="w-11 h-11 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 flex items-center justify-center text-white disabled:opacity-30 disabled:cursor-not-allowed hover:from-emerald-700 hover:to-teal-700 transition-all shadow-lg shadow-emerald-500/20 shrink-0"
-                                        >
-                                            <Send className="w-4 h-4" />
-                                        </button>
+                                {/* Suggestion chips (only when empty) */}
+                                {chatMessages.length === 0 && !chatLoading && (
+                                    <div className="flex flex-wrap gap-1.5" style={{ padding: '0.5rem 1.25rem 0.25rem' }}>
+                                        {[
+                                            'What are the top issue categories?',
+                                            'Show equity gaps in response times',
+                                            'How is resident sentiment trending?',
+                                            'What should I prioritize today?',
+                                        ].map((q, i) => (
+                                            <button
+                                                key={i}
+                                                onClick={() => { setChatInput(q); }}
+                                                className="transition-colors"
+                                                style={{
+                                                    background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.2)',
+                                                    borderRadius: '100px', padding: '0.35rem 0.75rem', fontSize: '0.72rem',
+                                                    color: '#6ee7b7', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+                                                }}
+                                            >
+                                                {q}
+                                            </button>
+                                        ))}
                                     </div>
-                                    <p className="text-[10px] text-white/20 mt-1 text-center hidden sm:block">Gemini 3.1 Flash-Lite · Equity metrics · Sentiment analysis · All system data except PII</p>
+                                )}
+
+                                {/* Input area */}
+                                <form
+                                    onSubmit={sendChatMessage}
+                                    className="flex gap-2"
+                                    style={{ padding: '0.75rem 1.25rem', borderTop: '1px solid rgba(255,255,255,0.08)', paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
+                                >
+                                    <textarea
+                                        value={chatInput}
+                                        onChange={(e) => setChatInput(e.target.value)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(); } }}
+                                        placeholder="Ask about your data…"
+                                        disabled={chatLoading}
+                                        rows={1}
+                                        maxLength={2000}
+                                        style={{
+                                            flex: 1, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                                            borderRadius: '10px', padding: '0.6rem 0.85rem', color: 'white',
+                                            fontSize: '16px', fontFamily: 'inherit', outline: 'none', resize: 'none',
+                                            maxHeight: '120px', overflowY: 'auto', lineHeight: '1.4',
+                                        }}
+                                    />
+                                    <button
+                                        type="submit"
+                                        disabled={!chatInput.trim() || chatLoading}
+                                        style={{
+                                            background: 'linear-gradient(135deg, #10b981, #14b8a6)', border: 'none', borderRadius: '10px',
+                                            width: '38px', height: '38px', display: 'grid', placeItems: 'center',
+                                            cursor: 'pointer', color: 'white', fontSize: '0.85rem', flexShrink: 0,
+                                            opacity: (!chatInput.trim() || chatLoading) ? 0.35 : 1,
+                                        }}
+                                    >
+                                        →
+                                    </button>
                                 </form>
                             </motion.div>
                         </>
                     )}
                 </AnimatePresence>
+
+                {/* Floating AI Chat FAB Button (visible when chat is closed) */}
+                {!chatOpen && (currentView === 'statistics' || currentView === 'dashboard') && (
+                    <button
+                        onClick={() => setChatOpen(true)}
+                        className="fixed z-[55] animate-pulse"
+                        style={{
+                            bottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))',
+                            right: '1.5rem',
+                            width: '56px', height: '56px', borderRadius: '50%',
+                            background: 'linear-gradient(135deg, #10b981 0%, #14b8a6 100%)',
+                            border: 'none', cursor: 'pointer', display: 'grid', placeItems: 'center',
+                            boxShadow: '0 4px 24px rgba(16,185,129,0.4)',
+                        }}
+                        aria-label="Ask AI Analytics Advisor"
+                    >
+                        <MessageSquare className="w-6 h-6 text-white" style={{ fill: 'none', stroke: 'currentColor', strokeWidth: 2 }} />
+                    </button>
+                )}
 
                 {/* List/Detail View */}
                 {currentView !== 'statistics' && currentView !== 'dashboard' && (

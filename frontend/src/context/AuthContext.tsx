@@ -47,6 +47,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     useEffect(() => {
         fetchUser();
+
+        // Global 401 handler: auto-logout when JWT expires mid-session
+        api.setOnUnauthorized(() => {
+            localStorage.removeItem('token');
+            api.setToken(null);
+            setState({
+                user: null,
+                token: null,
+                isAuthenticated: false,
+                isLoading: false,
+            });
+        });
+
+        return () => { api.setOnUnauthorized(null); };
     }, [fetchUser]);
 
     // Set token from SSO callback
