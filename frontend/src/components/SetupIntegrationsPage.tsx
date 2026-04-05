@@ -1022,8 +1022,34 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                         </div>
                                     )}
 
-                                    {/* Re-encrypt PII after KMS key rotation */}
+                                    {/* Migrate Secrets to GCP */}
                                     <div className="border-t border-white/10 pt-3 mt-3">
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="w-full text-xs text-white/50 hover:text-white hover:bg-white/10"
+                                            onClick={async () => {
+                                                try {
+                                                    setSaveMessage('Migrating secrets to GCP...');
+                                                    const result = await api.migrateToSecretManager();
+                                                    setSaveMessage(
+                                                        `✅ Migrated: ${result.migrated} keys. Scrubbed from DB: ${result.scrubbed}.` +
+                                                        (result.failed > 0 ? ` Failed: ${result.failed}` : '')
+                                                    );
+                                                } catch (err: any) {
+                                                    setSaveMessage(`❌ ${err.message || 'Migration failed'}`);
+                                                }
+                                            }}
+                                        >
+                                            Vault Local Secrets to GCP Identity
+                                        </Button>
+                                        <p className="text-white/30 text-[10px] mt-1 text-center">
+                                            Moves database-encrypted API keys into Secret Manager
+                                        </p>
+                                    </div>
+
+                                    {/* Re-encrypt PII after KMS key rotation */}
+                                    <div className="border-t border-white/10 pt-3 mt-1">
                                         <Button
                                             size="sm"
                                             variant="ghost"
