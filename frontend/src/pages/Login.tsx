@@ -131,6 +131,20 @@ export default function Login() {
                             <p className="text-white/50 mt-2">Staff Access Portal</p>
                         </div>
 
+                        {/* Global Error Message */}
+                        {error && (
+                            <motion.div
+                                initial={{ opacity: 0, y: -10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="flex items-center gap-3 p-4 rounded-xl bg-red-500/20 border border-red-500/30 text-red-300 mb-6"
+                                role="alert"
+                                aria-live="assertive"
+                            >
+                                <AlertCircle className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
+                                <span className="text-sm">{error}</span>
+                            </motion.div>
+                        )}
+
                         {/* Demo Mode Login */}
                         {demoMode ? (
                             <div className="space-y-4">
@@ -170,20 +184,6 @@ export default function Login() {
                             </div>
                         ) : (
                             <>
-                                {/* Error Message */}
-                                {error && (
-                                    <motion.div
-                                        initial={{ opacity: 0, y: -10 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        className="flex items-center gap-3 p-4 rounded-xl bg-red-500/20 border border-red-500/30 text-red-300 mb-6"
-                                        role="alert"
-                                        aria-live="assertive"
-                                    >
-                                        <AlertCircle className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
-                                        <span className="text-sm">{error}</span>
-                                    </motion.div>
-                                )}
-
                                 {/* SSO Login Button */}
                                 <div className="space-y-4">
                                     <Button
