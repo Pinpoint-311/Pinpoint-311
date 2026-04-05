@@ -57,9 +57,9 @@ export default function Login() {
             // Remove token from URL
             navigate('/login', { replace: true });
         } else if (urlError) {
-            setError(decodeURIComponent(urlError));
-            // Remove error from URL
-            navigate('/login', { replace: true });
+            // Keep the error in the URL so it's resilient to refreshes, 
+            // and simply display it in the UI.
+            setError(decodeURIComponent(urlError.replace(/\+/g, ' ')));
         }
     }, [searchParams, setToken, navigate]);
 
