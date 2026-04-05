@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pinpoint311-v1';
+const CACHE_NAME = 'pinpoint311-v2';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
