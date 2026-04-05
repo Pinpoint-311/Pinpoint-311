@@ -28,8 +28,8 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Skip non-GET requests
-  if (request.method !== 'GET') return;
+  // Skip non-GET requests and non-HTTP protocols (e.g. chrome-extension://)
+  if (request.method !== 'GET' || !url.protocol.startsWith('http')) return;
 
   // API calls — always network-first
   if (url.pathname.startsWith('/api/')) {
