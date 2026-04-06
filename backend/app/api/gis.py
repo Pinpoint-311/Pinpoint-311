@@ -23,7 +23,9 @@ async def get_google_api_key(db: AsyncSession) -> Optional[str]:
     try:
         from app.services.secret_manager import get_secret
         return await get_secret("GOOGLE_MAPS_API_KEY")
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Could not get Google Maps API Key: {e}")
         return None
 
 
@@ -177,8 +179,9 @@ async def get_maps_config(db: AsyncSession = Depends(get_db)):
     try:
         from app.services.secret_manager import get_secret
         map_id = await get_secret("GOOGLE_MAPS_MAP_ID")
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Could not get Google Maps Map ID: {e}")
     
     # Get township settings
     result = await db.execute(select(SystemSettings).limit(1))

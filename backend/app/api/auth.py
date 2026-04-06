@@ -259,6 +259,18 @@ async def auth0_callback(
         err_msg = error_description or error or "Authentication cancelled or failed."
         import urllib.parse
         safe_error = urllib.parse.quote(err_msg)
+        
+        # Validate redirect URI to prevent Open Redirect
+        parsed_uri = urllib.parse.urlparse(redirect_uri)
+        if parsed_uri.netloc:
+            # Check against safe origins or convert to relative
+            allowed_hosts = ["localhost", "127.0.0.1"]
+            import os
+            cors = os.environ.get("CORS_ORIGINS", "")
+            if cors: allowed_hosts.extend([urllib.parse.urlparse(o).netloc for o in cors.split(",")])
+            if not any(host in parsed_uri.netloc for host in allowed_hosts):
+                redirect_uri = parsed_uri.path or "/"
+                
         return RedirectResponse(
             url=f"{redirect_uri}?error={safe_error}",
             status_code=302
@@ -280,6 +292,17 @@ async def auth0_callback(
         user_info = await Auth0Service.verify_token(id_token, db)
         
         if not user_info.get("email"):
+            # Sanitize before redirect
+            import urllib.parse
+            parsed_uri = urllib.parse.urlparse(redirect_uri)
+            if parsed_uri.netloc:
+                allowed_hosts = ["localhost", "127.0.0.1"]
+                import os
+                cors = os.environ.get("CORS_ORIGINS", "")
+                if cors: allowed_hosts.extend([urllib.parse.urlparse(o).netloc for o in cors.split(",")])
+                if not any(host in parsed_uri.netloc for host in allowed_hosts):
+                    redirect_uri = parsed_uri.path or "/"
+
             return RedirectResponse(
                 url=f"{redirect_uri}?error=Email+not+provided+by+identity+provider",
                 status_code=302
@@ -307,6 +330,17 @@ async def auth0_callback(
                 user_agent=user_agent,
                 reason="Account not found in system"
             )
+            # Sanitize before redirect
+            import urllib.parse
+            parsed_uri = urllib.parse.urlparse(redirect_uri)
+            if parsed_uri.netloc:
+                allowed_hosts = ["localhost", "127.0.0.1"]
+                import os
+                cors = os.environ.get("CORS_ORIGINS", "")
+                if cors: allowed_hosts.extend([urllib.parse.urlparse(o).netloc for o in cors.split(",")])
+                if not any(host in parsed_uri.netloc for host in allowed_hosts):
+                    redirect_uri = parsed_uri.path or "/"
+
             return RedirectResponse(
                 url=f"{redirect_uri}?error=Account+not+found.+Please+contact+an+administrator+to+be+added+to+the+system.",
                 status_code=302
@@ -321,6 +355,17 @@ async def auth0_callback(
                 user_agent=user_agent,
                 reason="Account is disabled"
             )
+            # Sanitize before redirect
+            import urllib.parse
+            parsed_uri = urllib.parse.urlparse(redirect_uri)
+            if parsed_uri.netloc:
+                allowed_hosts = ["localhost", "127.0.0.1"]
+                import os
+                cors = os.environ.get("CORS_ORIGINS", "")
+                if cors: allowed_hosts.extend([urllib.parse.urlparse(o).netloc for o in cors.split(",")])
+                if not any(host in parsed_uri.netloc for host in allowed_hosts):
+                    redirect_uri = parsed_uri.path or "/"
+
             return RedirectResponse(
                 url=f"{redirect_uri}?error=Account+is+disabled.+Please+contact+an+administrator.",
                 status_code=302
@@ -346,6 +391,17 @@ async def auth0_callback(
         
         logger.info(f"Auth0 login successful for: {user.username} from {ip_address}")
         
+        # Sanitize before redirect
+        import urllib.parse
+        parsed_uri = urllib.parse.urlparse(redirect_uri)
+        if parsed_uri.netloc:
+            allowed_hosts = ["localhost", "127.0.0.1"]
+            import os
+            cors = os.environ.get("CORS_ORIGINS", "")
+            if cors: allowed_hosts.extend([urllib.parse.urlparse(o).netloc for o in cors.split(",")])
+            if not any(host in parsed_uri.netloc for host in allowed_hosts):
+                redirect_uri = parsed_uri.path or "/"
+
         # Redirect back to frontend with token
         return RedirectResponse(
             url=f"{redirect_uri}?token={access_token}",

@@ -346,11 +346,16 @@ class ClientError(BaseModel):
 @app.post("/api/system/client-errors", status_code=204)
 async def log_client_error(error: ClientError):
     """Log frontend errors for monitoring."""
+    import re
+    def sanitize(text):
+        if not text: return text
+        return re.sub(r'[\r\n]+', ' ', str(text))
+
     client_error_logger.error(
-        f"[CLIENT {error.type}] {error.message} | url={error.url} | "
-        f"source={error.source}:{error.lineno}:{error.colno} | "
-        f"ua={error.userAgent[:60] if error.userAgent else 'unknown'}"
+        f"[CLIENT {sanitize(error.type)}] {sanitize(error.message)} | url={sanitize(error.url)} | "
+        f"source={sanitize(error.source)}:{error.lineno}:{error.colno} | "
+        f"ua={sanitize(error.userAgent)[:60] if error.userAgent else 'unknown'}"
     )
     if error.stack:
-        client_error_logger.debug(f"Stack: {error.stack[:500]}")
+        client_error_logger.debug(f"Stack: {sanitize(error.stack)[:500]}")
     return Response(status_code=204)
