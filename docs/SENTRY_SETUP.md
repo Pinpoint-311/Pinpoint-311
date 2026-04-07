@@ -20,7 +20,7 @@ SSH to your production server and add the DSN to your environment:
 
 ```bash
 # SSH to production
-ssh ubuntu@132.226.32.116
+ssh ubuntu@<YOUR_SERVER_IP>
 cd /path/to/app
 
 # Edit .env file
@@ -34,7 +34,7 @@ docker compose restart backend celery_worker
 ### 4. Verify Integration
 1. Trigger a test error:
 ```bash
-curl https://311.westwindsorforward.org/api/sentry-debug
+curl https://<YOUR_DOMAIN>/api/sentry-debug
 ```
 2. Check Sentry dashboard - you should see the test error within 30 seconds
 
