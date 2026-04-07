@@ -105,7 +105,7 @@ This means:
 
 ### Not seeing errors?
 1. Verify `SENTRY_DSN` is set: `docker exec backend env | grep SENTRY`
-2. Check backend logs: `docker logs wwf-311-fix-backend-1 | grep -i sentry`
+2. Check backend logs: `docker logs pinpoint-311-backend-1 | grep -i sentry`
 3. Test endpoint: `curl https://your-domain/api/sentry-debug`
 
 ### High volume of errors?

@@ -140,7 +140,7 @@ docker-compose restart backend frontend redis caddy
 
 ### Database Connection
 ```bash
-docker exec -it wwf-311-fix-db-1 psql -U postgres -d pinpoint311
+docker exec -it pinpoint-311-db-1 psql -U postgres -d pinpoint311
 ```
 
 ### Create Backup
