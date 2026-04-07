@@ -384,6 +384,20 @@ export default function ResidentPortal() {
             errors.email = 'Please enter a valid email address';
         }
 
+        // Validate required custom questions
+        const questions = selectedService?.routing_config?.custom_questions;
+        if (questions) {
+            for (const q of questions) {
+                if (q.required) {
+                    const answer = customAnswers[q.label];
+                    const isEmpty = answer === undefined || answer === '' || (Array.isArray(answer) && answer.length === 0);
+                    if (isEmpty) {
+                        errors[`custom_${q.id}`] = `${q.label} is required`;
+                    }
+                }
+            }
+        }
+
         setFormErrors(errors);
         return Object.keys(errors).length === 0;
     };
@@ -1319,6 +1333,9 @@ export default function ResidentPortal() {
                                                                             </label>
                                                                         ))}
                                                                     </div>
+                                                                )}
+                                                                {formErrors[`custom_${q.id}`] && (
+                                                                    <p className="text-red-400 text-sm">{formErrors[`custom_${q.id}`]}</p>
                                                                 )}
                                                             </div>
                                                         ))}

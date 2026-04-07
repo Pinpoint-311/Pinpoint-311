@@ -55,18 +55,18 @@ These backups provide an additional recovery point specifically tied to version 
 ### Via API
 ```bash
 # Trigger backup
-curl -X POST https://311.westwindsorforward.org/api/system/backups/create \
+curl -X POST https://<YOUR_DOMAIN>/api/system/backups/create \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 
 # List backups
-curl https://311.westwindsorforward.org/api/system/backups \
+curl https://<YOUR_DOMAIN>/api/system/backups \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
 ### Via SSH (Emergency)
 ```bash
 # SSH to production server
-ssh ubuntu@132.226.32.116
+ssh ubuntu@<YOUR_SERVER_IP>
 
 # Enter the backend container
 docker exec -it wwf-311-fix-backend-1 bash
@@ -96,7 +96,7 @@ docker cp wwf-311-fix-backend-1:/tmp/emergency_backup_*.sql.gz ./
 #### Step 1: Create Fresh Backup (5 min)
 ```bash
 # Via Admin Console or API
-curl -X POST https://311.westwindsorforward.org/api/system/backups/create \
+curl -X POST https://<YOUR_DOMAIN>/api/system/backups/create \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -182,7 +182,7 @@ rm -rf Pinpoint-311
 
 ```bash
 # 1. SSH to production
-ssh ubuntu@132.226.32.116
+ssh ubuntu@<YOUR_SERVER_IP>
 cd /path/to/app
 
 # 2. Stop all services
@@ -206,7 +206,7 @@ gunzip -c restore.sql.gz | docker exec -i wwf-311-fix-db-1 psql -U postgres -d p
 docker compose up -d
 
 # 8. Verify system health
-curl https://311.westwindsorforward.org/api/health
+curl https://<YOUR_DOMAIN>/api/health
 ```
 
 #### Post-Recovery
