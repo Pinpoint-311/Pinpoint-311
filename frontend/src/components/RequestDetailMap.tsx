@@ -39,6 +39,7 @@ export default function RequestDetailMap({
     const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
 
     const [isLoading, setIsLoading] = useState(true);
+    const [mapReady, setMapReady] = useState(false);
 
     // Load Google Maps script
     useEffect(() => {
@@ -101,6 +102,7 @@ export default function RequestDetailMap({
         mapInstanceRef.current = map;
         infoWindowRef.current = new window.google.maps.InfoWindow();
         setIsLoading(false);
+        setMapReady(true);
     }, [lat, lng]);
 
     // Update map when coordinates change
@@ -141,7 +143,7 @@ export default function RequestDetailMap({
             }
         });
 
-    }, [lat, lng]);
+    }, [lat, lng, mapReady]);
 
     // Overlay matched asset with improved styling
     useEffect(() => {
@@ -247,7 +249,7 @@ export default function RequestDetailMap({
                 console.error('Error overlaying matched asset:', e);
             }
         }
-    }, [matchedAsset, mapLayers]);
+    }, [matchedAsset, mapLayers, mapReady]);
 
     if (!apiKey) {
         return (
