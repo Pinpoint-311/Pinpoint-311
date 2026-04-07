@@ -69,13 +69,13 @@ curl https://<YOUR_DOMAIN>/api/system/backups \
 ssh ubuntu@<YOUR_SERVER_IP>
 
 # Enter the backend container
-docker exec -it wwf-311-fix-backend-1 bash
+docker exec -it pinpoint-311-backend-1 bash
 
 # Manual pg_dump
 pg_dump -h db -U postgres pinpoint311 | gzip > /tmp/emergency_backup_$(date +%Y%m%d_%H%M%S).sql.gz
 
 # Copy out of container
-docker cp wwf-311-fix-backend-1:/tmp/emergency_backup_*.sql.gz ./
+docker cp pinpoint-311-backend-1:/tmp/emergency_backup_*.sql.gz ./
 ```
 
 ---
@@ -129,7 +129,7 @@ aws s3 cp s3://your-backup-bucket/backups/latest.sql.gz ./restore.sql.gz
 docker compose stop backend celery_worker
 
 # Restore to test database
-gunzip -c restore.sql.gz | docker exec -i wwf-311-fix-db-1 \
+gunzip -c restore.sql.gz | docker exec -i pinpoint-311-db-1 \
   psql -U postgres -d pinpoint311_dr_test
 
 # Restart services
@@ -196,11 +196,11 @@ docker compose up -d db
 sleep 30
 
 # 5. Drop and recreate database (DESTRUCTIVE)
-docker exec -i wwf-311-fix-db-1 psql -U postgres -c "DROP DATABASE IF EXISTS pinpoint311;"
-docker exec -i wwf-311-fix-db-1 psql -U postgres -c "CREATE DATABASE pinpoint311;"
+docker exec -i pinpoint-311-db-1 psql -U postgres -c "DROP DATABASE IF EXISTS pinpoint311;"
+docker exec -i pinpoint-311-db-1 psql -U postgres -c "CREATE DATABASE pinpoint311;"
 
 # 6. Restore backup
-gunzip -c restore.sql.gz | docker exec -i wwf-311-fix-db-1 psql -U postgres -d pinpoint311
+gunzip -c restore.sql.gz | docker exec -i pinpoint-311-db-1 psql -U postgres -d pinpoint311
 
 # 7. Start all services
 docker compose up -d

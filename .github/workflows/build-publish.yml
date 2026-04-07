@@ -7,7 +7,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ${{ github.repository_owner }}/wwf-311
+  IMAGE_PREFIX: ${{ github.repository_owner }}/pinpoint-311
 
 jobs:
   build-and-push:

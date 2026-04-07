@@ -815,8 +815,8 @@ Prevents the 311 system from affecting other server systems:
 
 Pre-built images available on GitHub Container Registry:
 ```bash
-ghcr.io/pinpoint-311/wwf-311-backend:latest
-ghcr.io/pinpoint-311/wwf-311-frontend:latest
+ghcr.io/pinpoint-311/pinpoint-311-backend:latest
+ghcr.io/pinpoint-311/pinpoint-311-frontend:latest
 ```
 
 Supports both `linux/amd64` and `linux/arm64` architectures.
