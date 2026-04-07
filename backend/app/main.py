@@ -1,11 +1,14 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 import os
+import logging
 import sentry_sdk
+
+logger = logging.getLogger(__name__)
 
 # Initialize Sentry for error tracking (optional - set SENTRY_DSN env var)
 SENTRY_DSN = os.environ.get("SENTRY_DSN")
@@ -155,10 +158,10 @@ async def lifespan(app: FastAPI):
                         await record_uptime_check(db, service_name, status, response_time, error)
                     
                     # Cleanup: Delete records older than 30 days
-                    from datetime import datetime, timedelta
+                    from datetime import datetime, timedelta, timezone
                     from sqlalchemy import delete
                     from app.models import UptimeRecord
-                    cutoff = datetime.utcnow() - timedelta(days=30)
+                    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
                     result = await db.execute(
                         delete(UptimeRecord).where(UptimeRecord.checked_at < cutoff)
                     )
@@ -166,11 +169,11 @@ async def lifespan(app: FastAPI):
                     deleted = result.rowcount
                     
                     if deleted > 0:
-                        print(f"[Uptime Monitor] Health check complete, cleaned up {deleted} old records")
+                        logger.info(f"[Uptime Monitor] Health check complete, cleaned up {deleted} old records")
                     else:
-                        print(f"[Uptime Monitor] Health check complete at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+                        logger.debug(f"[Uptime Monitor] Health check complete at {time.strftime('%Y-%m-%d %H:%M:%S')}")
             except Exception as e:
-                print(f"[Uptime Monitor] Error: {e}")
+                logger.error(f"[Uptime Monitor] Error: {e}")
             
             # Wait 5 minutes before next check
             await asyncio.sleep(300)
@@ -180,7 +183,7 @@ async def lifespan(app: FastAPI):
     
     # Start background uptime monitoring task
     uptime_task = asyncio.create_task(uptime_monitor())
-    print("[Uptime Monitor] Started background health monitoring (every 5 minutes)")
+    logger.info("[Uptime Monitor] Started background health monitoring (every 5 minutes)")
     
     yield
     
@@ -190,7 +193,7 @@ async def lifespan(app: FastAPI):
         await uptime_task
     except asyncio.CancelledError:
         pass  # Expected during shutdown
-    print("[Uptime Monitor] Stopped background health monitoring")
+    logger.info("[Uptime Monitor] Stopped background health monitoring")
 
 
 app = FastAPI(
@@ -317,7 +320,10 @@ async def demo_info():
 
 @app.get("/api/sentry-debug")
 async def sentry_debug():
-    """Test endpoint to verify Sentry integration. Raises an intentional error."""
+    """Test endpoint to verify Sentry integration. Only available in debug mode."""
+    from app.core.config import get_settings
+    if not get_settings().debug:
+        raise HTTPException(status_code=404, detail="Not found")
     if not SENTRY_DSN:
         return {"status": "sentry_not_configured", "message": "Set SENTRY_DSN env var to enable"}
     # Intentional error for testing

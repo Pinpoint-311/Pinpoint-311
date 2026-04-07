@@ -5,6 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 import secrets
 import logging
+import os
+import urllib.parse
 
 from app.db.session import get_db
 from app.models import User
@@ -14,6 +16,19 @@ from app.services.audit_service import AuditService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_redirect_uri(redirect_uri: str) -> str:
+    """Validate redirect URI against allowed CORS origins to prevent open redirects."""
+    parsed_uri = urllib.parse.urlparse(redirect_uri)
+    if parsed_uri.netloc:
+        allowed_hosts = {"localhost", "127.0.0.1"}
+        cors = os.environ.get("CORS_ORIGINS", "")
+        if cors:
+            allowed_hosts.update(urllib.parse.urlparse(o).netloc for o in cors.split(","))
+        if parsed_uri.netloc not in allowed_hosts:
+            return parsed_uri.path or "/"
+    return redirect_uri
 
 # Store state tokens temporarily (in production, use Redis)
 _pending_states: dict = {}
@@ -117,6 +132,8 @@ async def auto_bootstrap(
     logger.info(f"Auto-bootstrap login successful for: {admin.username}")
     
     # Return HTML that stores token and redirects to admin console
+    import json as _json
+    safe_token = _json.dumps(access_token)
     from fastapi.responses import HTMLResponse
     return HTMLResponse(content=f"""<!DOCTYPE html>
     <html>
@@ -128,7 +145,7 @@ async def auto_bootstrap(
             <p style="color:rgba(255,255,255,.5)">Setting up your admin console...</p>
         </div>
         <script>
-            localStorage.setItem('token', '{access_token}');
+            localStorage.setItem('token', {safe_token});
             window.location.href = '/admin';
         </script>
     </body>
@@ -179,13 +196,15 @@ async def use_bootstrap_token(
     logger.info(f"Bootstrap login successful for: {user.username}")
     
     # Return HTML that stores token and redirects
+    import json as _json
+    safe_token = _json.dumps(access_token)
     html_response = f"""
     <!DOCTYPE html>
     <html>
     <head><title>Logging in...</title></head>
     <body>
         <script>
-            localStorage.setItem('token', '{access_token}');
+            localStorage.setItem('token', {safe_token});
             window.location.href = '/admin';
         </script>
         <p>Logging in... If not redirected, <a href="/admin">click here</a></p>
@@ -257,19 +276,9 @@ async def auth0_callback(
     # Handle Auth0 errors (user cancellation, access denied, etc.)
     if error or not code:
         err_msg = error_description or error or "Authentication cancelled or failed."
-        import urllib.parse
         safe_error = urllib.parse.quote(err_msg)
-        
-        # Validate redirect URI to prevent Open Redirect
-        parsed_uri = urllib.parse.urlparse(redirect_uri)
-        if parsed_uri.netloc:
-            # Check against safe origins or convert to relative
-            allowed_hosts = ["localhost", "127.0.0.1"]
-            import os
-            cors = os.environ.get("CORS_ORIGINS", "")
-            if cors: allowed_hosts.extend([urllib.parse.urlparse(o).netloc for o in cors.split(",")])
-            if not any(host in parsed_uri.netloc for host in allowed_hosts):
-                redirect_uri = parsed_uri.path or "/"
+
+        redirect_uri = _sanitize_redirect_uri(redirect_uri)
                 
         return RedirectResponse(
             url=f"{redirect_uri}?error={safe_error}",
@@ -292,17 +301,7 @@ async def auth0_callback(
         user_info = await Auth0Service.verify_token(id_token, db)
         
         if not user_info.get("email"):
-            # Sanitize before redirect
-            import urllib.parse
-            parsed_uri = urllib.parse.urlparse(redirect_uri)
-            if parsed_uri.netloc:
-                allowed_hosts = ["localhost", "127.0.0.1"]
-                import os
-                cors = os.environ.get("CORS_ORIGINS", "")
-                if cors: allowed_hosts.extend([urllib.parse.urlparse(o).netloc for o in cors.split(",")])
-                if not any(host in parsed_uri.netloc for host in allowed_hosts):
-                    redirect_uri = parsed_uri.path or "/"
-
+            redirect_uri = _sanitize_redirect_uri(redirect_uri)
             return RedirectResponse(
                 url=f"{redirect_uri}?error=Email+not+provided+by+identity+provider",
                 status_code=302
@@ -330,17 +329,7 @@ async def auth0_callback(
                 user_agent=user_agent,
                 reason="Account not found in system"
             )
-            # Sanitize before redirect
-            import urllib.parse
-            parsed_uri = urllib.parse.urlparse(redirect_uri)
-            if parsed_uri.netloc:
-                allowed_hosts = ["localhost", "127.0.0.1"]
-                import os
-                cors = os.environ.get("CORS_ORIGINS", "")
-                if cors: allowed_hosts.extend([urllib.parse.urlparse(o).netloc for o in cors.split(",")])
-                if not any(host in parsed_uri.netloc for host in allowed_hosts):
-                    redirect_uri = parsed_uri.path or "/"
-
+            redirect_uri = _sanitize_redirect_uri(redirect_uri)
             return RedirectResponse(
                 url=f"{redirect_uri}?error=Account+not+found.+Please+contact+an+administrator+to+be+added+to+the+system.",
                 status_code=302
@@ -355,17 +344,7 @@ async def auth0_callback(
                 user_agent=user_agent,
                 reason="Account is disabled"
             )
-            # Sanitize before redirect
-            import urllib.parse
-            parsed_uri = urllib.parse.urlparse(redirect_uri)
-            if parsed_uri.netloc:
-                allowed_hosts = ["localhost", "127.0.0.1"]
-                import os
-                cors = os.environ.get("CORS_ORIGINS", "")
-                if cors: allowed_hosts.extend([urllib.parse.urlparse(o).netloc for o in cors.split(",")])
-                if not any(host in parsed_uri.netloc for host in allowed_hosts):
-                    redirect_uri = parsed_uri.path or "/"
-
+            redirect_uri = _sanitize_redirect_uri(redirect_uri)
             return RedirectResponse(
                 url=f"{redirect_uri}?error=Account+is+disabled.+Please+contact+an+administrator.",
                 status_code=302
@@ -391,16 +370,7 @@ async def auth0_callback(
         
         logger.info(f"Auth0 login successful for: {user.username} from {ip_address}")
         
-        # Sanitize before redirect
-        import urllib.parse
-        parsed_uri = urllib.parse.urlparse(redirect_uri)
-        if parsed_uri.netloc:
-            allowed_hosts = ["localhost", "127.0.0.1"]
-            import os
-            cors = os.environ.get("CORS_ORIGINS", "")
-            if cors: allowed_hosts.extend([urllib.parse.urlparse(o).netloc for o in cors.split(",")])
-            if not any(host in parsed_uri.netloc for host in allowed_hosts):
-                redirect_uri = parsed_uri.path or "/"
+        redirect_uri = _sanitize_redirect_uri(redirect_uri)
 
         # Redirect back to frontend with token
         return RedirectResponse(
@@ -540,6 +510,8 @@ async def demo_login(
     logger.info(f"Demo login for: {admin.username}")
     
     # Return HTML that stores token and redirects to staff dashboard
+    import json as _json
+    safe_token = _json.dumps(access_token)
     from fastapi.responses import HTMLResponse
     return HTMLResponse(content=f"""
     <!DOCTYPE html>
@@ -547,7 +519,7 @@ async def demo_login(
     <head><title>Logging in to demo...</title></head>
     <body>
         <script>
-            localStorage.setItem('token', '{access_token}');
+            localStorage.setItem('token', {safe_token});
             window.location.href = '/staff';
         </script>
         <p>Logging in... If not redirected, <a href="/staff">click here</a></p>

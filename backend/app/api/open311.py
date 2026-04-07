@@ -57,9 +57,9 @@ async def list_public_requests(
         cached = await redis_client.get(cache_key)
         if cached:
             return json.loads(cached)
-    except Exception:
-        pass  # Redis unavailable, proceed without cache
-    
+    except redis.RedisError:
+        logger.debug("Redis unavailable for cache read, proceeding without cache")
+
     query = select(ServiceRequest).where(ServiceRequest.deleted_at.is_(None))
     
     if status:
@@ -102,8 +102,8 @@ async def list_public_requests(
     # Cache the response
     try:
         await redis_client.setex(cache_key, CACHE_TTL, json.dumps(response_data))
-    except Exception:
-        pass  # Redis unavailable, continue without caching
+    except redis.RedisError:
+        logger.debug("Redis unavailable for cache write, continuing without caching")
     
     return response_data
 
