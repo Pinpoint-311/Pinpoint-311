@@ -71,6 +71,7 @@ export default function ResidentMapView({
 
     // UI state
     const [isLoading, setIsLoading] = useState(true);
+    const [mapReady, setMapReady] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
     const [expandedStatus, setExpandedStatus] = useState(true);
     const [expandedCategories, setExpandedCategories] = useState(false);
@@ -172,6 +173,7 @@ export default function ResidentMapView({
         }
 
         setIsLoading(false);
+        setMapReady(true);
     }, [defaultCenter, defaultZoom, townshipBoundary]);
 
     const renderBoundaryAndFit = (map: google.maps.Map, boundary: any) => {
@@ -206,7 +208,7 @@ export default function ResidentMapView({
     useEffect(() => {
         if (!mapInstanceRef.current || !window.google) return;
         updateMarkers();
-    }, [requests, statusFilters, categoryFilters, departmentFilters]);
+    }, [requests, statusFilters, categoryFilters, departmentFilters, mapReady]);
 
     const updateMarkers = () => {
         const map = mapInstanceRef.current;

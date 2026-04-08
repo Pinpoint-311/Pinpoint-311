@@ -69,6 +69,7 @@ export default function StaffDashboardMap({
 
     // UI state
     const [isLoading, setIsLoading] = useState(true);
+    const [mapReady, setMapReady] = useState(false);
     const [showFilters, setShowFilters] = useState(true);
     // Close filters on mobile after mount
     useEffect(() => {
@@ -205,6 +206,7 @@ export default function StaffDashboardMap({
         }
 
         setIsLoading(false);
+        setMapReady(true);
     }, [defaultCenter, defaultZoom, townshipBoundary]);
 
     // Render township boundary and fit map to it
@@ -241,13 +243,13 @@ export default function StaffDashboardMap({
     useEffect(() => {
         if (!mapInstanceRef.current || !window.google) return;
         updateMarkers();
-    }, [requests, statusFilters, categoryFilters, departmentFilters, staffFilters, assignmentFilter, priorityFilters]);
+    }, [requests, statusFilters, categoryFilters, departmentFilters, staffFilters, assignmentFilter, priorityFilters, mapReady]);
 
     // Update GeoJSON layers when layer filters change
     useEffect(() => {
         if (!mapInstanceRef.current || !window.google) return;
         updateLayers();
-    }, [mapLayers, layerFilters]);
+    }, [mapLayers, layerFilters, mapReady]);
 
     const updateMarkers = () => {
         const map = mapInstanceRef.current;
