@@ -349,6 +349,11 @@ class ApiClient {
         return this.request<AdvancedStatistics>('/system/advanced-statistics');
     }
 
+    // Heatmap Data (for spatial bias detection)
+    async getHeatmapData(): Promise<import('../types').HeatmapData> {
+        return this.request<import('../types').HeatmapData>('/system/heatmap-data');
+    }
+
     // AI Analytics Chat
     async analyticsChat(message: string, history: { role: string; content: string }[]): Promise<{ response: string; context_used: string[] }> {
         return this.request<{ response: string; context_used: string[] }>('/system/analytics-chat', {

@@ -566,7 +566,7 @@ from sqlalchemy import text, extract
 from datetime import timedelta
 import json
 from app.schemas import (
-    AdvancedStatisticsResponse, HotspotData, TrendData, DepartmentMetrics,
+    AdvancedStatisticsResponse, HeatmapDataResponse, HotspotData, TrendData, DepartmentMetrics,
     PredictiveInsights, CostEstimate, RepeatLocation
 )
 from app.models import Department
@@ -1166,6 +1166,90 @@ async def get_advanced_statistics(
         pass  # Redis cache write failed, non-critical
     
     return response_data
+
+
+# ============ Spatial Bias Heatmap ============
+
+
+@router.get("/heatmap-data", response_model=HeatmapDataResponse)
+async def get_heatmap_data(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_staff)
+):
+    """
+    Return two sets of weighted coordinates for spatial bias detection:
+    - report_points: every request location (weight 1)
+    - reporter_points: deduplicated by reporter email, rounded to ~100m grid
+
+    Comparing the two heatmaps reveals areas where many reports come from
+    few unique reporters (potential reporting bias / squeaky wheel effect).
+    """
+    from sqlalchemy import text as sa_text
+
+    # Check cache
+    cache_key = "heatmap_data"
+    try:
+        if redis_client:
+            cached = await redis_client.get(cache_key)
+            if cached:
+                return json.loads(cached)
+    except Exception:
+        pass
+
+    # All request coordinates (for "reports" heatmap)
+    # Rounded to ~100m grid to avoid pinpointing individual addresses
+    report_query = sa_text("""
+        SELECT ROUND(lat::numeric, 3) as lat, ROUND(long::numeric, 3) as lng
+        FROM service_requests
+        WHERE deleted_at IS NULL
+          AND lat IS NOT NULL
+          AND long IS NOT NULL
+    """)
+    report_result = await db.execute(report_query)
+    report_points = [
+        {"lat": float(r["lat"]), "lng": float(r["lng"]), "weight": 1}
+        for r in report_result.mappings().all()
+    ]
+
+    # Deduplicated reporter locations (rounded to ~100m grid cells)
+    # Each unique (email, grid_cell) pair counts as 1 point
+    # ROUND(lat, 3) ≈ 111m, ROUND(long, 3) ≈ 85m at mid-latitudes
+    reporter_query = sa_text("""
+        SELECT
+            ROUND(lat::numeric, 3) as lat,
+            ROUND(long::numeric, 3) as lng,
+            COUNT(*) as weight
+        FROM (
+            SELECT DISTINCT ON (COALESCE(email, id::text), ROUND(lat::numeric, 3), ROUND(long::numeric, 3))
+                lat, long, email, id
+            FROM service_requests
+            WHERE deleted_at IS NULL
+              AND lat IS NOT NULL
+              AND long IS NOT NULL
+        ) unique_reporters
+        GROUP BY ROUND(lat::numeric, 3), ROUND(long::numeric, 3)
+    """)
+    reporter_result = await db.execute(reporter_query)
+    reporter_points = [
+        {"lat": float(r["lat"]), "lng": float(r["lng"]), "weight": int(r["weight"])}
+        for r in reporter_result.mappings().all()
+    ]
+
+    result = {
+        "report_points": report_points,
+        "reporter_points": reporter_points,
+        "total_reports": len(report_points),
+        "total_unique_reporters": len(reporter_points),
+    }
+
+    # Cache for 5 minutes
+    try:
+        if redis_client:
+            await redis_client.setex(cache_key, STATS_CACHE_TTL, json.dumps(result))
+    except Exception:
+        pass
+
+    return result
 
 
 # ============ System Update ============
