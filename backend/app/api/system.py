@@ -566,7 +566,7 @@ from sqlalchemy import text, extract
 from datetime import timedelta
 import json
 from app.schemas import (
-    AdvancedStatisticsResponse, HotspotData, TrendData, DepartmentMetrics,
+    AdvancedStatisticsResponse, HeatmapDataResponse, HotspotData, TrendData, DepartmentMetrics,
     PredictiveInsights, CostEstimate, RepeatLocation
 )
 from app.models import Department
@@ -1171,7 +1171,7 @@ async def get_advanced_statistics(
 # ============ Spatial Bias Heatmap ============
 
 
-@router.get("/heatmap-data")
+@router.get("/heatmap-data", response_model=HeatmapDataResponse)
 async def get_heatmap_data(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_staff)
@@ -1197,8 +1197,9 @@ async def get_heatmap_data(
         pass
 
     # All request coordinates (for "reports" heatmap)
+    # Rounded to ~100m grid to avoid pinpointing individual addresses
     report_query = sa_text("""
-        SELECT lat, long as lng
+        SELECT ROUND(lat::numeric, 3) as lat, ROUND(long::numeric, 3) as lng
         FROM service_requests
         WHERE deleted_at IS NULL
           AND lat IS NOT NULL
