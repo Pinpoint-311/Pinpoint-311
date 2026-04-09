@@ -87,6 +87,7 @@ class DemoModeMiddleware(BaseHTTPMiddleware):
         "/api/system/analytics-chat", # AI Analytics Advisor
         "/api/services/reorder",  # Service category reordering
         "/api/system/client-errors",  # Frontend error reporting
+        "/api/system/update",          # Admin code update (admin-auth protected)
     ]
     
     async def dispatch(self, request: Request, call_next):
