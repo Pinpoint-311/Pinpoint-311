@@ -363,6 +363,19 @@ class StatisticsResponse(BaseModel):
     recent_requests: List[ServiceRequestResponse]
 
 
+class HeatmapPoint(BaseModel):
+    lat: float
+    lng: float
+    weight: int
+
+
+class HeatmapDataResponse(BaseModel):
+    report_points: List[HeatmapPoint]
+    reporter_points: List[HeatmapPoint]
+    total_reports: int
+    total_unique_reporters: int
+
+
 class HotspotData(BaseModel):
     lat: float
     lng: float
