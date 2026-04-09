@@ -46,10 +46,11 @@ import { Button, Card, Modal, Input, Textarea, Select, StatusBadge, Badge } from
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { api, MapLayer } from '../services/api';
-import { ServiceRequest, ServiceRequestDetail, ServiceDefinition, Statistics, AdvancedStatistics, RequestComment, ClosedSubstatus, User as UserType, Department, AuditLogEntry } from '../types';
+import { ServiceRequest, ServiceRequestDetail, ServiceDefinition, Statistics, AdvancedStatistics, RequestComment, ClosedSubstatus, User as UserType, Department, AuditLogEntry, HeatmapData } from '../types';
 import { XAxis, YAxis, ResponsiveContainer, AreaChart, Area, Tooltip } from 'recharts';
 import StaffDashboardMap from '../components/StaffDashboardMap';
 import RequestDetailMap from '../components/RequestDetailMap';
+import SpatialBiasHeatmap from '../components/SpatialBiasHeatmap';
 import { usePageNavigation } from '../hooks/usePageNavigation';
 import NotificationSettings from '../components/NotificationSettings';
 import ActivityFeed from '../components/ActivityFeed';
@@ -122,6 +123,7 @@ export default function StaffDashboard() {
     const [services, setServices] = useState<ServiceDefinition[]>([]);
     const [statistics, setStatistics] = useState<Statistics | null>(null);
     const [advancedStats, setAdvancedStats] = useState<AdvancedStatistics | null>(null);
+    const [heatmapData, setHeatmapData] = useState<HeatmapData | null>(null);
 
     // Dashboard-specific state
     const [departments, setDepartments] = useState<Department[]>([]);
@@ -503,12 +505,14 @@ export default function StaffDashboard() {
 
     const loadStatistics = async () => {
         try {
-            const [statsData, advancedData] = await Promise.all([
+            const [statsData, advancedData, heatmap] = await Promise.all([
                 api.getStatistics(),
-                api.getAdvancedStatistics()
+                api.getAdvancedStatistics(),
+                api.getHeatmapData().catch(() => null)
             ]);
             setStatistics(statsData);
             setAdvancedStats(advancedData);
+            if (heatmap) setHeatmapData(heatmap);
         } catch (err) {
             console.error('Failed to load statistics:', err);
         }
@@ -1179,37 +1183,18 @@ export default function StaffDashboard() {
                                 </div>
                             </div>
 
-                            {/* Two-Column: Hotspots + Staff */}
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-                                {/* Problem Areas — Compact Table */}
-                                {advancedStats?.hotspots && advancedStats.hotspots.length > 0 && (
-                                    <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
-                                        <h3 className="text-lg font-semibold text-white mb-1">Problem Areas</h3>
-                                        <p className="text-xs text-white/40 mb-4">Top locations by request volume</p>
-                                        <div className="space-y-2">
-                                            {advancedStats.hotspots.slice(0, 5).map((hotspot, idx) => (
-                                                <div key={idx} className="flex items-center gap-3 p-3 bg-white/5 rounded-lg hover:bg-white/10 transition">
-                                                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-red-500 to-orange-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-                                                        {hotspot.count}
-                                                    </div>
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="text-sm text-white/90 truncate">{hotspot.sample_address || `Area ${idx + 1}`}</div>
-                                                        <div className="flex items-center gap-2 mt-0.5">
-                                                            {hotspot.top_categories?.slice(0, 2).map((cat, i) => (
-                                                                <span key={i} className="text-[10px] px-1.5 py-0.5 bg-white/10 text-white/60 rounded">{cat}</span>
-                                                            ))}
-                                                            {hotspot.unique_reporters && (
-                                                                <span className="text-[10px] text-white/30">{hotspot.unique_reporters} reporter{hotspot.unique_reporters !== 1 ? 's' : ''}</span>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
+                            {/* Spatial Bias Heatmap — Full Width */}
+                            {mapsConfig?.google_maps_api_key && (
+                                <SpatialBiasHeatmap
+                                    heatmapData={heatmapData}
+                                    hotspots={advancedStats?.hotspots || []}
+                                    apiKey={mapsConfig.google_maps_api_key}
+                                    defaultCenter={mapsConfig.default_center || advancedStats?.geographic_center || undefined}
+                                />
+                            )}
 
-                                {/* Staff Performance + Workload */}
+                            {/* Staff Performance + Workload */}
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
                                 <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
                                     <h3 className="text-lg font-semibold text-white mb-1">Staff Activity</h3>
                                     <p className="text-xs text-white/40 mb-4">Resolutions and current workload</p>

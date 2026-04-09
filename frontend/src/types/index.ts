@@ -268,6 +268,19 @@ export interface Statistics {
     recent_requests: ServiceRequest[];
 }
 
+export interface HeatmapPoint {
+    lat: number;
+    lng: number;
+    weight: number;
+}
+
+export interface HeatmapData {
+    report_points: HeatmapPoint[];
+    reporter_points: HeatmapPoint[];
+    total_reports: number;
+    total_unique_reporters: number;
+}
+
 export interface HotspotData {
     lat: number;
     lng: number;
