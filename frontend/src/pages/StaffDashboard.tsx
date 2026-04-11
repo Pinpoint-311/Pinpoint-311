@@ -1184,9 +1184,6 @@ export default function StaffDashboard() {
                             </div>
 
                             {/* Spatial Bias Heatmap — Full Width */}
-                            <div className="bg-red-500 text-white p-6 rounded-xl text-center text-xl font-bold">
-                                DEBUG: Heatmap section renders here. API Key: {mapsConfig?.google_maps_api_key ? 'YES' : 'NO'}
-                            </div>
                             <SpatialBiasHeatmap
                                 heatmapData={heatmapData}
                                 hotspots={advancedStats?.hotspots || []}
