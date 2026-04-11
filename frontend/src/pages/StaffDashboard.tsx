@@ -1184,14 +1184,12 @@ export default function StaffDashboard() {
                             </div>
 
                             {/* Spatial Bias Heatmap — Full Width */}
-                            {mapsConfig?.google_maps_api_key && (
-                                <SpatialBiasHeatmap
-                                    heatmapData={heatmapData}
-                                    hotspots={advancedStats?.hotspots || []}
-                                    apiKey={mapsConfig.google_maps_api_key}
-                                    defaultCenter={mapsConfig.default_center || advancedStats?.geographic_center || undefined}
-                                />
-                            )}
+                            <SpatialBiasHeatmap
+                                heatmapData={heatmapData}
+                                hotspots={advancedStats?.hotspots || []}
+                                apiKey={mapsConfig?.google_maps_api_key || ''}
+                                defaultCenter={mapsConfig?.default_center || advancedStats?.geographic_center || undefined}
+                            />
 
                             {/* Staff Performance + Workload */}
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
