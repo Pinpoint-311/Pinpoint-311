@@ -1183,14 +1183,6 @@ export default function StaffDashboard() {
                                 </div>
                             </div>
 
-                            {/* Spatial Bias Heatmap — Full Width */}
-                            <SpatialBiasHeatmap
-                                heatmapData={heatmapData}
-                                hotspots={advancedStats?.hotspots || []}
-                                apiKey={mapsConfig?.google_maps_api_key || ''}
-                                defaultCenter={mapsConfig?.default_center || advancedStats?.geographic_center || undefined}
-                            />
-
                             {/* Staff Performance + Workload */}
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
                                 <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
@@ -1243,6 +1235,14 @@ export default function StaffDashboard() {
                                         )}
                                 </div>
                             </div>
+
+                            {/* Spatial Bias Heatmap — Full Width */}
+                            <SpatialBiasHeatmap
+                                heatmapData={heatmapData}
+                                hotspots={advancedStats?.hotspots || []}
+                                apiKey={mapsConfig?.google_maps_api_key || ''}
+                                defaultCenter={mapsConfig?.default_center || advancedStats?.geographic_center || undefined}
+                            />
                         </div>
                     </div>
                 )} {/* This closes the conditional for currentView === 'statistics' || currentView === 'dashboard' */}
