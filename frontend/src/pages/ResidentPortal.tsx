@@ -535,10 +535,8 @@ export default function ResidentPortal() {
                     </button>
 
                     <div className="flex items-center gap-2 md:gap-4">
-                        {/* Language selector - compact on mobile */}
-                        <div className="scale-90 md:scale-100 origin-right">
-                            <LanguageSelector />
-                        </div>
+                        {/* Language selector */}
+                        <LanguageSelector />
                         <div className="relative">
                             <Link
                                 to="/login"

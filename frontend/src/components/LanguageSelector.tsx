@@ -149,13 +149,13 @@ export default function LanguageSelector() {
         <div className="relative">
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-white/10 transition-all text-white shadow-lg"
+                className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-white/10 transition-all text-white shadow-lg"
                 aria-label="Select language"
             >
-                <Globe className="w-4 h-4" />
+                <Globe className="w-4 h-4 flex-shrink-0" />
                 <span className="hidden sm:inline text-sm font-medium">{currentLanguage.nativeName}</span>
-                <span className="sm:hidden text-sm">{currentLanguage.code.toUpperCase()}</span>
-                <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                <span className="sm:hidden text-xs font-medium">{currentLanguage.code.toUpperCase()}</span>
+                <ChevronDown className={`w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
             </button>
 
             <AnimatePresence>
@@ -176,7 +176,7 @@ export default function LanguageSelector() {
                             animate={{ opacity: 1, y: 0, scale: 1 }}
                             exit={{ opacity: 0, y: -10, scale: 0.95 }}
                             transition={{ duration: 0.15 }}
-                            className="fixed sm:absolute right-2 left-2 sm:left-auto sm:right-0 top-16 sm:top-auto sm:mt-2 w-auto sm:w-80 max-w-[calc(100vw-1rem)] rounded-xl bg-slate-800 border border-white/20 shadow-2xl z-[9999]"
+                            className="fixed sm:absolute inset-x-2 sm:inset-x-auto sm:right-0 top-14 sm:top-auto sm:mt-2 sm:w-80 rounded-xl bg-slate-800 border border-white/20 shadow-2xl z-[9999]"
                             style={{
                                 boxShadow: '0 20px 50px rgba(0,0,0,0.5), 0 0 20px rgba(0,0,0,0.3)'
                             }}
@@ -200,7 +200,7 @@ export default function LanguageSelector() {
                             </div>
 
                             {/* Language List */}
-                            <div className="max-h-[400px] overflow-y-auto p-2">
+                            <div className="max-h-[60vh] sm:max-h-[400px] overflow-y-auto p-2">
                                 {filteredLanguages.length === 0 ? (
                                     <div className="text-center py-8 text-white/40 text-sm">
                                         No languages found
