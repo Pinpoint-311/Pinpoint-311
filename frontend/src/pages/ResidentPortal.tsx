@@ -549,8 +549,7 @@ export default function ResidentPortal() {
                             {/* Demo-only tooltip pointing to Staff Login */}
                             {showDemoTooltip && (
                                 <div
-                                    className="absolute top-full right-0 mt-3 z-50"
-                                    style={{ minWidth: '220px' }}
+                                    className="absolute top-full right-0 mt-3 z-50 w-72 sm:w-80"
                                 >
                                     {/* Arrow pointing up */}
                                     <div
@@ -775,7 +774,7 @@ export default function ResidentPortal() {
                                         transition={{ delay: 0.4 }}
                                         className="max-w-md mx-auto"
                                     >
-                                        <div className="relative" data-no-translate>
+                                        <div className="relative">
                                             <label htmlFor="service-search" className="sr-only">{"Search services..."}</label>
                                             <div
                                                 className="absolute top-1/2 -translate-y-1/2 w-5 h-5 pointer-events-none"
