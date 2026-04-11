@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pinpoint311-v2';
+const CACHE_NAME = 'pinpoint311-v3';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -23,7 +23,7 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch — network-first for API, cache-first for static assets
+// Fetch — network-first for API & HTML, cache-first for hashed assets
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
@@ -39,13 +39,26 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static assets — cache-first, fallback to network
+  // Navigation requests (HTML pages) — network-first so new deploys take effect immediately
+  if (request.mode === 'navigate' || url.pathname === '/') {
+    event.respondWith(
+      fetch(request).then((response) => {
+        if (response.ok) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+        }
+        return response;
+      }).catch(() => caches.match(request) || caches.match('/'))
+    );
+    return;
+  }
+
+  // Hashed static assets (JS/CSS/images) — cache-first, fallback to network
   event.respondWith(
     caches.match(request).then((cached) => {
       if (cached) return cached;
       return fetch(request).then((response) => {
-        // Cache successful responses for static assets
-        if (response.ok && (url.pathname.match(/\.(js|css|png|jpg|svg|woff2?)$/) || url.pathname === '/')) {
+        if (response.ok && url.pathname.match(/\.(js|css|png|jpg|svg|woff2?)$/)) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
         }
