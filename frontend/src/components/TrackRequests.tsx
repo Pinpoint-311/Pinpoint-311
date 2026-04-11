@@ -357,17 +357,28 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                 <p className="text-white/70">{selectedRequest.address}</p>
                             </div>
 
-                            {selectedRequest.lat && selectedRequest.long && mapsApiKey && (
-                                <div className="h-48 bg-white/5 border-t border-white/10">
-                                    <iframe
-                                        width="100%"
-                                        height="100%"
-                                        style={{ border: 0 }}
-                                        loading="lazy"
-                                        src={`https://www.google.com/maps/embed/v1/place?key=${mapsApiKey}&q=${selectedRequest.lat},${selectedRequest.long}&zoom=17&maptype=satellite`}
-                                        allowFullScreen
+                            {selectedRequest.lat && selectedRequest.long && (
+                                <a
+                                    href={`https://www.google.com/maps?q=${selectedRequest.lat},${selectedRequest.long}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="block h-48 bg-white/5 border-t border-white/10 overflow-hidden relative group"
+                                >
+                                    <img
+                                        src={`https://maps.googleapis.com/maps/api/staticmap?center=${selectedRequest.lat},${selectedRequest.long}&zoom=17&size=600x300&maptype=satellite&markers=color:red%7C${selectedRequest.lat},${selectedRequest.long}${mapsApiKey ? `&key=${mapsApiKey}` : ''}`}
+                                        alt="Request location"
+                                        className="w-full h-full object-cover"
+                                        onError={(e) => {
+                                            // Fallback to OpenStreetMap if Google fails
+                                            (e.target as HTMLImageElement).src = `https://staticmap.openstreetmap.de/staticmap.php?center=${selectedRequest.lat},${selectedRequest.long}&zoom=17&size=600x300&markers=${selectedRequest.lat},${selectedRequest.long},lightblue`;
+                                        }}
                                     />
-                                </div>
+                                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                                        <span className="text-white text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 px-3 py-1.5 rounded-lg">
+                                            Open in Google Maps
+                                        </span>
+                                    </div>
+                                </a>
                             )}
                         </Card>
                     )}
