@@ -1908,148 +1908,188 @@ export default function AdminConsole() {
                         )}
 
 
-                        {/* Modules Tab */}
+                        {/* System Settings Tab */}
                         {currentTab === 'system' && (
-                            <div className="space-y-6">
+                            <div className="space-y-8">
+                                {/* Premium Header */}
                                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                                    <h1 className="text-xl sm:text-2xl font-bold text-white">Feature Modules</h1>
-                                    <Button className="w-full sm:w-auto" leftIcon={<Save className="w-4 h-4" />} onClick={handleSaveModules} isLoading={isLoading}>
+                                    <div>
+                                        <h1 className="text-xl sm:text-2xl font-bold text-white">System Settings</h1>
+                                        <p className="text-sm text-white/50 mt-1">Configure feature modules and integrations</p>
+                                    </div>
+                                    <Button
+                                        className="w-full sm:w-auto bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-500/25"
+                                        leftIcon={<Save className="w-4 h-4" />}
+                                        onClick={handleSaveModules}
+                                        isLoading={isLoading}
+                                    >
                                         Save Changes
                                     </Button>
                                 </div>
 
-                                <div className="space-y-4">
-                                    <Card>
-                                        <div className="flex items-center justify-between gap-4">
-                                            <div className="flex items-center gap-4 flex-1 min-w-0">
-                                                <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center shrink-0">
-                                                    <Sparkles className="w-6 h-6 text-blue-400" />
-                                                </div>
-                                                <div className="min-w-0">
-                                                    <h3 className="font-semibold text-white">AI Analysis</h3>
-                                                    <p className="text-sm text-white/50 truncate">Enable Vertex AI triage for submissions</p>
-                                                </div>
+                                {/* Feature Modules - Premium Container */}
+                                <div className="rounded-2xl bg-white/[0.03] backdrop-blur-xl border border-white/10 overflow-hidden shadow-2xl">
+                                    {/* Section Header */}
+                                    <div className="px-5 sm:px-6 py-4 border-b border-white/10 bg-gradient-to-r from-white/[0.05] to-transparent">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded-lg bg-primary-500/20 flex items-center justify-center">
+                                                <Sparkles className="w-4 h-4 text-primary-400" />
                                             </div>
-                                            <button
-                                                onClick={() => setModules((p) => ({ ...p, ai_analysis: !p.ai_analysis }))}
-                                                className={`relative w-12 h-7 rounded-full transition-colors duration-200 shrink-0 ${modules.ai_analysis ? 'bg-primary-500' : 'bg-white/20'}`}
-                                                role="switch"
-                                                aria-checked={modules.ai_analysis}
-                                                aria-label="Toggle AI Analysis"
-                                            >
-                                                <div
-                                                    className={`absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${modules.ai_analysis ? 'translate-x-5' : 'translate-x-0'}`}
-                                                    aria-hidden="true"
-                                                />
-                                            </button>
+                                            <div>
+                                                <h2 className="text-sm font-semibold text-white">Feature Modules</h2>
+                                                <p className="text-xs text-white/40">Enable or disable platform capabilities</p>
+                                            </div>
                                         </div>
-                                    </Card>
+                                    </div>
 
-                                    <Card>
-                                        <div className="flex items-center justify-between gap-4">
-                                            <div className="flex items-center gap-4 flex-1 min-w-0">
-                                                <div className="w-12 h-12 rounded-xl bg-green-500/20 flex items-center justify-center shrink-0">
-                                                    <MessageSquare className="w-6 h-6 text-green-400" />
+                                    {/* Module Rows */}
+                                    <div className="divide-y divide-white/5">
+                                        {/* AI Analysis */}
+                                        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0 }} className="px-5 sm:px-6 py-4 hover:bg-white/[0.03] transition-all duration-200">
+                                            <div className="flex items-center justify-between gap-4">
+                                                <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
+                                                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500/20 to-blue-600/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                                                        <Sparkles className="w-5 h-5 text-blue-400" />
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <h3 className="text-sm font-semibold text-white">AI Analysis</h3>
+                                                        <p className="text-xs text-white/40 truncate">Enable Vertex AI triage for submissions</p>
+                                                    </div>
                                                 </div>
-                                                <div className="min-w-0">
-                                                    <h3 className="font-semibold text-white">SMS Alerts</h3>
-                                                    <p className="text-sm text-white/50 truncate">Enable SMS notifications to residents</p>
-                                                </div>
+                                                <button
+                                                    onClick={() => setModules((p) => ({ ...p, ai_analysis: !p.ai_analysis }))}
+                                                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 ${modules.ai_analysis ? 'bg-primary-500' : 'bg-white/15'}`}
+                                                    role="switch"
+                                                    aria-checked={modules.ai_analysis}
+                                                    aria-label="Toggle AI Analysis"
+                                                >
+                                                    <span
+                                                        className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${modules.ai_analysis ? 'translate-x-6' : 'translate-x-1'}`}
+                                                        aria-hidden="true"
+                                                    />
+                                                </button>
                                             </div>
-                                            <button
-                                                onClick={() => setModules((p) => ({ ...p, sms_alerts: !p.sms_alerts }))}
-                                                className={`relative w-12 h-7 rounded-full transition-colors duration-200 shrink-0 ${modules.sms_alerts ? 'bg-primary-500' : 'bg-white/20'}`}
-                                                role="switch"
-                                                aria-checked={modules.sms_alerts}
-                                                aria-label="Toggle SMS Alerts"
-                                            >
-                                                <div
-                                                    className={`absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${modules.sms_alerts ? 'translate-x-5' : 'translate-x-0'}`}
-                                                    aria-hidden="true"
-                                                />
-                                            </button>
-                                        </div>
-                                    </Card>
+                                        </motion.div>
 
-                                    <Card>
-                                        <div className="flex items-center justify-between gap-4">
-                                            <div className="flex items-center gap-4 flex-1 min-w-0">
-                                                <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center shrink-0">
-                                                    <Mail className="w-6 h-6 text-blue-400" />
+                                        {/* SMS Alerts */}
+                                        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="px-5 sm:px-6 py-4 hover:bg-white/[0.03] transition-all duration-200">
+                                            <div className="flex items-center justify-between gap-4">
+                                                <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
+                                                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-green-500/20 to-green-600/10 border border-green-500/20 flex items-center justify-center shrink-0">
+                                                        <MessageSquare className="w-5 h-5 text-green-400" />
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <h3 className="text-sm font-semibold text-white">SMS Alerts</h3>
+                                                        <p className="text-xs text-white/40 truncate">Enable SMS notifications to residents</p>
+                                                    </div>
                                                 </div>
-                                                <div className="min-w-0">
-                                                    <h3 className="font-semibold text-white">Email Notifications</h3>
-                                                    <p className="text-sm text-white/50 truncate">Send email updates to residents</p>
-                                                </div>
+                                                <button
+                                                    onClick={() => setModules((p) => ({ ...p, sms_alerts: !p.sms_alerts }))}
+                                                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 ${modules.sms_alerts ? 'bg-primary-500' : 'bg-white/15'}`}
+                                                    role="switch"
+                                                    aria-checked={modules.sms_alerts}
+                                                    aria-label="Toggle SMS Alerts"
+                                                >
+                                                    <span
+                                                        className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${modules.sms_alerts ? 'translate-x-6' : 'translate-x-1'}`}
+                                                        aria-hidden="true"
+                                                    />
+                                                </button>
                                             </div>
-                                            <button
-                                                onClick={() => setModules((p) => ({ ...p, email_notifications: !p.email_notifications }))}
-                                                className={`relative w-12 h-7 rounded-full transition-colors duration-200 shrink-0 ${modules.email_notifications ? 'bg-primary-500' : 'bg-white/20'}`}
-                                                role="switch"
-                                                aria-checked={modules.email_notifications}
-                                                aria-label="Toggle Email Notifications"
-                                            >
-                                                <div
-                                                    className={`absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${modules.email_notifications ? 'translate-x-5' : 'translate-x-0'}`}
-                                                    aria-hidden="true"
-                                                />
-                                            </button>
-                                        </div>
-                                    </Card>
+                                        </motion.div>
 
-                                    <Card>
-                                        <div className="flex items-center justify-between gap-4">
-                                            <div className="flex items-center gap-4 flex-1 min-w-0">
-                                                <div className="w-12 h-12 rounded-xl bg-violet-500/20 flex items-center justify-center shrink-0">
-                                                    <FlaskConical className="w-6 h-6 text-violet-400" />
+                                        {/* Email Notifications */}
+                                        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="px-5 sm:px-6 py-4 hover:bg-white/[0.03] transition-all duration-200">
+                                            <div className="flex items-center justify-between gap-4">
+                                                <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
+                                                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-500/20 to-sky-600/10 border border-sky-500/20 flex items-center justify-center shrink-0">
+                                                        <Mail className="w-5 h-5 text-sky-400" />
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <h3 className="text-sm font-semibold text-white">Email Notifications</h3>
+                                                        <p className="text-xs text-white/40 truncate">Send email updates to residents</p>
+                                                    </div>
                                                 </div>
-                                                <div className="min-w-0">
-                                                    <h3 className="font-semibold text-white">Research Portal</h3>
-                                                    <p className="text-sm text-white/50 truncate">Enable researcher access to anonymized data exports</p>
-                                                </div>
+                                                <button
+                                                    onClick={() => setModules((p) => ({ ...p, email_notifications: !p.email_notifications }))}
+                                                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 ${modules.email_notifications ? 'bg-primary-500' : 'bg-white/15'}`}
+                                                    role="switch"
+                                                    aria-checked={modules.email_notifications}
+                                                    aria-label="Toggle Email Notifications"
+                                                >
+                                                    <span
+                                                        className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${modules.email_notifications ? 'translate-x-6' : 'translate-x-1'}`}
+                                                        aria-hidden="true"
+                                                    />
+                                                </button>
                                             </div>
-                                            <button
-                                                onClick={() => setModules((p) => ({ ...p, research_portal: !p.research_portal }))}
-                                                className={`relative w-12 h-7 rounded-full transition-colors duration-200 shrink-0 ${modules.research_portal ? 'bg-primary-500' : 'bg-white/20'}`}
-                                                role="switch"
-                                                aria-checked={modules.research_portal}
-                                                aria-label="Toggle Research Portal"
-                                            >
-                                                <div
-                                                    className={`absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${modules.research_portal ? 'translate-x-5' : 'translate-x-0'}`}
-                                                    aria-hidden="true"
-                                                />
-                                            </button>
-                                        </div>
-                                    </Card>
+                                        </motion.div>
+
+                                        {/* Research Portal */}
+                                        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="px-5 sm:px-6 py-4 hover:bg-white/[0.03] transition-all duration-200">
+                                            <div className="flex items-center justify-between gap-4">
+                                                <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
+                                                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500/20 to-violet-600/10 border border-violet-500/20 flex items-center justify-center shrink-0">
+                                                        <FlaskConical className="w-5 h-5 text-violet-400" />
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <h3 className="text-sm font-semibold text-white">Research Portal</h3>
+                                                        <p className="text-xs text-white/40 truncate">Enable researcher access to anonymized data exports</p>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={() => setModules((p) => ({ ...p, research_portal: !p.research_portal }))}
+                                                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 ${modules.research_portal ? 'bg-primary-500' : 'bg-white/15'}`}
+                                                    role="switch"
+                                                    aria-checked={modules.research_portal}
+                                                    aria-label="Toggle Research Portal"
+                                                >
+                                                    <span
+                                                        className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${modules.research_portal ? 'translate-x-6' : 'translate-x-1'}`}
+                                                        aria-hidden="true"
+                                                    />
+                                                </button>
+                                            </div>
+                                        </motion.div>
+                                    </div>
                                 </div>
                             </div>
                         )}
 
                         {/* Maps Configuration - part of System Settings */}
                         {currentTab === 'system' && (
-                            <div className="mt-12 p-6 rounded-2xl bg-white/5 backdrop-blur-sm border border-white/10 space-y-6">
-                                <div>
-                                    <h2 className="text-2xl font-bold text-white mb-2">Maps Configuration</h2>
-                                    <p className="text-white/60">
-                                        Configure map settings and township boundary for data-driven styling.
-                                    </p>
+                            <div className="rounded-2xl bg-white/[0.03] backdrop-blur-xl border border-white/10 overflow-hidden shadow-2xl">
+                                {/* Section Header */}
+                                <div className="px-5 sm:px-6 py-4 border-b border-white/10 bg-gradient-to-r from-white/[0.05] to-transparent">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center">
+                                            <MapPin className="w-4 h-4 text-emerald-400" />
+                                        </div>
+                                        <div>
+                                            <h2 className="text-sm font-semibold text-white">Maps Configuration</h2>
+                                            <p className="text-xs text-white/40">Configure map settings and township boundary</p>
+                                        </div>
+                                    </div>
                                 </div>
 
+                                <div className="p-5 sm:p-6 space-y-6">
                                 {!mapsApiKey ? (
-                                    <Card>
-                                        <div className="p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/30">
+                                    <div className="p-4 rounded-xl bg-gradient-to-br from-yellow-500/10 to-yellow-600/5 border border-yellow-500/20">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded-lg bg-yellow-500/20 flex items-center justify-center shrink-0">
+                                                <AlertTriangle className="w-4 h-4 text-yellow-400" />
+                                            </div>
                                             <p className="text-sm text-yellow-300">
-                                                ⚠️ Google Maps API key is required. Please configure it in the API Keys section first.
+                                                Google Maps API key is required. Please configure it in the API Keys section first.
                                             </p>
                                         </div>
-                                    </Card>
+                                    </div>
                                 ) : (
                                     <>
                                         {/* Municipality Boundary Search */}
-                                        <Card>
-                                            <h3 className="text-lg font-semibold text-white mb-2">Municipality Boundary</h3>
-                                            <p className="text-sm text-white/50 mb-4">
+                                        <div className="p-5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                                            <h3 className="text-base font-semibold text-white mb-1">Municipality Boundary</h3>
+                                            <p className="text-xs text-white/40 mb-4">
                                                 Search for your municipality using OpenStreetMap to get its boundary.
                                             </p>
 
@@ -2233,14 +2273,14 @@ export default function AdminConsole() {
                                                     className="block w-full text-sm text-white/60 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-500 file:text-white hover:file:bg-primary-600 file:cursor-pointer"
                                                 />
                                             </div>
-                                        </Card>
+                                        </div>
 
                                         {/* Custom Map Layers */}
-                                        <Card>
+                                        <div className="p-5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                                             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
                                                 <div>
-                                                    <h3 className="text-lg font-semibold text-white">Custom Map Layers</h3>
-                                                    <p className="text-sm text-white/50">
+                                                    <h3 className="text-base font-semibold text-white">Custom Map Layers</h3>
+                                                    <p className="text-xs text-white/40">
                                                         Upload GeoJSON files for parks, storm drains, utilities, and other assets.
                                                     </p>
                                                 </div>
@@ -2384,11 +2424,12 @@ export default function AdminConsole() {
                                                     ))}
                                                 </div>
                                             )}
-                                        </Card>
+                                        </div>
 
                                     </>
 
                                 )}
+                                </div>
                             </div>
 
                         )}
