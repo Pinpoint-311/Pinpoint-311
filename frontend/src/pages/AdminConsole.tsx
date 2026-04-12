@@ -1979,13 +1979,13 @@ export default function AdminConsole() {
                                                         </div>
                                                         <button
                                                             onClick={() => setModules((p) => ({ ...p, [mod.key]: !p[mod.key] }))}
-                                                            className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors duration-300 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 ${isOn ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-slate-600'}`}
+                                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 ${isOn ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-slate-600'}`}
                                                             role="switch"
                                                             aria-checked={isOn}
                                                             aria-label={`Toggle ${mod.label}`}
                                                         >
                                                             <span
-                                                                className={`inline-block h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-300 ${isOn ? 'translate-x-6' : 'translate-x-1'}`}
+                                                                className={`inline-block h-4 w-4 rounded-full bg-white shadow-md transition-transform duration-300 ${isOn ? 'translate-x-6' : 'translate-x-1'}`}
                                                                 aria-hidden="true"
                                                             />
                                                         </button>
@@ -2000,7 +2000,7 @@ export default function AdminConsole() {
 
                         {/* Maps Configuration - part of System Settings */}
                         {currentTab === 'system' && (
-                            <div className="rounded-2xl bg-white/[0.03] backdrop-blur-xl border border-white/10 overflow-hidden shadow-2xl">
+                            <div className="mt-8 rounded-2xl bg-white/[0.03] backdrop-blur-xl border border-white/10 overflow-hidden shadow-2xl">
                                 {/* Section Header */}
                                 <div className="px-5 sm:px-6 py-4 border-b border-white/10 bg-gradient-to-r from-white/[0.05] to-transparent">
                                     <div className="flex items-center gap-3">
