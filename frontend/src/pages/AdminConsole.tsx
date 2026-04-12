@@ -1979,13 +1979,15 @@ export default function AdminConsole() {
                                                         </div>
                                                         <button
                                                             onClick={() => setModules((p) => ({ ...p, [mod.key]: !p[mod.key] }))}
-                                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 ${isOn ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-slate-600'}`}
+                                                            className={`relative inline-flex items-center rounded-full transition-colors duration-300 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 ${isOn ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-slate-600'}`}
+                                                            style={{ width: 44, height: 24, minHeight: 24, maxHeight: 24, padding: 0 }}
                                                             role="switch"
                                                             aria-checked={isOn}
                                                             aria-label={`Toggle ${mod.label}`}
                                                         >
                                                             <span
-                                                                className={`inline-block h-4 w-4 rounded-full bg-white shadow-md transition-transform duration-300 ${isOn ? 'translate-x-6' : 'translate-x-1'}`}
+                                                                className={`inline-block rounded-full bg-white shadow-md transition-transform duration-300 ${isOn ? 'translate-x-6' : 'translate-x-1'}`}
+                                                                style={{ width: 16, height: 16 }}
                                                                 aria-hidden="true"
                                                             />
                                                         </button>
