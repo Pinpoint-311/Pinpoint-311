@@ -60,9 +60,9 @@ INFRASTRUCTURE_CATEGORIES = {
 
 async def check_research_enabled(db: AsyncSession):
     """Check if research portal is enabled via Admin Console modules"""
-    if settings.enable_research_suite:
+    if getattr(settings, 'enable_research_suite', False):
         return True
-    
+
     result = await db.execute(select(SystemSettings).limit(1))
     system_settings = result.scalar_one_or_none()
     if system_settings and system_settings.modules:
