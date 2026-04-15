@@ -27,7 +27,6 @@ import {
     ChevronUp,
     Database,
     Microscope,
-    GraduationCap,
     Sparkles,
     Send,
     X,
@@ -44,7 +43,7 @@ const RESEARCH_PACKS = [
         name: 'Social Equity Pack',
         icon: Users,
         color: 'purple',
-        audience: 'Sociologists, Equity Researchers',
+        audience: 'Equity Analysts, Social Researchers',
         fields: [
             { name: 'census_tract_geoid', type: 'string', description: '11-digit FIPS code for Census dataset joins', source: 'US Census Geocoder API (real)' },
             { name: 'social_vulnerability_index', type: 'float (0-1)', description: 'CDC SVI (0=lowest, 1=highest vulnerability)', source: 'Derived from GEOID' },
@@ -64,7 +63,7 @@ const RESEARCH_PACKS = [
         name: 'Environmental Context Pack',
         icon: Cloud,
         color: 'blue',
-        audience: 'Urban Planners, Civil Engineers',
+        audience: 'Planners, Engineers, Operations Staff',
         fields: [
             { name: 'weather_precip_24h_mm', type: 'float', description: 'Precipitation in 24h before report (mm)', source: 'Open-Meteo Archive API (real)' },
             { name: 'weather_temp_max_c', type: 'float', description: 'Max temperature on report day (°C)', source: 'Open-Meteo Archive API (real)' },
@@ -86,7 +85,7 @@ const RESEARCH_PACKS = [
         name: 'Sentiment & Trust Pack',
         icon: MessageSquare,
         color: 'pink',
-        audience: 'Political Scientists, Civic UX Researchers',
+        audience: 'Civic Engagement Analysts, Administrators',
         fields: [
             { name: 'sentiment_score', type: 'float (-1 to +1)', description: 'NLP sentiment (-1=angry, +1=grateful)', source: 'Word-based NLP (real)' },
             { name: 'is_repeat_report', type: 'boolean', description: 'Text indicates prior report of same issue', source: 'Regex detection (real)' },
@@ -105,7 +104,7 @@ const RESEARCH_PACKS = [
         name: 'Bureaucratic Friction Pack',
         icon: Building2,
         color: 'orange',
-        audience: 'Public Administration Researchers',
+        audience: 'Operations Managers, Process Analysts',
         fields: [
             { name: 'time_to_triage_hours', type: 'float', description: 'Hours from submission to first "In Progress"', source: 'Audit logs (real)' },
             { name: 'reassignment_count', type: 'int', description: 'Times request bounced between departments', source: 'Audit logs (real)' },
@@ -128,7 +127,7 @@ const RESEARCH_PACKS = [
         name: 'AI/ML Research Pack',
         icon: Brain,
         color: 'green',
-        audience: 'AI/ML Researchers, Data Scientists',
+        audience: 'Data Scientists, AI/ML Engineers',
         fields: [
             { name: 'ai_flagged', type: 'boolean', description: 'AI flagged for staff review', source: 'Vertex AI (real)' },
             { name: 'ai_flag_reason', type: 'string', description: 'Reason for AI flag (safety, urgent)', source: 'Vertex AI (real)' },
@@ -193,7 +192,7 @@ export const ResearchLab: React.FC = () => {
     // Set browser tab title
     useEffect(() => {
         const previousTitle = document.title;
-        document.title = 'University Research Data Lab | ' + (settings?.township_name || '311');
+        document.title = 'Research & Analytics Lab | ' + (settings?.township_name || '311');
         return () => {
             document.title = previousTitle;
         };
@@ -405,7 +404,7 @@ export const ResearchLab: React.FC = () => {
                         <div>
                             <h1 className="text-xl font-bold text-white flex items-center gap-2">
                                 <Microscope className="w-6 h-6 text-amber-400" />
-                                University Research Data Lab
+                                Research & Analytics Lab
                             </h1>
                             <p className="text-sm text-white/50">
                                 {settings?.township_name} • {totalFields} research fields available
@@ -422,7 +421,7 @@ export const ResearchLab: React.FC = () => {
                             Ask AI
                         </Button>
                         <div className="flex items-center gap-2 text-sm text-white/60">
-                            <GraduationCap className="w-4 h-4" />
+                            <Database className="w-4 h-4" />
                             <span>{user?.username} ({user?.role})</span>
                         </div>
                     </div>
@@ -437,11 +436,11 @@ export const ResearchLab: React.FC = () => {
                     className="mb-8 text-center"
                 >
                     <h2 className="text-3xl font-bold text-white mb-3">
-                        Academic Research Data Export
+                        Research Data Export
                     </h2>
                     <p className="text-white/60 max-w-2xl mx-auto">
-                        Export rich, privacy-preserving datasets for urban studies, public administration research,
-                        equity analysis, and AI/ML training. All {totalFields} fields computed on-the-fly with real data sources.
+                        Export rich, privacy-preserving datasets for operational analysis, equity studies,
+                        infrastructure planning, and data science. All {totalFields} fields computed on-the-fly with real data sources.
                     </p>
                 </motion.div>
 
@@ -901,8 +900,8 @@ export const ResearchLab: React.FC = () => {
                                     <Sparkles className="w-4 h-4 text-white" />
                                 </div>
                                 <div>
-                                    <h3 className="font-semibold text-white text-sm">Research Assistant</h3>
-                                    <p className="text-xs text-white/40">Powered by Vertex AI</p>
+                                    <h3 className="font-semibold text-white text-sm">Data Assistant</h3>
+                                    <p className="text-xs text-white/40">AI-Powered Analytics</p>
                                 </div>
                             </div>
                             <button

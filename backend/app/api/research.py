@@ -1,8 +1,8 @@
 """
-Research Suite API - Read-only analytics layer for researchers
+Research Suite API - Read-only analytics layer for researchers and staff
 
 This module provides sanitized, PII-free access to service request data
-for academic and municipal research purposes.
+for research, operational analysis, and planning purposes.
 
 Research Focus Areas:
 - Civil Engineering & Infrastructure: Asset types, infrastructure categories, maintenance patterns
@@ -1475,7 +1475,7 @@ async def get_data_dictionary(
 ):
     """
     Get data dictionary explaining all fields in exports.
-    Essential for academic research documentation.
+    Essential for research documentation and analysis reproducibility.
     """
     if not await check_research_enabled(db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Research Suite is not enabled")
@@ -1794,7 +1794,7 @@ async def get_data_dictionary(
         },
         "research_packs": {
             "social_equity": {
-                "audience": "Sociologists, Equity Researchers",
+                "audience": "Equity Analysts, Social Researchers",
                 "fields": ["census_tract_geoid", "social_vulnerability_index", "housing_tenure_renter_pct", "income_quintile", "population_density"],
                 "suggested_analyses": [
                     "Join with Census ACS for demographic correlation",
@@ -1804,7 +1804,7 @@ async def get_data_dictionary(
                 ]
             },
             "environmental_context": {
-                "audience": "Urban Planners, Civil Engineers",
+                "audience": "Planners, Engineers, Operations Staff",
                 "fields": ["weather_precip_24h_mm", "weather_temp_max_c", "weather_temp_min_c", "nearby_asset_age_years", "season"],
                 "suggested_analyses": [
                     "Freeze-thaw cycle pothole correlation",
@@ -1814,7 +1814,7 @@ async def get_data_dictionary(
                 ]
             },
             "sentiment_trust": {
-                "audience": "Political Scientists, Civic UX Researchers",
+                "audience": "Civic Engagement Analysts, Administrators",
                 "fields": ["sentiment_score", "is_repeat_report", "prior_report_mentioned", "frustration_expressed"],
                 "suggested_analyses": [
                     "Sentiment vs income quintile correlation",
@@ -1824,7 +1824,7 @@ async def get_data_dictionary(
                 ]
             },
             "bureaucratic_friction": {
-                "audience": "Public Administration Researchers",
+                "audience": "Operations Managers, Process Analysts",
                 "fields": ["time_to_triage_hours", "reassignment_count", "off_hours_submission", "escalation_occurred"],
                 "suggested_analyses": [
                     "Triage time vs resolution outcome",
@@ -1834,7 +1834,7 @@ async def get_data_dictionary(
                 ]
             },
             "civil_engineering": {
-                "audience": "Infrastructure Researchers",
+                "audience": "Planners, Engineers, Operations Staff",
                 "fields": ["infrastructure_category", "matched_asset_type", "nearby_asset_age_years", "season", "has_photos"],
                 "suggested_analyses": [
                     "Infrastructure maintenance patterns by category",
@@ -1843,7 +1843,7 @@ async def get_data_dictionary(
                 ]
             },
             "ai_ml_research": {
-                "audience": "AI/ML Researchers",
+                "audience": "Data Scientists, AI/ML Engineers",
                 "fields": ["ai_flagged", "ai_priority_score", "ai_classification", "ai_summary_sanitized", "ai_vs_manual_priority_diff", "ai_analyzed"],
                 "suggested_analyses": [
                     "AI-human priority alignment study",
@@ -1864,7 +1864,7 @@ async def export_data_dictionary_csv(
     """
     Download data dictionary as CSV file.
     This companion file explains every column in the research exports.
-    Researchers should download this alongside their data export.
+    Download this alongside your data export for reference.
     """
     if not await check_research_enabled(db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Research Suite is not enabled")
@@ -2127,7 +2127,7 @@ async def get_access_logs(
 
 
 # ============================================================================
-# RESEARCH AI CHAT — Conversational AI for researchers
+# RESEARCH AI CHAT — Conversational AI for researchers and staff
 # ============================================================================
 
 from pydantic import BaseModel
@@ -2153,7 +2153,7 @@ async def research_chat(
     current_user = Depends(get_current_researcher)
 ):
     """
-    Conversational AI assistant for researchers — answers questions about
+    Conversational AI assistant — answers questions about
     data fields, methodology, research packs, export formats, and analysis techniques.
     Uses the township's Vertex AI (Gemini) credentials.
     """
@@ -2189,14 +2189,14 @@ async def research_chat(
     research_field_count = 30
     total_field_count = core_field_count + research_field_count
 
-    system_prompt = f"""You are a research data assistant for the {township_name} Pinpoint 311 Research Data Lab. You help academic researchers understand the available data, methodology, and analysis techniques.
+    system_prompt = f"""You are a data assistant for the {township_name} Pinpoint 311 Research & Analytics Lab. You help researchers and municipal staff understand the available data, methodology, and analysis techniques.
 
 ## YOUR ROLE
-- Help researchers understand the {total_field_count} available data fields
+- Help users understand the {total_field_count} available data fields
 - Explain research methodology and data sources
 - Suggest analyses and statistical approaches
 - Answer questions about data formats, privacy modes, and export options
-- Be precise about field definitions — researchers need exact specifications
+- Be precise about field definitions — users need exact specifications
 
 ## CURRENT DATASET
 - **Township:** {township_name}
@@ -2229,7 +2229,7 @@ async def research_chat(
 | department_id | int | Assigned department |
 | comment_count / public_comment_count | int | Comment counts |
 
-## RESEARCH PACK: Social Equity (Sociologists, Equity Researchers)
+## RESEARCH PACK: Social Equity (Equity Analysts, Social Researchers)
 | Field | Type | Source |
 |-------|------|--------|
 | census_tract_geoid | string | US Census Geocoder API (real) — 11-digit FIPS code |
@@ -2238,7 +2238,7 @@ async def research_chat(
 | income_quintile | int (1-5) | Census ACS B19013 median household income |
 | population_density | string (low/medium/high) | Census ACS B01003 |
 
-## RESEARCH PACK: Environmental Context (Urban Planners, Civil Engineers)
+## RESEARCH PACK: Environmental Context (Planners, Engineers, Operations Staff)
 | Field | Type | Source |
 |-------|------|--------|
 | weather_precip_24h_mm | float | Open-Meteo Archive API |
@@ -2248,7 +2248,7 @@ async def research_chat(
 | matched_asset_attributes | JSON string | Full asset properties |
 | season | string | Calculated from timestamp |
 
-## RESEARCH PACK: Sentiment & Trust (Political Scientists)
+## RESEARCH PACK: Sentiment & Trust (Civic Engagement Analysts)
 | Field | Type | Source |
 |-------|------|--------|
 | sentiment_score | float (-1 to +1) | Word-based NLP analysis |
@@ -2256,7 +2256,7 @@ async def research_chat(
 | prior_report_mentioned | bool | Regex — references ticket/case numbers |
 | frustration_expressed | bool | Regex — trust erosion indicators |
 
-## RESEARCH PACK: Bureaucratic Friction (Public Administration)
+## RESEARCH PACK: Bureaucratic Friction (Operations Managers, Process Analysts)
 | Field | Type | Source |
 |-------|------|--------|
 | time_to_triage_hours | float | Audit logs — submission to first "In Progress" |
@@ -2268,7 +2268,7 @@ async def research_chat(
 | days_to_first_update | float | Days until first staff action |
 | status_change_count | int | Number of status changes |
 
-## RESEARCH PACK: AI/ML Research (Data Scientists)
+## RESEARCH PACK: AI/ML Research (Data Scientists, AI/ML Engineers)
 | Field | Type | Source |
 |-------|------|--------|
 | ai_flagged | bool | Vertex AI flagged for review |
@@ -2281,7 +2281,7 @@ async def research_chat(
 
 ## PRIVACY MODES
 - **Fuzzed (default):** Coordinates snapped to ~100ft grid, house numbers removed. Safe for most research.
-- **Exact (admin only):** Full precision coordinates and full addresses. Required IRB approval recommended.
+- **Exact (admin only):** Full precision coordinates and full addresses. Use with appropriate data governance approval.
 
 ## EXPORT FORMATS
 - **CSV:** Standard tabular format with all {total_field_count} fields. UTF-8 encoded.
@@ -2297,12 +2297,12 @@ async def research_chat(
 - Infrastructure categories are mapped from service_code via keyword matching
 
 ## SUGGESTED ANALYSES
-- SVI vs response time regression (equity research)
-- Freeze-thaw cycle pothole correlation (civil engineering)
-- Sentiment vs income quintile (political science)
-- AI-human priority alignment study (AI/ML research)
-- Department routing efficiency audit (public administration)
-- Renter vs owner reporting rate comparison (housing research)
+- SVI vs response time regression (equity analysis)
+- Freeze-thaw cycle pothole correlation (infrastructure planning)
+- Sentiment vs income quintile (civic engagement analysis)
+- AI-human priority alignment study (AI/ML evaluation)
+- Department routing efficiency audit (operations management)
+- Renter vs owner reporting rate comparison (housing analysis)
 
 ## RESPONSE RULES
 - Be precise about field definitions and data types
@@ -2315,9 +2315,9 @@ async def research_chat(
     # Build conversation
     conversation = system_prompt + "\n\n## CONVERSATION\n"
     for msg in body.history[-20:]:
-        role_label = "Researcher" if msg.role == "user" else "Research Assistant"
+        role_label = "User" if msg.role == "user" else "Data Assistant"
         conversation += f"\n**{role_label}:** {msg.content}\n"
-    conversation += f"\n**Researcher:** {body.message}\n\n**Research Assistant:**"
+    conversation += f"\n**User:** {body.message}\n\n**Data Assistant:**"
 
     # Call Vertex AI
     try:
