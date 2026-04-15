@@ -117,9 +117,11 @@ def build_analysis_prompt(
 
     # Add spatial context
     if spatial_context:
+        infra_list = spatial_context.get('critical_infrastructure', [])
+        infra_str = '; '.join(infra_list) if infra_list else 'None identified within 500m'
         prompt += f"""
 ## Spatial & Environmental Context
-- **Proximity to Critical Infrastructure**: {spatial_context.get('critical_infrastructure', 'None identified within 50ft')}
+- **Proximity to Critical Infrastructure**: {infra_str}
 - **Nearby active outages**: {spatial_context.get('nearby_outages', 0)} detected within 100m
 - **Area profile**: {spatial_context.get('area_type', 'Unknown')} (High Traffic: {spatial_context.get('is_high_traffic', 'N/A')})
 - **Vulnerable population impact**: {spatial_context.get('vulnerable_pop_prox', 'Low')}
@@ -536,75 +538,91 @@ async def get_spatial_context(db, lat: float, long: float, service_code: str) ->
                     except Exception as e:
                         logger.warning(f"Failed to check spatial proximity for layer {layer.name}: {e}")
 
-        # Fallback: If no critical infrastructure found from GeoJSON layers, use Nominatim (OSM)
+        # Fallback: If no critical infrastructure found from GeoJSON layers, use Overpass API (OSM)
         if not spatial_info["critical_infrastructure"]:
             try:
                 import math
-                
-                logger.info(f"[Critical Infrastructure] Using Nominatim fallback for {lat},{long}")
-                
-                # Search radius in degrees (~500m at this latitude)
-                # 1 degree lat ≈ 111km, 1 degree lon ≈ 111km * cos(lat)
-                radius_deg = 0.005  # ~500m
-                
-                # Critical infrastructure types to search for
-                search_terms = ["school", "fire station", "hospital", "police"]
-                
-                async with httpx.AsyncClient(timeout=8.0) as client:
-                    for search_term in search_terms:
-                        nominatim_url = "https://nominatim.openstreetmap.org/search"
-                        params = {
-                            "q": search_term,
-                            "format": "json",
-                            "bounded": 1,
-                            "viewbox": f"{long - radius_deg},{lat + radius_deg},{long + radius_deg},{lat - radius_deg}",
-                            "limit": 3,
-                            "addressdetails": 1
-                        }
-                        headers = {
-                            "User-Agent": "Township311/1.0 (township311-infrastructure-check)"
-                        }
-                        
-                        response = await client.get(nominatim_url, params=params, headers=headers)
-                        logger.info(f"[Critical Infrastructure] Nominatim search for '{search_term}': status {response.status_code}")
-                        
-                        if response.status_code == 200:
-                            results = response.json()
-                            logging.info(f"[Critical Infrastructure] Found {len(results)} {search_term} results")
-                            
-                            if results:
-                                # Calculate distance to each result and find closest
-                                for result in results:
-                                    result_lat = float(result.get("lat", 0))
-                                    result_lon = float(result.get("lon", 0))
-                                    
-                                    # Haversine distance calculation
-                                    R = 6371000  # Earth radius in meters
-                                    d_lat = math.radians(result_lat - lat)
-                                    d_lon = math.radians(result_lon - long)
-                                    a = math.sin(d_lat / 2) ** 2 + math.cos(math.radians(lat)) * math.cos(math.radians(result_lat)) * math.sin(d_lon / 2) ** 2
-                                    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-                                    distance_m = R * c
-                                    
-                                    # Only include if within 300m (filter out far results from bounding box)
-                                    if distance_m <= 300:
-                                        place_name = result.get("display_name", "").split(",")[0]  # Get first part of name
-                                        place_type = search_term.replace("_", " ").title()
-                                        spatial_info["critical_infrastructure"].append(
-                                            f"{place_type}: {place_name} ({int(distance_m)}m)"
-                                        )
-                                        logger.info(f"[Critical Infrastructure] Detected via Nominatim: {place_name} at {int(distance_m)}m")
-                                        break  # Take first match within 300m for this type
-                                # Continue searching for other infrastructure types (don't break outer loop)
-                        
-                        # Rate limit: Nominatim requests 1 req/sec max
-                        await asyncio.sleep(0.2)
-                
+
+                logger.info(f"[Critical Infrastructure] Using Overpass API fallback for {lat},{long}")
+
+                # Single Overpass query to find all critical infrastructure within 500m
+                overpass_url = "https://overpass-api.de/api/interpreter"
+                overpass_query = f"""
+[out:json][timeout:10];
+(
+  node["amenity"~"school|hospital|clinic|fire_station|police|nursing_home"](around:500,{lat},{long});
+  way["amenity"~"school|hospital|clinic|fire_station|police|nursing_home"](around:500,{lat},{long});
+  node["emergency"~"ambulance_station|fire_hydrant"](around:300,{lat},{long});
+  node["healthcare"](around:500,{lat},{long});
+);
+out center body;
+"""
+
+                import aiohttp
+
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=12)) as session:
+                    async with session.post(
+                        overpass_url,
+                        data={"data": overpass_query},
+                        headers={"User-Agent": "Pinpoint311/1.0 (infrastructure-check)"}
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json(content_type=None)
+                            elements = data.get("elements", [])
+                            logger.info(f"[Critical Infrastructure] Overpass returned {len(elements)} elements")
+
+                            # Type label mapping
+                            type_labels = {
+                                "school": "School",
+                                "hospital": "Hospital",
+                                "clinic": "Medical Clinic",
+                                "fire_station": "Fire Station",
+                                "police": "Police Station",
+                                "nursing_home": "Nursing Home/Assisted Living",
+                                "ambulance_station": "Ambulance Station",
+                            }
+
+                            seen_types = set()
+                            for el in elements:
+                                tags = el.get("tags", {})
+                                amenity = tags.get("amenity", "")
+                                emergency = tags.get("emergency", "")
+                                healthcare = tags.get("healthcare", "")
+
+                                # Determine type label
+                                infra_type = amenity or emergency or healthcare
+                                if infra_type in seen_types:
+                                    continue  # One per type
+
+                                label = type_labels.get(infra_type, infra_type.replace("_", " ").title())
+                                name = tags.get("name", label)
+
+                                # Get coordinates (center for ways)
+                                el_lat = el.get("center", {}).get("lat", el.get("lat", 0))
+                                el_lon = el.get("center", {}).get("lon", el.get("lon", 0))
+
+                                # Haversine distance
+                                R = 6371000
+                                d_lat = math.radians(el_lat - lat)
+                                d_lon = math.radians(el_lon - long)
+                                a = math.sin(d_lat / 2) ** 2 + math.cos(math.radians(lat)) * math.cos(math.radians(el_lat)) * math.sin(d_lon / 2) ** 2
+                                c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+                                distance_m = R * c
+
+                                if distance_m <= 500:
+                                    spatial_info["critical_infrastructure"].append(
+                                        f"{label}: {name} ({int(distance_m)}m)"
+                                    )
+                                    seen_types.add(infra_type)
+                                    logger.info(f"[Critical Infrastructure] Detected via Overpass: {name} ({label}) at {int(distance_m)}m")
+                        else:
+                            logger.warning(f"[Critical Infrastructure] Overpass API returned status {response.status}")
+
                 if not spatial_info["critical_infrastructure"]:
-                    logger.info("[Critical Infrastructure] No critical infrastructure found within 300m via Nominatim")
-                    
+                    logger.info("[Critical Infrastructure] No critical infrastructure found within 500m via Overpass")
+
             except Exception as e:
-                logger.warning(f"Nominatim critical infrastructure search failed: {e}")
+                logger.warning(f"Overpass critical infrastructure search failed: {e}")
 
         # 2. Lighting / Outages (Streetlight reports within 100m)
         outage_query = select(func.count(ServiceRequest.id)).where(
