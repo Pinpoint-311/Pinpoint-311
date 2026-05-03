@@ -33,6 +33,22 @@ interface RecentCommit {
     author: string;
 }
 
+interface DeployStep {
+    step: string;
+    success: boolean;
+    detail: string;
+    timestamp: string;
+}
+
+interface DeployFailureDetail {
+    message?: string;
+    error?: string;
+    rollback_performed?: boolean;
+    rollback_errors?: string[];
+    backup_available?: string;
+    steps?: DeployStep[];
+}
+
 interface SecurityCheck {
     name: string;
     icon: string;
@@ -73,8 +89,10 @@ export default function VersionSwitcher() {
     const [isSwitching, setIsSwitching] = useState(false);
     const [deployProgress, setDeployProgress] = useState(0);
     const [error, setError] = useState<string | null>(null);
+    const [deployFailure, setDeployFailure] = useState<DeployFailureDetail | null>(null);
     const [message, setMessage] = useState<string | null>(null);
     const [dropdownOpen, setDropdownOpen] = useState(false);
+    const [showDeployLog, setShowDeployLog] = useState(false);
 
     const fetchCurrentVersion = async () => {
         try {
@@ -153,6 +171,8 @@ export default function VersionSwitcher() {
         setDeployProgress(10);
         setMessage('Starting deployment...');
         setError(null);
+        setDeployFailure(null);
+        setShowDeployLog(false);
 
         try {
             setDeployProgress(25);
@@ -215,10 +235,11 @@ export default function VersionSwitcher() {
                 fetchCurrentVersion();
                 fetchReleases();
             } else {
-                // Handle rollback response
                 const detail = data.detail;
                 if (typeof detail === 'object') {
-                    setError(`❌ ${detail.message || 'Deployment failed'}${detail.rollback_performed ? ' - Rollback completed' : ''}`);
+                    setDeployFailure(detail as DeployFailureDetail);
+                    setShowDeployLog(true);
+                    setError(`${detail.message || 'Deployment failed'}${detail.rollback_performed ? ' — rolled back automatically' : ''}`);
                 } else {
                     setError(detail || 'Failed to deploy version');
                 }
@@ -559,9 +580,65 @@ export default function VersionSwitcher() {
 
             {/* Messages */}
             {error && (
-                <div className="p-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-xs flex items-center gap-1.5">
-                    <AlertCircle className="w-3 h-3 flex-shrink-0" />
-                    <span className="truncate">{error}</span>
+                <div className="space-y-2">
+                    <div className="p-2.5 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-xs">
+                        <div className="flex items-start gap-1.5">
+                            <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                            <span>{error}</span>
+                        </div>
+                    </div>
+
+                    {/* Deployment Log */}
+                    {deployFailure?.steps && deployFailure.steps.length > 0 && (
+                        <div className="rounded-lg border border-white/10 overflow-hidden">
+                            <button
+                                onClick={() => setShowDeployLog(!showDeployLog)}
+                                className="w-full flex items-center justify-between px-3 py-2 bg-white/[0.04] hover:bg-white/[0.06] transition-colors text-xs"
+                            >
+                                <span className="text-white/50 font-medium flex items-center gap-1.5">
+                                    <Clock className="w-3 h-3" />
+                                    Deployment Log ({deployFailure.steps.length} steps)
+                                </span>
+                                <ChevronDown className={`w-3 h-3 text-white/40 transition-transform ${showDeployLog ? 'rotate-180' : ''}`} />
+                            </button>
+                            {showDeployLog && (
+                                <div className="px-3 py-2 space-y-1.5 bg-black/20 max-h-64 overflow-y-auto">
+                                    {deployFailure.steps.map((step, i) => (
+                                        <div key={i} className="flex items-start gap-2 text-[11px]">
+                                            {step.success ? (
+                                                <Check className="w-3 h-3 text-emerald-400 flex-shrink-0 mt-0.5" />
+                                            ) : (
+                                                <X className="w-3 h-3 text-red-400 flex-shrink-0 mt-0.5" />
+                                            )}
+                                            <div className="min-w-0">
+                                                <span className={`font-mono font-medium ${step.success ? 'text-white/60' : 'text-red-400'}`}>
+                                                    {step.step.replace(/_/g, ' ')}
+                                                </span>
+                                                {step.detail && (
+                                                    <p className={`mt-0.5 break-all ${step.success ? 'text-white/35' : 'text-red-300/70'}`}>
+                                                        {step.detail}
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {deployFailure.error && (
+                                        <div className="pt-1.5 mt-1.5 border-t border-white/5">
+                                            <p className="text-[11px] text-red-300/80 font-mono break-all">{deployFailure.error}</p>
+                                        </div>
+                                    )}
+                                    {deployFailure.rollback_errors && deployFailure.rollback_errors.length > 0 && (
+                                        <div className="pt-1.5 mt-1.5 border-t border-white/5">
+                                            <p className="text-[10px] text-amber-400/80 font-medium mb-1">Rollback issues:</p>
+                                            {deployFailure.rollback_errors.map((err, i) => (
+                                                <p key={i} className="text-[11px] text-amber-300/60 break-all">{err}</p>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
 
