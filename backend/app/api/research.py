@@ -2310,7 +2310,10 @@ async def research_chat(
 - Include code snippets in Python (pandas) or R when helpful
 - Recommend appropriate visualization types
 - Cite data source limitations honestly
-- Never fabricate field names or capabilities"""
+- Never fabricate field names or capabilities
+- NEVER use markdown tables (| col | col |) — the chat UI cannot render them. Use bullet lists or bold labels instead. For example, instead of a table use: **field_name** (type) — description
+- Use **bold**, `code`, bullet points (- ), and code blocks (```) for formatting — these all render correctly
+- Avoid markdown headers (#, ##) in responses — use **bold text** on its own line for section titles instead"""
 
     # Build conversation
     conversation = system_prompt + "\n\n## CONVERSATION\n"
