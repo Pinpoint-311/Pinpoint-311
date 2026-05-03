@@ -74,7 +74,7 @@ import {
     Download,
     Eye,
     EyeOff,
-    CheckCircle2,
+    CircleCheck,
 } from 'lucide-react';
 import { Button, Card, Modal, Input, Select, Badge, AccordionSection } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
@@ -2059,7 +2059,7 @@ export default function AdminConsole() {
                                                     <div className="flex items-center justify-between">
                                                         <div className="flex items-center gap-3">
                                                             <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center">
-                                                                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                                                                <CircleCheck className="w-4 h-4 text-emerald-400" />
                                                             </div>
                                                             <div>
                                                                 <p className="text-sm font-medium text-emerald-300">Boundary Configured</p>
