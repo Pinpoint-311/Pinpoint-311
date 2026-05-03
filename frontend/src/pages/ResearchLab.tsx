@@ -948,11 +948,43 @@ export const ResearchLab: React.FC = () => {
                                                 if (codeBlockMatch) {
                                                     return <pre key={si} className="bg-black/40 rounded-lg p-3 my-2 overflow-x-auto text-xs text-amber-300"><code>{codeBlockMatch[1]}</code></pre>;
                                                 }
-                                                // Process inline formatting
-                                                return segment.split('\n').map((line, li) => {
-                                                    const bulletLine = line.replace(/^- (.+)$/, '• $1');
-                                                    // Split by inline code and bold
-                                                    const parts = bulletLine.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).map((part, pi) => {
+
+                                                // Detect and render markdown tables
+                                                const tableMatch = segment.match(/((?:^\|.+\|[ ]*\n?)+)/gm);
+                                                if (tableMatch) {
+                                                    const parts: React.ReactNode[] = [];
+                                                    let remaining = segment;
+                                                    tableMatch.forEach((tbl, ti) => {
+                                                        const idx = remaining.indexOf(tbl);
+                                                        if (idx > 0) parts.push(<span key={`pre-${si}-${ti}`}>{remaining.slice(0, idx)}</span>);
+                                                        const rows = tbl.trim().split('\n').filter(r => r.trim());
+                                                        const isSeparator = (r: string) => /^\|[\s\-:|]+\|$/.test(r.trim());
+                                                        const dataRows = rows.filter(r => !isSeparator(r));
+                                                        const parseCells = (r: string) => r.split('|').slice(1, -1).map(c => c.trim());
+                                                        if (dataRows.length > 0) {
+                                                            const headerCells = parseCells(dataRows[0]);
+                                                            const bodyRows = dataRows.slice(1);
+                                                            parts.push(
+                                                                <div key={`tbl-${si}-${ti}`} className="my-2 overflow-x-auto rounded-lg border border-white/10">
+                                                                    <table className="w-full text-xs">
+                                                                        <thead><tr className="bg-white/10">{headerCells.map((c, ci) => <th key={ci} className="px-3 py-1.5 text-left text-white font-semibold border-b border-white/10">{c}</th>)}</tr></thead>
+                                                                        <tbody>{bodyRows.map((row, ri) => {
+                                                                            const cells = parseCells(row);
+                                                                            return <tr key={ri} className={ri % 2 ? 'bg-white/5' : ''}>{cells.map((c, ci) => <td key={ci} className="px-3 py-1.5 text-white/70 border-b border-white/5">{c}</td>)}</tr>;
+                                                                        })}</tbody>
+                                                                    </table>
+                                                                </div>
+                                                            );
+                                                        }
+                                                        remaining = remaining.slice(idx + tbl.length);
+                                                    });
+                                                    if (remaining) parts.push(<span key={`post-${si}`}>{remaining}</span>);
+                                                    return <span key={si}>{parts}</span>;
+                                                }
+
+                                                // Process inline formatting line by line
+                                                const formatInline = (text: string) => {
+                                                    return text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).map((part, pi) => {
                                                         if (part.startsWith('`') && part.endsWith('`')) {
                                                             return <code key={pi} className="bg-black/30 px-1.5 py-0.5 rounded text-xs text-amber-300">{part.slice(1, -1)}</code>;
                                                         }
@@ -961,6 +993,26 @@ export const ResearchLab: React.FC = () => {
                                                         }
                                                         return <span key={pi}>{part}</span>;
                                                     });
+                                                };
+
+                                                return segment.split('\n').map((line, li) => {
+                                                    // Headers
+                                                    const h3Match = line.match(/^### (.+)$/);
+                                                    if (h3Match) return <div key={`${si}-${li}`} className="text-sm font-semibold text-white mt-2 mb-1">{formatInline(h3Match[1])}{'\n'}</div>;
+                                                    const h2Match = line.match(/^## (.+)$/);
+                                                    if (h2Match) return <div key={`${si}-${li}`} className="text-sm font-bold text-white mt-3 mb-1">{formatInline(h2Match[1])}{'\n'}</div>;
+                                                    const h1Match = line.match(/^# (.+)$/);
+                                                    if (h1Match) return <div key={`${si}-${li}`} className="text-base font-bold text-white mt-3 mb-1">{formatInline(h1Match[1])}{'\n'}</div>;
+
+                                                    // Numbered lists
+                                                    const numberedMatch = line.match(/^(\d+)\.\s+(.+)$/);
+                                                    if (numberedMatch) {
+                                                        return <span key={`${si}-${li}`}>{numberedMatch[1]}. {formatInline(numberedMatch[2])}{'\n'}</span>;
+                                                    }
+
+                                                    // Bullet points
+                                                    const bulletLine = line.replace(/^- (.+)$/, '• $1');
+                                                    const parts = formatInline(bulletLine);
                                                     return <span key={`${si}-${li}`}>{parts}{li < segment.split('\n').length - 1 && '\n'}</span>;
                                                 });
                                             })}
