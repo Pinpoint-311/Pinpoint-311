@@ -1678,8 +1678,13 @@ async def switch_version(
         
         # 3. Restart original containers
         try:
+            rollback_cmd = ["docker", "compose", "-p", compose_project]
+            prod_compose = os.path.join(project_root, "docker-compose.prod.yml")
+            if os.path.exists(prod_compose):
+                rollback_cmd.extend(["-f", "docker-compose.yml", "-f", "docker-compose.prod.yml"])
+            rollback_cmd.extend(["up", "-d", "--force-recreate", "backend", "frontend"])
             subprocess.run(
-                ["docker", "compose", "-p", compose_project, "restart", "backend", "frontend"],
+                rollback_cmd,
                 cwd=project_root,
                 capture_output=True,
                 timeout=120
@@ -1833,39 +1838,94 @@ async def switch_version(
         
         # ===== STEP 5: Rebuild Containers =====
         try:
-            # Only rebuild frontend (backend auto-reloads via --reload + volume mount)
-            build_result = subprocess.run(
-                ["docker", "compose", "-p", compose_project, "build", "--no-cache", "frontend"],
-                cwd=project_root,
-                capture_output=True,
-                text=True,
-                timeout=600  # 10 min for build
-            )
-            
-            if build_result.returncode != 0:
-                log_step("container_build", False, build_result.stderr[:300])
-                raise Exception(f"Container build failed: {build_result.stderr[:200]}")
-            
-            log_step("container_build", True, "Built frontend image")
-            
-            # Then restart with new images
-            restart_result = subprocess.run(
-                ["docker", "compose", "-p", compose_project, "up", "-d", "--force-recreate", "frontend"],
-                cwd=project_root,
-                capture_output=True,
-                text=True,
-                timeout=120
-            )
-            
-            if restart_result.returncode != 0:
-                log_step("container_restart", False, restart_result.stderr[:200])
-                raise Exception(f"Container restart failed: {restart_result.stderr[:200]}")
-            
-            state["containers_rebuilt"] = True
-            log_step("container_restart", True, "Restarted frontend container with new code")
-            
+            # Detect which compose files are in use
+            compose_files = []
+            for f in ["docker-compose.yml", "docker-compose.prod.yml"]:
+                fpath = os.path.join(project_root, f)
+                if os.path.exists(fpath):
+                    compose_files.append(f)
+            log_step("compose_files_detected", True, ", ".join(compose_files))
+
+            # Check if production compose is in use (uses prebuilt images, no local build)
+            prod_compose = os.path.join(project_root, "docker-compose.prod.yml")
+            uses_prebuilt = os.path.exists(prod_compose)
+
+            if uses_prebuilt:
+                # Production mode: pull latest images from GHCR instead of building locally
+                log_step("deploy_mode", True, "Production (prebuilt GHCR images)")
+
+                pull_result = subprocess.run(
+                    ["docker", "compose", "-p", compose_project,
+                     "-f", "docker-compose.yml", "-f", "docker-compose.prod.yml",
+                     "pull", "frontend", "backend"],
+                    cwd=project_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
+
+                if pull_result.returncode != 0:
+                    combined = (pull_result.stderr + pull_result.stdout)[-800:]
+                    log_step("image_pull", False, combined)
+                    raise Exception(f"Image pull failed: {combined}")
+
+                log_step("image_pull", True, "Pulled latest images from GHCR")
+
+                # Recreate containers with new images
+                up_result = subprocess.run(
+                    ["docker", "compose", "-p", compose_project,
+                     "-f", "docker-compose.yml", "-f", "docker-compose.prod.yml",
+                     "up", "-d", "--force-recreate", "frontend", "backend"],
+                    cwd=project_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+
+                if up_result.returncode != 0:
+                    combined = (up_result.stderr + up_result.stdout)[-800:]
+                    log_step("container_recreate", False, combined)
+                    raise Exception(f"Container recreate failed: {combined}")
+
+                state["containers_rebuilt"] = True
+                log_step("container_recreate", True, "Recreated containers with new images")
+            else:
+                # Dev mode: build locally
+                log_step("deploy_mode", True, "Development (local Docker build)")
+
+                build_result = subprocess.run(
+                    ["docker", "compose", "-p", compose_project, "build", "--no-cache", "frontend"],
+                    cwd=project_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=600
+                )
+
+                if build_result.returncode != 0:
+                    combined = (build_result.stderr + build_result.stdout)[-800:]
+                    log_step("container_build", False, combined)
+                    raise Exception(f"Container build failed: {combined}")
+
+                log_step("container_build", True, "Built frontend image")
+
+                restart_result = subprocess.run(
+                    ["docker", "compose", "-p", compose_project, "up", "-d", "--force-recreate", "frontend"],
+                    cwd=project_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+
+                if restart_result.returncode != 0:
+                    combined = (restart_result.stderr + restart_result.stdout)[-800:]
+                    log_step("container_restart", False, combined)
+                    raise Exception(f"Container restart failed: {combined}")
+
+                state["containers_rebuilt"] = True
+                log_step("container_restart", True, "Restarted frontend container with new code")
+
         except subprocess.TimeoutExpired:
-            log_step("container_rebuild", False, "Container rebuild timed out")
+            log_step("container_rebuild", False, "Container rebuild timed out (10 min limit)")
             raise Exception("Container rebuild timed out")
         
         # ===== STEP 6: Health Check =====
@@ -1929,7 +1989,7 @@ async def switch_version(
         
     except Exception as e:
         # ===== ROLLBACK ON FAILURE =====
-        log_step("deployment_failed", False, str(e)[:300])
+        log_step("deployment_failed", False, str(e)[:800])
         logger.error(f"Deployment failed, initiating rollback: {e}")
         
         rollback_errors = await rollback()
@@ -1945,7 +2005,7 @@ async def switch_version(
                 details={
                     "deployment_id": deployment_id,
                     "target_ref": ref,
-                    "error": str(e)[:500],
+                    "error": str(e)[:1000],
                     "rollback_errors": rollback_errors,
                     "steps": state["steps_completed"]
                 }
@@ -1959,11 +2019,13 @@ async def switch_version(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "message": "Deployment failed and rollback initiated",
-                "error": str(e),
+                "error": str(e)[:1500],
                 "rollback_performed": True,
                 "rollback_errors": rollback_errors,
                 "backup_available": state["backup_file"],
-                "steps": state["steps_completed"]
+                "steps": state["steps_completed"],
+                "deployment_id": deployment_id,
+                "compose_project": compose_project,
             }
         )
 
