@@ -70,6 +70,11 @@ import {
     DollarSign,
     FlaskConical,
     LockKeyhole,
+    Search,
+    Download,
+    Eye,
+    EyeOff,
+    CheckCircle2,
 } from 'lucide-react';
 import { Button, Card, Modal, Input, Select, Badge, AccordionSection } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
@@ -2016,124 +2021,56 @@ export default function AdminConsole() {
                                     </div>
                                 </div>
 
-                                <div className="p-5 sm:p-6 space-y-6">
+                                <div className="divide-y divide-white/[0.06]">
                                 {!mapsApiKey ? (
-                                    <div className="p-4 rounded-xl bg-gradient-to-br from-yellow-500/10 to-yellow-600/5 border border-yellow-500/20">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-9 h-9 rounded-xl bg-yellow-500/20 flex items-center justify-center shrink-0">
-                                                <AlertTriangle className="w-4 h-4 text-yellow-400" />
+                                    <div className="px-5 sm:px-6 py-5">
+                                        <div className="p-4 rounded-xl bg-gradient-to-br from-yellow-500/10 to-yellow-600/5 border border-yellow-500/20">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-9 h-9 rounded-xl bg-yellow-500/20 flex items-center justify-center shrink-0">
+                                                    <AlertTriangle className="w-4 h-4 text-yellow-400" />
+                                                </div>
+                                                <p className="text-sm text-yellow-300">
+                                                    Google Maps API key is required. Please configure it in the API Keys section first.
+                                                </p>
                                             </div>
-                                            <p className="text-sm text-yellow-300">
-                                                Google Maps API key is required. Please configure it in the API Keys section first.
-                                            </p>
                                         </div>
                                     </div>
                                 ) : (
                                     <>
-                                        {/* Municipality Boundary Search */}
-                                        <div className="p-5 rounded-xl bg-white/5 backdrop-blur-sm border border-white/10">
-                                            <h3 className="text-base font-semibold text-white mb-1">Municipality Boundary</h3>
-                                            <p className="text-xs text-white/50 mb-4">
-                                                Search for your municipality using OpenStreetMap to get its boundary.
-                                            </p>
-
-                                            <div className="p-4 rounded-xl bg-primary-500/10 border border-primary-500/20 mb-4">
-                                                <p className="text-sm font-medium text-primary-300 mb-2">How it works:</p>
-                                                <ol className="text-xs text-white/60 space-y-1 list-decimal list-inside">
-                                                    <li>Search for your municipality name (e.g., "West Windsor Township, NJ")</li>
-                                                    <li>Select from the search results</li>
-                                                    <li>Click "Fetch Boundary" to get the GeoJSON boundary data</li>
-                                                    <li>The boundary will be displayed on the resident portal map</li>
-                                                </ol>
+                                        {/* Municipality Boundary */}
+                                        <div className="px-5 sm:px-6 py-5">
+                                            <div className="flex items-center gap-4 mb-5">
+                                                <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-blue-500/20 to-blue-600/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                                                    <Globe className="w-5 h-5 text-blue-400" />
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <h3 className="text-sm font-semibold text-white">Municipality Boundary</h3>
+                                                    <p className="text-xs text-white/50 mt-0.5">Search for your municipality to auto-fetch its boundary polygon</p>
+                                                </div>
                                             </div>
 
-                                            {/* Search Input */}
-                                            <div className="flex gap-2 mb-4">
-                                                <div className="relative flex-1">
-                                                    <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40 pointer-events-none z-10" />
-                                                    <input
-                                                        type="text"
-                                                        placeholder="Search for your municipality..."
-                                                        aria-label="Search for your municipality"
-                                                        value={townshipSearch}
-                                                        onChange={(e) => setTownshipSearch(e.target.value)}
-                                                        onKeyDown={(e) => {
-                                                            if (e.key === 'Enter') {
-                                                                e.preventDefault();
-                                                                handleOsmSearch();
-                                                            }
-                                                        }}
-                                                        className="w-full h-12 pl-12 pr-4 rounded-xl bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/20 transition-all"
-                                                        disabled={isSearchingTownship}
-                                                    />
-                                                </div>
-                                                <Button
-                                                    onClick={handleOsmSearch}
-                                                    isLoading={isSearchingTownship}
-                                                    disabled={!townshipSearch.trim()}
-                                                >
-                                                    Search
-                                                </Button>
-                                            </div>
-
-                                            {/* Search Results */}
-                                            {osmSearchResults.length > 0 && (
-                                                <div className="mb-4">
-                                                    <p className="text-sm text-white/60 mb-2">Select your municipality:</p>
-                                                    <div className="space-y-2 max-h-60 overflow-y-auto">
-                                                        {osmSearchResults.map((result) => (
-                                                            <button
-                                                                key={result.osm_id}
-                                                                onClick={() => {
-                                                                    setSelectedOsmResult(result);
-                                                                    setOsmSearchResults([]);
-                                                                }}
-                                                                className="w-full p-3 rounded-xl text-left transition-all bg-white/5 hover:bg-white/10 border border-white/10"
-                                                            >
-                                                                <p className="text-sm text-white font-medium">{result.display_name}</p>
-                                                                <p className="text-xs text-white/40 mt-1">
-                                                                    OSM ID: {result.osm_id} • Type: {result.type}
-                                                                </p>
-                                                            </button>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {/* Selected Municipality */}
-                                            {selectedOsmResult && (
-                                                <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/30 mb-4">
-                                                    <p className="text-sm text-blue-300 mb-2">Selected Municipality</p>
-                                                    <p className="text-white font-medium text-sm">{selectedOsmResult.display_name}</p>
-                                                    <p className="text-xs text-white/50 mt-1">OSM ID: {selectedOsmResult.osm_id}</p>
-                                                    <div className="mt-3">
-                                                        <Button
-                                                            size="sm"
-                                                            onClick={handleFetchBoundary}
-                                                            isLoading={isFetchingBoundary}
-                                                        >
-                                                            Fetch & Save Boundary
-                                                        </Button>
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {/* Current Boundary Status */}
+                                            {/* Boundary configured status */}
                                             {townshipBoundary && (
-                                                <div className="p-4 rounded-xl bg-green-500/10 border border-green-500/30 mb-4">
-                                                    <div className="flex justify-between items-start">
-                                                        <div>
-                                                            <p className="text-sm text-green-300 mb-2">✓ Municipality Boundary Configured</p>
-                                                            <p className="text-xs text-white/60">
-                                                                Boundary data is saved and will be displayed on the resident portal map.
-                                                            </p>
+                                                <motion.div
+                                                    initial={{ opacity: 0, y: 10 }}
+                                                    animate={{ opacity: 1, y: 0 }}
+                                                    className="p-4 rounded-xl bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border border-emerald-500/20 mb-5"
+                                                >
+                                                    <div className="flex items-center justify-between">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center">
+                                                                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                                                            </div>
+                                                            <div>
+                                                                <p className="text-sm font-medium text-emerald-300">Boundary Configured</p>
+                                                                <p className="text-xs text-white/50 mt-0.5">Displayed on the resident portal map</p>
+                                                            </div>
                                                         </div>
-                                                        <div className="flex gap-2">
+                                                        <div className="flex items-center gap-1">
                                                             <Button
                                                                 size="sm"
                                                                 variant="ghost"
                                                                 onClick={() => {
-                                                                    // Download GeoJSON
                                                                     const dataStr = JSON.stringify(townshipBoundary, null, 2);
                                                                     const blob = new Blob([dataStr], { type: 'application/json' });
                                                                     const url = URL.createObjectURL(blob);
@@ -2146,7 +2083,7 @@ export default function AdminConsole() {
                                                                     URL.revokeObjectURL(url);
                                                                 }}
                                                             >
-                                                                Download
+                                                                <Download className="w-4 h-4" />
                                                             </Button>
                                                             <Button
                                                                 size="sm"
@@ -2164,43 +2101,133 @@ export default function AdminConsole() {
                                                                     }
                                                                 }}
                                                             >
-                                                                Clear
+                                                                <Trash2 className="w-4 h-4 text-red-400" />
                                                             </Button>
                                                         </div>
                                                     </div>
+                                                </motion.div>
+                                            )}
+
+                                            {/* Search Input */}
+                                            <div className="flex gap-2 mb-4">
+                                                <div className="relative flex-1">
+                                                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30 pointer-events-none z-10" />
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Search municipality (e.g. West Windsor Township, NJ)"
+                                                        aria-label="Search for your municipality"
+                                                        value={townshipSearch}
+                                                        onChange={(e) => setTownshipSearch(e.target.value)}
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') {
+                                                                e.preventDefault();
+                                                                handleOsmSearch();
+                                                            }
+                                                        }}
+                                                        className="w-full h-11 pl-11 pr-4 rounded-xl bg-white/[0.06] border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/20 focus:bg-white/[0.08] transition-all"
+                                                        disabled={isSearchingTownship}
+                                                    />
+                                                </div>
+                                                <Button
+                                                    onClick={handleOsmSearch}
+                                                    isLoading={isSearchingTownship}
+                                                    disabled={!townshipSearch.trim()}
+                                                    className="bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-500/20"
+                                                    leftIcon={<Search className="w-4 h-4" />}
+                                                >
+                                                    Search
+                                                </Button>
+                                            </div>
+
+                                            {/* Search Results */}
+                                            {osmSearchResults.length > 0 && (
+                                                <div className="mb-4 space-y-1.5">
+                                                    <p className="text-xs font-medium text-white/40 uppercase tracking-wider mb-2">Results</p>
+                                                    {osmSearchResults.map((result, idx) => (
+                                                        <motion.button
+                                                            key={result.osm_id}
+                                                            initial={{ opacity: 0, y: 8 }}
+                                                            animate={{ opacity: 1, y: 0 }}
+                                                            transition={{ delay: idx * 0.04 }}
+                                                            onClick={() => {
+                                                                setSelectedOsmResult(result);
+                                                                setOsmSearchResults([]);
+                                                            }}
+                                                            className="w-full px-4 py-3 rounded-xl text-left transition-all bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] hover:border-white/15 group"
+                                                        >
+                                                            <div className="flex items-center gap-3">
+                                                                <div className="w-8 h-8 rounded-lg bg-white/[0.06] flex items-center justify-center shrink-0 group-hover:bg-primary-500/20 transition-colors">
+                                                                    <MapPin className="w-3.5 h-3.5 text-white/40 group-hover:text-primary-400 transition-colors" />
+                                                                </div>
+                                                                <div className="min-w-0">
+                                                                    <p className="text-sm text-white font-medium truncate">{result.display_name}</p>
+                                                                    <p className="text-xs text-white/30 mt-0.5">
+                                                                        ID {result.osm_id} &middot; {result.type}
+                                                                    </p>
+                                                                </div>
+                                                            </div>
+                                                        </motion.button>
+                                                    ))}
                                                 </div>
                                             )}
 
+                                            {/* Selected Municipality */}
+                                            {selectedOsmResult && (
+                                                <motion.div
+                                                    initial={{ opacity: 0, scale: 0.98 }}
+                                                    animate={{ opacity: 1, scale: 1 }}
+                                                    className="p-4 rounded-xl bg-gradient-to-br from-blue-500/10 to-blue-600/5 border border-blue-500/20 mb-4"
+                                                >
+                                                    <div className="flex items-center justify-between gap-3">
+                                                        <div className="flex items-center gap-3 min-w-0">
+                                                            <div className="w-9 h-9 rounded-xl bg-blue-500/20 flex items-center justify-center shrink-0">
+                                                                <MapPin className="w-4 h-4 text-blue-400" />
+                                                            </div>
+                                                            <div className="min-w-0">
+                                                                <p className="text-sm font-medium text-white truncate">{selectedOsmResult.display_name}</p>
+                                                                <p className="text-xs text-white/40 mt-0.5">OSM ID: {selectedOsmResult.osm_id}</p>
+                                                            </div>
+                                                        </div>
+                                                        <Button
+                                                            size="sm"
+                                                            onClick={handleFetchBoundary}
+                                                            isLoading={isFetchingBoundary}
+                                                            className="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-400 hover:to-blue-500 shadow-lg shadow-blue-500/20 shrink-0"
+                                                        >
+                                                            Fetch Boundary
+                                                        </Button>
+                                                    </div>
+                                                </motion.div>
+                                            )}
 
-                                            {/* Divider */}
-                                            <div className="flex items-center gap-4 my-6">
-                                                <div className="flex-1 h-px bg-white/10"></div>
-                                                <span className="text-sm text-white/40">or upload existing GeoJSON</span>
-                                                <div className="flex-1 h-px bg-white/10"></div>
+                                            {/* Upload Divider */}
+                                            <div className="flex items-center gap-4 my-5">
+                                                <div className="flex-1 h-px bg-white/[0.06]"></div>
+                                                <span className="text-xs text-white/25 uppercase tracking-wider">or upload GeoJSON</span>
+                                                <div className="flex-1 h-px bg-white/[0.06]"></div>
                                             </div>
 
                                             {/* GeoJSON Upload */}
-                                            <div className="p-4 rounded-xl bg-white/5 border border-white/10">
-                                                <p className="text-sm text-white/70 mb-3">
-                                                    Upload a GeoJSON file containing your municipality boundary
-                                                </p>
+                                            <label className="flex items-center gap-4 p-4 rounded-xl bg-white/[0.03] border border-dashed border-white/10 hover:border-white/20 hover:bg-white/[0.05] transition-all cursor-pointer group">
+                                                <div className="w-10 h-10 rounded-xl bg-white/[0.06] flex items-center justify-center shrink-0 group-hover:bg-primary-500/15 transition-colors">
+                                                    <Upload className="w-4 h-4 text-white/40 group-hover:text-primary-400 transition-colors" />
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <p className="text-sm font-medium text-white/70 group-hover:text-white/90 transition-colors">Upload boundary file</p>
+                                                    <p className="text-xs text-white/30">.geojson or .json</p>
+                                                </div>
                                                 <input
                                                     type="file"
                                                     accept=".geojson,.json"
                                                     aria-label="Upload GeoJSON municipality boundary file"
+                                                    className="hidden"
                                                     onChange={async (e) => {
                                                         const file = e.target.files?.[0];
                                                         if (!file) return;
-
                                                         try {
                                                             const text = await file.text();
                                                             const geojson = JSON.parse(text);
-
-                                                            // Validate it's a valid GeoJSON
-                                                            if (!geojson.type) {
-                                                                throw new Error('Invalid GeoJSON format');
-                                                            }
-
+                                                            if (!geojson.type) throw new Error('Invalid GeoJSON format');
                                                             await api.saveTownshipBoundary(geojson, file.name);
                                                             setTownshipBoundary(geojson);
                                                             setSelectedOsmResult(null);
@@ -2210,27 +2237,27 @@ export default function AdminConsole() {
                                                             console.error('Failed to upload GeoJSON:', err);
                                                             alert("Failed to upload GeoJSON. Make sure the file is valid JSON.");
                                                         }
-
-                                                        // Reset file input
                                                         e.target.value = '';
                                                     }}
-                                                    className="block w-full text-sm text-white/60 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-500 file:text-white hover:file:bg-primary-600 file:cursor-pointer"
                                                 />
-                                            </div>
+                                            </label>
                                         </div>
 
                                         {/* Custom Map Layers */}
-                                        <div className="p-5 rounded-xl bg-white/5 backdrop-blur-sm border border-white/10">
-                                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
-                                                <div>
-                                                    <h3 className="text-base font-semibold text-white">Custom Map Layers</h3>
-                                                    <p className="text-xs text-white/50">
-                                                        Upload GeoJSON files for parks, storm drains, utilities, and other assets.
-                                                    </p>
+                                        <div className="px-5 sm:px-6 py-5">
+                                            <div className="flex items-center justify-between gap-4 mb-5">
+                                                <div className="flex items-center gap-4">
+                                                    <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-violet-500/20 to-violet-600/10 border border-violet-500/20 flex items-center justify-center shrink-0">
+                                                        <Layers className="w-5 h-5 text-violet-400" />
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <h3 className="text-sm font-semibold text-white">Custom Map Layers</h3>
+                                                        <p className="text-xs text-white/50 mt-0.5">Infrastructure assets displayed on the portal map</p>
+                                                    </div>
                                                 </div>
                                                 <Button
                                                     size="sm"
-                                                    className="w-full sm:w-auto"
+                                                    className="shrink-0 bg-gradient-to-r from-violet-500 to-violet-600 hover:from-violet-400 hover:to-violet-500 shadow-lg shadow-violet-500/20"
                                                     onClick={() => {
                                                         setEditingLayer(null);
                                                         setNewLayer({
@@ -2247,7 +2274,6 @@ export default function AdminConsole() {
                                                             routing_config: null,
                                                             visible_on_map: true,
                                                         });
-                                                        // Always load services for category selection
                                                         api.getServices().then(setServices).catch(console.error);
                                                         setShowLayerModal(true);
                                                     }}
@@ -2258,53 +2284,52 @@ export default function AdminConsole() {
                                             </div>
 
                                             {mapLayers.length === 0 ? (
-                                                <div className="text-center py-8 text-white/40">
-                                                    <Layers className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                                                    <p>No custom layers yet</p>
-                                                    <p className="text-sm">Upload GeoJSON files to add layers</p>
+                                                <div className="flex flex-col items-center justify-center py-12 rounded-xl border border-dashed border-white/[0.08] bg-white/[0.02]">
+                                                    <div className="w-14 h-14 rounded-2xl bg-white/[0.04] flex items-center justify-center mb-3">
+                                                        <Layers className="w-6 h-6 text-white/20" />
+                                                    </div>
+                                                    <p className="text-sm text-white/40 font-medium">No layers configured</p>
+                                                    <p className="text-xs text-white/25 mt-1">Upload GeoJSON files to add infrastructure layers</p>
                                                 </div>
                                             ) : (
-                                                <div className="space-y-3">
-                                                    {mapLayers.map((layer) => (
-                                                        <div
+                                                <div className="space-y-2">
+                                                    {mapLayers.map((layer, idx) => (
+                                                        <motion.div
                                                             key={layer.id}
-                                                            className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-3"
+                                                            initial={{ opacity: 0, y: 10 }}
+                                                            animate={{ opacity: 1, y: 0 }}
+                                                            transition={{ delay: idx * 0.05 }}
+                                                            className="px-4 py-3.5 rounded-xl bg-white/[0.04] border border-white/[0.06] hover:bg-white/[0.06] transition-all group"
                                                         >
-                                                            {/* Layer info row */}
-                                                            <div className="flex items-start gap-3">
+                                                            <div className="flex items-center gap-3">
                                                                 <div
-                                                                    className="w-8 h-8 rounded-lg border-2 shrink-0"
+                                                                    className="w-9 h-9 rounded-lg border-2 shrink-0 shadow-lg"
                                                                     style={{
                                                                         backgroundColor: layer.fill_color + Math.round(layer.fill_opacity * 255).toString(16).padStart(2, '0'),
                                                                         borderColor: layer.stroke_color,
                                                                     }}
                                                                 />
                                                                 <div className="flex-1 min-w-0">
-                                                                    <div className="flex flex-wrap items-center gap-2">
-                                                                        <span className="font-medium text-white">{layer.name}</span>
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className="text-sm font-semibold text-white">{layer.name}</span>
                                                                         {layer.layer_type && (
-                                                                            <Badge variant="default" size="sm">
+                                                                            <span className="px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider rounded-full bg-white/[0.06] text-white/40 border border-white/[0.06]">
                                                                                 {layer.layer_type}
-                                                                            </Badge>
+                                                                            </span>
                                                                         )}
                                                                         {!layer.is_active && (
-                                                                            <Badge variant="default" size="sm">
+                                                                            <span className="px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider rounded-full bg-red-500/10 text-red-400/60 border border-red-500/10">
                                                                                 Disabled
-                                                                            </Badge>
+                                                                            </span>
                                                                         )}
                                                                     </div>
                                                                     {layer.description && (
-                                                                        <p className="text-sm text-white/50 truncate">{layer.description}</p>
+                                                                        <p className="text-xs text-white/35 mt-0.5 truncate">{layer.description}</p>
                                                                     )}
                                                                 </div>
-                                                            </div>
-                                                            {/* Actions row */}
-                                                            <div className="flex items-center justify-between pt-2 border-t border-white/5">
-                                                                <label className="flex items-center gap-2 text-sm text-white/60">
-                                                                    <input
-                                                                        type="checkbox"
-                                                                        checked={(layer as any).visible_on_map ?? true}
-                                                                        onChange={async () => {
+                                                                <div className="flex items-center gap-1 shrink-0">
+                                                                    <button
+                                                                        onClick={async () => {
                                                                             try {
                                                                                 await api.updateMapLayer(layer.id, {
                                                                                     visible_on_map: !((layer as any).visible_on_map ?? true),
@@ -2314,14 +2339,16 @@ export default function AdminConsole() {
                                                                                 console.error('Failed to update layer:', err);
                                                                             }
                                                                         }}
-                                                                        className="rounded"
-                                                                    />
-                                                                    Show
-                                                                </label>
-                                                                <div className="flex items-center gap-1">
-                                                                    <Button
-                                                                        variant="ghost"
-                                                                        size="sm"
+                                                                        className={`p-2 rounded-lg transition-all ${
+                                                                            (layer as any).visible_on_map ?? true
+                                                                                ? 'text-emerald-400 hover:bg-emerald-500/15'
+                                                                                : 'text-white/20 hover:bg-white/5 hover:text-white/40'
+                                                                        }`}
+                                                                        title={(layer as any).visible_on_map ?? true ? 'Visible on map' : 'Hidden from map'}
+                                                                    >
+                                                                        {(layer as any).visible_on_map ?? true ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                                                                    </button>
+                                                                    <button
                                                                         onClick={() => {
                                                                             setEditingLayer(layer);
                                                                             setNewLayer({
@@ -2338,16 +2365,14 @@ export default function AdminConsole() {
                                                                                 routing_config: (layer as any).routing_config || null,
                                                                                 visible_on_map: (layer as any).visible_on_map ?? true,
                                                                             });
-                                                                            // Always load services for category selection
                                                                             api.getServices().then(setServices).catch(console.error);
                                                                             setShowLayerModal(true);
                                                                         }}
+                                                                        className="p-2 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 transition-all"
                                                                     >
                                                                         <Edit className="w-4 h-4" />
-                                                                    </Button>
-                                                                    <Button
-                                                                        variant="ghost"
-                                                                        size="sm"
+                                                                    </button>
+                                                                    <button
                                                                         onClick={async () => {
                                                                             if (!confirm(`Delete layer "${layer.name}"?`)) return;
                                                                             try {
@@ -2359,12 +2384,13 @@ export default function AdminConsole() {
                                                                                 console.error('Failed to delete layer:', err);
                                                                             }
                                                                         }}
+                                                                        className="p-2 rounded-lg text-white/20 hover:text-red-400 hover:bg-red-500/10 transition-all"
                                                                     >
-                                                                        <Trash2 className="w-4 h-4 text-red-400" />
-                                                                    </Button>
+                                                                        <Trash2 className="w-4 h-4" />
+                                                                    </button>
                                                                 </div>
                                                             </div>
-                                                        </div>
+                                                        </motion.div>
                                                     ))}
                                                 </div>
                                             )}
