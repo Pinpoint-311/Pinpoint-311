@@ -928,18 +928,6 @@ For an immersive bird's eye map experience with 3D buildings, configure a **Goog
 
 ---
 
-## 🗺️ Roadmap
-
-- [x] AI Triage & Gemini 3.0 Integration
-- [x] PostGIS Asset Selection & Geofencing
-- [x] Multi-Language Support (109 languages)
-- [ ] iOS/Android Native App Wrappers (Capacitor)
-- [ ] 3rd Party CRM Integrations (Salesforce, GovPilot)
-- [ ] Offline Mode for Field Staff
-- [ ] Push Notifications for Mobile
-
----
-
 ## 🛡️ Security & Governance
 
 Pinpoint 311 is designed for municipal government use, handling sensitive resident data. We take security, privacy, and supply-chain integrity seriously.
