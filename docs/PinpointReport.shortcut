@@ -35,17 +35,17 @@
 	</array>
 	<key>WFWorkflowActions</key>
 	<array>
-		<!-- 0: Comment / build notes -->
+		<!-- 0: Notes -->
 		<dict>
 			<key>WFWorkflowActionIdentifier</key>
 			<string>is.workflow.actions.comment</string>
 			<key>WFWorkflowActionParameters</key>
 			<dict>
 				<key>WFCommentActionText</key>
-				<string>Pinpoint 311 voice report (STARTER). This linear version captures location, asks description + email, and submits to the existing API. TO FINISH: (1) After "Get Services" add a Choose from List on its service_name, then a Repeat With Each over the chosen item's routing_config.custom_questions to ask each question and add answers to the Answers dictionary keyed by each question's "label". (2) Optionally add the >5mph deferred-notification branch. No server changes are needed.</string>
+				<string>Pinpoint 311 voice report (FULL). Captures location, fetches categories+questions from /api/services/, lets you pick a category by voice, loops through that category's custom_questions dynamically, then submits to /api/open311/v2/requests.json. No server changes needed. NOTE: every dynamic question is asked as a spoken text answer; refine per-type (yes/no, number) in-app if desired.</string>
 			</dict>
 		</dict>
-		<!-- 1: BASE_URL text (set on import) -->
+		<!-- 1: BASE_URL (set on import) -->
 		<dict>
 			<key>WFWorkflowActionIdentifier</key>
 			<string>is.workflow.actions.gettext</string>
@@ -53,10 +53,6 @@
 			<dict>
 				<key>WFTextActionText</key>
 				<string>https://yourtown.pinpoint311.org</string>
-				<key>UUID</key>
-				<string>BASEURL-0001-0001-0001-000000000001</string>
-				<key>CustomOutputName</key>
-				<string>BaseURL</string>
 			</dict>
 		</dict>
 		<dict>
@@ -73,12 +69,7 @@
 			<key>WFWorkflowActionIdentifier</key>
 			<string>is.workflow.actions.getcurrentlocation</string>
 			<key>WFWorkflowActionParameters</key>
-			<dict>
-				<key>UUID</key>
-				<string>LOCATION-0001-0001-0001-000000000002</string>
-				<key>CustomOutputName</key>
-				<string>TriggerLocation</string>
-			</dict>
+			<dict/>
 		</dict>
 		<dict>
 			<key>WFWorkflowActionIdentifier</key>
@@ -89,7 +80,69 @@
 				<string>TriggerLocation</string>
 			</dict>
 		</dict>
-		<!-- 3: GET /api/services/ (dynamic categories + questions) -->
+		<!-- 2b: Extract latitude -->
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.properties.locations</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFContentItemPropertyName</key>
+				<string>Latitude</string>
+				<key>WFInput</key>
+				<dict>
+					<key>Value</key>
+					<dict>
+						<key>Type</key>
+						<string>Variable</string>
+						<key>VariableName</key>
+						<string>TriggerLocation</string>
+					</dict>
+					<key>WFSerializationType</key>
+					<string>WFTextTokenAttachment</string>
+				</dict>
+			</dict>
+		</dict>
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.setvariable</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFVariableName</key>
+				<string>Lat</string>
+			</dict>
+		</dict>
+		<!-- 2c: Extract longitude -->
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.properties.locations</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFContentItemPropertyName</key>
+				<string>Longitude</string>
+				<key>WFInput</key>
+				<dict>
+					<key>Value</key>
+					<dict>
+						<key>Type</key>
+						<string>Variable</string>
+						<key>VariableName</key>
+						<string>TriggerLocation</string>
+					</dict>
+					<key>WFSerializationType</key>
+					<string>WFTextTokenAttachment</string>
+				</dict>
+			</dict>
+		</dict>
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.setvariable</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFVariableName</key>
+				<string>Lng</string>
+			</dict>
+		</dict>
+		<!-- 3: GET /api/services/ -->
 		<dict>
 			<key>WFWorkflowActionIdentifier</key>
 			<string>is.workflow.actions.url</string>
@@ -124,10 +177,6 @@
 			<dict>
 				<key>WFHTTPMethod</key>
 				<string>GET</string>
-				<key>UUID</key>
-				<string>SERVICES-0001-0001-0001-000000000003</string>
-				<key>CustomOutputName</key>
-				<string>Services</string>
 			</dict>
 		</dict>
 		<dict>
@@ -139,20 +188,268 @@
 				<string>Services</string>
 			</dict>
 		</dict>
-		<!-- 4: Ask service_code (manual placeholder; replace with Choose from List on Services -> service_name) -->
+		<!-- 4: Choose a category from the list -->
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.choosefromlist</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFChooseFromListActionPrompt</key>
+				<string>What type of issue are you reporting?</string>
+				<key>WFInput</key>
+				<dict>
+					<key>Value</key>
+					<dict>
+						<key>Type</key>
+						<string>Variable</string>
+						<key>VariableName</key>
+						<string>Services</string>
+					</dict>
+					<key>WFSerializationType</key>
+					<string>WFTextTokenAttachment</string>
+				</dict>
+			</dict>
+		</dict>
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.setvariable</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFVariableName</key>
+				<string>ChosenService</string>
+			</dict>
+		</dict>
+		<!-- 4b: service_code from chosen item -->
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.getvalueforkey</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFDictionaryKey</key>
+				<string>service_code</string>
+				<key>WFInput</key>
+				<dict>
+					<key>Value</key>
+					<dict>
+						<key>Type</key>
+						<string>Variable</string>
+						<key>VariableName</key>
+						<string>ChosenService</string>
+					</dict>
+					<key>WFSerializationType</key>
+					<string>WFTextTokenAttachment</string>
+				</dict>
+			</dict>
+		</dict>
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.setvariable</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFVariableName</key>
+				<string>ServiceCode</string>
+			</dict>
+		</dict>
+		<!-- 4c: routing_config from chosen item -->
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.getvalueforkey</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFDictionaryKey</key>
+				<string>routing_config</string>
+				<key>WFInput</key>
+				<dict>
+					<key>Value</key>
+					<dict>
+						<key>Type</key>
+						<string>Variable</string>
+						<key>VariableName</key>
+						<string>ChosenService</string>
+					</dict>
+					<key>WFSerializationType</key>
+					<string>WFTextTokenAttachment</string>
+				</dict>
+			</dict>
+		</dict>
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.setvariable</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFVariableName</key>
+				<string>RoutingConfig</string>
+			</dict>
+		</dict>
+		<!-- 4d: custom_questions array -->
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.getvalueforkey</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFDictionaryKey</key>
+				<string>custom_questions</string>
+				<key>WFInput</key>
+				<dict>
+					<key>Value</key>
+					<dict>
+						<key>Type</key>
+						<string>Variable</string>
+						<key>VariableName</key>
+						<string>RoutingConfig</string>
+					</dict>
+					<key>WFSerializationType</key>
+					<string>WFTextTokenAttachment</string>
+				</dict>
+			</dict>
+		</dict>
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.setvariable</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFVariableName</key>
+				<string>Questions</string>
+			</dict>
+		</dict>
+		<!-- 5: Start an empty Answers dictionary -->
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.dictionary</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFItems</key>
+				<dict>
+					<key>Value</key>
+					<dict>
+						<key>WFDictionaryFieldValueItems</key>
+						<array/>
+					</dict>
+					<key>WFSerializationType</key>
+					<string>WFDictionaryFieldValue</string>
+				</dict>
+			</dict>
+		</dict>
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.setvariable</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFVariableName</key>
+				<string>Answers</string>
+			</dict>
+		</dict>
+		<!-- 6: Repeat over each question -->
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.repeat.each</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFControlFlowMode</key>
+				<integer>0</integer>
+				<key>GroupingIdentifier</key>
+				<string>REPEATQ-1111-2222-3333-444455556666</string>
+				<key>WFInput</key>
+				<dict>
+					<key>Value</key>
+					<dict>
+						<key>Type</key>
+						<string>Variable</string>
+						<key>VariableName</key>
+						<string>Questions</string>
+					</dict>
+					<key>WFSerializationType</key>
+					<string>WFTextTokenAttachment</string>
+				</dict>
+			</dict>
+		</dict>
+		<!-- 6a: get this question's label -->
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.getvalueforkey</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFDictionaryKey</key>
+				<string>label</string>
+				<key>WFInput</key>
+				<dict>
+					<key>Value</key>
+					<dict>
+						<key>Type</key>
+						<string>Variable</string>
+						<key>VariableName</key>
+						<string>Repeat Item</string>
+					</dict>
+					<key>WFSerializationType</key>
+					<string>WFTextTokenAttachment</string>
+				</dict>
+			</dict>
+		</dict>
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.setvariable</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFVariableName</key>
+				<string>QLabel</string>
+			</dict>
+		</dict>
+		<!-- 6b: speak the question -->
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.speaktext</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFText</key>
+				<dict>
+					<key>Value</key>
+					<dict>
+						<key>string</key>
+						<string>￼</string>
+						<key>attachmentsByRange</key>
+						<dict>
+							<key>{0, 1}</key>
+							<dict>
+								<key>Type</key>
+								<string>Variable</string>
+								<key>VariableName</key>
+								<string>QLabel</string>
+							</dict>
+						</dict>
+					</dict>
+					<key>WFSerializationType</key>
+					<string>WFTextTokenString</string>
+				</dict>
+			</dict>
+		</dict>
+		<!-- 6c: ask for the answer (spoken) -->
 		<dict>
 			<key>WFWorkflowActionIdentifier</key>
 			<string>is.workflow.actions.ask</string>
 			<key>WFWorkflowActionParameters</key>
 			<dict>
 				<key>WFAskActionPrompt</key>
-				<string>What is the service code? (temporary — replace with Choose from List over the Services result)</string>
+				<dict>
+					<key>Value</key>
+					<dict>
+						<key>string</key>
+						<string>￼</string>
+						<key>attachmentsByRange</key>
+						<dict>
+							<key>{0, 1}</key>
+							<dict>
+								<key>Type</key>
+								<string>Variable</string>
+								<key>VariableName</key>
+								<string>QLabel</string>
+							</dict>
+						</dict>
+					</dict>
+					<key>WFSerializationType</key>
+					<string>WFTextTokenString</string>
+				</dict>
 				<key>WFInputType</key>
 				<string>Text</string>
-				<key>UUID</key>
-				<string>SVCCODE-0001-0001-0001-000000000004</string>
-				<key>CustomOutputName</key>
-				<string>ServiceCode</string>
 			</dict>
 		</dict>
 		<dict>
@@ -161,20 +458,96 @@
 			<key>WFWorkflowActionParameters</key>
 			<dict>
 				<key>WFVariableName</key>
-				<string>ServiceCode</string>
+				<string>QAnswer</string>
 			</dict>
 		</dict>
-		<!-- 5: Dictate description -->
+		<!-- 6d: store answer in Answers keyed by label -->
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.setvalueforkey</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFDictionary</key>
+				<dict>
+					<key>Value</key>
+					<dict>
+						<key>Type</key>
+						<string>Variable</string>
+						<key>VariableName</key>
+						<string>Answers</string>
+					</dict>
+					<key>WFSerializationType</key>
+					<string>WFTextTokenAttachment</string>
+				</dict>
+				<key>WFDictionaryKey</key>
+				<dict>
+					<key>Value</key>
+					<dict>
+						<key>string</key>
+						<string>￼</string>
+						<key>attachmentsByRange</key>
+						<dict>
+							<key>{0, 1}</key>
+							<dict>
+								<key>Type</key>
+								<string>Variable</string>
+								<key>VariableName</key>
+								<string>QLabel</string>
+							</dict>
+						</dict>
+					</dict>
+					<key>WFSerializationType</key>
+					<string>WFTextTokenString</string>
+				</dict>
+				<key>WFDictionaryValue</key>
+				<dict>
+					<key>Value</key>
+					<dict>
+						<key>string</key>
+						<string>￼</string>
+						<key>attachmentsByRange</key>
+						<dict>
+							<key>{0, 1}</key>
+							<dict>
+								<key>Type</key>
+								<string>Variable</string>
+								<key>VariableName</key>
+								<string>QAnswer</string>
+							</dict>
+						</dict>
+					</dict>
+					<key>WFSerializationType</key>
+					<string>WFTextTokenString</string>
+				</dict>
+			</dict>
+		</dict>
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.setvariable</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFVariableName</key>
+				<string>Answers</string>
+			</dict>
+		</dict>
+		<!-- 6e: end repeat -->
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.repeat.each</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFControlFlowMode</key>
+				<integer>2</integer>
+				<key>GroupingIdentifier</key>
+				<string>REPEATQ-1111-2222-3333-444455556666</string>
+			</dict>
+		</dict>
+		<!-- 7: dictate the main description -->
 		<dict>
 			<key>WFWorkflowActionIdentifier</key>
 			<string>is.workflow.actions.dictatetext</string>
 			<key>WFWorkflowActionParameters</key>
-			<dict>
-				<key>UUID</key>
-				<string>DESCRIPT-0001-0001-0001-000000000005</string>
-				<key>CustomOutputName</key>
-				<string>Description</string>
-			</dict>
+			<dict/>
 		</dict>
 		<dict>
 			<key>WFWorkflowActionIdentifier</key>
@@ -185,7 +558,7 @@
 				<string>Description</string>
 			</dict>
 		</dict>
-		<!-- 6: Ask email -->
+		<!-- 8: ask email -->
 		<dict>
 			<key>WFWorkflowActionIdentifier</key>
 			<string>is.workflow.actions.ask</string>
@@ -195,10 +568,6 @@
 				<string>What is your email address?</string>
 				<key>WFInputType</key>
 				<string>Text</string>
-				<key>UUID</key>
-				<string>EMAILXXX-0001-0001-0001-000000000006</string>
-				<key>CustomOutputName</key>
-				<string>Email</string>
 			</dict>
 		</dict>
 		<dict>
@@ -210,7 +579,7 @@
 				<string>Email</string>
 			</dict>
 		</dict>
-		<!-- 7: Build JSON body dictionary -->
+		<!-- 9: build JSON body -->
 		<dict>
 			<key>WFWorkflowActionIdentifier</key>
 			<string>is.workflow.actions.dictionary</string>
@@ -324,15 +693,105 @@
 									<string>WFTextTokenString</string>
 								</dict>
 							</dict>
+							<dict>
+								<key>WFItemType</key>
+								<integer>3</integer>
+								<key>WFKey</key>
+								<dict>
+									<key>Value</key>
+									<dict>
+										<key>string</key>
+										<string>lat</string>
+									</dict>
+									<key>WFSerializationType</key>
+									<string>WFTextTokenString</string>
+								</dict>
+								<key>WFValue</key>
+								<dict>
+									<key>Value</key>
+									<dict>
+										<key>string</key>
+										<string>￼</string>
+										<key>attachmentsByRange</key>
+										<dict>
+											<key>{0, 1}</key>
+											<dict>
+												<key>Type</key>
+												<string>Variable</string>
+												<key>VariableName</key>
+												<string>Lat</string>
+											</dict>
+										</dict>
+									</dict>
+									<key>WFSerializationType</key>
+									<string>WFTextTokenString</string>
+								</dict>
+							</dict>
+							<dict>
+								<key>WFItemType</key>
+								<integer>3</integer>
+								<key>WFKey</key>
+								<dict>
+									<key>Value</key>
+									<dict>
+										<key>string</key>
+										<string>long</string>
+									</dict>
+									<key>WFSerializationType</key>
+									<string>WFTextTokenString</string>
+								</dict>
+								<key>WFValue</key>
+								<dict>
+									<key>Value</key>
+									<dict>
+										<key>string</key>
+										<string>￼</string>
+										<key>attachmentsByRange</key>
+										<dict>
+											<key>{0, 1}</key>
+											<dict>
+												<key>Type</key>
+												<string>Variable</string>
+												<key>VariableName</key>
+												<string>Lng</string>
+											</dict>
+										</dict>
+									</dict>
+									<key>WFSerializationType</key>
+									<string>WFTextTokenString</string>
+								</dict>
+							</dict>
+							<dict>
+								<key>WFItemType</key>
+								<integer>1</integer>
+								<key>WFKey</key>
+								<dict>
+									<key>Value</key>
+									<dict>
+										<key>string</key>
+										<string>custom_fields</string>
+									</dict>
+									<key>WFSerializationType</key>
+									<string>WFTextTokenString</string>
+								</dict>
+								<key>WFValue</key>
+								<dict>
+									<key>Value</key>
+									<dict>
+										<key>Type</key>
+										<string>Variable</string>
+										<key>VariableName</key>
+										<string>Answers</string>
+									</dict>
+									<key>WFSerializationType</key>
+									<string>WFTextTokenAttachment</string>
+								</dict>
+							</dict>
 						</array>
 					</dict>
 					<key>WFSerializationType</key>
 					<string>WFDictionaryFieldValue</string>
 				</dict>
-				<key>UUID</key>
-				<string>JSONBODY-0001-0001-0001-000000000007</string>
-				<key>CustomOutputName</key>
-				<string>RequestBody</string>
 			</dict>
 		</dict>
 		<dict>
@@ -344,7 +803,7 @@
 				<string>RequestBody</string>
 			</dict>
 		</dict>
-		<!-- 8: POST to submission endpoint -->
+		<!-- 10: POST submission -->
 		<dict>
 			<key>WFWorkflowActionIdentifier</key>
 			<string>is.workflow.actions.url</string>
@@ -401,13 +860,18 @@
 					<key>WFSerializationType</key>
 					<string>WFTextTokenString</string>
 				</dict>
-				<key>UUID</key>
-				<string>SUBMITXX-0001-0001-0001-000000000008</string>
-				<key>CustomOutputName</key>
+			</dict>
+		</dict>
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.setvariable</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFVariableName</key>
 				<string>SubmitResponse</string>
 			</dict>
 		</dict>
-		<!-- 9: Read tracking id and speak confirmation -->
+		<!-- 11: read tracking id + speak -->
 		<dict>
 			<key>WFWorkflowActionIdentifier</key>
 			<string>is.workflow.actions.getvalueforkey</string>
@@ -415,9 +879,26 @@
 			<dict>
 				<key>WFDictionaryKey</key>
 				<string>service_request_id</string>
-				<key>UUID</key>
-				<string>TRACKING-0001-0001-0001-000000000009</string>
-				<key>CustomOutputName</key>
+				<key>WFInput</key>
+				<dict>
+					<key>Value</key>
+					<dict>
+						<key>Type</key>
+						<string>Variable</string>
+						<key>VariableName</key>
+						<string>SubmitResponse</string>
+					</dict>
+					<key>WFSerializationType</key>
+					<string>WFTextTokenAttachment</string>
+				</dict>
+			</dict>
+		</dict>
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>is.workflow.actions.setvariable</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFVariableName</key>
 				<string>TrackingID</string>
 			</dict>
 		</dict>
