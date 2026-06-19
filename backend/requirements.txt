@@ -22,7 +22,7 @@ google-cloud-secret-manager==2.18.0
 google-cloud-iam==2.14.0
 alembic==1.13.1
 aiofiles==23.2.1
-cryptography==46.0.6
+cryptography==46.0.7
 slowapi==0.1.9
 boto3==1.34.25
 sentry-sdk[fastapi]==2.54.0
