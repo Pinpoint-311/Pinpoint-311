@@ -560,6 +560,96 @@ class UptimeRecord(Base):
     checked_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
+class IntegrationConfig(Base):
+    """Connection settings for an external govtech platform (Accela, Tyler, CivicPlus, etc.).
+
+    Credentials are stored encrypted (Fernet via SECRET_KEY) as a JSON blob and
+    only decrypted when a connector needs them.
+    """
+    __tablename__ = "integration_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    platform = Column(String(50), nullable=False, index=True)  # accela, tyler, civicplus, sdl, edmunds, govpilot, fasttrackgov, polimorphic, open311
+    display_name = Column(String(100), nullable=False)
+    enabled = Column(Boolean, default=False, nullable=False)
+
+    # Non-secret settings: base_url, jurisdiction/agency ids, field & status mappings, share_pii flag
+    config = Column(JSON, default={})
+
+    # Encrypted JSON of secrets (api keys, client secrets, passwords)
+    _credentials_encrypted = Column("credentials", Text)
+
+    # push (Pinpoint -> platform), pull (platform -> Pinpoint), bidirectional
+    sync_direction = Column(String(20), default="push", nullable=False)
+
+    # Token authenticating inbound webhooks from this platform
+    webhook_token = Column(String(64), unique=True, index=True)
+
+    last_sync_at = Column(DateTime(timezone=True))
+    last_sync_status = Column(String(20))  # success, error
+    last_sync_error = Column(Text)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    @hybrid_property
+    def credentials(self):
+        """Decrypt credential JSON when accessing. Returns a dict."""
+        if not self._credentials_encrypted:
+            return {}
+        try:
+            from app.core.encryption import decrypt
+            import json as _json
+            return _json.loads(decrypt(self._credentials_encrypted))
+        except Exception:
+            return {}
+
+    @credentials.setter
+    def credentials(self, value):
+        """Encrypt credential dict when setting."""
+        if value:
+            from app.core.encryption import encrypt
+            import json as _json
+            self._credentials_encrypted = encrypt(_json.dumps(value))
+        else:
+            self._credentials_encrypted = None
+
+
+class IntegrationLink(Base):
+    """Maps a local service request to its record on an external platform."""
+    __tablename__ = "integration_links"
+
+    id = Column(Integer, primary_key=True, index=True)
+    integration_id = Column(Integer, ForeignKey("integration_configs.id", ondelete="CASCADE"), nullable=False, index=True)
+    service_request_id = Column(Integer, ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    external_id = Column(String(200), nullable=False, index=True)
+    external_status = Column(String(50))
+    direction = Column(String(10), default="pushed")  # pushed (we created it there) or pulled (it originated there)
+
+    last_pushed_at = Column(DateTime(timezone=True))
+    last_pulled_at = Column(DateTime(timezone=True))
+    sync_error = Column(Text)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    integration = relationship("IntegrationConfig")
+    service_request = relationship("ServiceRequest")
+
+
+class IntegrationSyncLog(Base):
+    """Audit trail of sync operations against external platforms."""
+    __tablename__ = "integration_sync_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    integration_id = Column(Integer, ForeignKey("integration_configs.id", ondelete="CASCADE"), nullable=False, index=True)
+    operation = Column(String(30), nullable=False)  # test, push, push_status, pull, webhook
+    status = Column(String(20), nullable=False)  # success, error
+    detail = Column(Text)
+    request_count = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
 class ApiUsageRecord(Base):
     """Track API calls to external services for cost estimation and monitoring."""
     __tablename__ = "api_usage_records"

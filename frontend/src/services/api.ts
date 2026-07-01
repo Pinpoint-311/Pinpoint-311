@@ -19,6 +19,63 @@ import {
 
 const API_BASE = '/api';
 
+// GovTech platform integration types
+export interface IntegrationFieldSpec {
+    key: string;
+    label: string;
+    secret?: boolean;
+    placeholder?: string;
+    required?: boolean;
+}
+
+export interface IntegrationPlatform {
+    platform: string;
+    name: string;
+    vendor: string;
+    category: string;
+    integration_mode: 'public_api' | 'open311' | 'partner_api';
+    docs_url: string;
+    description: string;
+    capabilities: string[];
+    credential_fields: IntegrationFieldSpec[];
+    config_fields: IntegrationFieldSpec[];
+    setup_notes: string;
+}
+
+export interface IntegrationConfig {
+    id: number;
+    platform: string;
+    platform_name: string;
+    display_name: string;
+    enabled: boolean;
+    sync_direction: 'push' | 'pull' | 'bidirectional';
+    config: Record<string, unknown>;
+    configured_credentials: string[];
+    webhook_path: string;
+    last_sync_at: string | null;
+    last_sync_status: string | null;
+    last_sync_error: string | null;
+    created_at: string | null;
+}
+
+export interface IntegrationSave {
+    platform: string;
+    display_name?: string;
+    enabled?: boolean;
+    sync_direction?: string;
+    config?: Record<string, unknown>;
+    credentials?: Record<string, string>;
+}
+
+export interface IntegrationSyncLog {
+    id: number;
+    operation: string;
+    status: string;
+    detail: string | null;
+    request_count: number;
+    created_at: string | null;
+}
+
 class ApiClient {
     private token: string | null = null;
     private onUnauthorized: (() => void) | null = null;
@@ -337,6 +394,45 @@ class ApiClient {
 
     async syncSecrets(): Promise<{ status: string; added_secrets: string[]; count: number }> {
         return this.request('/system/secrets/sync', { method: 'POST' });
+    }
+
+    // GovTech Platform Integrations (Admin)
+    async getIntegrationCatalog(): Promise<IntegrationPlatform[]> {
+        return this.request<IntegrationPlatform[]>('/integrations/catalog');
+    }
+
+    async getIntegrations(): Promise<IntegrationConfig[]> {
+        return this.request<IntegrationConfig[]>('/integrations');
+    }
+
+    async createIntegration(data: IntegrationSave): Promise<IntegrationConfig> {
+        return this.request<IntegrationConfig>('/integrations', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateIntegration(id: number, data: Partial<IntegrationSave>): Promise<IntegrationConfig> {
+        return this.request<IntegrationConfig>(`/integrations/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async deleteIntegration(id: number): Promise<{ message: string }> {
+        return this.request<{ message: string }>(`/integrations/${id}`, { method: 'DELETE' });
+    }
+
+    async testIntegration(id: number): Promise<{ ok: boolean; detail: string }> {
+        return this.request<{ ok: boolean; detail: string }>(`/integrations/${id}/test`, { method: 'POST' });
+    }
+
+    async syncIntegration(id: number): Promise<{ message: string }> {
+        return this.request<{ message: string }>(`/integrations/${id}/sync`, { method: 'POST' });
+    }
+
+    async getIntegrationLogs(id: number): Promise<IntegrationSyncLog[]> {
+        return this.request<IntegrationSyncLog[]>(`/integrations/${id}/logs`);
     }
 
     // Statistics

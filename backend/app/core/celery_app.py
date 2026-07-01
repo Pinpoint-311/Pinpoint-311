@@ -7,7 +7,7 @@ celery_app = Celery(
     "township_311",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.service_requests"]
+    include=["app.tasks.service_requests", "app.tasks.integrations"]
 )
 
 celery_app.conf.update(
@@ -37,6 +37,12 @@ celery_app.conf.update(
         "weekly-backup-cleanup": {
             "task": "app.tasks.service_requests.cleanup_expired_backups",
             "schedule": 60 * 60 * 24 * 7,  # Every 7 days
+            "options": {"queue": "default"}
+        },
+        # Poll connected govtech platforms for external status changes
+        "pull-integration-updates": {
+            "task": "app.tasks.integrations.pull_integration_updates",
+            "schedule": 60 * 15,  # Every 15 minutes
             "options": {"queue": "default"}
         },
         # Weekly staff digest emails on Mondays at 8:00 AM UTC
