@@ -16,7 +16,9 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from app.integrations.base import BaseConnector, ConnectorError, ExternalRecord
+import hashlib
+
+from app.integrations.base import BaseConnector, ConnectorError, ExternalComment, ExternalRecord
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +27,7 @@ DEFAULT_API_BASE = "https://seeclickfix.com/api/v2"
 
 class SeeClickFixConnector(BaseConnector):
     platform = "civicplus"
-    capabilities = {"test", "push", "pull"}
+    capabilities = {"test", "push", "pull", "comments"}
 
     DEFAULT_STATUS_MAP_OUT = {"open": "open", "in_progress": "acknowledged", "closed": "closed"}
     DEFAULT_STATUS_MAP_IN = {
@@ -116,3 +118,46 @@ class SeeClickFixConnector(BaseConnector):
                 return None
             self._raise_for_status(resp, "SeeClickFix get issue")
             return self._record_from_issue(resp.json())
+
+    # ---- Comments ----
+
+    async def push_comment(self, external_id: str, author: str, content: str) -> Optional[str]:
+        body = {"comment": f"{author}: {content}" if author else content}
+        async with self._client(**self._auth_kwargs()) as client:
+            resp = await client.post(f"{self.api_base}/issues/{external_id}/comments", json=body)
+            self._raise_for_status(resp, "SeeClickFix create comment")
+            item = resp.json()
+        cid = item.get("id")
+        return str(cid) if cid is not None else None
+
+    async def pull_comments(self, external_id: str) -> List[ExternalComment]:
+        async with self._client(**self._auth_kwargs()) as client:
+            resp = await client.get(f"{self.api_base}/issues/{external_id}/comments")
+            if resp.status_code == 404:
+                return []
+            self._raise_for_status(resp, "SeeClickFix list comments")
+            body = resp.json()
+        items = body.get("comments") if isinstance(body, dict) else body
+        comments = []
+        for item in (items or []):
+            content = item.get("comment") or ""
+            if not content:
+                continue
+            created = None
+            if item.get("created_at"):
+                try:
+                    created = datetime.fromisoformat(str(item["created_at"]).replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+            # SCF comment payloads don't always expose an id — derive a stable surrogate
+            cid = item.get("id")
+            if cid is None:
+                cid = "h" + hashlib.sha1(f"{item.get('created_at')}|{content}".encode()).hexdigest()[:16]
+            comments.append(ExternalComment(
+                external_id=str(cid),
+                content=content,
+                author=(item.get("commenter") or {}).get("name") if isinstance(item.get("commenter"), dict) else None,
+                created_at=created,
+                raw=item,
+            ))
+        return comments

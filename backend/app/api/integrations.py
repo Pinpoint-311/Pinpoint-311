@@ -4,6 +4,7 @@ create and update requests in Pinpoint."""
 
 import logging
 import secrets as pysecrets
+import uuid as uuid_module
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -22,6 +23,7 @@ from app.models import (
     IntegrationLink,
     IntegrationSyncLog,
     RequestAuditLog,
+    RequestComment,
     ServiceDefinition,
     ServiceRequest,
     User,
@@ -53,10 +55,19 @@ class IntegrationUpdate(BaseModel):
     credentials: Optional[Dict[str, str]] = None
 
 
+class WebhookCommentIn(BaseModel):
+    """A comment carried in an inbound webhook payload."""
+    content: str = Field(..., min_length=1, max_length=5000)
+    author: Optional[str] = Field(default=None, max_length=100)
+    external_id: Optional[str] = Field(default=None, max_length=100)
+
+
 class WebhookRequestIn(BaseModel):
     """Normalized inbound payload external platforms POST to the webhook."""
     external_id: str = Field(..., max_length=200)
-    description: str = Field(..., min_length=1, max_length=10000)
+    # Optional when updating an existing record (status/comment-only posts)
+    description: Optional[str] = Field(default=None, max_length=10000)
+    comments: Optional[List[WebhookCommentIn]] = None
     service_code: Optional[str] = None
     status: Optional[str] = Field(default=None, pattern="^(open|in_progress|closed)$")
     address: Optional[str] = Field(default=None, max_length=500)
@@ -228,9 +239,32 @@ async def trigger_sync(
     integration = await _get_integration(db, integration_id)
     if not integration.enabled:
         raise HTTPException(status_code=400, detail="Enable the integration before syncing")
-    from app.tasks.integrations import pull_integration_updates
+    from app.tasks.integrations import pull_integration_comments, pull_integration_updates
     pull_integration_updates.delay()
+    pull_integration_comments.delay()
     return {"message": "Sync started", "platform": integration.platform}
+
+
+@router.post("/{integration_id}/sync-assets")
+async def trigger_asset_sync(
+    integration_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Run the asset inventory sync immediately (also runs daily via Beat)."""
+    integration = await _get_integration(db, integration_id)
+    if not integration.enabled:
+        raise HTTPException(status_code=400, detail="Enable the integration before syncing")
+    catalog = PLATFORM_CATALOG.get(integration.platform, {})
+    if "assets" not in catalog.get("capabilities", []):
+        raise HTTPException(status_code=400, detail=f"{integration.platform} does not support asset sync")
+    from app.tasks.integrations import _flag
+    if not _flag(integration.config, "sync_assets"):
+        integration.config = {**(integration.config or {}), "sync_assets": True}
+        await db.commit()
+    from app.tasks.integrations import sync_integration_assets
+    sync_integration_assets.delay()
+    return {"message": "Asset sync started", "platform": integration.platform}
 
 
 @router.get("/{integration_id}/logs")
@@ -319,7 +353,28 @@ async def integration_webhook(
     if not integration:
         raise HTTPException(status_code=401, detail="Invalid webhook token")
 
-    # Existing link -> status update
+    async def _import_webhook_comments(service_request_pk: int) -> int:
+        """Attach comments carried in the payload, deduped by external comment id."""
+        imported = 0
+        for wc in (payload.comments or []):
+            ref = f"{integration.id}:{wc.external_id}" if wc.external_id else None
+            if ref:
+                exists = (await db.execute(
+                    select(RequestComment.id).where(RequestComment.external_ref == ref)
+                )).scalar_one_or_none()
+                if exists:
+                    continue
+            db.add(RequestComment(
+                service_request_id=service_request_pk,
+                username=(wc.author or integration.display_name)[:100],
+                content=wc.content,
+                visibility="external",
+                external_ref=ref or f"{integration.id}:webhook-{uuid_module.uuid4().hex[:12]}",
+            ))
+            imported += 1
+        return imported
+
+    # Existing link -> status update and/or comments
     link = (await db.execute(
         select(IntegrationLink).where(
             IntegrationLink.integration_id == integration.id,
@@ -330,22 +385,35 @@ async def integration_webhook(
         sr = (await db.execute(
             select(ServiceRequest).where(ServiceRequest.id == link.service_request_id)
         )).scalar_one_or_none()
-        if sr and payload.status and payload.status != sr.status:
-            old_status = sr.status
-            sr.status = payload.status
-            sr.updated_datetime = datetime.utcnow()
-            if payload.status == "closed":
-                sr.closed_datetime = datetime.utcnow()
-            db.add(RequestAuditLog(
-                service_request_id=sr.id,
-                action="status_change",
-                old_value=old_status,
-                new_value=payload.status,
-                actor_type="integration",
-                actor_name=integration.display_name,
-            ))
+        comments_added = 0
+        if sr:
+            if payload.status and payload.status != sr.status:
+                old_status = sr.status
+                sr.status = payload.status
+                sr.updated_datetime = datetime.utcnow()
+                if payload.status == "closed":
+                    sr.closed_datetime = datetime.utcnow()
+                db.add(RequestAuditLog(
+                    service_request_id=sr.id,
+                    action="status_change",
+                    old_value=old_status,
+                    new_value=payload.status,
+                    actor_type="integration",
+                    actor_name=integration.display_name,
+                ))
+            comments_added = await _import_webhook_comments(sr.id)
             await db.commit()
-        return {"message": "updated", "service_request_id": sr.service_request_id if sr else None}
+        return {
+            "message": "updated",
+            "service_request_id": sr.service_request_id if sr else None,
+            "comments_added": comments_added,
+        }
+
+    if not payload.description:
+        raise HTTPException(
+            status_code=400,
+            detail="description is required when creating a new request (unknown external_id)",
+        )
 
     # New record -> create a request
     service_code = payload.service_code or (integration.config or {}).get("default_local_service_code")
@@ -409,6 +477,7 @@ async def integration_webhook(
         detail=f"{payload.external_id} -> {sr.service_request_id}",
         request_count=1,
     ))
+    await _import_webhook_comments(sr.id)
     await db.commit()
 
     # Same post-processing as portal submissions (AI triage)

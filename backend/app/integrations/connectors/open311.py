@@ -54,12 +54,18 @@ class Open311Connector(BaseConnector):
 
     def _record_from_open311(self, item: Dict[str, Any]) -> ExternalRecord:
         raw_status = item.get("status")
+        lat, lng = item.get("lat"), item.get("long")
         return ExternalRecord(
             external_id=str(item.get("service_request_id") or item.get("token") or ""),
             status=self.map_status_in(raw_status),
             raw_status=raw_status,
             status_notes=item.get("status_notes"),
             updated_at=_parse_dt(item.get("updated_datetime")),
+            description=item.get("description"),
+            service_name=item.get("service_name"),
+            address=item.get("address"),
+            lat=float(lat) if lat is not None else None,
+            long=float(lng) if lng is not None else None,
             raw=item,
         )
 

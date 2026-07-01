@@ -31,6 +31,22 @@ class ExternalRecord:
     status_notes: Optional[str] = None
     updated_at: Optional[datetime] = None
     raw: Dict[str, Any] = field(default_factory=dict)
+    # Populated on pulls that can import new records (not just status updates)
+    description: Optional[str] = None
+    service_name: Optional[str] = None
+    address: Optional[str] = None
+    lat: Optional[float] = None
+    long: Optional[float] = None
+
+
+@dataclass
+class ExternalComment:
+    """Normalized comment on an external platform's record."""
+    external_id: str                      # platform's comment id (or a stable surrogate)
+    content: str
+    author: Optional[str] = None
+    created_at: Optional[datetime] = None
+    raw: Dict[str, Any] = field(default_factory=dict)
 
 
 # Normalized outbound payload keys (built by tasks/integrations.py):
@@ -92,6 +108,33 @@ class BaseConnector:
     async def fetch_record(self, external_id: str) -> Optional[ExternalRecord]:
         """Fetch a single record by external id (used for per-request refresh)."""
         return None
+
+    # -- Comments (capability "comments") --
+
+    async def push_comment(self, external_id: str, author: str, content: str) -> Optional[str]:
+        """Post a comment on the external record. Returns the platform's comment id if available."""
+        raise ConnectorError(f"{self.platform} connector does not support comments")
+
+    async def pull_comments(self, external_id: str) -> List[ExternalComment]:
+        """Fetch comments on the external record."""
+        raise ConnectorError(f"{self.platform} connector does not support comments")
+
+    # -- Documents / attachments (capability "documents") --
+
+    async def push_document(self, external_id: str, filename: str,
+                            content: bytes, content_type: str) -> None:
+        """Attach a file (photo, document) to the external record."""
+        raise ConnectorError(f"{self.platform} connector does not support document upload")
+
+    # -- Asset management (capability "assets") --
+
+    async def pull_assets(self) -> List[Dict[str, Any]]:
+        """Fetch infrastructure assets as GeoJSON Feature dicts.
+
+        Features must have geometry (Point) and properties including at least
+        an asset id/name so they can populate a Pinpoint map layer for
+        asset-linked request intake."""
+        raise ConnectorError(f"{self.platform} connector does not support asset sync")
 
     # ---- HTTP helpers ----------------------------------------------------
 

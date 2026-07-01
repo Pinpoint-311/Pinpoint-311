@@ -431,6 +431,10 @@ class ApiClient {
         return this.request<{ message: string }>(`/integrations/${id}/sync`, { method: 'POST' });
     }
 
+    async syncIntegrationAssets(id: number): Promise<{ message: string }> {
+        return this.request<{ message: string }>(`/integrations/${id}/sync-assets`, { method: 'POST' });
+    }
+
     async getIntegrationLogs(id: number): Promise<IntegrationSyncLog[]> {
         return this.request<IntegrationSyncLog[]>(`/integrations/${id}/logs`);
     }

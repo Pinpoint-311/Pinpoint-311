@@ -313,7 +313,11 @@ class RequestComment(Base):
     
     # Visibility: internal (staff only) or external (visible to resident)
     visibility = Column(String(20), default="internal")  # internal, external
-    
+
+    # Set when the comment was imported from an external platform:
+    # "<integration_id>:<external_comment_id>". Prevents re-import and echo-back.
+    external_ref = Column(String(200), index=True)
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -630,6 +634,11 @@ class IntegrationLink(Base):
     last_pushed_at = Column(DateTime(timezone=True))
     last_pulled_at = Column(DateTime(timezone=True))
     sync_error = Column(Text)
+
+    # External comment ids created by our pushes — skipped on pull to avoid echo
+    pushed_comment_ids = Column(JSON, default=list)
+    # Whether local media/documents were uploaded to the external record
+    documents_pushed = Column(Boolean, default=False)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
