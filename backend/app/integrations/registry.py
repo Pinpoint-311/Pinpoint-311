@@ -186,6 +186,190 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# Clerk-friendly setup guidance, merged into the catalog below.
+#
+# plain_summary   one sentence, no jargon, about what connecting does
+# what_you_need   plain checklist shown before setup starts
+# vendor_ask      ready-to-send email requesting access ({{WEBHOOK_URL}} is
+#                 replaced with the connection's inbound webhook address);
+#                 None when no vendor request is needed
+# field_help      per-field plain-language hints keyed by field key
+# recommended_sync_direction   preselected in the setup wizard
+# ---------------------------------------------------------------------------
+CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
+    "accela": {
+        "plain_summary": "Reports submitted here automatically become Accela records, photos included. Status changes and comments flow both ways, so staff can work in either system.",
+        "what_you_need": [
+            "Your Accela agency name (staff who log into Accela will know it — it's on the login screen)",
+            "An Accela staff username and password the connection can use",
+            "A 'Client ID' and 'Client Secret' — your Accela administrator or Accela support can create these in about 10 minutes",
+            "The record type to file reports under (e.g. 'Service Request / Complaint') — ask whoever manages Accela",
+        ],
+        "vendor_ask": {
+            "to_hint": "Your Accela administrator, or Accela support (support@accela.com)",
+            "subject": "API access for our 311 system (Pinpoint 311)",
+            "body": "Hello,\n\nWe are connecting our resident request system (Pinpoint 311) to our Accela Civic Platform account so resident reports appear in Accela automatically.\n\nCould you please:\n1. Create an API app for us at developer.accela.com and send the Client ID and Client Secret\n2. Confirm our agency name and environment (PROD or TEST)\n3. Provide a staff account (username + password) the connection can use\n4. Tell us the record type resident service requests should be filed under (e.g. ServiceRequest/General/Complaint/NA)\n\nThank you!",
+        },
+        "field_help": {
+            "client_id": "A long code your Accela administrator gives you — looks like random letters and numbers.",
+            "client_secret": "The matching secret code. Treat it like a password.",
+            "username": "The Accela staff account the connection will act as.",
+            "password": "That account's password.",
+            "agency_name": "Your agency's short name in Accela, usually ALL CAPS (e.g. SPRINGFIELD).",
+            "environment": "Leave as PROD unless Accela support says otherwise.",
+            "record_type": "Where reports get filed in Accela. Copy this exactly from your Accela administrator.",
+            "sync_assets": "Type true to also copy your Accela asset list (hydrants, signs, lights) onto the Pinpoint map each night.",
+            "asset_group": "Optional — only sync one group of assets (ask your Accela admin for the group name).",
+        },
+        "recommended_sync_direction": "bidirectional",
+    },
+    "tyler": {
+        "plain_summary": "Reports submitted here are sent into your Tyler system, and Tyler status updates show up here automatically.",
+        "what_you_need": [
+            "The 'Open311 web address' for your town's Tyler system",
+            "An API key from Tyler that allows creating requests",
+        ],
+        "vendor_ask": {
+            "to_hint": "Your Tyler Technologies account manager or implementation contact",
+            "subject": "Open311 access for our 311 system (Pinpoint 311)",
+            "body": "Hello,\n\nWe are connecting our resident request system (Pinpoint 311) to our Tyler system so resident reports flow in automatically.\n\nCould you please send us:\n1. Our jurisdiction's Open311 (GeoReport v2) endpoint URL\n2. An API key with permission to create service requests\n3. Our jurisdiction ID, if one is required\n\nThank you!",
+        },
+        "field_help": {
+            "api_key": "The key Tyler sends you — a long string of letters and numbers.",
+            "base_url": "Paste the web address exactly as Tyler sends it. It usually ends in /open311/v2.",
+            "jurisdiction_id": "Only fill this in if Tyler says you need it. Often it looks like yourtown.gov.",
+            "default_service_code": "Optional — leave blank unless Tyler asks reports to use one specific category code.",
+        },
+        "recommended_sync_direction": "bidirectional",
+    },
+    "civicplus": {
+        "plain_summary": "Reports submitted here also appear in SeeClickFix, and SeeClickFix status changes and comments show up here.",
+        "what_you_need": [
+            "A SeeClickFix account with permission to report in your town (username + password)",
+            "Optional: your town's SeeClickFix web address (the part after seeclickfix.com/, e.g. 'springfield')",
+        ],
+        "vendor_ask": {
+            "to_hint": "Your CivicPlus / SeeClickFix account manager",
+            "subject": "API access for our 311 system (Pinpoint 311)",
+            "body": "Hello,\n\nWe are connecting our resident request system (Pinpoint 311) to our SeeClickFix account.\n\nCould you please confirm:\n1. The account (or API token) we should use for creating issues via the SeeClickFix API v2\n2. Our place URL (the seeclickfix.com/... address for our town)\n3. The request type ID resident reports should use\n\nThank you!",
+        },
+        "field_help": {
+            "username": "The email address of the SeeClickFix account to connect.",
+            "password": "That account's password.",
+            "api_key": "Only needed if CivicPlus gave you a token instead of a username and password.",
+            "place_url": "The last part of your town's SeeClickFix page address, e.g. 'springfield' from seeclickfix.com/springfield.",
+            "request_type": "A number CivicPlus can give you. Leave blank to use the default.",
+        },
+        "recommended_sync_direction": "bidirectional",
+    },
+    "sdl": {
+        "plain_summary": "Reports submitted here become SDL work items with photos attached, and SDL status changes and comments show up here.",
+        "what_you_need": [
+            "A web address (URL) and API key from SDL — one email to SDL support gets both",
+        ],
+        "vendor_ask": {
+            "to_hint": "SDL support, or your SDL account manager",
+            "subject": "API access for our 311 system (Pinpoint 311)",
+            "body": "Hello,\n\nWe use SDL and are connecting our resident request system (Pinpoint 311) so resident reports flow into SDL automatically and status updates flow back.\n\nCould you please enable REST API access for third-party intake on our account and send us:\n1. Our API base URL\n2. An API key\n3. Any notes on the endpoints for creating requests, updating status, comments, and attachments\n\nIf you can receive updates from us by webhook instead, our address is: {{WEBHOOK_URL}}\n\nThank you!",
+        },
+        "field_help": {
+            "api_key": "The key SDL support sends you — a long string of letters and numbers.",
+            "base_url": "Paste the web address exactly as SDL sends it, e.g. https://api.spatialdatalogic.com/v1/yourtown.",
+        },
+        "recommended_sync_direction": "bidirectional",
+    },
+    "edmunds": {
+        "plain_summary": "Reports submitted here become MCSJ work orders, and work order status changes show up here.",
+        "what_you_need": [
+            "A service username and password from Edmunds, plus your MCSJ web address — one email to Edmunds support gets all three",
+        ],
+        "vendor_ask": {
+            "to_hint": "Edmunds GovTech support, or your Edmunds account manager",
+            "subject": "MCSJ API access for our 311 system (Pinpoint 311)",
+            "body": "Hello,\n\nWe use MCSJ and are connecting our resident request system (Pinpoint 311) so resident reports create work orders automatically and status updates flow back.\n\nCould you please:\n1. Enable the MCSJ API / web-service module for our license\n2. Create a service account (username + password) for the connection\n3. Send us our API base URL and any notes on the work order endpoints\n\nThank you!",
+        },
+        "field_help": {
+            "username": "The service account name Edmunds creates for this connection.",
+            "password": "That account's password.",
+            "base_url": "Paste the web address exactly as Edmunds sends it, e.g. https://mcsj.yourtown.gov/api.",
+        },
+        "recommended_sync_direction": "bidirectional",
+    },
+    "govpilot": {
+        "plain_summary": "Reports submitted here appear in GovPilot, and GovPilot status changes show up here. GovPilot GIS assets can appear on the Pinpoint map.",
+        "what_you_need": [
+            "An API key and web address from GovPilot — one email to your GovPilot customer success manager gets both",
+        ],
+        "vendor_ask": {
+            "to_hint": "Your GovPilot customer success manager",
+            "subject": "API access for our 311 system (Pinpoint 311)",
+            "body": "Hello,\n\nWe use GovPilot and are connecting our resident request system (Pinpoint 311) so resident reports flow into GovPilot automatically and status updates flow back.\n\nCould you please send us:\n1. An API key with access to the report-a-concern / records modules\n2. Our API base URL\n3. Any notes on the endpoints for creating requests, status, comments, and attachments\n\nIf you can receive updates from us by webhook instead, our address is: {{WEBHOOK_URL}}\n\nThank you!",
+        },
+        "field_help": {
+            "api_key": "The key GovPilot sends you — a long string of letters and numbers.",
+            "base_url": "Paste the web address exactly as GovPilot sends it, e.g. https://api.govpilot.com/v1.",
+        },
+        "recommended_sync_direction": "bidirectional",
+    },
+    "fasttrackgov": {
+        "plain_summary": "Reports submitted here become FastTrackGov cases, and case status changes show up here.",
+        "what_you_need": [
+            "A subscription key and gateway address from your FastTrackGov / MS Govern representative",
+        ],
+        "vendor_ask": {
+            "to_hint": "Your FastTrackGov / MS Govern representative",
+            "subject": "API access for our 311 system (Pinpoint 311)",
+            "body": "Hello,\n\nWe use FastTrackGov and are connecting our resident request system (Pinpoint 311) so resident reports create cases automatically and status updates flow back.\n\nCould you please send us:\n1. An API subscription key\n2. Our API gateway base URL\n3. Any notes on the endpoints for creating cases, status, comments, and attachments\n\nThank you!",
+        },
+        "field_help": {
+            "api_key": "The subscription key your representative sends — a long string of letters and numbers.",
+            "base_url": "Paste the web address exactly as your representative sends it.",
+        },
+        "recommended_sync_direction": "bidirectional",
+    },
+    "polimorphic": {
+        "plain_summary": "Requests taken by Polimorphic's AI phone/chat assistant appear here automatically, and updates made here flow back to Polimorphic.",
+        "what_you_need": [
+            "A workspace API token and address from Polimorphic",
+            "You'll send Polimorphic a special web address from this page (shown after you connect) so their assistant can file requests here",
+        ],
+        "vendor_ask": {
+            "to_hint": "Your Polimorphic customer success contact",
+            "subject": "Connecting Polimorphic to our 311 system (Pinpoint 311)",
+            "body": "Hello,\n\nWe want requests taken by our Polimorphic assistant to appear in our resident request system (Pinpoint 311) automatically, and updates to flow back.\n\n1. Please point your outbound webhook for new requests and updates at: {{WEBHOOK_URL}}\n2. Please send us our workspace API URL and an API token so we can push our requests and status changes to Polimorphic\n\nThank you!",
+        },
+        "field_help": {
+            "api_key": "The token Polimorphic sends you — a long string of letters and numbers.",
+            "base_url": "Paste the workspace address exactly as Polimorphic sends it.",
+        },
+        "recommended_sync_direction": "bidirectional",
+    },
+    "open311": {
+        "plain_summary": "Connects to any system that speaks the Open311 standard — a fallback for vendors not listed above.",
+        "what_you_need": [
+            "The system's Open311 web address",
+            "An API key from whoever runs that system",
+        ],
+        "vendor_ask": {
+            "to_hint": "Whoever operates the Open311 endpoint",
+            "subject": "Open311 access for our 311 system (Pinpoint 311)",
+            "body": "Hello,\n\nWe would like to connect our resident request system (Pinpoint 311) to your Open311 (GeoReport v2) endpoint.\n\nCould you please send us:\n1. The endpoint base URL\n2. An API key with permission to create service requests\n3. The jurisdiction ID, if required\n\nThank you!",
+        },
+        "field_help": {
+            "api_key": "The key the endpoint operator sends you.",
+            "base_url": "The web address of the Open311 endpoint. It usually ends in /v2.",
+            "jurisdiction_id": "Only fill this in if the operator says you need it.",
+            "default_service_code": "Optional — leave blank unless told otherwise.",
+        },
+        "recommended_sync_direction": "bidirectional",
+    },
+}
+
+for _key, _guide in CLERK_GUIDES.items():
+    PLATFORM_CATALOG[_key].update(_guide)
+
+
 _CONNECTOR_CLASSES = {
     "accela": AccelaConnector,
     "tyler": TylerConnector,

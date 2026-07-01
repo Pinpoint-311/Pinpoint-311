@@ -91,17 +91,30 @@ GeoReport v2 endpoint.
 
 ## Setting up a connection
 
-1. Open **Admin Console → Setup & Integration → GovTech Platform Connections**.
-2. Click **Connect** on a platform card, fill in the credentials/config fields
-   (each card links to the vendor's docs and states what to request from the
-   vendor), and **Save & Connect**.
-3. Click **Test Connection** — this performs a live authenticated call.
-4. Flip the toggle to enable, and choose a sync direction:
-   - *Push only* — Pinpoint is the intake front door; the platform is the system of record.
-   - *Pull only* — the platform originates work; Pinpoint mirrors it.
-   - *Bidirectional* — full two-way sync.
-5. For platforms that push into Pinpoint (e.g. Polimorphic's AI intake), copy
-   the **Inbound Webhook URL** from the card and give it to the vendor.
+Setup is a guided three-step wizard designed for non-technical staff — no
+API knowledge needed:
+
+1. Open **Admin Console → Setup & Integration → Connect Your Other Town
+   Systems** and press **Set up** on the system your town uses.
+2. **Before you start** — the wizard lists in plain language exactly what to
+   have on hand, and includes a **ready-to-send email** (copy button included)
+   asking the vendor for precisely the right access. Close the wizard and come
+   back whenever the vendor replies.
+3. **Enter the details** — paste each item the vendor sent; every field has a
+   plain-language hint and an example. Pick how the systems should work
+   together ("Keep both systems in sync" is pre-selected). Rarely-needed
+   fields are tucked under *Optional settings*.
+4. **Final check** — the wizard tests the connection live. If it works, the
+   connection turns on automatically and you're done. If not, it explains the
+   problem in plain language ("the password looks wrong", "check the web
+   address for typos") with the technical details one click away for the
+   vendor's support team. Entries are saved either way, so you can retry
+   anytime.
+
+For platforms that also send things *to* Pinpoint (e.g. Polimorphic's AI
+intake), the wizard's success screen shows the inbound webhook address with a
+copy button and tells you to pass it to the vendor — the request email
+template already includes it.
 
 ### Inbound webhook payload
 

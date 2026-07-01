@@ -206,6 +206,40 @@ async def delete_integration(
 
 # ---------- Actions ----------
 
+def _friendly_test_error(error: str) -> str:
+    """Translate a technical connection error into plain language a
+    non-technical admin can act on."""
+    text = error.lower()
+    if "http 401" in text or "http 403" in text or "unauthorized" in text or "forbidden" in text:
+        return ("The platform refused the sign-in details. Double-check the key or "
+                "username/password — copy and paste them again with no extra spaces.")
+    if "http 404" in text:
+        return ("We reached their server, but the web address looks incomplete or "
+                "slightly wrong. Compare it letter-for-letter with what the vendor sent you.")
+    if "http 429" in text:
+        return "The platform says we're connecting too often. Wait a few minutes and try again."
+    if "http 5" in text:
+        return ("Their system had a problem on its end. This usually isn't your setup — "
+                "wait a few minutes and try again, or check with the vendor.")
+    if "timed out" in text or "timeout" in text:
+        return ("Their system didn't answer in time. Check the web address for typos; "
+                "if it looks right, try again in a few minutes.")
+    if ("name or service not known" in text or "getaddrinfo" in text
+            or "nodename" in text or "resolve" in text or "connecterror" in text
+            or "connection refused" in text or "all connection attempts failed" in text):
+        return ("We couldn't find a system at that web address. Check it for typos — "
+                "it should start with https:// and match what the vendor sent exactly.")
+    if "certificate" in text or "ssl" in text:
+        return ("There's a security-certificate problem with that address. Make sure it "
+                "starts with https:// — if it does, ask the vendor about their certificate.")
+    if "requires config.base_url" in text or "no api base url" in text:
+        return "The web address (base URL) is missing. Paste the one the vendor sent you."
+    if "credentials missing" in text or "requires agency_name" in text or "requires record_type" in text:
+        return "Some required fields are still blank — go back one step and fill them in."
+    return ("Something didn't work. The technical details below may help the vendor's "
+            "support team figure it out.")
+
+
 @router.post("/{integration_id}/test")
 async def test_integration(
     integration_id: int,
@@ -220,7 +254,7 @@ async def test_integration(
         result = await connector.test_connection()
         log_status, detail = "success", result.get("detail", "OK")
     except Exception as e:
-        result = {"ok": False, "detail": str(e)}
+        result = {"ok": False, "detail": str(e), "friendly": _friendly_test_error(str(e))}
         log_status, detail = "error", str(e)
 
     db.add(IntegrationSyncLog(

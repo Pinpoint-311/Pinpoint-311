@@ -28,6 +28,12 @@ export interface IntegrationFieldSpec {
     required?: boolean;
 }
 
+export interface IntegrationVendorAsk {
+    to_hint: string;
+    subject: string;
+    body: string;
+}
+
 export interface IntegrationPlatform {
     platform: string;
     name: string;
@@ -40,6 +46,18 @@ export interface IntegrationPlatform {
     credential_fields: IntegrationFieldSpec[];
     config_fields: IntegrationFieldSpec[];
     setup_notes: string;
+    // Clerk-friendly guidance
+    plain_summary: string;
+    what_you_need: string[];
+    vendor_ask: IntegrationVendorAsk | null;
+    field_help: Record<string, string>;
+    recommended_sync_direction: string;
+}
+
+export interface IntegrationTestResult {
+    ok: boolean;
+    detail: string;
+    friendly?: string;
 }
 
 export interface IntegrationConfig {
@@ -423,8 +441,8 @@ class ApiClient {
         return this.request<{ message: string }>(`/integrations/${id}`, { method: 'DELETE' });
     }
 
-    async testIntegration(id: number): Promise<{ ok: boolean; detail: string }> {
-        return this.request<{ ok: boolean; detail: string }>(`/integrations/${id}/test`, { method: 'POST' });
+    async testIntegration(id: number): Promise<IntegrationTestResult> {
+        return this.request<IntegrationTestResult>(`/integrations/${id}/test`, { method: 'POST' });
     }
 
     async syncIntegration(id: number): Promise<{ message: string }> {
