@@ -10,6 +10,8 @@ import {
 
 import { Card, Button, Input, Select, Badge } from './ui';
 import { SystemSecret } from '../types';
+import { api } from '../services/api';
+import GovtechIntegrations from './GovtechIntegrations';
 
 
 interface ModulesState {
@@ -37,6 +39,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [savingSmsProvider, setSavingSmsProvider] = useState(false);
     const userModifiedSms = useRef(false);
     const [expandedGuide, setExpandedGuide] = useState<string | null>(null);
+    const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
 
 
@@ -1308,8 +1311,14 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 </div>
             </div>
 
+            {saveMessage && (
+                <div className="rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-sm text-white/80">
+                    {saveMessage}
+                </div>
+            )}
 
-
+            {/* GovTech Platform Connections */}
+            <GovtechIntegrations />
 
             {/* Help Link */}
             <Card className="bg-blue-500/10 border-blue-500/20">
