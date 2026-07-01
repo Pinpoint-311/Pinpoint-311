@@ -118,6 +118,18 @@ export default function GovtechIntegrations() {
         }
     };
 
+    const handleSyncAssets = async (existing: IntegrationConfig) => {
+        setBusy(`assets:${existing.platform}`);
+        try {
+            await api.syncIntegrationAssets(existing.id);
+            setTestResult(prev => ({ ...prev, [existing.platform]: { ok: true, detail: 'Asset sync queued — the inventory will appear as a map layer' } }));
+        } catch (err: any) {
+            setTestResult(prev => ({ ...prev, [existing.platform]: { ok: false, detail: err?.message || 'Asset sync failed to start' } }));
+        } finally {
+            setBusy(null);
+        }
+    };
+
     const handleDelete = async (existing: IntegrationConfig) => {
         if (!window.confirm(`Disconnect ${existing.platform_name}? Credentials and sync history will be removed.`)) return;
         setBusy(`delete:${existing.platform}`);
@@ -253,6 +265,11 @@ export default function GovtechIntegrations() {
                                         {existing.enabled && platform.capabilities.includes('pull') && (
                                             <Button size="sm" variant="ghost" className="text-xs" onClick={() => handleSync(existing)} disabled={busy !== null} leftIcon={<RefreshCw className="w-3 h-3" />}>
                                                 Sync Now
+                                            </Button>
+                                        )}
+                                        {existing.enabled && platform.capabilities.includes('assets') && (
+                                            <Button size="sm" variant="ghost" className="text-xs" onClick={() => handleSyncAssets(existing)} disabled={busy !== null}>
+                                                {busy === `assets:${platform.platform}` ? 'Syncing…' : 'Sync Assets'}
                                             </Button>
                                         )}
                                         <button

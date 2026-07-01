@@ -30,7 +30,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from app.integrations.base import BaseConnector, ConnectorError, ExternalRecord
+from app.integrations.base import BaseConnector, ConnectorError, ExternalComment, ExternalRecord
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ DEFAULT_FIELD_MAP = {
 
 class GenericRestConnector(BaseConnector):
     platform = "generic_rest"
-    capabilities = {"test", "push", "push_status", "pull"}
+    capabilities = {"test", "push", "push_status", "pull", "comments", "documents", "assets"}
 
     DEFAULT_STATUS_MAP_OUT = {"open": "open", "in_progress": "in_progress", "closed": "closed"}
     DEFAULT_STATUS_MAP_IN = {
@@ -108,11 +108,22 @@ class GenericRestConnector(BaseConnector):
                 updated_dt = datetime.fromisoformat(str(item[updated_field]).replace("Z", "+00:00"))
             except ValueError:
                 pass
+        # Reverse field_map so pulled records can be imported as new requests
+        field_map = {**DEFAULT_FIELD_MAP, **(self.config.get("field_map") or {})}
+        def theirs(ours: str, fallback: str) -> Any:
+            return item.get(field_map.get(ours) or fallback)
+        lat = theirs("lat", "latitude")
+        lng = theirs("long", "longitude")
         return ExternalRecord(
             external_id=str(item.get(id_field) or ""),
             status=self.map_status_in(raw_status) if raw_status is not None else None,
             raw_status=str(raw_status) if raw_status is not None else None,
             updated_at=updated_dt,
+            description=theirs("description", "description"),
+            service_name=theirs("service_name", "category"),
+            address=theirs("address", "address"),
+            lat=float(lat) if lat is not None else None,
+            long=float(lng) if lng is not None else None,
             raw=item,
         )
 
@@ -192,3 +203,114 @@ class GenericRestConnector(BaseConnector):
             self._raise_for_status(resp, f"{self.platform} get request")
             item = resp.json()
         return self._record_from_response(item if isinstance(item, dict) else {})
+
+    # ---- Comments ----
+    # Config: comments_path (default "/requests/{id}/comments"),
+    #         comment_id_field/comment_text_field/comment_author_field/comment_created_field
+
+    async def push_comment(self, external_id: str, author: str, content: str) -> Optional[str]:
+        body = {
+            self.config.get("comment_text_field", "content"): content,
+            self.config.get("comment_author_field", "author"): author or "Pinpoint 311",
+        }
+        async with self._client(**self._request_kwargs()) as client:
+            resp = await client.post(
+                self._url("comments_path", "/requests/{id}/comments", external_id),
+                params=self._query_auth(), json=body,
+            )
+            self._raise_for_status(resp, f"{self.platform} create comment")
+            item = resp.json()
+        if isinstance(item, dict):
+            cid = item.get(self.config.get("comment_id_field", "id"))
+            return str(cid) if cid is not None else None
+        return None
+
+    async def pull_comments(self, external_id: str) -> List[ExternalComment]:
+        async with self._client(**self._request_kwargs()) as client:
+            resp = await client.get(
+                self._url("comments_path", "/requests/{id}/comments", external_id),
+                params=self._query_auth(),
+            )
+            if resp.status_code == 404:
+                return []
+            self._raise_for_status(resp, f"{self.platform} list comments")
+            body = resp.json()
+        items = body if isinstance(body, list) else body.get(
+            self.config.get("comments_items_field", "comments"), body.get("results", [])
+        )
+        id_field = self.config.get("comment_id_field", "id")
+        text_field = self.config.get("comment_text_field", "content")
+        author_field = self.config.get("comment_author_field", "author")
+        created_field = self.config.get("comment_created_field", "created_at")
+        comments = []
+        for item in (items or []):
+            if not isinstance(item, dict) or item.get(id_field) is None or not item.get(text_field):
+                continue
+            created = None
+            if item.get(created_field):
+                try:
+                    created = datetime.fromisoformat(str(item[created_field]).replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+            comments.append(ExternalComment(
+                external_id=str(item[id_field]),
+                content=str(item[text_field]),
+                author=item.get(author_field),
+                created_at=created,
+                raw=item,
+            ))
+        return comments
+
+    # ---- Documents ----
+    # Config: documents_path (default "/requests/{id}/documents"),
+    #         document_file_field (default "file")
+
+    async def push_document(self, external_id: str, filename: str,
+                            content: bytes, content_type: str) -> None:
+        async with self._client(**self._request_kwargs()) as client:
+            resp = await client.post(
+                self._url("documents_path", "/requests/{id}/documents", external_id),
+                params=self._query_auth(),
+                files={self.config.get("document_file_field", "file"): (filename, content, content_type)},
+            )
+            self._raise_for_status(resp, f"{self.platform} upload document")
+
+    # ---- Assets ----
+    # Config: assets_path (default "/assets"). The endpoint may return a GeoJSON
+    # FeatureCollection directly, or a JSON list mapped via asset_*_field keys.
+
+    async def pull_assets(self) -> List[Dict[str, Any]]:
+        async with self._client(**self._request_kwargs()) as client:
+            resp = await client.get(
+                self._url("assets_path", "/assets", None), params=self._query_auth()
+            )
+            self._raise_for_status(resp, f"{self.platform} list assets")
+            body = resp.json()
+        # Native GeoJSON FeatureCollection
+        if isinstance(body, dict) and body.get("type") == "FeatureCollection":
+            return [f for f in body.get("features", []) if isinstance(f, dict) and f.get("geometry")]
+        items = body if isinstance(body, list) else body.get(
+            self.config.get("assets_items_field", "results"), body.get("data", [])
+        )
+        id_field = self.config.get("asset_id_field", "id")
+        name_field = self.config.get("asset_name_field", "name")
+        type_field = self.config.get("asset_type_field", "type")
+        lat_field = self.config.get("asset_lat_field", "latitude")
+        lng_field = self.config.get("asset_long_field", "longitude")
+        features = []
+        for item in (items or []):
+            if not isinstance(item, dict):
+                continue
+            lat, lng = item.get(lat_field), item.get(lng_field)
+            if lat is None or lng is None:
+                continue
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [float(lng), float(lat)]},
+                "properties": {
+                    "asset_id": str(item.get(id_field) or ""),
+                    "name": item.get(name_field) or str(item.get(id_field) or ""),
+                    "type": item.get(type_field),
+                },
+            })
+        return features

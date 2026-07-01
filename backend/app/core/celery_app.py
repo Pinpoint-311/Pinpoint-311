@@ -45,6 +45,18 @@ celery_app.conf.update(
             "schedule": 60 * 15,  # Every 15 minutes
             "options": {"queue": "default"}
         },
+        # Import new external comments on linked, active requests
+        "pull-integration-comments": {
+            "task": "app.tasks.integrations.pull_integration_comments",
+            "schedule": 60 * 15,  # Every 15 minutes
+            "options": {"queue": "default"}
+        },
+        # Mirror external asset inventories into Pinpoint map layers
+        "sync-integration-assets": {
+            "task": "app.tasks.integrations.sync_integration_assets",
+            "schedule": 60 * 60 * 24,  # Every 24 hours
+            "options": {"queue": "default"}
+        },
         # Weekly staff digest emails on Mondays at 8:00 AM UTC
         "weekly-staff-digest": {
             "task": "app.tasks.service_requests.send_weekly_digest",

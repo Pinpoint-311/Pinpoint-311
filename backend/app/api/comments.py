@@ -77,7 +77,11 @@ async def create_comment(
             current_user.full_name or current_user.username,
             comment_data.content
         )
-    
+
+        # Mirror the comment to linked govtech platforms
+        from app.tasks.integrations import push_comment_to_integrations
+        push_comment_to_integrations.delay(comment.id)
+
     return comment
 
 

@@ -195,6 +195,11 @@ async def add_public_comment(
     db.add(comment)
     await db.commit()
     await db.refresh(comment)
+
+    # Mirror the comment to linked govtech platforms
+    from app.tasks.integrations import push_comment_to_integrations
+    push_comment_to_integrations.delay(comment.id)
+
     return comment
 
 

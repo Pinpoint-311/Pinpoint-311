@@ -20,7 +20,9 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from app.integrations.base import BaseConnector, ConnectorError, ExternalRecord
+import json
+
+from app.integrations.base import BaseConnector, ConnectorError, ExternalComment, ExternalRecord
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +32,7 @@ DEFAULT_AUTH_BASE = "https://auth.accela.com"
 
 class AccelaConnector(BaseConnector):
     platform = "accela"
-    capabilities = {"test", "push", "push_status", "pull"}
+    capabilities = {"test", "push", "push_status", "pull", "comments", "documents", "assets"}
 
     DEFAULT_STATUS_MAP_OUT = {"open": "Open", "in_progress": "In Progress", "closed": "Closed"}
     DEFAULT_STATUS_MAP_IN = {
@@ -185,3 +187,103 @@ class AccelaConnector(BaseConnector):
             self._raise_for_status(resp, "Accela get record")
             result = resp.json().get("result") or []
         return self._record_from_accela(result[0]) if result else None
+
+    # ---- Comments (Accela record comments API) ----
+
+    async def push_comment(self, external_id: str, author: str, content: str) -> Optional[str]:
+        token = await self._get_token()
+        body = [{"text": f"{author}: {content}" if author else content}]
+        async with self._client() as client:
+            resp = await client.post(
+                f"{self.api_base}/v4/records/{external_id}/comments",
+                json=body, headers=self._headers(token),
+            )
+            self._raise_for_status(resp, "Accela create comment")
+            result = resp.json().get("result") or []
+        return str(result[0]["id"]) if result and result[0].get("id") is not None else None
+
+    async def pull_comments(self, external_id: str) -> List[ExternalComment]:
+        token = await self._get_token()
+        async with self._client() as client:
+            resp = await client.get(
+                f"{self.api_base}/v4/records/{external_id}/comments",
+                params={"limit": 100}, headers=self._headers(token),
+            )
+            if resp.status_code == 404:
+                return []
+            self._raise_for_status(resp, "Accela list comments")
+            result = resp.json().get("result") or []
+        comments = []
+        for item in result:
+            created = None
+            if item.get("createdDate"):
+                try:
+                    created = datetime.fromisoformat(str(item["createdDate"]).replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+            comments.append(ExternalComment(
+                external_id=str(item.get("id") or ""),
+                content=item.get("text") or "",
+                author=(item.get("createdBy") or {}).get("text") if isinstance(item.get("createdBy"), dict) else item.get("createdBy"),
+                created_at=created,
+                raw=item,
+            ))
+        return [c for c in comments if c.external_id and c.content]
+
+    # ---- Documents (Accela record documents API, multipart) ----
+
+    async def push_document(self, external_id: str, filename: str,
+                            content: bytes, content_type: str) -> None:
+        token = await self._get_token()
+        file_info = json.dumps([{
+            "serviceProviderCode": self.config.get("agency_name", ""),
+            "fileName": filename,
+            "type": content_type,
+            "description": "Uploaded from Pinpoint 311",
+        }])
+        async with self._client() as client:
+            resp = await client.post(
+                f"{self.api_base}/v4/records/{external_id}/documents",
+                headers={"Authorization": token},
+                data={"fileInfo": file_info},
+                files={"uploadedFile": (filename, content, content_type)},
+            )
+            self._raise_for_status(resp, "Accela upload document")
+
+    # ---- Assets (Accela asset management API) ----
+
+    async def pull_assets(self) -> List[Dict[str, Any]]:
+        token = await self._get_token()
+        features: List[Dict[str, Any]] = []
+        offset = 0
+        async with self._client() as client:
+            while offset < 10000:  # hard ceiling
+                params: Dict[str, Any] = {"limit": 100, "offset": offset}
+                if self.config.get("asset_group"):
+                    params["group"] = self.config["asset_group"]
+                resp = await client.get(
+                    f"{self.api_base}/v4/assets", params=params, headers=self._headers(token)
+                )
+                self._raise_for_status(resp, "Accela list assets")
+                result = resp.json().get("result") or []
+                if not result:
+                    break
+                for item in result:
+                    lat = item.get("yCoordinate")
+                    lng = item.get("xCoordinate")
+                    if lat is None or lng is None:
+                        continue  # only mappable assets become layer features
+                    features.append({
+                        "type": "Feature",
+                        "geometry": {"type": "Point", "coordinates": [float(lng), float(lat)]},
+                        "properties": {
+                            "asset_id": str(item.get("assetId") or item.get("id") or ""),
+                            "name": item.get("description") or str(item.get("assetId") or ""),
+                            "type": (item.get("type") or {}).get("text") if isinstance(item.get("type"), dict) else item.get("type"),
+                            "status": (item.get("status") or {}).get("text") if isinstance(item.get("status"), dict) else item.get("status"),
+                        },
+                    })
+                if len(result) < 100:
+                    break
+                offset += 100
+        return features
