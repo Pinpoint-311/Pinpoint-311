@@ -157,58 +157,37 @@ async def translate_text(
     if cached:
         return cached
     
-    # 2. Call Google Translate API using service account
-    auth = await _get_auth_headers()
-    if not auth:
-        logger.warning("Translation not configured (no service account or API key)")
+    # 2. Call the configured translation provider (Google default, or Azure)
+    from app.services.translation_providers import get_translation_provider
+    provider = await get_translation_provider()
+    if not provider:
+        logger.warning("Translation not configured (no provider credentials)")
         return None
-    
+
     try:
-        # Build request with appropriate auth
-        headers = {}
-        params = {}
-        if "_api_key" in auth:
-            params["key"] = auth["_api_key"]
-        else:
-            headers = auth
-        
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                GOOGLE_TRANSLATE_API_URL,
-                params=params,
-                headers=headers,
-                json={
-                    "q": text,
-                    "source": source_lang,
-                    "target": target_lang,
-                    "format": "text"
-                }
-            )
-            response.raise_for_status()
-            result = response.json()
-            
-            if "data" in result and "translations" in result["data"]:
-                translated = result["data"]["translations"][0]["translatedText"]
-                
-                # Track API usage for cost estimation
-                try:
-                    from app.db.session import SessionLocal
-                    from app.services.api_usage import track_api_usage
-                    async with SessionLocal() as db:
-                        await track_api_usage(
-                            db=db,
-                            service_name="translation",
-                            operation="translate_text",
-                            characters=len(text)
-                        )
-                except Exception as e:
-                    logger.warning(f"Failed to track translation usage: {e}")
-                
-                # 3. Save to database cache
-                await save_translation_to_cache(text, target_lang, translated)
-                
-                return translated
+        out = await provider.translate([text], source_lang, target_lang)
+        if not out:
             return None
+        translated = out[0]
+
+        # Track API usage for cost estimation
+        try:
+            from app.db.session import SessionLocal
+            from app.services.api_usage import track_api_usage
+            async with SessionLocal() as db:
+                await track_api_usage(
+                    db=db,
+                    service_name="translation",
+                    operation="translate_text",
+                    characters=len(text)
+                )
+        except Exception as e:
+            logger.warning(f"Failed to track translation usage: {e}")
+
+        # 3. Save to database cache
+        await save_translation_to_cache(text, target_lang, translated)
+
+        return translated
     except Exception as e:
         from app.core.sanitize import sanitize_for_log
         logger.error(f"Translation failed ({sanitize_for_log(source_lang)} -> {sanitize_for_log(target_lang)}): {e}")
@@ -248,49 +227,28 @@ async def translate_batch(
     if not uncached:
         return results
     
-    # 2. Call Google Translate API for uncached texts (via service account)
-    auth = await _get_auth_headers()
-    if not auth:
-        logger.warning("Translation not configured (no service account or API key)")
+    # 2. Call the configured translation provider (Google default, or Azure)
+    from app.services.translation_providers import get_translation_provider
+    provider = await get_translation_provider()
+    if not provider:
+        logger.warning("Translation not configured (no provider credentials)")
         for t in uncached:
             results[t] = t
         return results
-    
+
     try:
-        # Build request with appropriate auth
-        headers = {}
-        params = {}
-        if "_api_key" in auth:
-            params["key"] = auth["_api_key"]
-        else:
-            headers = auth
-        
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                GOOGLE_TRANSLATE_API_URL,
-                params=params,
-                headers=headers,
-                json={
-                    "q": uncached,
-                    "source": source_lang,
-                    "target": target_lang,
-                    "format": "text"
-                }
-            )
-            response.raise_for_status()
-            result = response.json()
-            
-            translations = result.get("data", {}).get("translations", [])
-            for i, text in enumerate(uncached):
-                if i < len(translations):
-                    translated = translations[i].get("translatedText", text)
-                    results[text] = translated
-                    # 3. Save each to database
-                    await save_translation_to_cache(text, target_lang, translated)
-                else:
-                    results[text] = text
-                    
+        out = await provider.translate(uncached, source_lang, target_lang)
+        if out is None:
+            for t in uncached:
+                results[t] = t
             return results
+        for i, text in enumerate(uncached):
+            translated = out[i] if i < len(out) else text
+            results[text] = translated
+            if translated != text:
+                # 3. Save each to database
+                await save_translation_to_cache(text, target_lang, translated)
+        return results
     except Exception as e:
         logger.error(f"Batch translation failed: {e}")
         for t in uncached:
