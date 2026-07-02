@@ -53,6 +53,7 @@ import RequestDetailMap from '../components/RequestDetailMap';
 import SpatialBiasHeatmap from '../components/SpatialBiasHeatmap';
 import { usePageNavigation } from '../hooks/usePageNavigation';
 import NotificationSettings from '../components/NotificationSettings';
+import ManualIntake from '../components/ManualIntake';
 import ActivityFeed from '../components/ActivityFeed';
 import PrintWorkOrder from '../components/PrintWorkOrder';
 
@@ -199,6 +200,7 @@ export default function StaffDashboard() {
 
     // Notification settings modal state
     const [showNotificationSettings, setShowNotificationSettings] = useState(false);
+    const [showManualIntake, setShowManualIntake] = useState(false);
 
     // Activity feed state
     const [showActivityFeed, setShowActivityFeed] = useState(false);
@@ -820,6 +822,13 @@ export default function StaffDashboard() {
 
                     {/* Menu Items */}
                     <nav className="flex-1 p-4 space-y-2">
+                        {/* Primary action: log a request for a caller / walk-in / email */}
+                        <button
+                            onClick={() => { setShowManualIntake(true); setSidebarOpen(false); }}
+                            className="shimmer-sweep w-full flex items-center justify-center gap-2 px-3 py-2.5 mb-4 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-900/40 transition-all hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                        >
+                            <Phone className="w-4 h-4" aria-hidden="true" /> Log a request
+                        </button>
                         <p className="text-xs font-medium text-white/40 uppercase tracking-wider px-3 mb-3">
                             Main
                         </p>
@@ -3033,6 +3042,17 @@ export default function StaffDashboard() {
                 isOpen={showNotificationSettings}
                 onClose={() => setShowNotificationSettings(false)}
                 userName={user?.full_name || user?.username || 'User'}
+            />
+            {/* Manual intake — call taker / walk-in / email */}
+            <ManualIntake
+                isOpen={showManualIntake}
+                onClose={() => setShowManualIntake(false)}
+                services={services}
+                onCreated={(created) => {
+                    // Reflect the new request immediately without a full reload.
+                    setAllRequests(prev => [created as any, ...prev]);
+                    setRequests(prev => [created as any, ...prev]);
+                }}
             />
             {/* Activity Feed Panel */}
             <ActivityFeed
