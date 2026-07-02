@@ -44,6 +44,37 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
     return settings
 
 
+@router.get("/ai/catalog")
+async def get_ai_catalog(_: User = Depends(get_current_staff)):
+    """AI provider catalog for the admin UI: available boundaries (Vertex /
+    Azure Government / Bedrock), their models, and the fields each needs, plus
+    which provider is currently selected and which are configured."""
+    from app.services.ai.registry import AI_CATALOG, catalog_for_api, AI_PROVIDER_KEY, AI_MODEL_KEY
+    from app.services.secret_manager import get_secret
+
+    current_provider = (await get_secret(AI_PROVIDER_KEY)) or "vertex"
+    current_model = await get_secret(AI_MODEL_KEY)
+
+    configured = {}
+    for key, meta in AI_CATALOG.items():
+        required = [f["key"] for f in meta["credential_fields"] if not f["label"].endswith("(optional)")]
+        # "configured" = the non-optional credential fields are all present
+        present = True
+        for field in meta["credential_fields"]:
+            if field["key"] in required:
+                if not await get_secret(field["key"]):
+                    present = False
+                    break
+        configured[key] = present
+
+    return {
+        "current_provider": current_provider,
+        "current_model": current_model or AI_CATALOG.get(current_provider, {}).get("default_model"),
+        "configured": configured,
+        "providers": catalog_for_api(),
+    }
+
+
 @router.post("/settings", response_model=SystemSettingsResponse)
 async def update_settings(
     settings_data: SystemSettingsBase,

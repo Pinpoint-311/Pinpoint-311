@@ -110,18 +110,17 @@ def analyze_request(self, request_id: int):
             
             logger.info(f"[AI Analysis] AI module is enabled, proceeding...")
             
-            # Get Vertex AI credentials
-            project_id = await get_secret(db, "VERTEX_AI_PROJECT")
-            if not project_id:
-                msg = "[AI Analysis] Skipped - VERTEX_AI_PROJECT not configured"
+            # Select the configured AI provider (Vertex/Gemini is the default).
+            # None means AI is not configured for this instance → skip, as before.
+            from app.services.ai import get_ai_provider
+            ai_provider = await get_ai_provider(db)
+            if ai_provider is None:
+                msg = "[AI Analysis] Skipped - no AI provider configured"
                 logger.warning(msg)
-                return {"status": "skipped", "reason": "VERTEX_AI_PROJECT not configured"}
-            
-            logger.info("[AI Analysis] Project ID found: <set>")
-            
-            location = "global"  # Gemini 3.1 Flash-Lite is available on global endpoints
-            service_account_json = await get_secret(db, "VERTEX_AI_SERVICE_ACCOUNT_KEY")
-            
+                return {"status": "skipped", "reason": "AI provider not configured"}
+
+            logger.info(f"[AI Analysis] Using provider={ai_provider.provider} model={ai_provider.model}")
+
             # Get the request
             result = await db.execute(
                 select(ServiceRequest).where(ServiceRequest.id == request_id)
@@ -169,16 +168,10 @@ def analyze_request(self, request_id: int):
             # Get images for multimodal analysis
             image_data = request.media_urls[:3] if request.media_urls else None
             
-            # Call Vertex AI
-            logger.info(f"[AI Analysis] Calling Vertex AI for request {request_id}...")
-            
-            analysis_result = await analyze_with_gemini(
-                project_id=project_id,
-                location=location,
-                prompt=prompt,
-                image_data=image_data,
-                service_account_json=service_account_json if service_account_json else None
-            )
+            # Call the selected AI provider
+            logger.info(f"[AI Analysis] Calling {ai_provider.provider} for request {request_id}...")
+
+            analysis_result = await ai_provider.complete_json(prompt, image_data)
             
             logger.info(f"[AI Analysis] Got result: {analysis_result}")
             
