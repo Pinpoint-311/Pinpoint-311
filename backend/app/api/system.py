@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
-from typing import List
+from typing import List, Optional, Dict
+from pydantic import BaseModel
 import subprocess
 import os
 import uuid
@@ -92,6 +93,104 @@ async def get_ai_catalog(_: User = Depends(get_current_staff)):
         "configured": configured,
         "providers": catalog_for_api(),
     }
+
+
+# ---- Unified provider save + test (AI / translation / identity) ----
+
+_PROVIDER_SELECT_KEY = {
+    "ai": "AI_PROVIDER",
+    "translation": "TRANSLATION_PROVIDER",
+    "identity": "IDENTITY_PROVIDER",
+}
+
+
+async def _persist_secret(db: AsyncSession, key_name: str, value: str):
+    """Write a secret to the configured store (Secret Manager / Key Vault when
+    available) and always keep an encrypted DB copy — same path as /secrets."""
+    from app.core.encryption import encrypt
+    from app.services.secret_manager import set_secret, clear_cache
+    bootstrap_keys = {"GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT"}
+    if value and key_name not in bootstrap_keys:
+        try:
+            if await set_secret(key_name, value):
+                clear_cache()
+        except Exception as e:
+            logger.warning(f"Provider secret store write failed for {key_name}: {e}")
+    result = await db.execute(select(SystemSecret).where(SystemSecret.key_name == key_name))
+    secret = result.scalar_one_or_none()
+    enc = encrypt(value) if value else None
+    if secret:
+        secret.key_value = enc
+        secret.is_configured = bool(value)
+    else:
+        db.add(SystemSecret(key_name=key_name, key_value=enc, is_configured=bool(value)))
+    await db.commit()
+
+
+class ProviderSaveRequest(BaseModel):
+    provider: str
+    model: Optional[str] = None
+    settings: Dict[str, str] = {}
+
+
+@router.post("/providers/{capability}/save")
+async def save_provider(
+    capability: str,
+    body: ProviderSaveRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Select a provider for a capability and save its settings/secrets.
+    Blank values are ignored (existing secret kept)."""
+    if capability not in _PROVIDER_SELECT_KEY:
+        raise HTTPException(status_code=400, detail=f"Unknown capability: {capability}")
+    await _persist_secret(db, _PROVIDER_SELECT_KEY[capability], body.provider)
+    if capability == "ai" and body.model:
+        await _persist_secret(db, "AI_MODEL", body.model)
+    for key, value in (body.settings or {}).items():
+        if value:  # blank = keep existing
+            await _persist_secret(db, key, value)
+    from app.services.secret_manager import clear_cache
+    clear_cache()
+    return {"ok": True, "provider": body.provider}
+
+
+@router.post("/providers/{capability}/test")
+async def test_provider(
+    capability: str,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Live connectivity check for the currently-configured provider of a
+    capability. Returns {ok, detail}."""
+    try:
+        if capability == "ai":
+            from app.services.ai import get_ai_provider
+            provider = await get_ai_provider(db)
+            if not provider:
+                return {"ok": False, "detail": "No AI provider is configured. Enter the required fields and save first."}
+            result = await provider.complete_json('Reply with {"priority_score": 5}. This is a connection test.')
+            ok = isinstance(result, dict) and "_error" not in result
+            return {"ok": ok, "detail": f"{provider.provider}/{provider.model} responded" if ok else f"Call failed: {result.get('_error', 'unknown')[:200]}"}
+        if capability == "translation":
+            from app.services.translation_providers import get_translation_provider
+            provider = await get_translation_provider()
+            if not provider:
+                return {"ok": False, "detail": "No translation provider is configured."}
+            out = await provider.translate(["hello"], "en", "es")
+            return {"ok": bool(out), "detail": f"Translated sample → {out[0]}" if out else "No translation returned"}
+        if capability == "identity":
+            from app.services.identity import resolve_identity_config, get_oidc_metadata
+            cfg = await resolve_identity_config(db)
+            if not cfg:
+                return {"ok": False, "detail": "No identity provider is configured."}
+            meta = await get_oidc_metadata(cfg)
+            return {"ok": bool(meta.get("authorization_endpoint")), "detail": f"Discovered {cfg['provider']} endpoints at {cfg['issuer_base']}"}
+        raise HTTPException(status_code=400, detail=f"Test not supported for: {capability}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"ok": False, "detail": f"Test failed: {str(e)[:200]}"}
 
 
 @router.post("/settings", response_model=SystemSettingsResponse)

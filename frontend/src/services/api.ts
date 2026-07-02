@@ -94,6 +94,42 @@ export interface IntegrationSyncLog {
     created_at: string | null;
 }
 
+// Pluggable service-provider types (AI / translation / identity)
+export interface ProviderFieldSpec {
+    key: string;
+    label: string;
+    secret?: boolean;
+}
+
+export interface ProviderModelSpec {
+    id: string;
+    label: string;
+}
+
+export interface ProviderInfo {
+    provider: string;
+    name: string;
+    description?: string;
+    boundary?: string;
+    models?: ProviderModelSpec[];
+    default_model?: string;
+    credential_fields: ProviderFieldSpec[];
+    field_help?: Record<string, string>;
+}
+
+export interface ProviderCatalog {
+    current_provider: string;
+    current_model?: string | null;
+    configured?: Record<string, boolean>;
+    providers: ProviderInfo[];
+}
+
+export interface ProviderSave {
+    provider: string;
+    model?: string;
+    settings?: Record<string, string>;
+}
+
 class ApiClient {
     private token: string | null = null;
     private onUnauthorized: (() => void) | null = null;
@@ -455,6 +491,22 @@ class ApiClient {
 
     async getIntegrationLogs(id: number): Promise<IntegrationSyncLog[]> {
         return this.request<IntegrationSyncLog[]>(`/integrations/${id}/logs`);
+    }
+
+    // Service providers (AI / translation / identity)
+    async getProviderCatalog(capability: 'ai' | 'translation' | 'identity'): Promise<ProviderCatalog> {
+        return this.request<ProviderCatalog>(`/system/${capability}/catalog`);
+    }
+
+    async saveProvider(capability: string, data: ProviderSave): Promise<{ ok: boolean; provider: string }> {
+        return this.request(`/system/providers/${capability}/save`, {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async testProvider(capability: string): Promise<{ ok: boolean; detail: string }> {
+        return this.request(`/system/providers/${capability}/test`, { method: 'POST' });
     }
 
     // Statistics
