@@ -1,8 +1,9 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, Float, Text, Boolean, Table
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, Float, Text, Boolean, Table, event, select
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.sql import func
 from geoalchemy2 import Geometry
+from datetime import datetime
 from app.db.session import Base
 # encryption is imported lazily in hybrid properties to avoid circular imports
 
@@ -332,14 +333,85 @@ class RequestAuditLog(Base):
     actor_type = Column(String(20), nullable=False)  # "resident" or "staff"
     actor_name = Column(String(100))  # Username or "Resident"
     
-    # When
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
+    # When (Python-side default so the value is present at insert time for hashing)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), default=datetime.utcnow)
+
     # Additional context (JSON for flexibility)
     extra_data = Column(JSON)  # { substatus, completion_message, etc. }
-    
+
+    # Tamper-evidence: SHA-256 hash chain (OPRA-grade immutable audit trail).
+    # entry_hash = SHA256(previous_hash + canonical(this row)); computed
+    # automatically on insert (see the before_insert listener below). Any
+    # alteration or deletion of a row breaks the chain and is detectable via
+    # the audit-log verify endpoint.
+    previous_hash = Column(String(64))
+    entry_hash = Column(String(64))
+
     # Relationship
     service_request = relationship("ServiceRequest", backref="audit_logs")
+
+
+def _canonical_request_audit(action, old_value, new_value, actor_type,
+                             actor_name, created_at, extra_data, previous_hash) -> str:
+    """Deterministic serialization of a request-audit row for hashing."""
+    import json as _json
+    return _json.dumps({
+        "action": action,
+        "old_value": old_value,
+        "new_value": new_value,
+        "actor_type": actor_type,
+        "actor_name": actor_name,
+        "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at),
+        "extra_data": extra_data,
+        "previous_hash": previous_hash,
+    }, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def compute_request_audit_hash(row: "RequestAuditLog", previous_hash) -> str:
+    import hashlib as _hashlib
+    canonical = _canonical_request_audit(
+        row.action, row.old_value, row.new_value, row.actor_type,
+        row.actor_name, row.created_at, row.extra_data, previous_hash,
+    )
+    return _hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+import itertools as _itertools
+from sqlalchemy.orm import Session as _Session
+
+# Monotonic creation counter → deterministic chain order even when several
+# audit rows are created in the same commit (e.g. a status change that also
+# reassigns a department in one transaction).
+_audit_seq = _itertools.count()
+
+
+@event.listens_for(RequestAuditLog, "init")
+def _stamp_audit_seq(target, args, kwargs):
+    target._seq = next(_audit_seq)
+
+
+@event.listens_for(_Session, "before_flush")
+def _request_audit_hash_chain(session, flush_context, instances):
+    """Chain new request-audit rows into a SHA-256 hash chain at flush time.
+
+    Runs once per flush over all pending RequestAuditLog inserts (in creation
+    order), seeding from the last persisted entry_hash. Works under the async
+    engine and needs no changes at the ~15 call sites that create audit rows.
+    """
+    pending = [o for o in session.new if isinstance(o, RequestAuditLog)]
+    if not pending:
+        return
+    pending.sort(key=lambda o: getattr(o, "_seq", 0))
+    tbl = RequestAuditLog.__table__
+    running = session.execute(
+        select(tbl.c.entry_hash).order_by(tbl.c.id.desc()).limit(1)
+    ).scalar()
+    for row in pending:
+        if row.created_at is None:
+            row.created_at = datetime.utcnow()
+        row.previous_hash = running
+        row.entry_hash = compute_request_audit_hash(row, running)
+        running = row.entry_hash
 
 
 

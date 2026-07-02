@@ -167,6 +167,9 @@ async def _run_schema_migrations():
         "CREATE INDEX IF NOT EXISTS ix_request_comments_external_ref ON request_comments (external_ref)",
         "ALTER TABLE integration_links ADD COLUMN IF NOT EXISTS pushed_comment_ids JSON DEFAULT '[]'",
         "ALTER TABLE integration_links ADD COLUMN IF NOT EXISTS documents_pushed BOOLEAN DEFAULT FALSE",
+        # Immutable/tamper-evident request audit log hash chain (added 2026-07-02)
+        "ALTER TABLE request_audit_logs ADD COLUMN IF NOT EXISTS previous_hash VARCHAR(64)",
+        "ALTER TABLE request_audit_logs ADD COLUMN IF NOT EXISTS entry_hash VARCHAR(64)",
     ]
     
     try:
