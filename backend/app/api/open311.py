@@ -227,6 +227,51 @@ async def get_audit_log(
     return audit_result.scalars().all()
 
 
+@router.get("/requests/{request_id}/audit-log/verify")
+async def verify_audit_log(
+    request_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_staff)
+):
+    """Verify the tamper-evidence of a request's audit trail.
+
+    Recomputes each entry's SHA-256 hash from its stored fields + stored
+    previous_hash and reports any mismatch — proving to a records officer
+    (OPRA) that the log has not been altered since it was written.
+    """
+    from app.models import compute_request_audit_hash
+    result = await db.execute(
+        select(ServiceRequest).where(ServiceRequest.service_request_id == request_id)
+    )
+    request = result.scalar_one_or_none()
+    if not request:
+        raise HTTPException(status_code=404, detail="Request not found")
+
+    entries = (await db.execute(
+        select(RequestAuditLog)
+        .where(RequestAuditLog.service_request_id == request.id)
+        .order_by(RequestAuditLog.id.asc())
+    )).scalars().all()
+
+    tampered = []
+    for e in entries:
+        if not e.entry_hash:
+            continue  # legacy entry written before hashing existed
+        expected = compute_request_audit_hash(e, e.previous_hash)
+        if expected != e.entry_hash:
+            tampered.append(e.id)
+
+    hashed = [e for e in entries if e.entry_hash]
+    return {
+        "service_request_id": request_id,
+        "total_entries": len(entries),
+        "verified_entries": len(hashed),
+        "legacy_unhashed": len(entries) - len(hashed),
+        "intact": len(tampered) == 0,
+        "tampered_entry_ids": tampered,
+    }
+
+
 @router.get("/public/requests/{request_id}/audit-log")
 async def get_public_audit_log(request_id: str, db: AsyncSession = Depends(get_db)):
     """Get public audit log for a request - shows status changes only, no internal details.
