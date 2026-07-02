@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 # Prefix used to identify encrypted values
 ENCRYPTED_PREFIX = "gAAAA"  # Fernet tokens always start with this
 KMS_ENCRYPTED_PREFIX = "kms:"  # Google KMS encrypted values
+AZURE_ENCRYPTED_PREFIX = "akv:"  # Azure Key Vault encrypted values
+
+
+def _kms_provider() -> str:
+    """Which KMS backend to use for PII: 'google' (default) or 'azure'."""
+    return (os.getenv("KMS_PROVIDER") or _get_config_sync("KMS_PROVIDER") or "google").strip().lower()
 
 
 def _derive_key(secret_key: str) -> bytes:
@@ -123,7 +129,8 @@ def is_encrypted(value: Optional[str]) -> bool:
     """
     if not value:
         return False
-    return value.startswith(ENCRYPTED_PREFIX) or value.startswith(KMS_ENCRYPTED_PREFIX)
+    return (value.startswith(ENCRYPTED_PREFIX) or value.startswith(KMS_ENCRYPTED_PREFIX)
+            or value.startswith(AZURE_ENCRYPTED_PREFIX))
 
 
 def decrypt_safe(ciphertext: str) -> str:
@@ -142,10 +149,10 @@ def decrypt_safe(ciphertext: str) -> str:
     if not ciphertext:
         return ciphertext
     
-    # Check if it's KMS encrypted
-    if ciphertext.startswith(KMS_ENCRYPTED_PREFIX):
+    # Check if it's KMS encrypted (Google or Azure)
+    if ciphertext.startswith(KMS_ENCRYPTED_PREFIX) or ciphertext.startswith(AZURE_ENCRYPTED_PREFIX):
         return decrypt_pii(ciphertext)
-    
+
     # Check if it looks like an encrypted value
     if not is_encrypted(ciphertext):
         # Return as-is (legacy unencrypted value)
@@ -291,6 +298,22 @@ def encrypt_pii(plaintext: str) -> str:
     if not plaintext:
         return plaintext
 
+    # Azure Key Vault backend (host-selected via KMS_PROVIDER=azure)
+    if _kms_provider() == "azure":
+        from app.core import azure_keyvault
+        if azure_keyvault.is_configured():
+            try:
+                return f"{AZURE_ENCRYPTED_PREFIX}{azure_keyvault.encrypt(plaintext)}"
+            except Exception as e:
+                if _kms_required():
+                    logger.error(f"Azure Key Vault encryption failed and REQUIRE_KMS is set: {e}")
+                    raise
+                logger.error(f"Azure Key Vault encryption failed, falling back to Fernet: {e}")
+                return encrypt(plaintext)
+        if _kms_required():
+            raise RuntimeError("REQUIRE_KMS is set but Azure Key Vault is not configured.")
+        return encrypt(plaintext)
+
     if not _is_kms_available():
         if _kms_required():
             raise RuntimeError(
@@ -365,7 +388,16 @@ def decrypt_pii(ciphertext: str) -> str:
     """
     if not ciphertext:
         return ciphertext
-    
+
+    # Azure Key Vault encrypted values
+    if ciphertext.startswith(AZURE_ENCRYPTED_PREFIX):
+        from app.core import azure_keyvault
+        try:
+            return azure_keyvault.decrypt(ciphertext[len(AZURE_ENCRYPTED_PREFIX):])
+        except Exception as e:
+            logger.error(f"Azure Key Vault decryption failed: {e}")
+            return ""
+
     # Handle non-KMS encrypted values
     if not ciphertext.startswith(KMS_ENCRYPTED_PREFIX):
         return decrypt_safe(ciphertext)
