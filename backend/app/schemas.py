@@ -297,13 +297,26 @@ class ServiceRequestDetailResponse(ServiceRequestResponse):
 
 # ============ Manual Intake ============
 class ManualIntakeCreate(BaseModel):
+    """Staff-entered request (call taker, walk-in, or email intake).
+
+    Mirrors ServiceRequestCreate so manual intake runs through the exact same
+    pipeline (assignment, AI triage, govtech push, notifications). The only
+    difference is that resident contact details are optional — a caller may
+    decline to give them — and the source records how it came in.
+    """
     service_code: str
-    description: str = Field(..., min_length=10)
+    description: str = Field(..., min_length=3)  # call takers write terse notes
     address: Optional[str] = None
+    lat: Optional[float] = None
+    long: Optional[float] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
+    preferred_language: Optional[str] = Field(default="en", max_length=10)
+    media_urls: Optional[List[str]] = []
+    matched_asset: Optional[Dict[str, Any]] = None
+    custom_fields: Optional[Dict[str, Any]] = {}
     source: RequestSource = RequestSource.phone
 
 
