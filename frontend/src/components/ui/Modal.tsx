@@ -139,12 +139,12 @@ export const Modal: React.FC<ModalProps> = ({
                             aria-describedby={ariaDescribedBy}
                             tabIndex={-1}
                         >
-                            {/* Header */}
+                            {/* Header — opaque so scrolled content never shows through it */}
                             {title && (
-                                <div className="flex items-center justify-between p-6 border-b border-white/10 sticky top-0 glass-card">
+                                <div className="flex items-center justify-between gap-3 p-4 sm:p-6 border-b border-white/10 sticky top-0 z-20 bg-slate-900 rounded-t-2xl">
                                     <h2
                                         id={titleId}
-                                        className="text-xl font-semibold text-white"
+                                        className="text-lg sm:text-xl font-semibold text-white"
                                     >
                                         {title}
                                     </h2>

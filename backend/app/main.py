@@ -289,6 +289,11 @@ app.include_router(api_usage.router, prefix="/api/system/api-usage", tags=["API 
 app.include_router(data_export.router, prefix="/api", tags=["Data Export"])
 app.include_router(integrations.router, prefix="/api/integrations", tags=["GovTech Integrations"])
 
+# Built-in practice vendor so integrations can be verified without any real
+# platform account (see app/api/integration_sandbox.py)
+from app.api import integration_sandbox
+app.include_router(integration_sandbox.router, prefix="/api/integrations/sandbox-vendor", tags=["Integration Sandbox"])
+
 # Mount uploads directory for serving uploaded files
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/project/uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)

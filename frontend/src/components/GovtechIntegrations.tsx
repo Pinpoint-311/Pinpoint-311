@@ -12,6 +12,7 @@ import {
 } from '../services/api';
 
 const MODE_LABELS: Record<string, { label: string; className: string }> = {
+    sandbox: { label: 'No account needed — try it now', className: 'bg-violet-500/20 text-violet-300 border-violet-500/30' },
     public_api: { label: 'Works with your account login', className: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
     open311: { label: 'Works with a standard address + key', className: 'bg-sky-500/20 text-sky-300 border-sky-500/30' },
     partner_api: { label: 'Vendor sends you the details', className: 'bg-amber-500/20 text-amber-300 border-amber-500/30' },
@@ -367,7 +368,7 @@ export default function GovtechIntegrations() {
                                         className="bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700"
                                         onClick={() => openWizard(platform, 'intro')}
                                     >
-                                        Set up — takes about 10 minutes
+                                        {platform.platform === 'sandbox' ? 'Try it — takes 2 minutes' : 'Set up — takes about 10 minutes'}
                                     </Button>
                                 ) : (
                                     <>
@@ -490,12 +491,12 @@ export default function GovtechIntegrations() {
                                 </div>
                             )}
 
-                            <div className="flex items-center justify-between pt-2">
-                                <a href={wizard.docs_url} target="_blank" rel="noopener noreferrer" className="text-indigo-300 text-xs hover:underline inline-flex items-center gap-1">
+                            <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
+                                <a href={wizard.docs_url} target="_blank" rel="noopener noreferrer" className="text-indigo-300 text-xs hover:underline inline-flex items-center gap-1 self-center sm:self-auto">
                                     {wizard.vendor} website <ExternalLink className="w-3 h-3" />
                                 </a>
                                 <Button
-                                    className="bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700"
+                                    className="w-full sm:w-auto bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700"
                                     onClick={() => setStep('details')}
                                 >
                                     I have these — continue
@@ -568,11 +569,11 @@ export default function GovtechIntegrations() {
                                 </p>
                             )}
 
-                            <div className="flex items-center justify-between pt-2">
-                                <Button variant="ghost" size="sm" onClick={() => setStep('intro')} leftIcon={<ArrowLeft className="w-3.5 h-3.5" />}>
-                                    Back
-                                </Button>
-                                <div className="flex items-center gap-2">
+                            <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
+                                <div className="flex items-center justify-between sm:justify-start gap-2">
+                                    <Button variant="ghost" size="sm" onClick={() => setStep('intro')} leftIcon={<ArrowLeft className="w-3.5 h-3.5" />}>
+                                        Back
+                                    </Button>
                                     {configFor(wizard.platform) && (
                                         <Button size="sm" variant="ghost" className="text-xs text-red-300 hover:text-red-200"
                                             onClick={() => handleDelete(configFor(wizard.platform)!, wizard.name)}
@@ -580,14 +581,14 @@ export default function GovtechIntegrations() {
                                             Disconnect
                                         </Button>
                                     )}
-                                    <Button
-                                        className="bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700"
-                                        onClick={() => goToFinish(wizard)}
-                                        disabled={saving || requiredMissing(wizard).length > 0}
-                                    >
-                                        {saving ? 'Saving…' : 'Save & check the connection'}
-                                    </Button>
                                 </div>
+                                <Button
+                                    className="w-full sm:w-auto bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700"
+                                    onClick={() => goToFinish(wizard)}
+                                    disabled={saving || requiredMissing(wizard).length > 0}
+                                >
+                                    {saving ? 'Saving…' : 'Save & check the connection'}
+                                </Button>
                             </div>
                         </div>
                     )}
@@ -637,7 +638,7 @@ export default function GovtechIntegrations() {
                                     })()}
 
                                     <div className="flex justify-end">
-                                        <Button className="bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700" onClick={closeWizard}>
+                                        <Button className="w-full sm:w-auto bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700" onClick={closeWizard}>
                                             Done
                                         </Button>
                                     </div>
