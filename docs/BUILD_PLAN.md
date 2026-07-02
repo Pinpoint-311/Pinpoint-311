@@ -64,17 +64,22 @@ the base app for every deployment (not gated to managed mode).
 - Close for production: remove Docker-socket self-update in hosted mode (done via §3.1), **central-log PII scrubbing** (hard requirement once logs ship to a state sink), CSP tightening review, dependency pinning + failing CI on high-severity.
 
 ### 3.4 Provider abstraction layer (new seams — phased, see §8)
-Define one interface per capability and select via config. Scope is deliberately
-narrow — only the capabilities the stack actually varies on:
-`AIProvider (provider, model)`, `TranslationProvider`, `SecretStore`,
-`KeyManager`. Existing services (`vertex_ai_service`, `translation`,
-`secret_manager`, `encryption`) become the first implementations behind these,
-with Azure/AWS adapters added.
+Define one interface per capability and select via config. Scope is the
+capabilities the stack actually varies on:
+`IdentityProvider (OIDC)`, `AIProvider (provider, model)`, `TranslationProvider`,
+`SecretStore`, `KeyManager`. Existing services (`auth0_service`,
+`vertex_ai_service`, `translation`, `secret_manager`, `encryption`) become the
+first implementations behind these, with Azure/AWS adapters added.
 
-**Unchanged (no abstraction):** Identity stays **Auth0**; **Maps/geocoding stays
-Google Maps** as today; SMS (Twilio/HTTP) and Email (SMTP) already support any
-provider. Object storage is a host deployment choice (S3-compatible or Azure
-Blob), not a product change.
+Identity generalizes cleanly because the app already authenticates via **OIDC**
+(Auth0 today): a single generic OIDC adapter — config'd with issuer, client
+id/secret, JWKS, audience, scopes — covers **Auth0, Microsoft Entra ID, Okta**,
+and any OIDC-compliant IdP. Auth0 stays the default so existing deployments are
+unchanged.
+
+**Unchanged (no abstraction):** **Maps/geocoding stays Google Maps** as today;
+SMS (Twilio/HTTP) and Email (SMTP) already support any provider. Object storage
+is a host deployment choice (S3-compatible or Azure Blob), not a product change.
 
 ---
 
@@ -128,7 +133,7 @@ is metadata/counters only.
 | Database, Redis, object storage, compute, TLS/domains | **Host** | **Host** | Platform infra |
 | Encryption key infra (KMS/HSM), secret store | **Host** | Host | Platform (per-town key) |
 | Container images, migrations, patches | **Org** | Org (dev) | Published to registry |
-| Staff identity (IdP) | Host pattern; **Town or State** config | Host/State | See §7 decision |
+| Staff identity (IdP — Auth0 / Entra / Okta via OIDC) | Host pattern; **Town or State** config | Host/State | Town instance (OIDC config) |
 
 **Managed-mode policy:** cost-incurring town features stay **disabled until the
 town supplies its own key**, so the host never absorbs a town's API bill. This
@@ -145,7 +150,7 @@ capabilities the **host** fixes per deployment; others the **town** chooses
 
 | Capability | Pluggable? | Chosen by | Adapters we build | GCP-stack default | Azure-stack default |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Identity** | No (unchanged) | Town | **Auth0** (as today) | Auth0 | Auth0 |
+| **Identity** | **Yes** (OIDC-generic) | Host or Town | One OIDC adapter → **Auth0 · Microsoft Entra ID · Okta** (+ any OIDC IdP) | Auth0 | Entra ID |
 | **AI** (2-level: provider, model) | **Yes** | **Town** | **Vertex AI** (Gemini **+ Claude**) · **AWS Bedrock** (Claude + others) · **Azure Government AI** (Azure OpenAI in gov regions) | Vertex / Gemini Flash-Lite | Azure Gov / GPT-4o-mini |
 | **Translation** | **Yes** | Town | Google Cloud Translation · **Azure Translator** | Google | Azure |
 | **Secrets store** | **Yes** | **Host** | Google Secret Manager · **Azure Key Vault** · DB-Fernet fallback | Secret Manager | Key Vault |
@@ -164,9 +169,13 @@ Design notes:
   Government / GovCloud model availability before finalizing per-stack defaults.*
 - **Translation, Secrets, KMS** each get an Azure adapter alongside the existing
   Google one; the **host** picks these to match its cloud.
-- **Identity (Auth0) and Maps (Google Maps) are intentionally unchanged** — an
-  Azure-hosted deployment still uses the existing Google Maps browser key (a
-  light referrer-restricted key, not a cloud project) and Auth0 for staff SSO.
+- **Identity is pluggable via one generic OIDC adapter** (Auth0 / Entra ID /
+  Okta / any OIDC IdP), chosen by the host or town; Auth0 stays the default so
+  nothing changes for existing deployments. An M365 state can point staff SSO
+  at Entra with config only.
+- **Maps (Google Maps) is intentionally unchanged** — an Azure-hosted
+  deployment still uses the existing Google Maps browser key (a light
+  referrer-restricted key, not a cloud project).
 
 ---
 
@@ -191,9 +200,9 @@ export, rate limits). Branch `claude/security-audit-fixes`.
 - **DoD:** upgrade a cohort with auto-rollback; per-town cost visible; a town can be offboarded and crypto-shredded.
 
 ### Phase 4 — Provider abstraction (Repo A)
-- Land the interfaces and ship the adapters: **AI** — Vertex + Bedrock + Azure Government AI (two-level provider/model); **Translation** — Google + Azure; **Secrets** — Secret Manager + Key Vault; **KMS** — Cloud KMS + Key Vault Managed HSM.
-- Identity (Auth0) and Maps (Google) unchanged.
-- **DoD:** a deployment can run its AI on any of the three boundaries and its translation/secrets/KMS on Google or Azure, selected by config, with no code changes.
+- Land the interfaces and ship the adapters: **Identity** — generic OIDC (Auth0 + Entra ID + Okta); **AI** — Vertex + Bedrock + Azure Government AI (two-level provider/model); **Translation** — Google + Azure; **Secrets** — Secret Manager + Key Vault; **KMS** — Cloud KMS + Key Vault Managed HSM.
+- Maps (Google) unchanged.
+- **DoD:** a deployment can point identity at Auth0/Entra/Okta, run AI on any of the three boundaries, and run translation/secrets/KMS on Google or Azure — all selected by config, no code changes.
 
 ### Phase 5 — NJ production/compliance hardening
 - StateRAMP / NJ SISM alignment; signed SSP/PIA/IR/DR; VPAT; OPRA workflow; records retention mapped to NJ DARM; SLA + RACI; k8s/GitOps target.
@@ -211,7 +220,7 @@ export, rate limits). Branch `claude/security-audit-fixes`.
 ---
 
 ## 10. Cross-cutting principles
-- **Minimal product change** — keep the existing UX; identity (Auth0) and maps (Google) stay as-is. Provider choice adds config options, not new surfaces.
+- **Minimal product change** — keep the existing UX; maps (Google) stays as-is and Auth0 remains the identity default. Provider choice adds config options, not new surfaces.
 - **Core upgrades benefit everyone** — genuine improvements (immutable audit log, safety-flag surfacing) ship to self-hosted and centralized alike, never gated to managed mode.
 - **App never phones home with data** — panel is metadata-only.
 - **Additive to the app** — standalone self-host stays first-class.
