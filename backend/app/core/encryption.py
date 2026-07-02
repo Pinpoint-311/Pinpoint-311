@@ -204,6 +204,13 @@ def _is_kms_available() -> bool:
     return bool(project)
 
 
+def _kms_required() -> bool:
+    """When REQUIRE_KMS is set, PII must be encrypted with Cloud KMS — any
+    fallback to local Fernet raises instead of silently downgrading. Lets an
+    operator guarantee HSM-backed encryption rather than trusting it."""
+    return os.getenv("REQUIRE_KMS", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _get_kms_key_name() -> Optional[str]:
     """Get the KMS key resource name from env vars or database."""
     global _kms_key_name
@@ -283,16 +290,23 @@ def encrypt_pii(plaintext: str) -> str:
     """
     if not plaintext:
         return plaintext
-    
+
     if not _is_kms_available():
+        if _kms_required():
+            raise RuntimeError(
+                "REQUIRE_KMS is set but Google Cloud KMS is not configured "
+                "(GOOGLE_CLOUD_PROJECT missing). Refusing to fall back to local encryption."
+            )
         # Fallback to Fernet for local development
         return encrypt(plaintext)
-    
+
     try:
         client = _get_kms_client()
         key_name = _get_kms_key_name()
-        
+
         if not client or not key_name:
+            if _kms_required():
+                raise RuntimeError("REQUIRE_KMS is set but the KMS client/key is unavailable.")
             return encrypt(plaintext)
         
         # Encrypt the plaintext
@@ -331,6 +345,10 @@ def encrypt_pii(plaintext: str) -> str:
         return f"{KMS_ENCRYPTED_PREFIX}{encrypted_b64}"
         
     except Exception as e:
+        if _kms_required():
+            # Do not silently downgrade to local encryption when KMS is mandated.
+            logger.error(f"KMS encryption failed and REQUIRE_KMS is set: {e}")
+            raise
         logger.error(f"KMS encryption failed, falling back to Fernet: {e}")
         return encrypt(plaintext)
 
