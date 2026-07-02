@@ -21,7 +21,7 @@
 | Automated safety flagging surfaced for immediate attention | STRENGTHEN | AI emits `safety_flags`; confirm/boost prominent surfacing in staff UI |
 | OPRA-export-ready **immutable**, timestamped audit log, NJ retention | STRENGTHEN | Timestamped append + NJ retention EXIST; **`RequestAuditLog` is not hash-chained** (the auth `AuditLog` is). Extend the hash-chain to request actions to truthfully claim "immutable," or soften wording. |
 | Session-based non-emergency disclaimer + immutable trail; WCAG 2.1 AA | EXISTS | `DisclaimerAcknowledgment`; accessibility CI |
-| State/county road detection → redirect to NJDOT/correct agency | CONFIG/DATA | `routing_mode=road_based` + line-layer redirect supported; needs **NJDOT/county road centerline layer loaded** and line-based detection verified |
+| State/county road detection → redirect to NJDOT/correct agency | DEFERRED | Out of scope for now (routing_mode=road_based exists but the NJDOT layer + detection work is parked) |
 | Open311 v2 compatibility | EXISTS | `/api/open311/v2` |
 | Research Suite: 60+ anonymized fields | EXISTS | `research.py` (note prior audit: regex redaction should be strengthened) |
 | One server hosts many **isolated** municipal instances (no bleed) | HOSTED | Silo model; the multi-tenant tooling this doc scopes (§3–§4) |
@@ -35,11 +35,11 @@
 
 **Reads for the pitch:** the resident/staff/state feature set is real today; the
 "multi-tenant deployment tooling in development" line in the proposal is
-accurate and is precisely §3–§4 here. Before submitting, either build the three
-**STRENGTHEN** items or soften their wording so no claim outruns the code —
-specifically the word "immutable" on the request audit log, the NJDOT road
-detection (needs the road layer), and the security posture (say "internal audit
-completed and remediated," not "clean").
+accurate and is precisely §3–§4 here. Two genuine upgrades ship to **all**
+deployments (self-hosted and centralized): the **immutable (hash-chained)
+request audit log** to justify the OPRA claim, and **safety-flag surfacing**.
+NJDOT road detection is **deferred**. Security wording should read "internal
+audit completed and remediated; hardening underway," not "clean."
 
 ---
 

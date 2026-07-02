@@ -49,24 +49,32 @@ tenant) → its own access controls, audit, and review gate.
 | Alembic-on-boot | Idempotent, backward-compatible (expand/contract) migrations for zero-downtime canary upgrades. |
 | Lifecycle hooks | Full data **export** endpoint (offboarding/OPRA); **suspend/resume** honoring a panel flag; **decommission** hook that lets the panel destroy the town key (crypto-shred). |
 
-### 3.2 Proposal "STRENGTHEN" items (make the pitch fully truthful)
+### 3.2 Core product upgrades — ship to BOTH self-hosted and centralized
+These are genuine product improvements, not hosting features, so they land in
+the base app for every deployment (not gated to managed mode).
 | Item | Work |
 | :--- | :--- |
-| Immutable request audit log | Extend the SHA-256 hash-chain (already on the auth `AuditLog`) to `RequestAuditLog`, so "immutable, tamper-evident" is literally true for OPRA. Add a verify endpoint. |
-| State/county road detection | Ship the `routing_mode=road_based` line-layer detection end-to-end and load the **NJDOT + county road centerline** layer; resident on a state road is redirected to NJDOT instead of the town queue. |
-| Safety-flag surfacing | AI already emits `safety_flags`; add prominent staff-dashboard surfacing + an at-risk queue so hazards don't sit unnoticed. |
+| Immutable request audit log | Extend the SHA-256 hash-chain (already on the auth `AuditLog`) to `RequestAuditLog`, so "immutable, tamper-evident" is literally true for OPRA. Add a verify endpoint. Benefits every town, hosted or self-hosted. |
+| Safety-flag surfacing | AI already emits `safety_flags`; add prominent staff-dashboard surfacing + an at-risk queue so hazards don't sit unnoticed. Core improvement for all deployments. |
+
+*Deferred:* NJDOT/state-county road detection — out of scope for now.
 
 ### 3.3 Security hardening carryover (from the audit)
 - Already remediated: `SECRET_KEY` enforcement, PII/KMS handling + `REQUIRE_KMS`, SSRF guard, auth-bootstrap hardening, opt-in PII export, comment authz, rate limits, `_flag` PII-share gate.
 - Close for production: remove Docker-socket self-update in hosted mode (done via §3.1), **central-log PII scrubbing** (hard requirement once logs ship to a state sink), CSP tightening review, dependency pinning + failing CI on high-severity.
 
 ### 3.4 Provider abstraction layer (new seams — phased, see §8)
-Define one interface per capability and select via config. Interfaces:
-`IdentityProvider`, `AIProvider (provider, model)`, `TranslationProvider`,
-`SecretStore`, `KeyManager`, `GeocodeProvider`, `MapDisplayProvider`,
-`SmsProvider`, `EmailProvider`, `ObjectStore`. Existing services
-(`vertex_ai_service`, `translation`, `secret_manager`, `encryption`,
-`auth0_service`, gis/maps) become the first implementations behind these.
+Define one interface per capability and select via config. Scope is deliberately
+narrow — only the capabilities the stack actually varies on:
+`AIProvider (provider, model)`, `TranslationProvider`, `SecretStore`,
+`KeyManager`. Existing services (`vertex_ai_service`, `translation`,
+`secret_manager`, `encryption`) become the first implementations behind these,
+with Azure/AWS adapters added.
+
+**Unchanged (no abstraction):** Identity stays **Auth0**; **Maps/geocoding stays
+Google Maps** as today; SMS (Twilio/HTTP) and Email (SMTP) already support any
+provider. Object storage is a host deployment choice (S3-compatible or Azure
+Blob), not a product change.
 
 ---
 
@@ -115,7 +123,7 @@ is metadata/counters only.
 | GovTech integrations (SDL, Edmunds, GovPilot, Tyler, Accela, CivicPlus, Polimorphic, Open311) | **Town** | Town (vendor contract) | Town instance (encrypted creds) — already built |
 | AI (Vertex/Azure OpenAI/Bedrock) | **Town** | **Town** (own key, direct-billed) | Town instance; **off until key entered** in managed mode |
 | Translation | **Town** | Town | Town instance |
-| Maps geocoding / display | **Town** | Town (or free Census) | Town instance |
+| Maps (Google Maps — unchanged) | **Town** | Town (Google Maps key) | Town instance |
 | SMS / Email | **Town** | Town | Town instance |
 | Database, Redis, object storage, compute, TLS/domains | **Host** | **Host** | Platform infra |
 | Encryption key infra (KMS/HSM), secret store | **Host** | Host | Platform (per-town key) |
@@ -135,27 +143,30 @@ provider"), each selectable by config, with a sensible default per stack. Some
 capabilities the **host** fixes per deployment; others the **town** chooses
 (because the town pays).
 
-| Capability | Pluggable? | Chosen by | Adapters we build | GCP-stack default | Azure-stack default | NJ recommendation |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Identity** | Yes (OIDC-generic) | Host or Town | One OIDC adapter → Auth0 / Entra ID / Okta | Auth0 | Entra ID | Per §7 decision (state IdP vs Auth0) |
-| **AI** (2-level: provider, model) | Yes | **Town** | Vertex (Gemini **+ Claude**) · OpenAI-compatible (Azure OpenAI + OpenAI) · Bedrock (on demand) | Vertex / Gemini Flash-Lite | Azure OpenAI / GPT-4o-mini | Match state cloud; Gemini Flash-Lite cheapest |
-| **Translation** | Yes | Town | Google Cloud Translation · Azure Translator | Google | Azure | Match AI stack |
-| **Secrets store** | Yes | **Host** | Google Secret Manager · Azure Key Vault · DB-Fernet fallback | Secret Manager | Key Vault | Match host cloud |
-| **Key management (PII)** | Yes | **Host** | Google Cloud KMS · Azure Key Vault Managed HSM · Fernet fallback | Cloud KMS | Key Vault HSM | Host-provided, per-town key, `REQUIRE_KMS` on |
-| **Geocoding** | Yes | Town | **US Census (free/federal)** · Esri/NJGIN · Google · Azure Maps | Google or Census | Azure Maps or Census | **Census + NJGIN/Esri** (no forced 2nd cloud) |
-| **Map display** | Yes (hard) | Town/Host | Google Maps JS (default) · MapLibre + Esri/Azure tiles | Google Maps | MapLibre+Azure/Esri | Esri (NJ already licenses it) |
-| **SMS** | Yes | Town | Twilio · generic HTTP (both exist) | Twilio | Twilio | Town choice |
-| **Email** | Yes | Town | SMTP (any provider) · optional SendGrid / Graph | SMTP | SMTP/Graph | Town/state relay |
-| **Object storage** | Yes | Host | S3-compatible (exists) · Azure Blob | GCS/S3 | Azure Blob | Match host cloud |
-| **Hosting/orchestration** | Yes | Host | Kubernetes (any cloud) · Compose fleet | GKE | AKS | Match state cloud |
+| Capability | Pluggable? | Chosen by | Adapters we build | GCP-stack default | Azure-stack default |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Identity** | No (unchanged) | Town | **Auth0** (as today) | Auth0 | Auth0 |
+| **AI** (2-level: provider, model) | **Yes** | **Town** | **Vertex AI** (Gemini **+ Claude**) · **AWS Bedrock** (Claude + others) · **Azure Government AI** (Azure OpenAI in gov regions) | Vertex / Gemini Flash-Lite | Azure Gov / GPT-4o-mini |
+| **Translation** | **Yes** | Town | Google Cloud Translation · **Azure Translator** | Google | Azure |
+| **Secrets store** | **Yes** | **Host** | Google Secret Manager · **Azure Key Vault** · DB-Fernet fallback | Secret Manager | Key Vault |
+| **Key management (PII)** | **Yes** | **Host** | Google Cloud KMS · **Azure Key Vault Managed HSM** · Fernet fallback | Cloud KMS | Key Vault HSM |
+| **Maps (geocoding + display)** | No (unchanged) | Town | **Google Maps** (as today) | Google Maps | Google Maps |
+| **SMS** | Yes (exists) | Town | Twilio · generic HTTP | Twilio | Twilio |
+| **Email** | Yes (exists) | Town | SMTP (any provider) | SMTP | SMTP |
+| **Object storage** | Host infra | Host | S3-compatible · Azure Blob | GCS/S3 | Azure Blob |
+| **Hosting/orchestration** | Host infra | Host | Kubernetes (any cloud) · Compose fleet | GKE | AKS |
 
-Design notes: **AI is two-level** (`boundary → model`) so one Vertex adapter
-covers Gemini *and* Claude, and one OpenAI-compatible adapter covers Azure
-OpenAI *and* OpenAI. **Geocoding defaults to the free federal Census service**
-so no town is forced into a second cloud just for maps. **Map display** is the
-only genuinely hard swap (front-end SDK) — Google Maps stays the light default
-(a single referrer-restricted browser key, not a cloud project); Esri is the
-first alternative because NJ already runs it.
+Design notes:
+- **AI is two-level** (`boundary → model`): pick the compliant boundary, then
+  the model within it. Vertex covers **Gemini + Claude**; Bedrock covers
+  **Claude** in an AWS boundary; Azure Government AI covers **Azure OpenAI**
+  in gov regions. Town chooses and pays (own key). *Verify current Azure
+  Government / GovCloud model availability before finalizing per-stack defaults.*
+- **Translation, Secrets, KMS** each get an Azure adapter alongside the existing
+  Google one; the **host** picks these to match its cloud.
+- **Identity (Auth0) and Maps (Google Maps) are intentionally unchanged** — an
+  Azure-hosted deployment still uses the existing Google Maps browser key (a
+  light referrer-restricted key, not a cloud project) and Auth0 for staff SSO.
 
 ---
 
@@ -165,11 +176,11 @@ first alternative because NJ already runs it.
 Critical audit fixes landed (`SECRET_KEY`, PII/KMS, SSRF, auth bootstrap, PII
 export, rate limits). Branch `claude/security-audit-fixes`.
 
-### Phase 1 — App hosted-hooks + STRENGTHEN (Repo A) — *start here*
-- `MANAGED_MODE`, provisioning API, `/telemetry`, disable self-update in managed mode, version/migration stamping, lifecycle export/suspend/shred hooks.
-- STRENGTHEN: hash-chain `RequestAuditLog`; road-based detection + NJDOT layer; safety-flag surfacing.
+### Phase 1 — App hosted-hooks + core upgrades (Repo A) — *start here*
+- Hosted hooks: `MANAGED_MODE`, provisioning API, `/telemetry`, disable self-update in managed mode, version/migration stamping, lifecycle export/suspend/shred.
+- Core upgrades (ship to ALL deployments): hash-chain `RequestAuditLog` (immutable audit) + verify endpoint; safety-flag surfacing / at-risk queue.
 - Central-log PII scrubbing.
-- **DoD:** a single instance can be provisioned entirely via API + env, runs migrations on boot, exposes telemetry, and a town admin completes setup in-browser with infra hidden.
+- **DoD:** a single instance can be provisioned entirely via API + env, runs migrations on boot, exposes telemetry, a town admin completes setup in-browser with infra hidden, and the immutable audit log + safety queue work for self-hosted and hosted alike.
 
 ### Phase 2 — Control-plane MVP (Repo B)
 - Tenant registry + provisioner + one town end-to-end (Compose-fleet target first).
@@ -180,8 +191,9 @@ export, rate limits). Branch `claude/security-audit-fixes`.
 - **DoD:** upgrade a cohort with auto-rollback; per-town cost visible; a town can be offboarded and crypto-shredded.
 
 ### Phase 4 — Provider abstraction (Repo A)
-- Land the interfaces; ship Vertex + OpenAI-compatible (AI), OIDC-generic (Auth0+Entra), Secret/Key (GCP+Azure), Geocode (Census+Esri). Map-display (MapLibre+Esri) as its own sub-task.
-- **DoD:** a town/deployment can run a coherent Azure or GCP stack with no forced second cloud.
+- Land the interfaces and ship the adapters: **AI** — Vertex + Bedrock + Azure Government AI (two-level provider/model); **Translation** — Google + Azure; **Secrets** — Secret Manager + Key Vault; **KMS** — Cloud KMS + Key Vault Managed HSM.
+- Identity (Auth0) and Maps (Google) unchanged.
+- **DoD:** a deployment can run its AI on any of the three boundaries and its translation/secrets/KMS on Google or Azure, selected by config, with no code changes.
 
 ### Phase 5 — NJ production/compliance hardening
 - StateRAMP / NJ SISM alignment; signed SSP/PIA/IR/DR; VPAT; OPRA workflow; records retention mapped to NJ DARM; SLA + RACI; k8s/GitOps target.
@@ -199,9 +211,10 @@ export, rate limits). Branch `claude/security-audit-fixes`.
 ---
 
 ## 10. Cross-cutting principles
-- **No forced second cloud** — every stack has a coherent single-vendor path.
+- **Minimal product change** — keep the existing UX; identity (Auth0) and maps (Google) stay as-is. Provider choice adds config options, not new surfaces.
+- **Core upgrades benefit everyone** — genuine improvements (immutable audit log, safety-flag surfacing) ship to self-hosted and centralized alike, never gated to managed mode.
 - **App never phones home with data** — panel is metadata-only.
 - **Additive to the app** — standalone self-host stays first-class.
 - **Managed-mode = least privilege for towns** — infra hidden, only what they own is editable.
-- **Honest claims** — no proposal statement outruns shipped code (see STRENGTHEN items).
+- **Honest claims** — no proposal statement outruns shipped code.
 </content>
