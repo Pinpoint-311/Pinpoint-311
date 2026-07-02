@@ -12,6 +12,7 @@ import { Card, Button, Input, Select, Badge } from './ui';
 import { SystemSecret } from '../types';
 import { api } from '../services/api';
 import GovtechIntegrations from './GovtechIntegrations';
+import ServiceProviders from './ServiceProviders';
 
 
 interface ModulesState {
@@ -1316,6 +1317,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                     {saveMessage}
                 </div>
             )}
+
+            {/* Pluggable service providers (AI / translation / identity) */}
+            <ServiceProviders />
 
             {/* GovTech Platform Connections */}
             <GovtechIntegrations />
