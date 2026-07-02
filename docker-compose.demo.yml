@@ -53,10 +53,10 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://demo:${DEMO_DB_PASSWORD}@demo-db/demo_db
       REDIS_URL: redis://demo-redis:6379/0
-      SECRET_KEY: ${DEMO_SECRET_KEY:-demo-secret-key-pinpoint311-2026}
+      SECRET_KEY: ${DEMO_SECRET_KEY:?Set DEMO_SECRET_KEY in .env.demo (openssl rand -hex 32) — do not use a committed default}
       INITIAL_ADMIN_USER: admin
       INITIAL_ADMIN_EMAIL: demo@pinpoint311.org
-      INITIAL_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-Demo2026}
+      INITIAL_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:?Set DEMO_ADMIN_PASSWORD in .env.demo — do not use a committed default}
       DEMO_MODE: "true"
       # Google API keys (set in .env.demo)
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
@@ -88,7 +88,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://demo:${DEMO_DB_PASSWORD}@demo-db/demo_db
       REDIS_URL: redis://demo-redis:6379/0
-      SECRET_KEY: ${DEMO_SECRET_KEY:-demo-secret-key-pinpoint311-2026}
+      SECRET_KEY: ${DEMO_SECRET_KEY:?Set DEMO_SECRET_KEY in .env.demo (openssl rand -hex 32) — do not use a committed default}
       DEMO_MODE: "true"
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
       GOOGLE_VERTEX_PROJECT: ${GOOGLE_VERTEX_PROJECT:-}

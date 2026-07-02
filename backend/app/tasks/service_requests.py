@@ -672,16 +672,57 @@ New Request: {request.service_name}
 
 
 @celery_app.task
+def purge_old_ip_addresses():
+    """Null out IP addresses older than 90 days.
+
+    The Privacy Impact Assessment commits to a 90-day retention for IP
+    addresses while audit logs themselves are kept for 7 years, so we scrub
+    the IP field rather than deleting the log entry.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    async def _purge():
+        from datetime import datetime, timedelta, timezone
+        from sqlalchemy import update
+        from app.models import AuditLog, DisclaimerAcknowledgment
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+        async with SessionLocal() as db:
+            r1 = await db.execute(
+                update(AuditLog)
+                .where(AuditLog.timestamp < cutoff, AuditLog.ip_address.isnot(None))
+                .values(ip_address=None, user_agent=None)
+            )
+            r2 = await db.execute(
+                update(DisclaimerAcknowledgment)
+                .where(DisclaimerAcknowledgment.acknowledged_at < cutoff,
+                       DisclaimerAcknowledgment.ip_address.isnot(None))
+                .values(ip_address=None)
+            )
+            await db.commit()
+            purged = (r1.rowcount or 0) + (r2.rowcount or 0)
+            logger.info(f"[Retention] Purged IP addresses from {purged} record(s) older than 90 days")
+            return {"status": "success", "purged": purged}
+
+    try:
+        return run_async(_purge())
+    except Exception as e:
+        logger.error(f"[Retention] IP purge failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@celery_app.task
 def enforce_retention_policy():
     """
     Enforce document retention policy by archiving expired records.
-    
+
     Should be scheduled to run daily via Celery Beat.
     Respects legal holds (flagged records are never archived).
     """
     import logging
     logger = logging.getLogger(__name__)
-    
+
     async def _enforce():
         from app.models import SystemSettings
         from app.services.retention_service import (

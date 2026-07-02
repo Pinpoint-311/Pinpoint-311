@@ -27,6 +27,12 @@ celery_app.conf.update(
             "schedule": 60 * 60 * 24,  # Every 24 hours
             "options": {"queue": "default"}
         },
+        # Daily purge of IP addresses older than 90 days (privacy commitment)
+        "daily-ip-purge": {
+            "task": "app.tasks.service_requests.purge_old_ip_addresses",
+            "schedule": 60 * 60 * 24,  # Every 24 hours
+            "options": {"queue": "default"}
+        },
         # Daily database backup at 2:00 AM UTC
         "daily-database-backup": {
             "task": "app.tasks.service_requests.backup_database",

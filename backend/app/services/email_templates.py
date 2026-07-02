@@ -5,6 +5,25 @@ Generates beautiful, responsive HTML email templates with township branding.
 Pulls configuration from SystemSettings for logo, colors, and township name.
 """
 from typing import Optional, Dict
+import html
+
+
+def _h(value):
+    """HTML-escape a user-supplied string for safe interpolation into email
+    HTML. Prevents stored HTML/link injection into government-branded emails
+    from resident-controlled fields (description, comment, address, etc.)."""
+    if value is None:
+        return value
+    return html.escape(str(value), quote=True)
+
+
+def _safe_url(value: Optional[str]) -> Optional[str]:
+    """Only allow http(s) URLs in href/src attributes; drop anything else
+    (javascript:, data:, etc.) to prevent attribute breakout."""
+    if not value:
+        return None
+    v = str(value).strip()
+    return v if v.lower().startswith(("http://", "https://")) else None
 
 
 # Email template translations for common languages
@@ -449,6 +468,7 @@ def build_confirmation_email(
     Build email for new request confirmation.
     Returns dict with 'subject', 'html', and 'text' keys.
     """
+    service_name, description, address = _h(service_name), _h(description), _h(address)
     tracking_url = f"{portal_url}/#track/{request_id}"
     i18n = get_i18n(language)
     
@@ -545,6 +565,7 @@ async def build_confirmation_email_async(
     Uses Google Translate API for any language not in the static dictionary.
     Results are cached to minimize API calls.
     """
+    service_name, description, address = _h(service_name), _h(description), _h(address)
     tracking_url = f"{portal_url}/#track/{request_id}"
     i18n = await get_i18n_async(language)
     
@@ -641,6 +662,8 @@ def build_status_update_email(
     Build email for status update notification.
     Includes completion photo if provided (for closed requests).
     """
+    service_name, completion_message = _h(service_name), _h(completion_message)
+    completion_photo_url = _safe_url(completion_photo_url)
     tracking_url = f"{portal_url}/#track/{request_id}"
     
     status_configs = {
@@ -745,6 +768,7 @@ def build_comment_email(
     Build email for new public comment notification.
     Uses table-based layout for email client compatibility.
     """
+    service_name, comment_author, comment_content = _h(service_name), _h(comment_author), _h(comment_content)
     tracking_url = f"{portal_url}/#track/{request_id}"
     author_initial = comment_author[0].upper() if comment_author else "S"
     
@@ -890,6 +914,8 @@ async def build_status_update_email_async(
     Async version - Build email for status update notification.
     Uses Google Translate API for any language not in the static dictionary.
     """
+    service_name, completion_message = _h(service_name), _h(completion_message)
+    completion_photo_url = _safe_url(completion_photo_url)
     tracking_url = f"{portal_url}/#track/{request_id}"
     i18n = await get_i18n_async(language)
     
@@ -1001,6 +1027,7 @@ async def build_comment_email_async(
     Async version - Build email for new public comment notification.
     Uses Google Translate API for any language not in the static dictionary.
     """
+    service_name, comment_author, comment_content = _h(service_name), _h(comment_author), _h(comment_content)
     tracking_url = f"{portal_url}/#track/{request_id}"
     author_initial = comment_author[0].upper() if comment_author else "S"
     i18n = await get_i18n_async(language)
