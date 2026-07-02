@@ -179,19 +179,70 @@ class GenericRestConnector(BaseConnector):
             )
             self._raise_for_status(resp, f"{self.platform} status update")
 
+    def _extract_items(self, body: Any) -> List[Dict[str, Any]]:
+        if isinstance(body, list):
+            return [i for i in body if isinstance(i, dict)]
+        if isinstance(body, dict):
+            items = body.get(self.config.get("list_items_field", "results"), body.get("data", []))
+            if isinstance(items, list):
+                return [i for i in items if isinstance(i, dict)]
+        return []
+
+    def _next_link(self, body: Any) -> Optional[str]:
+        """Find the next-page URL across the common REST pagination shapes:
+        a top-level next/next_page(_url) field, a links.next object, or a
+        meta/metadata.pagination.next_page_url. Configurable via next_field."""
+        if not isinstance(body, dict):
+            return None
+        for key in (self.config.get("next_field"), "next", "next_page", "next_page_url"):
+            if key and body.get(key):
+                return str(body[key])
+        links = body.get("links")
+        if isinstance(links, dict) and links.get("next"):
+            return str(links["next"])
+        for meta_key in ("meta", "metadata"):
+            meta = body.get(meta_key)
+            if isinstance(meta, dict):
+                pg = meta.get("pagination") if isinstance(meta.get("pagination"), dict) else meta
+                if isinstance(pg, dict) and pg.get("next_page_url"):
+                    return str(pg["next_page_url"])
+        return None
+
+    def _absolutize(self, url: str) -> str:
+        return url if url.startswith(("http://", "https://")) else f"{self.base_url}{url}"
+
     async def pull_updates(self, since: Optional[datetime] = None) -> List[ExternalRecord]:
         params: Dict[str, Any] = {**self._query_auth(), "limit": 100}
         if since:
             params["updated_since"] = since.isoformat()
+        try:
+            max_pages = max(1, int(self.config.get("max_pull_pages", 20)))
+        except (TypeError, ValueError):
+            max_pages = 20
+        url = self._url("list_path", "/requests")
+        records: List[ExternalRecord] = []
+        seen_ids: set = set()
         async with self._client(**self._request_kwargs()) as client:
-            resp = await client.get(self._url("list_path", "/requests"), params=params)
-            self._raise_for_status(resp, f"{self.platform} list requests")
-            body = resp.json()
-        items = body if isinstance(body, list) else body.get(self.config.get("list_items_field", "results"), body.get("data", []))
-        if not isinstance(items, list):
-            return []
-        records = [self._record_from_response(i) for i in items if isinstance(i, dict)]
-        return [r for r in records if r.external_id]
+            for _ in range(max_pages):
+                resp = await client.get(url, params=params)
+                self._raise_for_status(resp, f"{self.platform} list requests")
+                body = resp.json()
+                for item in self._extract_items(body):
+                    records.append(self._record_from_response(item))
+                next_url = self._next_link(body)
+                if not next_url:
+                    break
+                # A next link carries its own query string; pass params=None so
+                # httpx preserves it (an empty dict would wipe the query). Keep
+                # only query-auth creds, which the vendor's link may not include.
+                url, params = self._absolutize(next_url), (self._query_auth() or None)
+        # De-dupe (paginated feeds can repeat a record spanning a page boundary).
+        deduped: List[ExternalRecord] = []
+        for r in records:
+            if r.external_id and r.external_id not in seen_ids:
+                seen_ids.add(r.external_id)
+                deduped.append(r)
+        return deduped
 
     async def fetch_record(self, external_id: str) -> Optional[ExternalRecord]:
         async with self._client(**self._request_kwargs()) as client:
