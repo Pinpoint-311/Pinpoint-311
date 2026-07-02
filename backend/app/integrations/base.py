@@ -5,10 +5,13 @@ and a vendor's API. Connectors are stateless: they are constructed per
 operation from an IntegrationConfig row (config dict + decrypted credentials).
 """
 
+import ipaddress
 import logging
+import socket
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -16,6 +19,48 @@ logger = logging.getLogger(__name__)
 
 # Default network timeout for all vendor API calls
 HTTP_TIMEOUT = httpx.Timeout(20.0, connect=10.0)
+
+
+def _is_disallowed_ip(ip_str: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return True  # unparseable → refuse
+    return (
+        ip.is_private or ip.is_loopback or ip.is_link_local
+        or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+    )
+
+
+def _assert_public_url(url: str) -> None:
+    """Block SSRF: refuse URLs that resolve to internal/loopback/link-local/
+    metadata addresses. Resolves the hostname so DNS-based bypasses are caught."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ConnectorError(f"Refusing non-HTTP(S) URL: {parsed.scheme or url}")
+    host = parsed.hostname
+    if not host:
+        raise ConnectorError("Refusing request to a URL with no host")
+    # Literal IP?
+    try:
+        ipaddress.ip_address(host)
+        if _is_disallowed_ip(host):
+            raise ConnectorError(f"Refusing request to internal address {host}")
+        return
+    except ValueError:
+        pass
+    # Resolve hostname — every resolved address must be public
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80),
+                                   proto=socket.IPPROTO_TCP)
+    except socket.gaierror as e:
+        raise ConnectorError(f"Could not resolve host {host}: {e}")
+    for info in infos:
+        ip_str = info[4][0]
+        if _is_disallowed_ip(ip_str):
+            raise ConnectorError(
+                f"Refusing request to {host}: resolves to internal address {ip_str}"
+            )
 
 
 class ConnectorError(Exception):
@@ -138,8 +183,25 @@ class BaseConnector:
 
     # ---- HTTP helpers ----------------------------------------------------
 
+    # Connectors that legitimately talk to an in-cluster host (only the
+    # built-in practice sandbox) set this True to opt out of the SSRF guard.
+    allow_internal_hosts = False
+
     def _client(self, **kwargs) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True, **kwargs)
+        allow_internal = self.allow_internal_hosts
+
+        async def _ssrf_guard(request: "httpx.Request") -> None:
+            if not allow_internal:
+                _assert_public_url(str(request.url))
+
+        # follow_redirects=False so a vendor 3xx cannot pivot us to an
+        # internal address; the guard also runs on the initial URL.
+        return httpx.AsyncClient(
+            timeout=HTTP_TIMEOUT,
+            follow_redirects=False,
+            event_hooks={"request": [_ssrf_guard]},
+            **kwargs,
+        )
 
     @staticmethod
     def _raise_for_status(response: httpx.Response, context: str) -> None:

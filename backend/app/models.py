@@ -167,13 +167,10 @@ class ServiceRequest(Base):
     
     @first_name.setter
     def first_name(self, value):
-        """Encrypt first name when setting."""
+        """Encrypt first name when setting. Never stores plaintext PII."""
         if value:
-            try:
-                from app.core.encryption import encrypt_pii
-                self._first_name_encrypted = encrypt_pii(value)
-            except Exception:
-                self._first_name_encrypted = value  # Fallback to raw value
+            from app.core.encryption import encrypt_pii
+            self._first_name_encrypted = encrypt_pii(value)
         else:
             self._first_name_encrypted = None
     
@@ -190,13 +187,10 @@ class ServiceRequest(Base):
     
     @last_name.setter
     def last_name(self, value):
-        """Encrypt last name when setting."""
+        """Encrypt last name when setting. Never stores plaintext PII."""
         if value:
-            try:
-                from app.core.encryption import encrypt_pii
-                self._last_name_encrypted = encrypt_pii(value)
-            except Exception:
-                self._last_name_encrypted = value
+            from app.core.encryption import encrypt_pii
+            self._last_name_encrypted = encrypt_pii(value)
         else:
             self._last_name_encrypted = None
     
@@ -213,13 +207,10 @@ class ServiceRequest(Base):
     
     @email.setter
     def email(self, value):
-        """Encrypt email when setting."""
+        """Encrypt email when setting. Never stores plaintext PII."""
         if value:
-            try:
-                from app.core.encryption import encrypt_pii
-                self._email_encrypted = encrypt_pii(value)
-            except Exception:
-                self._email_encrypted = value
+            from app.core.encryption import encrypt_pii
+            self._email_encrypted = encrypt_pii(value)
         else:
             self._email_encrypted = ""
     
@@ -236,13 +227,10 @@ class ServiceRequest(Base):
     
     @phone.setter
     def phone(self, value):
-        """Encrypt phone when setting."""
+        """Encrypt phone when setting. Never stores plaintext PII."""
         if value:
-            try:
-                from app.core.encryption import encrypt_pii
-                self._phone_encrypted = encrypt_pii(value)
-            except Exception:
-                self._phone_encrypted = value
+            from app.core.encryption import encrypt_pii
+            self._phone_encrypted = encrypt_pii(value)
         else:
             self._phone_encrypted = None
     

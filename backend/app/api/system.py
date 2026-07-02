@@ -18,8 +18,14 @@ from app.schemas import (
     StatisticsResponse
 )
 from app.core.auth import get_current_admin, get_current_staff
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 router = APIRouter()
+
+# Tighter per-route limits for endpoints that call paid Google APIs, on top of
+# the app-wide default limit. Decorator-based enforcement (own in-memory store).
+_cost_limiter = Limiter(key_func=get_remote_address)
 
 
 # ============ Settings ============
@@ -2317,6 +2323,7 @@ ación de Baches", "description": "Reportar daños en carreteras"},
 
 
 @router.post("/translate/batch")
+@_cost_limiter.limit("60/minute")
 async def batch_translate(
     request: Request
 ):
@@ -2710,7 +2717,9 @@ class AnalyticsChatResponse(BaseModel):
 
 
 @router.post("/analytics-chat", response_model=AnalyticsChatResponse)
+@_cost_limiter.limit("20/minute")
 async def analytics_chat(
+    request: Request,
     body: AnalyticsChatRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_staff)

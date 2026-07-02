@@ -19,6 +19,9 @@ class SandboxConnector(GenericRestConnector):
     pipeline — push, photos, comments, status pull, assets, import — without
     credentials for any real platform."""
     platform = "sandbox"
+    # The practice sandbox is the Pinpoint backend itself (in-cluster host),
+    # so it is the one connector allowed past the SSRF guard.
+    allow_internal_hosts = True
 
     def __init__(self, config, credentials):
         default_url = os.environ.get(

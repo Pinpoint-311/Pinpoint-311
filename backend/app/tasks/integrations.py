@@ -13,6 +13,7 @@ request lifecycle.
 """
 
 import base64
+import hashlib
 import logging
 import re
 from datetime import datetime
@@ -34,6 +35,12 @@ from app.models import (
 from app.tasks.service_requests import run_async
 
 logger = logging.getLogger(__name__)
+
+def _comment_fp(content: str) -> str:
+    """Stable content fingerprint used as a fallback echo-dedup marker for
+    comments whose platform returns no comment id on create."""
+    return "fp:" + hashlib.sha1((content or "").strip().encode("utf-8")).hexdigest()[:16]
+
 
 def _flag(config: dict, key: str, default: bool = False) -> bool:
     """Read a boolean config value that may arrive as a string from the admin UI."""
@@ -67,7 +74,7 @@ def _build_payload(sr: ServiceRequest, config: dict) -> dict:
         "custom_fields": sr.custom_fields,
         "priority": sr.manual_priority_score,
     }
-    if config.get("share_pii"):
+    if _flag(config, "share_pii"):
         payload.update({
             "first_name": sr.first_name,
             "last_name": sr.last_name,
@@ -370,6 +377,9 @@ def pull_integration_updates():
                                f"{imported} new request(s) imported",
                                len(records))
                 except Exception as e:
+                    # Clear any pending-rollback state before writing the error
+                    # log, so one bad record can't poison the whole beat cycle.
+                    await db.rollback()
                     integration.last_sync_at = datetime.utcnow()
                     integration.last_sync_status = "error"
                     integration.last_sync_error = str(e)[:1000]
@@ -412,12 +422,19 @@ def push_comment_to_integrations(self, comment_id: int):
                     external_comment_id = await connector.push_comment(
                         link.external_id, comment.username, comment.content
                     )
-                    # Track what we sent so pulls don't re-import our own comments
-                    sent_marker = external_comment_id or f"local:{comment.id}"
-                    link.pushed_comment_ids = [*(link.pushed_comment_ids or []), sent_marker]
+                    # Track what we sent so pulls don't re-import our own
+                    # comments. Store the external id when the platform returns
+                    # one, plus a content fingerprint as a fallback for
+                    # platforms that return no id on create (else our own
+                    # comment echoes back as a duplicate on the next pull).
+                    markers = [_comment_fp(comment.content)]
+                    if external_comment_id:
+                        markers.append(external_comment_id)
+                    link.pushed_comment_ids = [*(link.pushed_comment_ids or []), *markers]
                     await _log(db, integration.id, "push_comment", "success",
                                f"comment {comment.id} -> {link.external_id}", 1)
                 except Exception as e:
+                    await db.rollback()
                     await _log(db, integration.id, "push_comment", "error",
                                f"comment {comment.id}: {e}")
                     logger.warning(f"[Integrations] Comment push to {integration.platform} failed: {e}")
@@ -465,8 +482,11 @@ def pull_integration_comments():
                         external_comments = await connector.pull_comments(link.external_id)
                         pushed_ids = set(link.pushed_comment_ids or [])
                         for ec in external_comments:
-                            if ec.external_id in pushed_ids:
-                                continue  # our own comment echoed back
+                            # Skip our own outbound comments echoing back —
+                            # match on external id or on content fingerprint
+                            # (covers platforms that returned no id on create).
+                            if ec.external_id in pushed_ids or _comment_fp(ec.content) in pushed_ids:
+                                continue
                             ref = f"{integration.id}:{ec.external_id}"
                             exists = (await db.execute(
                                 select(RequestComment.id).where(RequestComment.external_ref == ref)
@@ -488,6 +508,7 @@ def pull_integration_comments():
                                    f"{len(links)} request(s) polled, {imported} comment(s) imported",
                                    imported)
                 except Exception as e:
+                    await db.rollback()
                     await _log(db, integration.id, "pull_comments", "error", str(e))
                     logger.warning(f"[Integrations] Comment pull from {integration.platform} failed: {e}")
             await db.commit()
@@ -551,6 +572,7 @@ def sync_integration_assets():
                                f"{len(features)} asset(s) synced to layer '{layer.name}'",
                                len(features))
                 except Exception as e:
+                    await db.rollback()
                     await _log(db, integration.id, "sync_assets", "error", str(e))
                     logger.warning(f"[Integrations] Asset sync from {integration.platform} failed: {e}")
             await db.commit()

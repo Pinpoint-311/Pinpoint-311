@@ -8,6 +8,7 @@ in various formats (CSV, JSON, GeoJSON) for reporting and integration.
 import csv
 import io
 import json
+import logging
 from datetime import datetime
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query, HTTPException
@@ -127,22 +128,40 @@ async def export_requests(
     end_date: Optional[datetime] = Query(None, description="End date filter"),
     status: Optional[str] = Query(None, description="Status filter"),
     service_code: Optional[str] = Query(None, description="Service code filter"),
-    include_pii: bool = Query(True, description="Include reporter PII (name, email, phone)"),
+    include_pii: bool = Query(False, description="Include reporter PII (name, email, phone). Defaults off; explicit opt-in is audit-logged."),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_staff)
 ):
     """
     Export 311 requests as CSV, JSON, or GeoJSON.
-    
+
     - **format**: csv, json, or geojson
     - **start_date**: Optional start date filter (YYYY-MM-DD)
     - **end_date**: Optional end date filter (YYYY-MM-DD)
     - **status**: Optional status filter (open, in_progress, closed)
-    - **service_code**: Optional service code filter
-    - **include_pii**: Include reporter PII or redact it (default: true)
-    
-    Requires staff or admin authentication.
+    - **include_pii**: Include reporter PII or redact it (default: false — must be explicitly requested)
+
+    Requires staff or admin authentication. Bulk PII exports are audit-logged.
     """
+    # Bulk PII exfiltration is a sensitive action — record who did it.
+    if include_pii:
+        try:
+            from app.services.audit_service import AuditService
+            await AuditService.log_event(
+                db,
+                event_type="data_export_pii",
+                success=True,
+                username=current_user.username,
+                user_id=getattr(current_user, "id", None),
+                details={
+                    "format": format,
+                    "status": status or "all",
+                    "service_code": service_code or "all",
+                },
+            )
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Failed to write PII-export audit log: {e}")
+
     requests = await get_requests_for_export(db, start_date, end_date, status, service_code)
     
     # Get township name for filename
