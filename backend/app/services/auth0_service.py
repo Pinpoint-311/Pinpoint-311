@@ -13,10 +13,24 @@ from sqlalchemy.orm import Session
 
 class Auth0Service:
     """
-    Auth0 authentication using standard OAuth 2.0 Authorization Code Flow with PKCE.
-    All configuration stored in database via SystemSecret.
+    OIDC authentication (Auth0 default; Entra ID / Okta / generic OIDC also
+    supported). Auth0's code paths are preserved byte-for-byte; other providers
+    are handled through the standards-based generic OIDC layer
+    (app/services/identity.py). Config stored via SystemSecret / Secret Manager.
     """
-    
+
+    @staticmethod
+    async def _active_provider() -> str:
+        from app.services.secret_manager import get_secret
+        return ((await get_secret("IDENTITY_PROVIDER")) or "auth0").strip().lower()
+
+    @staticmethod
+    async def is_identity_configured(db: Session) -> bool:
+        """True if ANY identity provider is configured (used by the bootstrap
+        gate so a non-Auth0 deployment doesn't leave passwordless bootstrap open)."""
+        from app.services.identity import resolve_identity_config
+        return (await resolve_identity_config(db)) is not None
+
     @staticmethod
     async def get_config(db: Session) -> Optional[Dict[str, str]]:
         """
@@ -59,13 +73,31 @@ class Auth0Service:
         Returns:
             Full authorization URL to redirect user to
         """
+        # Non-Auth0 providers → standards-based generic OIDC via discovery
+        if await Auth0Service._active_provider() != "auth0":
+            from app.services.identity import resolve_identity_config, get_oidc_metadata
+            idc = await resolve_identity_config(db)
+            if not idc:
+                raise HTTPException(status_code=500, detail="Identity provider not configured")
+            meta = await get_oidc_metadata(idc)
+            params = {
+                "response_type": "code",
+                "client_id": idc["client_id"],
+                "redirect_uri": redirect_uri,
+                "scope": "openid profile email",
+                "state": state,
+                **(idc.get("extra_authorize_params") or {}),
+            }
+            query_string = "&".join(f"{k}={httpx.QueryParams({k: v})[k]}" for k, v in params.items())
+            return f"{meta['authorization_endpoint']}?{query_string}"
+
         config = await Auth0Service.get_config(db)
         if not config:
             raise HTTPException(status_code=500, detail="Auth0 not configured")
-        
+
         domain = config["domain"]
         client_id = config["client_id"]
-        
+
         # Build authorization URL
         params = {
             "response_type": "code",
@@ -75,7 +107,7 @@ class Auth0Service:
             "state": state,
             "audience": f"https://{domain}/api/v2/"  # For API access tokens
         }
-        
+
         query_string = "&".join(f"{k}={httpx.QueryParams({k: v})[k]}" for k, v in params.items())
         return f"https://{domain}/authorize?{query_string}"
     
@@ -96,14 +128,38 @@ class Auth0Service:
         Returns:
             Dict with: access_token, id_token, token_type, expires_in
         """
+        # Non-Auth0 providers → generic OIDC token endpoint (form-encoded, per spec)
+        if await Auth0Service._active_provider() != "auth0":
+            from app.services.identity import resolve_identity_config, get_oidc_metadata
+            idc = await resolve_identity_config(db)
+            if not idc:
+                raise HTTPException(status_code=500, detail="Identity provider not configured")
+            meta = await get_oidc_metadata(idc)
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    meta["token_endpoint"],
+                    data={
+                        "grant_type": "authorization_code",
+                        "client_id": idc["client_id"],
+                        "client_secret": idc["client_secret"],
+                        "code": code,
+                        "redirect_uri": redirect_uri,
+                    },
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+            if response.status_code != 200:
+                detail = response.json().get("error_description", "Token exchange failed") if response.headers.get("content-type", "").startswith("application/json") else "Token exchange failed"
+                raise HTTPException(status_code=400, detail=detail)
+            return response.json()
+
         config = await Auth0Service.get_config(db)
         if not config:
             raise HTTPException(status_code=500, detail="Auth0 not configured")
-        
+
         domain = config["domain"]
         client_id = config["client_id"]
         client_secret = config["client_secret"]
-        
+
         # Exchange code for tokens
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -119,11 +175,11 @@ class Auth0Service:
                     "Content-Type": "application/json"
                 }
             )
-            
+
             if response.status_code != 200:
                 error_detail = response.json().get("error_description", "Token exchange failed")
                 raise HTTPException(status_code=400, detail=error_detail)
-            
+
             return response.json()
     
     @staticmethod
@@ -154,13 +210,21 @@ class Auth0Service:
         Returns:
             Decoded token payload
         """
+        # Non-Auth0 providers → standards-based generic OIDC verification
+        if await Auth0Service._active_provider() != "auth0":
+            from app.services.identity import resolve_identity_config, verify_oidc_token
+            idc = await resolve_identity_config(db)
+            if not idc:
+                raise HTTPException(status_code=500, detail="Identity provider not configured")
+            return await verify_oidc_token(token, idc)
+
         config = await Auth0Service.get_config(db)
         if not config:
             raise HTTPException(status_code=500, detail="Auth0 not configured")
-        
+
         domain = config["domain"]
         client_id = config["client_id"]
-        
+
         # Get JWKS for verification
         jwks = await Auth0Service.get_jwks(domain)
         
@@ -207,12 +271,28 @@ class Auth0Service:
         Returns:
             User profile dict
         """
+        # Non-Auth0 providers → generic userinfo endpoint from discovery
+        if await Auth0Service._active_provider() != "auth0":
+            from app.services.identity import resolve_identity_config, get_oidc_metadata
+            idc = await resolve_identity_config(db)
+            if not idc:
+                raise HTTPException(status_code=500, detail="Identity provider not configured")
+            meta = await get_oidc_metadata(idc)
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    meta["userinfo_endpoint"],
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+            if response.status_code != 200:
+                raise HTTPException(status_code=400, detail="Failed to fetch user info")
+            return response.json()
+
         config = await Auth0Service.get_config(db)
         if not config:
             raise HTTPException(status_code=500, detail="Auth0 not configured")
-        
+
         domain = config["domain"]
-        
+
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"https://{domain}/userinfo",

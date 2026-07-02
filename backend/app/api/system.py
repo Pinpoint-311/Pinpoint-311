@@ -44,6 +44,25 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
     return settings
 
 
+@router.get("/identity/catalog")
+async def get_identity_catalog(_: User = Depends(get_current_admin)):
+    """Identity provider catalog for the admin UI (Auth0 / Entra / Okta / OIDC),
+    plus which provider is active."""
+    from app.services.identity import catalog_for_api, IDENTITY_PROVIDER_KEY
+    from app.services.secret_manager import get_secret
+    current = (await get_secret(IDENTITY_PROVIDER_KEY)) or "auth0"
+    return {"current_provider": current.strip().lower(), "providers": catalog_for_api()}
+
+
+@router.get("/translation/catalog")
+async def get_translation_catalog(_: User = Depends(get_current_staff)):
+    """Translation provider catalog (Google / Azure) + current selection."""
+    from app.services.translation_providers import catalog_for_api, TRANSLATION_PROVIDER_KEY
+    from app.services.secret_manager import get_secret
+    current = (await get_secret(TRANSLATION_PROVIDER_KEY)) or "google"
+    return {"current_provider": current.strip().lower(), "providers": catalog_for_api()}
+
+
 @router.get("/ai/catalog")
 async def get_ai_catalog(_: User = Depends(get_current_staff)):
     """AI provider catalog for the admin UI: available boundaries (Vertex /
