@@ -38,13 +38,13 @@ _bootstrap_tokens: dict = {}
 
 
 async def _bootstrap_gate_open(db: AsyncSession) -> bool:
-    """Bootstrap is permitted ONLY when Auth0 has never been configured.
+    """Bootstrap is permitted ONLY when NO identity provider is configured
+    (Auth0, Entra, Okta, or generic OIDC).
 
-    Fail-closed: gates on the *presence* of Auth0 config, not its reachability,
-    so an Auth0 outage cannot re-open passwordless admin access.
+    Fail-closed: gates on the *presence* of identity config, not its
+    reachability, so an IdP outage cannot re-open passwordless admin access.
     """
-    config = await Auth0Service.get_config(db)
-    return not config
+    return not await Auth0Service.is_identity_configured(db)
 
 
 def _verify_bootstrap_password(supplied: str) -> None:
