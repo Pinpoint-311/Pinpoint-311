@@ -5,11 +5,14 @@ and a vendor's API. Connectors are stateless: they are constructed per
 operation from an IntegrationConfig row (config dict + decrypted credentials).
 """
 
+import asyncio
+import email.utils
 import ipaddress
 import logging
+import random
 import socket
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -19,6 +22,100 @@ logger = logging.getLogger(__name__)
 
 # Default network timeout for all vendor API calls
 HTTP_TIMEOUT = httpx.Timeout(20.0, connect=10.0)
+
+# Retry policy for transient vendor failures (rate limits, gateway blips,
+# dropped connections). Applied centrally so every connector inherits it.
+DEFAULT_MAX_RETRIES = 3
+_RETRYABLE_STATUS = {429, 502, 503, 504}
+_IDEMPOTENT_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+class RetryTransport(httpx.AsyncHTTPTransport):
+    """HTTP transport that transparently retries transient failures.
+
+    Vendor APIs rate-limit and their gateways flake; a robust integration
+    should ride that out rather than fail a resident's report. This retries
+    on 429/502/503/504 and on connection-level errors with exponential
+    backoff + jitter, honoring a ``Retry-After`` header when present.
+
+    Safety: non-idempotent requests (POST/PUT/DELETE — e.g. creating a
+    record) are retried ONLY when the vendor definitively did not process
+    them: a 429 (rejected before handling) or a connection that was never
+    established. They are never retried on a read timeout or a 5xx, where
+    the write may have already landed and a retry could duplicate it.
+    """
+
+    def __init__(self, *args: Any, max_retries: int = DEFAULT_MAX_RETRIES,
+                 backoff_base: float = 0.5, backoff_cap: float = 8.0, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        self._max_retries = max(0, max_retries)
+        self._backoff_base = backoff_base
+        self._backoff_cap = backoff_cap
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        method = request.method.upper()
+        idempotent = method in _IDEMPOTENT_METHODS
+        attempt = 0
+        while True:
+            try:
+                response = await super().handle_async_request(request)
+            except httpx.ConnectError as exc:
+                # Connection never established → the request was not processed,
+                # so retrying is safe even for POST/PUT.
+                if attempt >= self._max_retries:
+                    raise
+                logger.warning("Connection error to %s (attempt %d): %s — retrying",
+                               request.url.host, attempt + 1, exc)
+                await self._backoff(attempt, None)
+                attempt += 1
+                continue
+            except httpx.TransportError as exc:
+                # Read/write/pool errors: only safe to retry for idempotent methods.
+                if not idempotent or attempt >= self._max_retries:
+                    raise
+                logger.warning("Transport error to %s (attempt %d): %s — retrying",
+                               request.url.host, attempt + 1, exc)
+                await self._backoff(attempt, None)
+                attempt += 1
+                continue
+
+            if (response.status_code in _RETRYABLE_STATUS
+                    and attempt < self._max_retries
+                    and (idempotent or response.status_code == 429)):
+                retry_after = self._parse_retry_after(response.headers.get("Retry-After"))
+                await response.aclose()
+                logger.warning("HTTP %d from %s (attempt %d) — retrying%s",
+                               response.status_code, request.url.host, attempt + 1,
+                               f" after {retry_after}s" if retry_after else "")
+                await self._backoff(attempt, retry_after)
+                attempt += 1
+                continue
+            return response
+
+    async def _backoff(self, attempt: int, retry_after: Optional[float]) -> None:
+        if retry_after is not None:
+            delay = min(retry_after, 30.0)
+        else:
+            delay = min(self._backoff_cap, self._backoff_base * (2 ** attempt))
+            delay += random.uniform(0, delay * 0.25)  # jitter to avoid thundering herds
+        await asyncio.sleep(delay)
+
+    @staticmethod
+    def _parse_retry_after(value: Optional[str]) -> Optional[float]:
+        if not value:
+            return None
+        value = value.strip()
+        if value.isdigit():
+            return float(value)
+        try:
+            dt = email.utils.parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return None
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return max(0.0, (dt - datetime.now(timezone.utc)).total_seconds())
 
 
 def _is_disallowed_ip(ip_str: str) -> bool:
@@ -196,9 +293,16 @@ class BaseConnector:
 
         # follow_redirects=False so a vendor 3xx cannot pivot us to an
         # internal address; the guard also runs on the initial URL.
+        # RetryTransport rides out transient vendor failures (rate limits,
+        # gateway blips, dropped connections) with safe, method-aware retries.
+        try:
+            max_retries = int(self.config.get("max_retries", DEFAULT_MAX_RETRIES))
+        except (TypeError, ValueError):
+            max_retries = DEFAULT_MAX_RETRIES
         return httpx.AsyncClient(
             timeout=HTTP_TIMEOUT,
             follow_redirects=False,
+            transport=RetryTransport(max_retries=max_retries),
             event_hooks={"request": [_ssrf_guard]},
             **kwargs,
         )

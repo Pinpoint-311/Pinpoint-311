@@ -3,10 +3,11 @@ import { motion } from 'framer-motion';
 import {
     Landmark, CheckCircle, AlertCircle, ExternalLink, RefreshCw,
     Plug, Trash2, Copy, Check, Mail, ClipboardList, Loader2, ArrowLeft,
-    ChevronDown, ChevronUp, PartyPopper
+    ChevronDown, ChevronUp, PartyPopper, Sparkles,
+    ArrowUpRight, ArrowDownLeft, MessageSquare, Image as ImageIcon, MapPin,
 } from 'lucide-react';
 
-import { Button, Input, Modal } from './ui';
+import { Button, Modal } from './ui';
 import {
     api, IntegrationPlatform, IntegrationConfig, IntegrationSyncLog, IntegrationTestResult,
 } from '../services/api';
@@ -17,6 +18,16 @@ const MODE_LABELS: Record<string, { label: string; className: string }> = {
     open311: { label: 'Works with a standard address + key', className: 'bg-sky-500/20 text-sky-300 border-sky-500/30' },
     partner_api: { label: 'Vendor sends you the details', className: 'bg-amber-500/20 text-amber-300 border-amber-500/30' },
 };
+
+// Capability chips make each connector's real breadth visible at a glance —
+// what actually flows between Pinpoint and the vendor, driven by the catalog.
+const CAPABILITY_CHIPS: { key: string; label: string; icon: typeof Sparkles }[] = [
+    { key: 'push', label: 'Send reports', icon: ArrowUpRight },
+    { key: 'pull', label: 'Receive updates', icon: ArrowDownLeft },
+    { key: 'comments', label: 'Comments', icon: MessageSquare },
+    { key: 'documents', label: 'Photos & files', icon: ImageIcon },
+    { key: 'assets', label: 'Assets → map', icon: MapPin },
+];
 
 const SYNC_CHOICES = (name: string) => [
     { value: 'bidirectional', label: 'Keep both systems in sync', help: `New reports go to ${name}, and their updates come back here. Recommended.` },
@@ -235,21 +246,21 @@ export default function GovtechIntegrations() {
         const help = platform.field_help?.[field.key];
         return (
             <div key={field.key}>
-                <label className="text-sm text-white/70 mb-1 block font-medium">
+                <label className="text-[11px] uppercase tracking-wider text-white/60 mb-1.5 font-semibold flex items-center gap-1.5">
                     {field.label}
-                    {field.required && !alreadySet && <span className="text-amber-300"> (required)</span>}
-                    {alreadySet && <span className="text-green-400 text-xs ml-2 inline-flex items-center gap-1"><CheckCircle className="w-3 h-3" /> already saved</span>}
+                    {field.required && !alreadySet && <span className="normal-case tracking-normal text-amber-300 font-medium">(required)</span>}
+                    {alreadySet && <span className="ml-auto normal-case tracking-normal text-[10px] font-medium text-emerald-300/80 inline-flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Saved</span>}
                 </label>
-                <Input
+                <input
                     type={field.secret ? 'password' : 'text'}
                     placeholder={alreadySet
-                        ? (isCredential ? 'Saved — leave blank to keep it' : String((existing?.config as Record<string, unknown>)?.[field.key] ?? ''))
+                        ? (isCredential ? '•••••••••  leave blank to keep' : String((existing?.config as Record<string, unknown>)?.[field.key] ?? ''))
                         : (field.placeholder || '')}
                     value={values[field.key] || ''}
                     onChange={(e) => setValues(p => ({ ...p, [field.key]: e.target.value }))}
-                    className="text-sm"
+                    className="w-full rounded-xl bg-white/[0.04] border border-white/10 text-white text-sm px-3.5 py-2.5 placeholder:text-white/45 transition-all focus:outline-none focus:border-primary-400/50 focus:bg-white/[0.06] focus:shadow-[0_0_0_3px_rgba(99,102,241,0.15)]"
                 />
-                {help && <p className="text-white/40 text-xs mt-1">{help}</p>}
+                {help && <p className="text-white/50 text-xs mt-1.5 leading-relaxed">{help}</p>}
             </div>
         );
     };
@@ -268,16 +279,27 @@ export default function GovtechIntegrations() {
     // ---------- UI ----------
 
     return (
-        <div>
-            <h2 className="text-lg font-semibold text-white mb-1 flex items-center gap-2">
-                <Landmark className="w-5 h-5 text-indigo-400" />
-                Connect Your Other Town Systems
-            </h2>
-            <p className="text-white/50 text-sm mb-4">
-                If your town also uses one of these systems, connect it and resident reports, photos, comments,
-                and status updates will flow between them automatically — no double entry.
-                {connectedCount > 0 && <span className="text-emerald-300"> {connectedCount} connected.</span>}
-            </p>
+        <div className="relative">
+            {/* Aurora glow behind the header for depth */}
+            <div className="aurora-glow w-72 h-40 -top-10 -left-6" aria-hidden="true" />
+
+            <div className="relative mb-5">
+                <div className="inline-flex items-center gap-1.5 rounded-full bg-primary-500/15 border border-primary-400/25 px-2.5 py-1 mb-3">
+                    <Landmark className="w-3 h-3 text-primary-300" aria-hidden="true" />
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-primary-200">Platform connectors</span>
+                    {connectedCount > 0 && (
+                        <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-emerald-500/20 border border-emerald-400/30 px-1.5 text-[10px] font-semibold text-emerald-200">
+                            <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400" aria-hidden="true" />
+                            {connectedCount} connected
+                        </span>
+                    )}
+                </div>
+                <h2 className="text-2xl font-bold text-gradient tracking-tight">Connect Your Other Town Systems</h2>
+                <p className="text-white/50 text-sm mt-1.5 max-w-2xl leading-relaxed">
+                    Full two-way connectors for the platforms your town already runs. Reports, photos, comments,
+                    and status updates flow between them automatically — <span className="text-white/70">no double entry</span>.
+                </p>
+            </div>
 
             {error && (
                 <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
@@ -285,7 +307,7 @@ export default function GovtechIntegrations() {
                 </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="relative grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {catalog.map((platform, idx) => {
                     const existing = configFor(platform.platform);
                     const mode = MODE_LABELS[platform.integration_mode] || MODE_LABELS.partner_api;
@@ -297,33 +319,36 @@ export default function GovtechIntegrations() {
                     return (
                         <motion.div
                             key={platform.platform}
-                            initial={{ opacity: 0, y: 10 }}
+                            initial={{ opacity: 0, y: 14 }}
                             animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: idx * 0.04 }}
-                            className={`relative rounded-2xl border backdrop-blur-xl p-5 transition-all duration-300 ${isWorking
-                                ? 'bg-gradient-to-br from-indigo-500/10 via-violet-500/5 to-purple-500/10 border-indigo-500/30 shadow-lg shadow-indigo-500/10'
-                                : needsAttention
-                                    ? 'bg-amber-500/5 border-amber-500/30'
-                                    : 'bg-white/5 border-white/10 hover:border-white/20'
-                                }`}
+                            transition={{ delay: idx * 0.05, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+                            className={`premium-card p-5 ${needsAttention ? 'ring-1 ring-amber-500/40' : ''}`}
                         >
-                            <div className="flex items-start justify-between gap-3">
-                                <div className="flex items-center gap-3 min-w-0">
-                                    <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${existing?.enabled
-                                        ? 'bg-gradient-to-br from-indigo-400 to-violet-500 shadow-lg shadow-indigo-500/30'
-                                        : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'
-                                        }`}>
-                                        <Plug className="w-5 h-5 text-white" />
+                            {isWorking && (
+                                <div className="absolute -inset-px rounded-[20px] bg-gradient-to-br from-primary-500/10 via-transparent to-primary-500/5 pointer-events-none" aria-hidden="true" />
+                            )}
+                            <div className="relative flex items-start justify-between gap-3">
+                                <div className="flex items-center gap-3.5 min-w-0">
+                                    <div className="relative shrink-0">
+                                        {existing?.enabled && (
+                                            <div className="absolute -inset-1 rounded-2xl bg-gradient-to-br from-primary-400/40 to-primary-600/20 blur-md" aria-hidden="true" />
+                                        )}
+                                        <div className={`relative w-11 h-11 rounded-2xl flex items-center justify-center shadow-lg ${existing?.enabled
+                                            ? 'bg-gradient-to-br from-primary-500/30 to-primary-700/20 border border-primary-400/30 shadow-primary-900/40'
+                                            : 'bg-white/[0.06] border border-white/10 shadow-black/20'
+                                            }`}>
+                                            <Plug className={`w-5 h-5 ${existing?.enabled ? 'text-primary-200' : 'text-white/60'}`} />
+                                        </div>
                                     </div>
                                     <div className="min-w-0">
-                                        <h3 className="font-semibold text-white truncate">{platform.name}</h3>
-                                        <p className="text-white/40 text-xs truncate">{platform.category}</p>
+                                        <h3 className="font-semibold text-white tracking-tight truncate">{platform.name}</h3>
+                                        <p className="text-white/45 text-xs truncate">{platform.category}</p>
                                     </div>
                                 </div>
                                 <div className="shrink-0">
                                     {isWorking ? (
-                                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                                            <CheckCircle className="w-3 h-3" /> Connected
+                                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-200 border border-emerald-400/30">
+                                            <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400" aria-hidden="true" /> Connected
                                         </span>
                                     ) : needsAttention ? (
                                         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
@@ -339,14 +364,23 @@ export default function GovtechIntegrations() {
                                 </div>
                             </div>
 
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border mt-3 ${mode.className}`}>
+                            <span className={`relative inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border mt-3 ${mode.className}`}>
                                 {mode.label}
                             </span>
 
-                            <p className="text-white/50 text-xs mt-2 leading-relaxed">{platform.plain_summary || platform.description}</p>
+                            <p className="relative text-white/50 text-xs mt-2 leading-relaxed">{platform.plain_summary || platform.description}</p>
+
+                            {/* Capability chips — what actually flows with this connector */}
+                            <div className="relative flex flex-wrap gap-1.5 mt-3">
+                                {CAPABILITY_CHIPS.filter(c => platform.capabilities.includes(c.key)).map(c => (
+                                    <span key={c.key} className="inline-flex items-center gap-1 rounded-md bg-white/[0.04] border border-white/10 px-1.5 py-0.5 text-[10px] text-white/55">
+                                        <c.icon className="w-2.5 h-2.5 text-primary-300/80" aria-hidden="true" /> {c.label}
+                                    </span>
+                                ))}
+                            </div>
 
                             {existing?.last_sync_at && (
-                                <p className={`text-[11px] mt-2 ${existing.last_sync_status === 'error' ? 'text-amber-300' : 'text-white/40'}`}>
+                                <p className={`relative text-[11px] mt-2 ${existing.last_sync_status === 'error' ? 'text-amber-300' : 'text-white/40'}`}>
                                     {existing.last_sync_status === 'error'
                                         ? 'The last update check hit a problem — press "Check connection" for a plain-language explanation.'
                                         : `Last checked ${new Date(existing.last_sync_at).toLocaleString()} — all good.`}
@@ -354,22 +388,23 @@ export default function GovtechIntegrations() {
                             )}
 
                             {result && (
-                                <div className={`mt-2 rounded-lg px-3 py-2 text-xs border ${result.ok
+                                <div className={`relative mt-2 rounded-lg px-3 py-2 text-xs border ${result.ok
                                     ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-200'
                                     : 'bg-amber-500/10 border-amber-500/25 text-amber-200'}`}>
                                     {result.ok ? result.detail : (result.friendly || result.detail)}
                                 </div>
                             )}
 
-                            <div className="flex flex-wrap items-center gap-2 mt-4">
+                            <div className="relative flex flex-wrap items-center gap-2 mt-4">
                                 {!existing ? (
-                                    <Button
-                                        size="sm"
-                                        className="bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700"
+                                    <button
+                                        className="shimmer-sweep inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-900/40 transition-all hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
                                         onClick={() => openWizard(platform, 'intro')}
                                     >
-                                        {platform.platform === 'sandbox' ? 'Try it — takes 2 minutes' : 'Set up — takes about 10 minutes'}
-                                    </Button>
+                                        {platform.platform === 'sandbox'
+                                            ? <><Sparkles className="w-4 h-4" /> Try it — 2 minutes</>
+                                            : <><Plug className="w-4 h-4" /> Set up — about 10 minutes</>}
+                                    </button>
                                 ) : (
                                     <>
                                         <Button size="sm" variant="ghost" className="text-xs" onClick={() => openWizard(platform, 'details')}>
@@ -396,7 +431,7 @@ export default function GovtechIntegrations() {
                                             <button
                                                 onClick={() => handleToggle(existing)}
                                                 disabled={busy !== null}
-                                                className={`relative inline-flex items-center rounded-full transition-colors duration-300 shrink-0 ${existing.enabled ? 'bg-indigo-500 shadow-lg shadow-indigo-500/30' : 'bg-slate-600'}`}
+                                                className={`relative inline-flex items-center rounded-full transition-colors duration-300 shrink-0 ${existing.enabled ? 'bg-primary-500 shadow-lg shadow-primary-900/40' : 'bg-slate-600'}`}
                                                 style={{ width: 40, height: 22, padding: 0 }}
                                                 role="switch"
                                                 aria-checked={existing.enabled}
@@ -414,7 +449,7 @@ export default function GovtechIntegrations() {
                             </div>
 
                             {logsOpen === platform.platform && platformLogs && (
-                                <div className="mt-3 rounded-lg border border-white/10 divide-y divide-white/5 max-h-48 overflow-y-auto">
+                                <div className="relative mt-3 rounded-lg border border-white/10 divide-y divide-white/5 max-h-48 overflow-y-auto">
                                     {platformLogs.length === 0 && (
                                         <p className="text-white/30 text-xs px-3 py-2">Nothing has synced yet. Activity will show up here once reports start flowing.</p>
                                     )}
@@ -495,12 +530,12 @@ export default function GovtechIntegrations() {
                                 <a href={wizard.docs_url} target="_blank" rel="noopener noreferrer" className="text-indigo-300 text-xs hover:underline inline-flex items-center gap-1 self-center sm:self-auto">
                                     {wizard.vendor} website <ExternalLink className="w-3 h-3" />
                                 </a>
-                                <Button
-                                    className="w-full sm:w-auto bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700"
+                                <button
+                                    className="shimmer-sweep w-full sm:w-auto inline-flex items-center justify-center gap-1.5 rounded-xl px-5 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-900/40 transition-all hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
                                     onClick={() => setStep('details')}
                                 >
                                     I have these — continue
-                                </Button>
+                                </button>
                             </div>
                         </div>
                     )}
@@ -534,32 +569,41 @@ export default function GovtechIntegrations() {
                             )}
 
                             <div className="rounded-xl bg-white/[0.04] border border-white/10 p-4">
-                                <h4 className="text-white font-semibold text-sm mb-2">How should the two systems work together?</h4>
-                                <div className="space-y-2">
+                                <h4 className="text-white font-semibold text-sm mb-3">How should the two systems work together?</h4>
+                                <div className="space-y-2" role="radiogroup" aria-label="Sync direction">
                                     {SYNC_CHOICES(wizard.name)
                                         .filter(c => c.value === 'bidirectional'
                                             ? wizard.capabilities.includes('push') && wizard.capabilities.includes('pull')
                                             : wizard.capabilities.includes(c.value))
-                                        .map(choice => (
-                                            <label key={choice.value} className={`flex items-start gap-2.5 rounded-lg px-3 py-2 cursor-pointer border transition-colors ${syncChoice === choice.value ? 'bg-indigo-500/15 border-indigo-500/40' : 'border-transparent hover:bg-white/5'}`}>
-                                                <input
-                                                    type="radio"
-                                                    name="sync-choice"
-                                                    className="mt-1 accent-indigo-500"
-                                                    checked={syncChoice === choice.value}
-                                                    onChange={() => setSyncChoice(choice.value)}
-                                                />
-                                                <span>
-                                                    <span className="text-white/80 text-sm block">
-                                                        {choice.label}
-                                                        {choice.value === (wizard.recommended_sync_direction || 'bidirectional') && (
-                                                            <span className="text-emerald-300 text-xs ml-2">Recommended</span>
+                                        .map(choice => {
+                                            const isSel = syncChoice === choice.value;
+                                            const recommended = choice.value === (wizard.recommended_sync_direction || 'bidirectional');
+                                            return (
+                                                <button
+                                                    key={choice.value}
+                                                    type="button"
+                                                    role="radio"
+                                                    aria-checked={isSel}
+                                                    onClick={() => setSyncChoice(choice.value)}
+                                                    className={`w-full text-left rounded-xl px-3.5 py-3 border transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${isSel
+                                                        ? 'bg-gradient-to-br from-primary-500/25 to-primary-700/15 border-primary-400/50 shadow-lg shadow-primary-900/30'
+                                                        : 'bg-white/[0.03] border-white/10 hover:bg-white/[0.06] hover:border-white/20'}`}
+                                                >
+                                                    <span className="flex items-center justify-between gap-2">
+                                                        <span className={`text-sm font-medium ${isSel ? 'text-white' : 'text-white/75'}`}>
+                                                            {choice.label}
+                                                            {recommended && <span className="text-emerald-300 text-xs ml-2 font-normal">Recommended</span>}
+                                                        </span>
+                                                        {isSel && (
+                                                            <span className="shrink-0 w-4 h-4 rounded-full bg-primary-400 flex items-center justify-center">
+                                                                <Check className="w-3 h-3 text-primary-950" strokeWidth={3} />
+                                                            </span>
                                                         )}
                                                     </span>
-                                                    <span className="text-white/40 text-xs">{choice.help}</span>
-                                                </span>
-                                            </label>
-                                        ))}
+                                                    <span className="block text-white/45 text-xs mt-0.5">{choice.help}</span>
+                                                </button>
+                                            );
+                                        })}
                                 </div>
                             </div>
 
@@ -582,13 +626,13 @@ export default function GovtechIntegrations() {
                                         </Button>
                                     )}
                                 </div>
-                                <Button
-                                    className="w-full sm:w-auto bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700"
+                                <button
+                                    className="shimmer-sweep w-full sm:w-auto inline-flex items-center justify-center gap-1.5 rounded-xl px-5 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-900/40 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
                                     onClick={() => goToFinish(wizard)}
                                     disabled={saving || requiredMissing(wizard).length > 0}
                                 >
-                                    {saving ? 'Saving…' : 'Save & check the connection'}
-                                </Button>
+                                    {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : <><Sparkles className="w-4 h-4" /> Save &amp; check the connection</>}
+                                </button>
                             </div>
                         </div>
                     )}
