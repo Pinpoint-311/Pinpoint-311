@@ -81,6 +81,39 @@ unchanged.
 SMS (Twilio/HTTP) and Email (SMTP) already support any provider. Object storage
 is a host deployment choice (S3-compatible or Azure Blob), not a product change.
 
+### 3.5 All providers pre-built and point-and-click configurable (hard requirement)
+Every adapter listed in §7 ships **pre-built in the image** — switching
+providers is **never** a code change, rebuild, or redeploy, only a
+configuration choice. The configuration experience must be **as easy as or
+easier than** today's Auth0 + Google setup.
+
+Concretely, each provider reuses the existing clerk-friendly Setup &
+Integrations pattern already in the app (the guided cards + wizard we built for
+govtech connections):
+- **Provider picker per capability** — e.g. AI shows *Vertex AI · AWS Bedrock ·
+  Azure Government AI*; Identity shows *Auth0 · Entra ID · Okta* — as selectable
+  cards, with a one-line plain description of each.
+- **Plain-language fields with examples and inline hints** for every credential
+  and setting (same `field_help` pattern), so a non-technical clerk can paste
+  what the vendor sent without knowing what it is.
+- **"Test connection" live check** with friendly, human-readable errors
+  (the same translated-error UX), and **auto-enable on success**.
+- **Write-only secret handling** — configured secrets show "saved — leave blank
+  to keep," never re-displayed.
+- **Two-level pickers where relevant** — AI shows a **model** dropdown under the
+  chosen boundary (e.g. Gemini Flash-Lite / Claude / GPT-4o-mini).
+- **Sensible defaults pre-filled** per stack, so the common path is mostly
+  "confirm and test."
+- **Managed-mode aware** — host-owned providers (secrets/KMS, and identity when
+  the state sets it) render as read-only "Managed by your state"; town-owned
+  providers (AI, translation, and identity when town-set) stay fully editable
+  with the guided wizard.
+
+Definition of done for each adapter includes its **config card + field hints +
+Test-connection check**, not just the backend implementation. An adapter is not
+"done" until a non-technical admin can select and configure it end-to-end in the
+browser.
+
 ---
 
 ## 4. Repo B — orchestration panel (what we build new)
@@ -202,7 +235,8 @@ export, rate limits). Branch `claude/security-audit-fixes`.
 ### Phase 4 — Provider abstraction (Repo A)
 - Land the interfaces and ship the adapters: **Identity** — generic OIDC (Auth0 + Entra ID + Okta); **AI** — Vertex + Bedrock + Azure Government AI (two-level provider/model); **Translation** — Google + Azure; **Secrets** — Secret Manager + Key Vault; **KMS** — Cloud KMS + Key Vault Managed HSM.
 - Maps (Google) unchanged.
-- **DoD:** a deployment can point identity at Auth0/Entra/Okta, run AI on any of the three boundaries, and run translation/secrets/KMS on Google or Azure — all selected by config, no code changes.
+- Each adapter ships with its **guided config card + field hints + Test-connection check** (§3.5), not just the backend.
+- **DoD:** a non-technical admin can, entirely in the browser, point identity at Auth0/Entra/Okta, run AI on any of the three boundaries (with a model picker), and run translation/secrets/KMS on Google or Azure — no code changes, and the flow is at least as easy as today's Auth0/Google setup.
 
 ### Phase 5 — NJ production/compliance hardening
 - StateRAMP / NJ SISM alignment; signed SSP/PIA/IR/DR; VPAT; OPRA workflow; records retention mapped to NJ DARM; SLA + RACI; k8s/GitOps target.
@@ -221,6 +255,7 @@ export, rate limits). Branch `claude/security-audit-fixes`.
 
 ## 10. Cross-cutting principles
 - **Minimal product change** — keep the existing UX; maps (Google) stays as-is and Auth0 remains the identity default. Provider choice adds config options, not new surfaces.
+- **Every provider is pre-built and point-and-click** — switching is config, never code; the setup UX must be as easy as or easier than today's Auth0/Google flow (guided cards, plain-language hints, Test-connection, auto-enable). See §3.5.
 - **Core upgrades benefit everyone** — genuine improvements (immutable audit log, safety-flag surfacing) ship to self-hosted and centralized alike, never gated to managed mode.
 - **App never phones home with data** — panel is metadata-only.
 - **Additive to the app** — standalone self-host stays first-class.
