@@ -89,6 +89,33 @@ fully public, documented APIs and work out of the box with account credentials;
 Tyler (and anything else speaking Open311) works against the jurisdiction's
 GeoReport v2 endpoint.
 
+## Verifying without vendor access
+
+You don't need any vendor account to prove the pipeline works:
+
+- **Practice Sandbox (built in)** — the first card in the admin UI is a
+  pretend town system that runs inside Pinpoint itself
+  (`/api/integrations/sandbox-vendor`). Connect it (no credentials), submit a
+  test report, and within ~2 minutes a simulated work crew acknowledges it,
+  comments on it, and completes it — all mirrored back through the exact same
+  push/pull/comment/photo/asset code paths the real connectors use. Practice
+  data is in-memory and disappears on restart. Override its address with the
+  `SANDBOX_VENDOR_URL` env var outside docker-compose.
+- **Accela** — free developer account at
+  [developer.accela.com](https://developer.accela.com): register an app,
+  then use the Test API Token utility and sandbox agency to exercise the real
+  Construct API.
+- **CivicPlus SeeClickFix** — public API docs at
+  [dev.seeclickfix.com](https://dev.seeclickfix.com) with a replicated test
+  environment at `test.seeclickfix.com`; personal access tokens come from any
+  account's Password & Security page.
+- **Open311/Tyler** — many cities run public GeoReport v2 endpoints (list at
+  the [Open311 wiki](https://wiki.open311.org/GeoReport_v2/Servers/)) that
+  allow read access without a key — enough to verify pull.
+- **SDL, Edmunds, GovPilot, FastTrackGov, Polimorphic** — no public sandboxes
+  exist; verification requires the customer endpoint each vendor issues. Use
+  the Practice Sandbox to validate the pipeline in the meantime.
+
 ## Setting up a connection
 
 Setup is a guided three-step wizard designed for non-technical staff — no
