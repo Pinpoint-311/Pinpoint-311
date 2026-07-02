@@ -1,13 +1,18 @@
 """
 Encryption utilities for protecting sensitive data at rest.
 
-Uses Fernet symmetric encryption (AES-128-CBC with HMAC) derived from 
-the application's SECRET_KEY environment variable.
+Config/secret values use Fernet symmetric encryption (AES-128-CBC with HMAC)
+derived from the application's SECRET_KEY environment variable.
 
-For PII data (resident email, phone, name), uses Google Cloud KMS
-for HSM-backed encryption with full audit logging.
+PII data (resident email, phone, name) uses envelope encryption (see
+app/core/pii_crypto.py): AES-256-GCM with a data key that is wrapped by a
+cloud KMS — Google Cloud KMS or Azure Key Vault — for HSM-backed key
+management, or by a SECRET_KEY-derived key when no cloud KMS is configured.
+The wrapped data key is cached, so the KMS is contacted about once per
+process rather than once per field. Legacy per-field "kms:"/"akv:" values and
+Fernet values remain readable.
 
-Government compliance: Secrets are encrypted before storage and 
+Government compliance: Secrets are encrypted before storage and
 decrypted only when needed by authorized services.
 """
 
@@ -23,8 +28,9 @@ logger = logging.getLogger(__name__)
 
 # Prefix used to identify encrypted values
 ENCRYPTED_PREFIX = "gAAAA"  # Fernet tokens always start with this
-KMS_ENCRYPTED_PREFIX = "kms:"  # Google KMS encrypted values
-AZURE_ENCRYPTED_PREFIX = "akv:"  # Azure Key Vault encrypted values
+KMS_ENCRYPTED_PREFIX = "kms:"  # Google KMS encrypted values (legacy per-field)
+AZURE_ENCRYPTED_PREFIX = "akv:"  # Azure Key Vault encrypted values (legacy per-field)
+PII_V2_PREFIX = "pii2:"  # Envelope-encrypted PII (AES-256-GCM + KMS-wrapped DEK)
 
 
 def _kms_provider() -> str:
@@ -130,7 +136,7 @@ def is_encrypted(value: Optional[str]) -> bool:
     if not value:
         return False
     return (value.startswith(ENCRYPTED_PREFIX) or value.startswith(KMS_ENCRYPTED_PREFIX)
-            or value.startswith(AZURE_ENCRYPTED_PREFIX))
+            or value.startswith(AZURE_ENCRYPTED_PREFIX) or value.startswith(PII_V2_PREFIX))
 
 
 def decrypt_safe(ciphertext: str) -> str:
@@ -149,8 +155,9 @@ def decrypt_safe(ciphertext: str) -> str:
     if not ciphertext:
         return ciphertext
     
-    # Check if it's KMS encrypted (Google or Azure)
-    if ciphertext.startswith(KMS_ENCRYPTED_PREFIX) or ciphertext.startswith(AZURE_ENCRYPTED_PREFIX):
+    # Check if it's KMS encrypted (envelope, Google, or Azure)
+    if (ciphertext.startswith(PII_V2_PREFIX) or ciphertext.startswith(KMS_ENCRYPTED_PREFIX)
+            or ciphertext.startswith(AZURE_ENCRYPTED_PREFIX)):
         return decrypt_pii(ciphertext)
 
     # Check if it looks like an encrypted value
@@ -285,94 +292,30 @@ def _get_kms_client():
 
 def encrypt_pii(plaintext: str) -> str:
     """
-    Encrypt PII data (resident email, phone, name) using Google Cloud KMS.
-    
-    Falls back to Fernet encryption if KMS is not available (local dev).
-    
-    Args:
-        plaintext: The PII data to encrypt
-        
-    Returns:
-        Encrypted string prefixed with "kms:" or Fernet encrypted
+    Encrypt PII data (resident email, phone, name) with envelope encryption.
+
+    A single AES-256-GCM data key (DEK) encrypts the value locally; the DEK is
+    wrapped once by the configured KMS (Google Cloud KMS or Azure Key Vault) and
+    cached, so the KMS is contacted about once per process instead of once per
+    field. When no cloud KMS is configured the DEK is wrapped with a
+    SECRET_KEY-derived key (local dev / self-hosted without an HSM). Setting
+    REQUIRE_KMS forces the DEK to be wrapped by a real KMS or the call raises.
+
+    Returns a "pii2:" token. Legacy "kms:"/"akv:"/Fernet values remain readable.
     """
     if not plaintext:
         return plaintext
 
-    # Azure Key Vault backend (host-selected via KMS_PROVIDER=azure)
-    if _kms_provider() == "azure":
-        from app.core import azure_keyvault
-        if azure_keyvault.is_configured():
-            try:
-                return f"{AZURE_ENCRYPTED_PREFIX}{azure_keyvault.encrypt(plaintext)}"
-            except Exception as e:
-                if _kms_required():
-                    logger.error(f"Azure Key Vault encryption failed and REQUIRE_KMS is set: {e}")
-                    raise
-                logger.error(f"Azure Key Vault encryption failed, falling back to Fernet: {e}")
-                return encrypt(plaintext)
-        if _kms_required():
-            raise RuntimeError("REQUIRE_KMS is set but Azure Key Vault is not configured.")
-        return encrypt(plaintext)
-
-    if not _is_kms_available():
-        if _kms_required():
-            raise RuntimeError(
-                "REQUIRE_KMS is set but Google Cloud KMS is not configured "
-                "(GOOGLE_CLOUD_PROJECT missing). Refusing to fall back to local encryption."
-            )
-        # Fallback to Fernet for local development
-        return encrypt(plaintext)
-
+    from app.core import pii_crypto
     try:
-        client = _get_kms_client()
-        key_name = _get_kms_key_name()
-
-        if not client or not key_name:
-            if _kms_required():
-                raise RuntimeError("REQUIRE_KMS is set but the KMS client/key is unavailable.")
-            return encrypt(plaintext)
-        
-        # Encrypt the plaintext
-        response = client.encrypt(
-            request={
-                "name": key_name,
-                "plaintext": plaintext.encode("utf-8")
-            }
-        )
-        
-        # Track KMS usage
-        try:
-            import asyncio
-            from app.db.session import SessionLocal
-            from app.services.api_usage import track_api_usage
-            
-            async def _track():
-                async with SessionLocal() as db:
-                    await track_api_usage(
-                        db,
-                        service_name="kms",
-                        operation="encrypt",
-                        api_calls=1
-                    )
-            
-            try:
-                asyncio.get_running_loop()  # Check if loop is running
-                asyncio.create_task(_track())
-            except RuntimeError:
-                asyncio.run(_track())
-        except Exception as track_err:
-            logger.debug(f"Failed to track KMS encrypt usage: {track_err}")
-        
-        # Base64 encode and add prefix
-        encrypted_b64 = base64.b64encode(response.ciphertext).decode("utf-8")
-        return f"{KMS_ENCRYPTED_PREFIX}{encrypted_b64}"
-        
+        return pii_crypto.encrypt(plaintext)
     except Exception as e:
+        # REQUIRE_KMS violations (no HSM available) must propagate, never
+        # silently downgrade to a weaker local scheme.
         if _kms_required():
-            # Do not silently downgrade to local encryption when KMS is mandated.
-            logger.error(f"KMS encryption failed and REQUIRE_KMS is set: {e}")
+            logger.error(f"PII envelope encryption failed and REQUIRE_KMS is set: {e}")
             raise
-        logger.error(f"KMS encryption failed, falling back to Fernet: {e}")
+        logger.error(f"PII envelope encryption failed, falling back to Fernet: {e}")
         return encrypt(plaintext)
 
 
@@ -389,7 +332,18 @@ def decrypt_pii(ciphertext: str) -> str:
     if not ciphertext:
         return ciphertext
 
-    # Azure Key Vault encrypted values
+    # Envelope-encrypted values (current scheme)
+    if ciphertext.startswith(PII_V2_PREFIX):
+        from app.core import pii_crypto
+        try:
+            return pii_crypto.decrypt(ciphertext)
+        except Exception as e:
+            # A genuine failure here means misconfiguration or tampering — do
+            # not expose the raw token; return empty and log loudly.
+            logger.error(f"PII envelope decryption failed: {e}")
+            return ""
+
+    # Azure Key Vault encrypted values (legacy per-field)
     if ciphertext.startswith(AZURE_ENCRYPTED_PREFIX):
         from app.core import azure_keyvault
         try:

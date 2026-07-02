@@ -16,14 +16,52 @@ Secrets are bundled into 6 groups to fit the free tier:
 import json
 import logging
 import os
-from typing import Optional, Dict, Any
+import threading
+import time
+from typing import Optional, Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Cache for secrets (they don't change often)
-_secret_cache: Dict[str, Dict[str, str]] = {}
+# TTL cache for secret bundles: name -> (data, expiry_epoch). A TTL means a
+# secret rotated in the manager out-of-band is picked up without a restart.
+_secret_cache: Dict[str, Tuple[Dict[str, str], float]] = {}
+_cache_lock = threading.Lock()
+_bundle_locks: Dict[str, threading.Lock] = {}
 _config: Dict[str, Any] = {"use_gcp": None}
 _sm_client = None
+
+
+def _cache_ttl() -> int:
+    try:
+        return int(os.getenv("SECRET_CACHE_TTL_SECONDS", "300"))
+    except ValueError:
+        return 300
+
+
+def _cache_get(name: str) -> Optional[Dict[str, str]]:
+    entry = _secret_cache.get(name)
+    if not entry:
+        return None
+    data, expiry = entry
+    if expiry < time.time():
+        _secret_cache.pop(name, None)
+        return None
+    return data
+
+
+def _cache_put(name: str, data: Dict[str, str]) -> None:
+    _secret_cache[name] = (data, time.time() + _cache_ttl())
+
+
+def _bundle_lock(name: str) -> threading.Lock:
+    """A per-bundle lock serializes read-modify-write within this process so
+    concurrent writes to the same bundle don't clobber each other's keys."""
+    with _cache_lock:
+        lk = _bundle_locks.get(name)
+        if lk is None:
+            lk = threading.Lock()
+            _bundle_locks[name] = lk
+        return lk
 
 
 def _get_project_from_db() -> Optional[str]:
@@ -124,11 +162,13 @@ def _is_gcp_available() -> bool:
     return False
 
 
-def _get_secret_from_gcp(secret_name: str) -> Optional[Dict[str, str]]:
-    """Fetch a secret bundle from Google Secret Manager."""
-    if secret_name in _secret_cache:
-        return _secret_cache[secret_name]
-    
+def _get_secret_from_gcp(secret_name: str, force_refresh: bool = False) -> Optional[Dict[str, str]]:
+    """Fetch a secret bundle from Google Secret Manager (TTL-cached)."""
+    if not force_refresh:
+        cached = _cache_get(secret_name)
+        if cached is not None:
+            return cached
+
     try:
         project = os.getenv("GOOGLE_CLOUD_PROJECT") or _get_project_from_db()
         client = _get_sm_client()
@@ -163,7 +203,7 @@ def _get_secret_from_gcp(secret_name: str) -> Optional[Dict[str, str]]:
             logger.debug(f"Failed to track Secret Manager usage: {track_err}")
         
         secret_data = json.loads(response.payload.data.decode("UTF-8"))
-        _secret_cache[secret_name] = secret_data
+        _cache_put(secret_name, secret_data)
         return secret_data
     except Exception as e:
         from app.core.sanitize import sanitize_for_log
@@ -378,32 +418,32 @@ def set_secret_sync(key_name: str, value: str) -> bool:
             return False
         
         bundle_name = _get_bundle_name(key_name)
-        
-        # Get existing bundle or create empty one
-        existing_bundle = _get_secret_from_gcp(bundle_name) or {}
-        
-        # Update the bundle with new value
-        existing_bundle[key_name] = value
-        
-        # Create secret if it doesn't exist
-        if not _create_secret_if_not_exists(client, project, bundle_name):
-            return False
-        
-        # Add new version with updated bundle
-        secret_path = f"projects/{project}/secrets/{bundle_name}"
-        payload = json.dumps(existing_bundle).encode("UTF-8")
-        
-        client.add_secret_version(
-            request={
-                "parent": secret_path,
-                "payload": {"data": payload},
-            }
-        )
-        
-        # Clear cache so next read gets fresh data
-        if bundle_name in _secret_cache:
-            del _secret_cache[bundle_name]
-        
+
+        # Serialize writes to this bundle within the process, and read the
+        # FRESHEST copy (bypassing the cache) right before merging, so a
+        # concurrent write doesn't lose another key via a stale read.
+        with _bundle_lock(bundle_name):
+            existing_bundle = dict(_get_secret_from_gcp(bundle_name, force_refresh=True) or {})
+            existing_bundle[key_name] = value
+
+            # Create secret if it doesn't exist
+            if not _create_secret_if_not_exists(client, project, bundle_name):
+                return False
+
+            # Add new version with updated bundle
+            secret_path = f"projects/{project}/secrets/{bundle_name}"
+            payload = json.dumps(existing_bundle).encode("UTF-8")
+
+            client.add_secret_version(
+                request={
+                    "parent": secret_path,
+                    "payload": {"data": payload},
+                }
+            )
+
+            # Refresh the cache with exactly what we just wrote.
+            _cache_put(bundle_name, existing_bundle)
+
         logger.info(f"Secret {key_name} written to Secret Manager bundle {bundle_name}")
         return True
         

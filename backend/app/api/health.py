@@ -108,43 +108,53 @@ async def check_google_kms(db: AsyncSession) -> Dict[str, Any]:
                 "note": "Fernet encryption is secure; KMS is optional for enhanced key management"
             }
         
-        # Try to encrypt/decrypt test data
-        from app.core.encryption import encrypt_pii, decrypt_pii
-        
+        # Encrypt/decrypt test data through the real envelope path
+        from app.core.encryption import encrypt_pii, decrypt_pii, PII_V2_PREFIX
+        from app.core import pii_crypto
+
         test_data = "health_check_test@example.com"
         encrypted = encrypt_pii(test_data)
-        
-        if not encrypted.startswith("kms:"):
-            return {
-                "status": "fallback",
-                "message": "KMS not available, using Fernet fallback encryption",
-                "project": project,
-                "key_ring": key_ring,
-                "key_name": key_id,
-                "location": location
-            }
-        
         decrypted = decrypt_pii(encrypted)
-        
-        if decrypted == test_data:
+
+        if decrypted != test_data:
             return {
-                "status": "healthy",
-                "message": "KMS encryption working correctly",
+                "status": "error",
+                "message": "PII encryption round-trip returned incorrect data",
                 "project": project,
                 "key_ring": key_ring,
                 "key_name": key_id,
                 "location": location,
-                "test_passed": True
             }
+
+        # Determine which key manager wraps the data key (envelope scheme).
+        if encrypted.startswith(PII_V2_PREFIX):
+            backend = pii_crypto.active_backend()
+        elif encrypted.startswith("kms:") or encrypted.startswith("akv:"):
+            backend = "kms"
         else:
+            backend = "local"
+
+        if backend in ("google", "azure", "kms"):
             return {
-                "status": "error",
-                "message": "KMS decrypt returned incorrect data",
+                "status": "healthy",
+                "message": f"Envelope encryption working (data key wrapped by {backend} KMS)",
                 "project": project,
                 "key_ring": key_ring,
                 "key_name": key_id,
-                "location": location
+                "location": location,
+                "kms_backend": backend,
+                "test_passed": True,
             }
+        return {
+            "status": "fallback",
+            "message": "PII encryption working with a local SECRET_KEY-wrapped data key (no cloud KMS configured)",
+            "project": project,
+            "key_ring": key_ring,
+            "key_name": key_id,
+            "location": location,
+            "kms_backend": backend,
+            "test_passed": True,
+        }
             
     except Exception as e:
         import logging
