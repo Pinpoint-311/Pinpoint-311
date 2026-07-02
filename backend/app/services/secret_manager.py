@@ -88,6 +88,19 @@ def _get_sm_client():
 
 
 
+def _secrets_provider() -> str:
+    """Which secret store to use: 'google' (default, GCP Secret Manager + DB
+    fallback) or 'azure' (Azure Key Vault + DB fallback)."""
+    val = os.getenv("SECRETS_PROVIDER")
+    if val:
+        return val.strip().lower()
+    try:
+        from app.core.encryption import _get_config_sync
+        return (_get_config_sync("SECRETS_PROVIDER") or "google").strip().lower()
+    except Exception:
+        return "google"
+
+
 def _is_gcp_available() -> bool:
     """Check if Google Cloud Secret Manager is available."""
     if _config["use_gcp"] is not None:
@@ -172,6 +185,18 @@ async def get_secret(key_name: str) -> Optional[str]:
     - BACKUP_* -> secret-backup bundle
     - Others -> secret-config bundle
     """
+    # Azure Key Vault backend (host-selected via SECRETS_PROVIDER=azure)
+    if _secrets_provider() == "azure":
+        try:
+            from app.core import azure_keyvault
+            if azure_keyvault.is_configured():
+                val = azure_keyvault.get_secret(key_name)
+                if val is not None:
+                    return val
+        except Exception as e:
+            logger.warning(f"Azure Key Vault secret read failed for {key_name}: {e}")
+        return await _get_secret_from_db(key_name)
+
     if _is_gcp_available():
         # Determine which bundle this key belongs to
         if key_name.startswith("AUTH0_"):
@@ -330,6 +355,16 @@ def set_secret_sync(key_name: str, value: str) -> bool:
     Secrets are bundled into JSON objects to stay within free tier limits.
     Returns True if successful, False otherwise.
     """
+    # Azure Key Vault backend
+    if _secrets_provider() == "azure":
+        try:
+            from app.core import azure_keyvault
+            if azure_keyvault.is_configured():
+                return azure_keyvault.set_secret(key_name, value)
+        except Exception as e:
+            logger.error(f"Azure Key Vault secret write failed for {key_name}: {e}")
+        return False
+
     if not _is_gcp_available():
         logger.debug(f"Secret Manager not available, skipping write for {key_name}")
         return False
