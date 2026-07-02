@@ -114,6 +114,47 @@ Test-connection check**, not just the backend implementation. An adapter is not
 "done" until a non-technical admin can select and configure it end-to-end in the
 browser.
 
+### 3.6 Design consistency — premium glassmorphism + accessible (hard requirement)
+Every new surface — provider config cards, the AI model picker, telemetry
+views, and the orchestration panel (Repo B) — must match the app's existing
+**premium glassmorphism design language** *and* stay **WCAG 2.1 AA accessible**.
+This is non-negotiable and part of every UI DoD:
+- Reuse the existing `components/ui` primitives (`Card`, `Button`, `Input`,
+  `Select`, `Modal`, `Badge`) and Tailwind design tokens — no bespoke styling
+  that drifts from the current look (frosted panels, subtle gradients, soft
+  shadows, rounded-2xl, consistent spacing).
+- Motion via framer-motion, **always honoring `prefers-reduced-motion`**.
+- Accessibility: full keyboard operability, visible focus states, AA contrast
+  (including on glass/translucent backgrounds), ARIA roles/labels on toggles
+  and pickers, screen-reader-friendly status/errors. The existing accessibility
+  CI gate applies to all new surfaces.
+- The orchestration panel shares the same design system so the whole platform
+  reads as one product, not a separate admin tool.
+
+### 3.7 Prebuilt integrations — design, performance & "as prebuilt as possible"
+Enhance the existing govtech connectors *and* apply the same bar to the new
+provider adapters:
+- **As fully prebuilt as possible.** Each connector/adapter bakes in every
+  sensible default so the admin enters the *minimum* — ideally just a URL + key
+  (or just a key): auth style, endpoint paths, field mappings, status
+  vocabulary, model catalogs (e.g. Azure OpenAI / Bedrock / Vertex model
+  lists), region lists, and per-vendor setup guidance + request-email templates
+  are all shipped. Goal: the common path is "pick provider → paste key → Test →
+  done."
+- **Design polish.** Bring every integration/provider card to the same premium,
+  consistent glassmorphism standard (status chips, health indicators, sync
+  activity, empty/loading/error states) — no rough edges relative to the rest
+  of the admin console.
+- **Performance.** Code-split the heavy admin bundle (current build warns on a
+  ~1.4 MB chunk); lazy-load the integrations/provider views; cache the
+  catalog; virtualize/paginate sync-activity logs; debounce and use optimistic
+  UI on saves/tests. Backend: reuse pooled HTTP clients, run pushes
+  concurrently, and cache catalog/health lookups so the panel and cards stay
+  snappy at fleet scale.
+- **DoD:** connecting any integration or provider is fast, visually consistent,
+  and requires the fewest possible fields, with clear loading/success/error
+  states throughout.
+
 ---
 
 ## 4. Repo B — orchestration panel (what we build new)
@@ -255,7 +296,8 @@ export, rate limits). Branch `claude/security-audit-fixes`.
 
 ## 10. Cross-cutting principles
 - **Minimal product change** — keep the existing UX; maps (Google) stays as-is and Auth0 remains the identity default. Provider choice adds config options, not new surfaces.
-- **Every provider is pre-built and point-and-click** — switching is config, never code; the setup UX must be as easy as or easier than today's Auth0/Google flow (guided cards, plain-language hints, Test-connection, auto-enable). See §3.5.
+- **Every provider is pre-built and point-and-click** — switching is config, never code; the setup UX must be as easy as or easier than today's Auth0/Google flow (guided cards, plain-language hints, Test-connection, auto-enable). Ship maximal defaults so the admin enters the fewest fields possible. See §3.5, §3.7.
+- **Consistent premium + accessible design everywhere** — every new surface (including the orchestration panel) uses the app's glassmorphism design system via the shared `ui` primitives and stays WCAG 2.1 AA (keyboard, contrast, ARIA, reduced-motion). See §3.6.
 - **Core upgrades benefit everyone** — genuine improvements (immutable audit log, safety-flag surfacing) ship to self-hosted and centralized alike, never gated to managed mode.
 - **App never phones home with data** — panel is metadata-only.
 - **Additive to the app** — standalone self-host stays first-class.
