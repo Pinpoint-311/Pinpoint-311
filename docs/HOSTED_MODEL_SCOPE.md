@@ -1,5 +1,50 @@
 # State-Hosted Multi-Tenant Model — Change Scope
 
+> **Anchored to the NJIA/DCA centralized-hosting proposal.** Every commitment
+> in that proposal maps to a build status below. Legend: **EXISTS** (works
+> today) · **HOSTED** (needs the multi-tenant/managed-mode tooling this doc
+> scopes) · **STRENGTHEN** (partially built; needs work to fully match the
+> claim) · **CONFIG/DATA** (works but needs NJ data loaded) · **ABSTRACT**
+> (provider-adaptability, phased).
+
+## 0. Proposal commitment → build status
+
+| Proposal commitment | Status | Notes / build task |
+| :--- | :--- | :--- |
+| Sub-60s reporting, no account, SMS/email magic-link tracking | EXISTS | — |
+| 109-language end-to-end (report → description → notifications) | EXISTS | — |
+| Photo + GPS or asset-based location (click hydrant/light/park) | EXISTS | Map layers + asset match |
+| Early-detection value framing | EXISTS | Narrative only |
+| Single staff view: weather + history + geospatial context | EXISTS | `weather_service`, spatial context |
+| AI augments, human-approved (staff-reviewed priority/classification) | EXISTS | `manual_priority_score`, accept-AI-priority; AI never auto-sets legal hold |
+| Conversational analytics assistant (plain-language queries) | EXISTS | `/analytics-chat` (now rate-limited) |
+| Automated safety flagging surfaced for immediate attention | STRENGTHEN | AI emits `safety_flags`; confirm/boost prominent surfacing in staff UI |
+| OPRA-export-ready **immutable**, timestamped audit log, NJ retention | STRENGTHEN | Timestamped append + NJ retention EXIST; **`RequestAuditLog` is not hash-chained** (the auth `AuditLog` is). Extend the hash-chain to request actions to truthfully claim "immutable," or soften wording. |
+| Session-based non-emergency disclaimer + immutable trail; WCAG 2.1 AA | EXISTS | `DisclaimerAcknowledgment`; accessibility CI |
+| State/county road detection → redirect to NJDOT/correct agency | CONFIG/DATA | `routing_mode=road_based` + line-layer redirect supported; needs **NJDOT/county road centerline layer loaded** and line-based detection verified |
+| Open311 v2 compatibility | EXISTS | `/api/open311/v2` |
+| Research Suite: 60+ anonymized fields | EXISTS | `research.py` (note prior audit: regex redaction should be strengthened) |
+| One server hosts many **isolated** municipal instances (no bleed) | HOSTED | Silo model; the multi-tenant tooling this doc scopes (§3–§4) |
+| Browser-based, afternoon, no-command-line town setup | HOSTED + EXISTS | Setup/integration wizards EXIST; add `managed_mode` (hide infra) + provisioning handoff so a town does only config |
+| Per-town cost $2–$11/mo via town's own cloud keys | HOSTED | `managed_mode` BYO-key policy (features off until town supplies key); cost tracker EXISTS for visibility |
+| Adding a town takes minutes | HOSTED | Control-plane provisioner (new repo) |
+| Host deploys updates (not the town) | HOSTED | Disable in-app self-update in managed mode; panel-driven rollouts |
+| Org/host/municipality responsibility split | HOSTED | Matches §1 below |
+| "Not tied to a cloud; Azure = config change" | ABSTRACT | Provider abstraction (§3.9); honest today = "adaptable," full Azure path is phased work |
+| Security: internal audit done + remediated; 3rd-party welcome | STRENGTHEN | Internal audit + critical fixes DONE; close remaining hardening (remove docker-socket self-update in hosted mode, central-log PII scrubbing) before production |
+
+**Reads for the pitch:** the resident/staff/state feature set is real today; the
+"multi-tenant deployment tooling in development" line in the proposal is
+accurate and is precisely §3–§4 here. Before submitting, either build the three
+**STRENGTHEN** items or soften their wording so no claim outruns the code —
+specifically the word "immutable" on the request audit log, the NJDOT road
+detection (needs the road layer), and the security posture (say "internal audit
+completed and remediated," not "clean").
+
+---
+
+
+
 Scoping document for running Pinpoint 311 as a **centrally state-hosted,
 instance-per-jurisdiction (silo) platform** driven by an external
 **orchestration panel** (separate repo).
