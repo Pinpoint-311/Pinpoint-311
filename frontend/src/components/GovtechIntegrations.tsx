@@ -3,11 +3,12 @@ import { motion } from 'framer-motion';
 import {
     Landmark, CheckCircle, AlertCircle, ExternalLink, RefreshCw,
     Plug, Trash2, Copy, Check, Mail, ClipboardList, Loader2, ArrowLeft,
-    ChevronDown, ChevronUp, PartyPopper, Sparkles,
+    ChevronDown, ChevronUp, PartyPopper, Sparkles, Search,
     ArrowUpRight, ArrowDownLeft, MessageSquare, Image as ImageIcon, MapPin,
 } from 'lucide-react';
 
 import { Button, Modal } from './ui';
+import SecretField from './SecretField';
 import {
     api, IntegrationPlatform, IntegrationConfig, IntegrationSyncLog, IntegrationTestResult,
 } from '../services/api';
@@ -46,6 +47,7 @@ export default function GovtechIntegrations() {
     const [logsOpen, setLogsOpen] = useState<string | null>(null);
     const [copied, setCopied] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [query, setQuery] = useState('');
 
     // Wizard state
     const [wizard, setWizard] = useState<IntegrationPlatform | null>(null);
@@ -110,8 +112,10 @@ export default function GovtechIntegrations() {
         const existing = configFor(platform.platform);
         const credentials: Record<string, string> = {};
         const config: Record<string, unknown> = {};
-        platform.credential_fields.forEach(f => { if (values[f.key]) credentials[f.key] = values[f.key]; });
-        platform.config_fields.forEach(f => { if (values[f.key] !== undefined && values[f.key] !== '') config[f.key] = values[f.key]; });
+        // Trim on save — a stray copy-paste space is the most common reason a
+        // correct key or URL is rejected by the vendor.
+        platform.credential_fields.forEach(f => { const v = (values[f.key] || '').trim(); if (v) credentials[f.key] = v; });
+        platform.config_fields.forEach(f => { const v = (values[f.key] ?? '').trim(); if (v !== '') config[f.key] = v; });
 
         setSaving(true);
         setError(null);
@@ -241,27 +245,23 @@ export default function GovtechIntegrations() {
     const renderField = (platform: IntegrationPlatform, field: { key: string; label: string; secret?: boolean; placeholder?: string; required?: boolean }, isCredential: boolean) => {
         const existing = configFor(platform.platform);
         const alreadySet = isCredential
-            ? existing?.configured_credentials.includes(field.key)
+            ? !!existing?.configured_credentials.includes(field.key)
             : existing !== undefined && (existing.config as Record<string, unknown>)[field.key] !== undefined;
-        const help = platform.field_help?.[field.key];
+        // Config (non-secret) fields show their current value as the placeholder;
+        // secrets show a masked "leave blank to keep" and get a reveal toggle.
+        const currentConfigVal = !isCredential ? String((existing?.config as Record<string, unknown>)?.[field.key] ?? '') : '';
         return (
-            <div key={field.key}>
-                <label className="text-[11px] uppercase tracking-wider text-white/60 mb-1.5 font-semibold flex items-center gap-1.5">
-                    {field.label}
-                    {field.required && !alreadySet && <span className="normal-case tracking-normal text-amber-300 font-medium">(required)</span>}
-                    {alreadySet && <span className="ml-auto normal-case tracking-normal text-[10px] font-medium text-emerald-300/80 inline-flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Saved</span>}
-                </label>
-                <input
-                    type={field.secret ? 'password' : 'text'}
-                    placeholder={alreadySet
-                        ? (isCredential ? '•••••••••  leave blank to keep' : String((existing?.config as Record<string, unknown>)?.[field.key] ?? ''))
-                        : (field.placeholder || '')}
-                    value={values[field.key] || ''}
-                    onChange={(e) => setValues(p => ({ ...p, [field.key]: e.target.value }))}
-                    className="w-full rounded-xl bg-white/[0.04] border border-white/10 text-white text-sm px-3.5 py-2.5 placeholder:text-white/45 transition-all focus:outline-none focus:border-primary-400/50 focus:bg-white/[0.06] focus:shadow-[0_0_0_3px_rgba(99,102,241,0.15)]"
-                />
-                {help && <p className="text-white/50 text-xs mt-1.5 leading-relaxed">{help}</p>}
-            </div>
+            <SecretField
+                key={field.key}
+                label={field.label}
+                secret={!!field.secret}
+                required={field.required}
+                value={values[field.key] || ''}
+                onChange={(v) => setValues(p => ({ ...p, [field.key]: v }))}
+                placeholder={!isCredential && alreadySet ? currentConfigVal : (field.placeholder || '')}
+                help={platform.field_help?.[field.key]}
+                savedHint={!!(isCredential && alreadySet)}
+            />
         );
     };
 
@@ -275,6 +275,15 @@ export default function GovtechIntegrations() {
     };
 
     const connectedCount = configs.filter(c => c.enabled).length;
+
+    // Filter by the clerk's search and surface connected platforms first.
+    const q = query.trim().toLowerCase();
+    const visibleCatalog = catalog
+        .filter(p => !q || [p.name, p.vendor, p.category].some(s => (s || '').toLowerCase().includes(q)))
+        .sort((a, b) => {
+            const rank = (p: IntegrationPlatform) => (configFor(p.platform)?.enabled ? 0 : configFor(p.platform) ? 1 : 2);
+            return rank(a) - rank(b);
+        });
 
     // ---------- UI ----------
 
@@ -307,8 +316,28 @@ export default function GovtechIntegrations() {
                 </div>
             )}
 
+            {/* Search — with 10+ platforms, let staff jump straight to theirs */}
+            {catalog.length > 4 && (
+                <div className="relative mb-4 max-w-md">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/35" aria-hidden="true" />
+                    <input
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        placeholder="Search — e.g. Accela, permitting, SeeClickFix…"
+                        aria-label="Search platforms"
+                        className="w-full rounded-xl bg-white/[0.04] border border-white/10 text-white text-sm pl-9 pr-3 py-2.5 placeholder:text-white/40 transition-all focus:outline-none focus:border-primary-400/50 focus:bg-white/[0.06] focus:shadow-[0_0_0_3px_rgba(99,102,241,0.15)]"
+                    />
+                </div>
+            )}
+
+            {visibleCatalog.length === 0 && (
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-8 text-center text-white/50 text-sm">
+                    No platforms match “{query}”. Don’t see yours? The <span className="text-white/70">Generic Open311</span> connector works with many systems.
+                </div>
+            )}
+
             <div className="relative grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {catalog.map((platform, idx) => {
+                {visibleCatalog.map((platform, idx) => {
                     const existing = configFor(platform.platform);
                     const mode = MODE_LABELS[platform.integration_mode] || MODE_LABELS.partner_api;
                     const result = cardResult[platform.platform];

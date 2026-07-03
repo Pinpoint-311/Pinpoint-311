@@ -52,7 +52,7 @@ async def get_identity_catalog(_: User = Depends(get_current_admin)):
     from app.services.identity import catalog_for_api, IDENTITY_PROVIDER_KEY
     from app.services.secret_manager import get_secret
     current = (await get_secret(IDENTITY_PROVIDER_KEY)) or "auth0"
-    return {"current_provider": current.strip().lower(), "providers": catalog_for_api()}
+    return {"current_provider": current.strip().lower(), "default_provider": "auth0", "providers": catalog_for_api()}
 
 
 @router.get("/translation/catalog")
@@ -61,7 +61,7 @@ async def get_translation_catalog(_: User = Depends(get_current_staff)):
     from app.services.translation_providers import catalog_for_api, TRANSLATION_PROVIDER_KEY
     from app.services.secret_manager import get_secret
     current = (await get_secret(TRANSLATION_PROVIDER_KEY)) or "google"
-    return {"current_provider": current.strip().lower(), "providers": catalog_for_api()}
+    return {"current_provider": current.strip().lower(), "default_provider": "google", "providers": catalog_for_api()}
 
 
 @router.get("/ai/catalog")
@@ -89,6 +89,7 @@ async def get_ai_catalog(_: User = Depends(get_current_staff)):
 
     return {
         "current_provider": current_provider,
+        "default_provider": "vertex",
         "current_model": current_model or AI_CATALOG.get(current_provider, {}).get("default_model"),
         "configured": configured,
         "providers": catalog_for_api(),
