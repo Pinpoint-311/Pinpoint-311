@@ -235,11 +235,14 @@ async def verify_audit_log(
 ):
     """Verify the tamper-evidence of a request's audit trail.
 
-    Recomputes each entry's SHA-256 hash from its stored fields + stored
-    previous_hash and reports any mismatch — proving to a records officer
-    (OPRA) that the log has not been altered since it was written.
+    Recomputes each entry's chained HMAC-SHA256 from its stored fields +
+    stored previous_hash and reports any mismatch — proving to a records
+    officer (OPRA) that the log has not been altered since it was written.
+    Entries written before the keyed-chain upgrade are accepted under the
+    legacy unkeyed hash and counted separately, so an operator can see how
+    much of the trail carries the stronger guarantee.
     """
-    from app.models import compute_request_audit_hash
+    from app.models import compute_request_audit_hash, compute_request_audit_hash_legacy
     result = await db.execute(
         select(ServiceRequest).where(ServiceRequest.service_request_id == request_id)
     )
@@ -254,12 +257,16 @@ async def verify_audit_log(
     )).scalars().all()
 
     tampered = []
+    legacy_scheme = 0
     for e in entries:
         if not e.entry_hash:
             continue  # legacy entry written before hashing existed
-        expected = compute_request_audit_hash(e, e.previous_hash)
-        if expected != e.entry_hash:
-            tampered.append(e.id)
+        if compute_request_audit_hash(e, e.previous_hash) == e.entry_hash:
+            continue  # keyed (HMAC) chain — strongest guarantee
+        if compute_request_audit_hash_legacy(e, e.previous_hash) == e.entry_hash:
+            legacy_scheme += 1  # pre-HMAC row, still chain-consistent
+            continue
+        tampered.append(e.id)
 
     hashed = [e for e in entries if e.entry_hash]
     return {
@@ -267,6 +274,7 @@ async def verify_audit_log(
         "total_entries": len(entries),
         "verified_entries": len(hashed),
         "legacy_unhashed": len(entries) - len(hashed),
+        "legacy_scheme_entries": legacy_scheme,
         "intact": len(tampered) == 0,
         "tampered_entry_ids": tampered,
     }

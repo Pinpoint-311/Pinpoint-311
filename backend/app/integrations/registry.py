@@ -36,7 +36,8 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "test"],
         "credential_fields": [],
         "config_fields": [
-            {"key": "base_url", "label": "Sandbox Address", "placeholder": "auto-detected — leave blank", "required": False},
+            # NOTE: no base_url field — the sandbox address is pinned server-side
+            # because this connector is exempt from the SSRF guard.
             {"key": "import_new_records", "label": "Import records that start in the sandbox (true/false)", "placeholder": "true", "required": False},
             {"key": "sync_assets", "label": "Copy practice assets to the map (true/false)", "placeholder": "true", "required": False},
         ],
@@ -108,7 +109,7 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "category": "Municipal operations & code enforcement",
         "integration_mode": "partner_api",
         "docs_url": "https://www.spatialdatalogic.com",
-        "description": "Full sync with SDL work management through SDL's customer REST API: requests, status, comments, photo attachments, and asset inventory sync.",
+        "description": "Prebuilt two-way connector for SDL's customer REST API: requests, status, comments, photo attachments, and asset sync. Ships with sensible endpoint defaults that are configurable to your tenant — run the connection check to confirm your endpoints.",
         "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "test"],
         "credential_fields": [
             {"key": "api_key", "label": "SDL API Key", "secret": True},
@@ -124,7 +125,7 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "category": "Municipal ERP & work orders",
         "integration_mode": "partner_api",
         "docs_url": "https://edmundsgovtech.com",
-        "description": "Full sync with MCSJ work orders via the Edmunds web-service interface: requests, status, comments, attachments, and asset inventory sync.",
+        "description": "Prebuilt two-way connector for MCSJ work orders via the Edmunds web-service interface: requests, status, comments, attachments, and asset sync. Endpoint paths are configurable to your tenant — run the connection check to confirm.",
         "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "test"],
         "credential_fields": [
             {"key": "username", "label": "Service Username", "secret": False},
@@ -141,7 +142,7 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "category": "Government management & GIS",
         "integration_mode": "partner_api",
         "docs_url": "https://www.govpilot.com",
-        "description": "Full sync with GovPilot's report-a-concern and records modules: requests, status, comments, attachments, and GIS asset inventory sync.",
+        "description": "Prebuilt two-way connector for GovPilot's report-a-concern and records modules: requests, status, comments, attachments, and GIS asset sync. Endpoint paths are configurable to your account — run the connection check to confirm.",
         "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "test"],
         "credential_fields": [
             {"key": "api_key", "label": "GovPilot API Key", "secret": True},
@@ -157,7 +158,7 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "category": "Licensing, permitting & code enforcement",
         "integration_mode": "partner_api",
         "docs_url": "https://www.fasttrackgov.com",
-        "description": "Full sync with FastTrackGov cases through the customer API gateway: requests, status, comments, attachments, and asset inventory sync.",
+        "description": "Prebuilt two-way connector for FastTrackGov cases through the customer API gateway: requests, status, comments, attachments, and asset sync. Endpoint paths are configurable to your gateway — run the connection check to confirm.",
         "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "test"],
         "credential_fields": [
             {"key": "api_key", "label": "Subscription Key", "secret": True},
@@ -223,7 +224,6 @@ CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
         ],
         "vendor_ask": None,
         "field_help": {
-            "base_url": "Leave this blank — Pinpoint finds its own sandbox automatically.",
             "import_new_records": "Type true to watch a record that started in the sandbox appear here as a new request.",
             "sync_assets": "Type true to put five practice hydrants and streetlights on your map.",
         },

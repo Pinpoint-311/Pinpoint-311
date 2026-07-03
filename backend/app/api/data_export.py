@@ -141,10 +141,16 @@ async def export_requests(
     - **status**: Optional status filter (open, in_progress, closed)
     - **include_pii**: Include reporter PII or redact it (default: false — must be explicitly requested)
 
-    Requires staff or admin authentication. Bulk PII exports are audit-logged.
+    Requires staff or admin authentication. Bulk PII exports require admin
+    and are audit-logged.
     """
-    # Bulk PII exfiltration is a sensitive action — record who did it.
+    # Bulk PII exfiltration is a sensitive action — admin only, and recorded.
     if include_pii:
+        if current_user.role != "admin":
+            raise HTTPException(
+                status_code=403,
+                detail="Bulk exports that include resident PII require an admin account.",
+            )
         try:
             from app.services.audit_service import AuditService
             await AuditService.log_event(

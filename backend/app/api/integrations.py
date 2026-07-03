@@ -241,7 +241,9 @@ def _friendly_test_error(error: str) -> str:
 
 
 @router.post("/{integration_id}/test")
+@limiter.limit("10/minute")  # live vendor API call
 async def test_integration(
+    request: Request,
     integration_id: int,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin),
@@ -265,7 +267,9 @@ async def test_integration(
 
 
 @router.post("/{integration_id}/sync")
+@limiter.limit("10/minute")
 async def trigger_sync(
+    request: Request,
     integration_id: int,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin),
@@ -280,7 +284,9 @@ async def trigger_sync(
 
 
 @router.post("/{integration_id}/sync-assets")
+@limiter.limit("6/minute")
 async def trigger_asset_sync(
+    request: Request,
     integration_id: int,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin),

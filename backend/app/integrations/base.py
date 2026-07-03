@@ -160,6 +160,23 @@ def _assert_public_url(url: str) -> None:
             )
 
 
+import re as _re
+
+# Credential-shaped content to scrub from vendor error bodies before they are
+# persisted (sync logs) or displayed (admin UI). Vendors sometimes echo the
+# request back in 4xx bodies, which would otherwise reflect the API key.
+_REDACT_PATTERNS = [
+    _re.compile(r"(?i)(bearer\s+)[a-z0-9\-._~+/=]{8,}"),
+    _re.compile(r"(?i)((?:api[_-]?key|apikey|token|secret|password|authorization|client_secret)\s*[=:\"']+\s*)[^\s&\"',}]{6,}"),
+]
+
+
+def _redact_secrets(text: str) -> str:
+    for pat in _REDACT_PATTERNS:
+        text = pat.sub(r"\1[REDACTED]", text)
+    return text
+
+
 class ConnectorError(Exception):
     """Raised when a vendor API call fails in a way the caller should surface."""
 
@@ -310,5 +327,7 @@ class BaseConnector:
     @staticmethod
     def _raise_for_status(response: httpx.Response, context: str) -> None:
         if response.status_code >= 400:
-            body = response.text[:500]
+            # The body is persisted to sync logs and shown in the admin UI, so
+            # scrub anything credential-shaped a vendor might echo back.
+            body = _redact_secrets(response.text[:500])
             raise ConnectorError(f"{context} failed: HTTP {response.status_code} — {body}")

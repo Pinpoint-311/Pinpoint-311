@@ -103,7 +103,7 @@ async def exchange_google_code(code: str, redirect_uri: str) -> Optional[Dict[st
             )
             
             if token_response.status_code != 200:
-                logger.error(f"Google token exchange failed: {token_response.text}")
+                logger.error(f"Google token exchange failed: HTTP {token_response.status_code}")
                 return None
             
             tokens = token_response.json()
@@ -190,7 +190,7 @@ async def exchange_microsoft_code(code: str, redirect_uri: str) -> Optional[Dict
             )
             
             if token_response.status_code != 200:
-                logger.error(f"Microsoft token exchange failed: {token_response.text}")
+                logger.error(f"Microsoft token exchange failed: HTTP {token_response.status_code}")
                 return None
             
             tokens = token_response.json()
