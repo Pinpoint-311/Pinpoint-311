@@ -56,7 +56,7 @@ async def get_identity_catalog(_: User = Depends(get_current_admin)):
 
 
 @router.get("/translation/catalog")
-async def get_translation_catalog(_: User = Depends(get_current_staff)):
+async def get_translation_catalog(_: User = Depends(get_current_admin)):
     """Translation provider catalog (Google / Azure) + current selection."""
     from app.services.translation_providers import catalog_for_api, TRANSLATION_PROVIDER_KEY
     from app.services.secret_manager import get_secret
@@ -65,7 +65,7 @@ async def get_translation_catalog(_: User = Depends(get_current_staff)):
 
 
 @router.get("/ai/catalog")
-async def get_ai_catalog(_: User = Depends(get_current_staff)):
+async def get_ai_catalog(_: User = Depends(get_current_admin)):
     """AI provider catalog for the admin UI: available boundaries (Vertex /
     Azure Government / Bedrock), their models, and the fields each needs, plus
     which provider is currently selected and which are configured."""
@@ -134,6 +134,19 @@ class ProviderSaveRequest(BaseModel):
     settings: Dict[str, str] = {}
 
 
+def _capability_catalog(capability: str) -> Dict:
+    if capability == "ai":
+        from app.services.ai.registry import AI_CATALOG
+        return AI_CATALOG
+    if capability == "translation":
+        from app.services.translation_providers import TRANSLATION_CATALOG
+        return TRANSLATION_CATALOG
+    if capability == "identity":
+        from app.services.identity import IDENTITY_CATALOG
+        return IDENTITY_CATALOG
+    return {}
+
+
 @router.post("/providers/{capability}/save")
 async def save_provider(
     capability: str,
@@ -145,7 +158,21 @@ async def save_provider(
     Blank values are ignored (existing secret kept)."""
     if capability not in _PROVIDER_SELECT_KEY:
         raise HTTPException(status_code=400, detail=f"Unknown capability: {capability}")
-    await _persist_secret(db, _PROVIDER_SELECT_KEY[capability], body.provider)
+    catalog = _capability_catalog(capability)
+    provider_id = (body.provider or "").strip().lower()
+    if provider_id not in catalog:
+        raise HTTPException(status_code=400, detail=f"Unknown {capability} provider: {body.provider}")
+    # Only the credential keys this provider's catalog declares may be written
+    # through this endpoint — it must not become an arbitrary secret writer.
+    allowed_keys = {f["key"] for f in catalog[provider_id].get("credential_fields", [])}
+    unknown = [k for k in (body.settings or {}) if k not in allowed_keys]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unexpected settings for {provider_id}: {', '.join(sorted(unknown))}")
+    if capability == "ai" and body.model:
+        allowed_models = {m["id"] for m in catalog[provider_id].get("models", [])}
+        if allowed_models and body.model not in allowed_models:
+            raise HTTPException(status_code=400, detail=f"Unknown model for {provider_id}: {body.model}")
+    await _persist_secret(db, _PROVIDER_SELECT_KEY[capability], provider_id)
     if capability == "ai" and body.model:
         await _persist_secret(db, "AI_MODEL", body.model)
     for key, value in (body.settings or {}).items():
@@ -153,11 +180,13 @@ async def save_provider(
             await _persist_secret(db, key, value)
     from app.services.secret_manager import clear_cache
     clear_cache()
-    return {"ok": True, "provider": body.provider}
+    return {"ok": True, "provider": provider_id}
 
 
 @router.post("/providers/{capability}/test")
+@_cost_limiter.limit("10/minute")  # live paid-API call — bound the cost
 async def test_provider(
+    request: Request,
     capability: str,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin),

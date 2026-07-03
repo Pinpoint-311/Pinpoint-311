@@ -163,7 +163,7 @@ class ServiceRequest(Base):
                 from app.core.encryption import decrypt_pii
                 return decrypt_pii(self._first_name_encrypted)
             except Exception:
-                return self._first_name_encrypted  # Fallback to raw value
+                return None  # never expose raw ciphertext
         return None
     
     @first_name.setter
@@ -183,7 +183,7 @@ class ServiceRequest(Base):
                 from app.core.encryption import decrypt_pii
                 return decrypt_pii(self._last_name_encrypted)
             except Exception:
-                return self._last_name_encrypted
+                return None  # never expose raw ciphertext
         return None
     
     @last_name.setter
@@ -203,7 +203,7 @@ class ServiceRequest(Base):
                 from app.core.encryption import decrypt_pii
                 return decrypt_pii(self._email_encrypted)
             except Exception:
-                return self._email_encrypted
+                return ""  # never expose raw ciphertext
         return ""
     
     @email.setter
@@ -223,7 +223,7 @@ class ServiceRequest(Base):
                 from app.core.encryption import decrypt_pii
                 return decrypt_pii(self._phone_encrypted)
             except Exception:
-                return self._phone_encrypted
+                return None  # never expose raw ciphertext
         return None
     
     @phone.setter
@@ -367,7 +367,33 @@ def _canonical_request_audit(action, old_value, new_value, actor_type,
     }, sort_keys=True, separators=(",", ":"), default=str)
 
 
+def _audit_chain_key() -> bytes:
+    """Server-held HMAC key for the audit chain, derived from SECRET_KEY.
+
+    An unkeyed hash chain only detects *accidental* edits: anyone who can
+    write to the DB can rewrite a row and recompute every hash after it with
+    the public algorithm. Keying the chain with a secret the DB does not hold
+    means a database-only attacker cannot forge a chain that verifies.
+    """
+    import hashlib as _hashlib
+    from app.core.config import get_settings
+    return _hashlib.sha256(b"pinpoint311-audit-chain:" + get_settings().secret_key.encode("utf-8")).digest()
+
+
 def compute_request_audit_hash(row: "RequestAuditLog", previous_hash) -> str:
+    """HMAC-SHA256 over the canonical row + previous hash (current scheme)."""
+    import hmac as _hmac
+    import hashlib as _hashlib
+    canonical = _canonical_request_audit(
+        row.action, row.old_value, row.new_value, row.actor_type,
+        row.actor_name, row.created_at, row.extra_data, previous_hash,
+    )
+    return _hmac.new(_audit_chain_key(), canonical.encode("utf-8"), _hashlib.sha256).hexdigest()
+
+
+def compute_request_audit_hash_legacy(row: "RequestAuditLog", previous_hash) -> str:
+    """Unkeyed SHA-256 (pre-HMAC scheme) — verification accepts it for rows
+    written before the upgrade so historical chains still validate."""
     import hashlib as _hashlib
     canonical = _canonical_request_audit(
         row.action, row.old_value, row.new_value, row.actor_type,

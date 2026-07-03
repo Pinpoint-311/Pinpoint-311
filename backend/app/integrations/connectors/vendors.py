@@ -29,7 +29,11 @@ class SandboxConnector(GenericRestConnector):
             # docker-compose service address, reachable from backend and worker
             "http://backend:8000/api/integrations/sandbox-vendor",
         )
-        config = {"base_url": default_url, **{k: v for k, v in (config or {}).items() if v}}
+        # SECURITY: because this connector bypasses the SSRF guard, the
+        # base_url must NOT be user-configurable — a custom value could point
+        # the guard-exempt client at internal services or cloud metadata.
+        # The sandbox always talks to the operator-pinned address.
+        config = {**{k: v for k, v in (config or {}).items() if v}, "base_url": default_url}
         super().__init__(config, credentials)
 
 

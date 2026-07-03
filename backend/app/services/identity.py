@@ -145,6 +145,10 @@ async def get_oidc_metadata(config: Dict[str, Any]) -> Dict[str, Any]:
         return _discovery_cache[issuer_base]
     url = f"{issuer_base}/.well-known/openid-configuration"
     try:
+        # SSRF guard: the issuer is admin-supplied — refuse URLs that resolve
+        # to internal/loopback/metadata addresses (same policy as connectors).
+        from app.integrations.base import _assert_public_url
+        _assert_public_url(url)
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(url)
             resp.raise_for_status()
