@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Sparkles, Languages, KeyRound, CheckCircle, AlertCircle,
-    ChevronDown, Loader2, Check, ShieldCheck,
+    ChevronDown, Loader2, Check, ShieldCheck, RefreshCw,
 } from 'lucide-react';
 
 import { Select } from './ui';
@@ -17,8 +17,11 @@ const CAPS: { key: Capability; title: string; blurb: string; icon: typeof Sparkl
     { key: 'identity', title: 'Staff Sign-In (Identity)', blurb: 'The identity provider that authenticates staff and admins.', icon: KeyRound },
 ];
 
-function CapabilityCard({ cap, title, blurb, icon: Icon, delay }: {
+export interface CapStatus { providerName?: string; onDefault?: boolean; verified?: boolean | null }
+
+function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, onStatus }: {
     cap: Capability; title: string; blurb: string; icon: typeof Sparkles; delay: number;
+    recheckToken: number; onStatus: (cap: Capability, s: CapStatus) => void;
 }) {
     const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
     const [selected, setSelected] = useState<string>('');
@@ -35,12 +38,23 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay }: {
             setCatalog(cat);
             setSelected(cat.current_provider);
             setModel(cat.current_model || '');
+            onStatus(cap, {
+                providerName: cat.providers.find(p => p.provider === cat.current_provider)?.name || cat.current_provider,
+                onDefault: !cat.default_provider || cat.current_provider === cat.default_provider,
+            });
         } catch (e: any) {
             setError(e?.message || 'Failed to load providers');
         }
-    }, [cap]);
+    }, [cap, onStatus]);
 
     useEffect(() => { load(); }, [load]);
+
+    // Parent "Recheck all" bumps this token — each card verifies its own live
+    // connection and reports the result up for the summary.
+    useEffect(() => {
+        if (recheckToken > 0) handleTest();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [recheckToken]);
 
     if (error) {
         return (
@@ -73,6 +87,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay }: {
             // Immediately verify
             const t = await api.testProvider(cap);
             setResult(t);
+            onStatus(cap, { verified: t.ok });
         } catch (e: any) {
             setError(e?.message || 'Save failed');
         } finally {
@@ -83,9 +98,12 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay }: {
     const handleTest = async () => {
         setBusy('test'); setResult(null);
         try {
-            setResult(await api.testProvider(cap));
+            const t = await api.testProvider(cap);
+            setResult(t);
+            onStatus(cap, { verified: t.ok });
         } catch (e: any) {
             setResult({ ok: false, detail: e?.message || 'Test failed' });
+            onStatus(cap, { verified: false });
         } finally {
             setBusy(null);
         }
@@ -207,6 +225,14 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay }: {
                                 )}
                             </div>
 
+                            {/* Switching identity forces a re-login */}
+                            {cap === 'identity' && selected !== catalog.current_provider && (
+                                <div className="rounded-lg bg-amber-500/10 border border-amber-400/25 px-3 py-2 text-[11px] text-amber-200 flex items-start gap-2">
+                                    <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+                                    Switching sign-in providers signs everyone out — staff will sign in again through {active?.name || 'the new provider'} next time.
+                                </div>
+                            )}
+
                             {/* AI model dropdown */}
                             {cap === 'ai' && active?.models && active.models.length > 0 && (
                                 <div>
@@ -271,26 +297,58 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay }: {
 }
 
 export default function ServiceProviders() {
+    const [recheckToken, setRecheckToken] = useState(0);
+    const [statuses, setStatuses] = useState<Record<string, CapStatus>>({});
+
+    const onStatus = useCallback((cap: Capability, s: CapStatus) => {
+        setStatuses(prev => ({ ...prev, [cap]: { ...prev[cap], ...s } }));
+    }, []);
+
+    const loaded = CAPS.filter(c => statuses[c.key]);
+    const onDefaultCount = loaded.filter(c => statuses[c.key]?.onDefault).length;
+    const verifiedCount = loaded.filter(c => statuses[c.key]?.verified === true).length;
+    const failedCount = loaded.filter(c => statuses[c.key]?.verified === false).length;
+
     return (
         <div className="relative">
             {/* Aurora glow behind the header for depth */}
             <div className="aurora-glow w-72 h-40 -top-10 -left-6" aria-hidden="true" />
 
-            <div className="relative mb-5">
-                <div className="inline-flex items-center gap-1.5 rounded-full bg-primary-500/15 border border-primary-400/25 px-2.5 py-1 mb-3">
-                    <Sparkles className="w-3 h-3 text-primary-300" aria-hidden="true" />
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-primary-200">Configure once</span>
+            <div className="relative mb-5 flex flex-wrap items-end justify-between gap-3">
+                <div>
+                    <div className="inline-flex items-center gap-1.5 rounded-full bg-primary-500/15 border border-primary-400/25 px-2.5 py-1 mb-3">
+                        <Sparkles className="w-3 h-3 text-primary-300" aria-hidden="true" />
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-primary-200">Configure once</span>
+                    </div>
+                    <h2 className="text-2xl font-bold text-gradient tracking-tight">Service Providers</h2>
+                    <p className="text-white/50 text-sm mt-1.5 max-w-2xl leading-relaxed">
+                        Choose which cloud powers each capability. Every option is pre-built — pick a provider, paste your key, and test.
+                        <span className="text-white/70"> Google &amp; Auth0 are the defaults</span>, so you can leave these untouched and everything just works.
+                    </p>
                 </div>
-                <h2 className="text-2xl font-bold text-gradient tracking-tight">Service Providers</h2>
-                <p className="text-white/50 text-sm mt-1.5 max-w-2xl leading-relaxed">
-                    Choose which cloud powers each capability. Every option is pre-built — pick a provider, paste your key, and test.
-                    <span className="text-white/70"> Google &amp; Auth0 are the defaults</span>, so you can leave these untouched and everything just works.
-                </p>
+                <div className="flex flex-col items-start sm:items-end gap-1.5">
+                    <button
+                        onClick={() => setRecheckToken(t => t + 1)}
+                        className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium text-white/80 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                    >
+                        <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" /> Recheck all connections
+                    </button>
+                    {loaded.length > 0 && (
+                        <div className="text-[11px] text-white/50 flex flex-wrap items-center gap-x-3 gap-y-0.5 sm:justify-end">
+                            <span>{onDefaultCount === loaded.length
+                                ? 'All on recommended defaults'
+                                : `${loaded.length - onDefaultCount} customized · ${onDefaultCount} on defaults`}</span>
+                            {verifiedCount > 0 && <span className="text-emerald-300/80 inline-flex items-center gap-1"><CheckCircle className="w-3 h-3" />{verifiedCount} verified</span>}
+                            {failedCount > 0 && <span className="text-amber-300/90 inline-flex items-center gap-1"><AlertCircle className="w-3 h-3" />{failedCount} need attention</span>}
+                        </div>
+                    )}
+                </div>
             </div>
 
             <div className="relative grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {CAPS.map((c, i) => (
-                    <CapabilityCard key={c.key} cap={c.key} title={c.title} blurb={c.blurb} icon={c.icon} delay={i * 0.08} />
+                    <CapabilityCard key={c.key} cap={c.key} title={c.title} blurb={c.blurb} icon={c.icon} delay={i * 0.08}
+                        recheckToken={recheckToken} onStatus={onStatus} />
                 ))}
             </div>
         </div>
