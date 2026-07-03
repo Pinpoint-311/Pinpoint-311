@@ -1,5 +1,41 @@
 import { useState } from 'react';
-import { Eye, EyeOff, Lock, CheckCircle } from 'lucide-react';
+import { Eye, EyeOff, Lock, CheckCircle, AlertCircle } from 'lucide-react';
+
+type FieldKind = 'url' | 'email' | 'json' | 'auto';
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Infer what a field should contain from its label, so we can give a gentle
+ * format hint without every caller having to declare a type. */
+function inferKind(label: string): FieldKind {
+    const l = label.toLowerCase();
+    if (l.includes('json')) return 'json';
+    if (l.includes('email')) return 'email';
+    if (l.includes('url') || l.includes('endpoint') || l.includes('domain')
+        || l.includes('issuer') || l.includes('address')) return 'url';
+    return 'auto';
+}
+
+/** Advisory validation — returns null (no hint), or {ok, msg}. Never blocks. */
+function checkValue(kind: FieldKind, raw: string): { ok: boolean; msg: string } | null {
+    const v = raw.trim();
+    if (!v) return null;
+    if (kind === 'url') {
+        return /^https?:\/\/.+/i.test(v)
+            ? { ok: true, msg: 'Looks like a valid web address' }
+            : { ok: false, msg: 'Web addresses usually start with https://' };
+    }
+    if (kind === 'email') {
+        return EMAIL_RE.test(v)
+            ? { ok: true, msg: 'Looks like a valid email' }
+            : { ok: false, msg: 'This doesn’t look like an email address yet' };
+    }
+    if (kind === 'json') {
+        try { JSON.parse(v); return { ok: true, msg: 'Valid JSON' }; }
+        catch { return { ok: false, msg: 'This isn’t valid JSON yet — paste the whole key file' }; }
+    }
+    return null;
+}
 
 /**
  * A credential/config input tuned for non-technical staff:
@@ -15,7 +51,7 @@ import { Eye, EyeOff, Lock, CheckCircle } from 'lucide-react';
  */
 export default function SecretField({
     label, value, onChange, secret = false, placeholder, help,
-    savedHint = false, required = false, autoFocus = false,
+    savedHint = false, required = false, autoFocus = false, kind = 'auto',
 }: {
     label: string;
     value: string;
@@ -26,9 +62,11 @@ export default function SecretField({
     savedHint?: boolean;
     required?: boolean;
     autoFocus?: boolean;
+    kind?: FieldKind;
 }) {
     const [reveal, setReveal] = useState(false);
     const isPassword = secret && !reveal;
+    const check = checkValue(kind === 'auto' ? inferKind(label) : kind, value);
 
     return (
         <div>
@@ -66,6 +104,12 @@ export default function SecretField({
                     </button>
                 )}
             </div>
+            {check && (
+                <p className={`text-xs mt-1.5 flex items-center gap-1 ${check.ok ? 'text-emerald-300/80' : 'text-amber-300/90'}`}>
+                    {check.ok ? <CheckCircle className="w-3 h-3 shrink-0" aria-hidden="true" /> : <AlertCircle className="w-3 h-3 shrink-0" aria-hidden="true" />}
+                    {check.msg}
+                </p>
+            )}
             {help && <p className="text-white/50 text-xs mt-1.5 leading-relaxed">{help}</p>}
         </div>
     );
