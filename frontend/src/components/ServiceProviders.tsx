@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Sparkles, Languages, KeyRound, CheckCircle, AlertCircle,
-    ChevronDown, Loader2, Check, Lock, ShieldCheck,
+    ChevronDown, Loader2, Check, ShieldCheck,
 } from 'lucide-react';
 
 import { Select } from './ui';
+import SecretField from './SecretField';
 import { api, ProviderCatalog, ProviderInfo } from '../services/api';
 
 type Capability = 'ai' | 'translation' | 'identity';
@@ -60,7 +61,12 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay }: {
         setBusy('save'); setResult(null); setError(null);
         try {
             const settings: Record<string, string> = {};
-            active.credential_fields.forEach(f => { if (values[f.key]) settings[f.key] = values[f.key]; });
+            // Trim on save — a stray space from copy-paste is the #1 cause of a
+            // "correct" key failing. Trimming here keeps mid-word typing intact.
+            active.credential_fields.forEach(f => {
+                const v = (values[f.key] || '').trim();
+                if (v) settings[f.key] = v;
+            });
             await api.saveProvider(cap, { provider: selected, model: model || undefined, settings });
             setValues({});
             await load();
@@ -157,6 +163,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay }: {
                                     {catalog.providers.map(p => {
                                         const isSel = p.provider === selected;
                                         const isCurrent = p.provider === catalog.current_provider;
+                                        const isDefault = catalog.default_provider ? p.provider === catalog.default_provider : false;
                                         return (
                                             <button
                                                 key={p.provider}
@@ -175,9 +182,14 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay }: {
                                                         </span>
                                                     )}
                                                 </div>
-                                                {isCurrent && (
-                                                    <span className="inline-block mt-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-300/90">In use</span>
-                                                )}
+                                                <div className="flex items-center gap-1.5 mt-1">
+                                                    {isCurrent && (
+                                                        <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-300/90">In use</span>
+                                                    )}
+                                                    {isDefault && !isCurrent && (
+                                                        <span className="text-[10px] font-semibold uppercase tracking-wide text-primary-300/90">Recommended</span>
+                                                    )}
+                                                </div>
                                             </button>
                                         );
                                     })}
@@ -212,29 +224,18 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay }: {
                             {active && active.credential_fields.length > 0 && (
                                 <div className="space-y-3">
                                     {active.credential_fields.map(f => {
-                                        const alreadySet = catalog.configured?.[selected] && selected === catalog.current_provider;
+                                        const alreadySet = !!(catalog.configured?.[selected] && selected === catalog.current_provider);
                                         return (
-                                            <div key={f.key}>
-                                                <label className="text-[11px] uppercase tracking-wider text-white/60 mb-1.5 font-semibold flex items-center gap-1.5">
-                                                    {f.secret && <Lock className="w-3 h-3 text-white/35" aria-hidden="true" />}
-                                                    {f.label}
-                                                    {alreadySet && (
-                                                        <span className="ml-auto normal-case tracking-normal text-[10px] font-medium text-emerald-300/80 flex items-center gap-1">
-                                                            <CheckCircle className="w-3 h-3" aria-hidden="true" /> Saved
-                                                        </span>
-                                                    )}
-                                                </label>
-                                                <input
-                                                    type={f.secret ? 'password' : 'text'}
-                                                    placeholder={alreadySet ? '•••••••••  leave blank to keep' : `Enter ${f.label.toLowerCase()}`}
-                                                    value={values[f.key] || ''}
-                                                    onChange={(e) => setValues(p => ({ ...p, [f.key]: e.target.value }))}
-                                                    className="w-full rounded-xl bg-white/[0.04] border border-white/10 text-white text-sm px-3.5 py-2.5 placeholder:text-white/45 transition-all focus:outline-none focus:border-primary-400/50 focus:bg-white/[0.06] focus:shadow-[0_0_0_3px_rgba(99,102,241,0.15)]"
-                                                />
-                                                {active.field_help?.[f.key] && (
-                                                    <p className="text-white/50 text-xs mt-1.5 leading-relaxed">{active.field_help[f.key]}</p>
-                                                )}
-                                            </div>
+                                            <SecretField
+                                                key={f.key}
+                                                label={f.label}
+                                                secret={f.secret}
+                                                value={values[f.key] || ''}
+                                                onChange={(v) => setValues(p => ({ ...p, [f.key]: v }))}
+                                                placeholder={`Enter ${f.label.toLowerCase()}`}
+                                                help={active.field_help?.[f.key]}
+                                                savedHint={alreadySet}
+                                            />
                                         );
                                     })}
                                 </div>

@@ -119,6 +119,7 @@ export interface ProviderInfo {
 
 export interface ProviderCatalog {
     current_provider: string;
+    default_provider?: string;
     current_model?: string | null;
     configured?: Record<string, boolean>;
     providers: ProviderInfo[];
