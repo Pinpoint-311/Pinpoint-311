@@ -180,6 +180,10 @@ async def verify_oidc_token(token: str, config: Dict[str, Any]) -> Dict[str, Any
     from fastapi import HTTPException
 
     meta = await get_oidc_metadata(config)
+    # SSRF guard: jwks_uri comes from the discovery doc of an admin-supplied
+    # issuer — refuse internal/loopback/metadata targets before fetching keys.
+    from app.integrations.base import _assert_public_url
+    _assert_public_url(meta["jwks_uri"])
     async with httpx.AsyncClient(timeout=10.0) as client:
         jwks_resp = await client.get(meta["jwks_uri"])
         jwks_resp.raise_for_status()

@@ -11,7 +11,6 @@ Flow:
 from typing import Optional, Dict, List
 import logging
 import json
-import httpx
 from sqlalchemy import select, and_
 
 logger = logging.getLogger(__name__)
