@@ -10,6 +10,9 @@ import {
 
 import { Card, Button, Input, Select, Badge } from './ui';
 import { SystemSecret } from '../types';
+import { api } from '../services/api';
+import GovtechIntegrations from './GovtechIntegrations';
+import ServiceProviders from './ServiceProviders';
 
 
 interface ModulesState {
@@ -37,6 +40,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [savingSmsProvider, setSavingSmsProvider] = useState(false);
     const userModifiedSms = useRef(false);
     const [expandedGuide, setExpandedGuide] = useState<string | null>(null);
+    const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
 
 
@@ -240,7 +244,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                         <InstructionStep num={1}>Go to <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">console.cloud.google.com</a> and create a new project (or select an existing one). Note the <strong className="text-white/90">Project ID</strong>.</InstructionStep>
                                         <InstructionStep num={2}>Go to <strong className="text-white/90">APIs & Services → Library</strong> and enable: <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud KMS API</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud Translation API</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Vertex AI API</code>, and <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Secret Manager API</code>.</InstructionStep>
                                         <InstructionStep num={3}>
-                                            <strong className="text-white/90">Create a KMS Key Ring and Key:</strong> Go to <strong className="text-white/90">Security → Key Management</strong>. Click <strong className="text-white/90">Create Key Ring</strong>, name it (e.g. <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pinpoint311</code>), select a location (e.g. <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">us-central1</code>). Then create a key inside the ring (e.g. <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pii-encryption</code>), purpose: <strong className="text-white/90">Symmetric encrypt/decrypt</strong>.
+                                            <strong className="text-white/90">Create a KMS Key Ring and Key:</strong> Go to <strong className="text-white/90">Security → Key Management</strong>. Click <strong className="text-white/90">Create Key Ring</strong>, name it <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pinpoint311-keyring</code>, select a location (e.g. <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">us-central1</code>). Then create a key inside the ring named <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pii-encryption-key</code>, purpose: <strong className="text-white/90">Symmetric encrypt/decrypt</strong>. (Use these exact names to match the platform defaults, or enter your own below.)
                                         </InstructionStep>
                                         <InstructionStep num={4}>
                                             <strong className="text-white/90">Create a Service Account:</strong> Go to <strong className="text-white/90">IAM & Admin → Service Accounts → Create</strong>. Grant it the roles: <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud KMS CryptoKey Encrypter/Decrypter</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud Translation API User</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Vertex AI User</code>, and <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Secret Manager Admin</code>.
@@ -903,7 +907,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                             <label className="text-xs text-white/50 mb-1 block">KMS Key Ring</label>
                                             <Input
                                                 type="text"
-                                                placeholder="pinpoint311"
+                                                placeholder="pinpoint311-keyring"
                                                 value={secretValues['KMS_KEY_RING'] || ''}
                                                 onChange={(e) => setSecretValues(p => ({ ...p, 'KMS_KEY_RING': e.target.value }))}
                                                 className="text-xs"
@@ -913,7 +917,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                             <label className="text-xs text-white/50 mb-1 block">KMS Key ID</label>
                                             <Input
                                                 type="text"
-                                                placeholder="pii-encryption"
+                                                placeholder="pii-encryption-key"
                                                 value={secretValues['KMS_KEY_ID'] || ''}
                                                 onChange={(e) => setSecretValues(p => ({ ...p, 'KMS_KEY_ID': e.target.value }))}
                                                 className="text-xs"
@@ -941,7 +945,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     </Button>
 
                                     <p className="text-white/40 text-xs">
-                                        KMS fields are optional — the platform defaults to <code className="bg-black/20 px-1 rounded">us-central1</code> / <code className="bg-black/20 px-1 rounded">pinpoint311</code> / <code className="bg-black/20 px-1 rounded">pii-encryption</code> if left blank.
+                                        KMS fields are optional — the platform defaults to <code className="bg-black/20 px-1 rounded">us-central1</code> / <code className="bg-black/20 px-1 rounded">pinpoint311-keyring</code> / <code className="bg-black/20 px-1 rounded">pii-encryption-key</code> if left blank. These must match your KMS key ring and key names exactly, or PII encryption silently falls back to local (Fernet) encryption.
                                     </p>
 
                                     {/* Divider */}
@@ -1308,8 +1312,17 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 </div>
             </div>
 
+            {saveMessage && (
+                <div className="rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-sm text-white/80">
+                    {saveMessage}
+                </div>
+            )}
 
+            {/* Pluggable service providers (AI / translation / identity) */}
+            <ServiceProviders />
 
+            {/* GovTech Platform Connections */}
+            <GovtechIntegrations />
 
             {/* Help Link */}
             <Card className="bg-blue-500/10 border-blue-500/20">

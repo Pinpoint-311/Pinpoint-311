@@ -1,8 +1,9 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, Float, Text, Boolean, Table
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, Float, Text, Boolean, Table, event, select
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.sql import func
 from geoalchemy2 import Geometry
+from datetime import datetime
 from app.db.session import Base
 # encryption is imported lazily in hybrid properties to avoid circular imports
 
@@ -162,18 +163,15 @@ class ServiceRequest(Base):
                 from app.core.encryption import decrypt_pii
                 return decrypt_pii(self._first_name_encrypted)
             except Exception:
-                return self._first_name_encrypted  # Fallback to raw value
+                return None  # never expose raw ciphertext
         return None
     
     @first_name.setter
     def first_name(self, value):
-        """Encrypt first name when setting."""
+        """Encrypt first name when setting. Never stores plaintext PII."""
         if value:
-            try:
-                from app.core.encryption import encrypt_pii
-                self._first_name_encrypted = encrypt_pii(value)
-            except Exception:
-                self._first_name_encrypted = value  # Fallback to raw value
+            from app.core.encryption import encrypt_pii
+            self._first_name_encrypted = encrypt_pii(value)
         else:
             self._first_name_encrypted = None
     
@@ -185,18 +183,15 @@ class ServiceRequest(Base):
                 from app.core.encryption import decrypt_pii
                 return decrypt_pii(self._last_name_encrypted)
             except Exception:
-                return self._last_name_encrypted
+                return None  # never expose raw ciphertext
         return None
     
     @last_name.setter
     def last_name(self, value):
-        """Encrypt last name when setting."""
+        """Encrypt last name when setting. Never stores plaintext PII."""
         if value:
-            try:
-                from app.core.encryption import encrypt_pii
-                self._last_name_encrypted = encrypt_pii(value)
-            except Exception:
-                self._last_name_encrypted = value
+            from app.core.encryption import encrypt_pii
+            self._last_name_encrypted = encrypt_pii(value)
         else:
             self._last_name_encrypted = None
     
@@ -208,18 +203,15 @@ class ServiceRequest(Base):
                 from app.core.encryption import decrypt_pii
                 return decrypt_pii(self._email_encrypted)
             except Exception:
-                return self._email_encrypted
+                return ""  # never expose raw ciphertext
         return ""
     
     @email.setter
     def email(self, value):
-        """Encrypt email when setting."""
+        """Encrypt email when setting. Never stores plaintext PII."""
         if value:
-            try:
-                from app.core.encryption import encrypt_pii
-                self._email_encrypted = encrypt_pii(value)
-            except Exception:
-                self._email_encrypted = value
+            from app.core.encryption import encrypt_pii
+            self._email_encrypted = encrypt_pii(value)
         else:
             self._email_encrypted = ""
     
@@ -231,18 +223,15 @@ class ServiceRequest(Base):
                 from app.core.encryption import decrypt_pii
                 return decrypt_pii(self._phone_encrypted)
             except Exception:
-                return self._phone_encrypted
+                return None  # never expose raw ciphertext
         return None
     
     @phone.setter
     def phone(self, value):
-        """Encrypt phone when setting."""
+        """Encrypt phone when setting. Never stores plaintext PII."""
         if value:
-            try:
-                from app.core.encryption import encrypt_pii
-                self._phone_encrypted = encrypt_pii(value)
-            except Exception:
-                self._phone_encrypted = value
+            from app.core.encryption import encrypt_pii
+            self._phone_encrypted = encrypt_pii(value)
         else:
             self._phone_encrypted = None
     
@@ -313,7 +302,11 @@ class RequestComment(Base):
     
     # Visibility: internal (staff only) or external (visible to resident)
     visibility = Column(String(20), default="internal")  # internal, external
-    
+
+    # Set when the comment was imported from an external platform:
+    # "<integration_id>:<external_comment_id>". Prevents re-import and echo-back.
+    external_ref = Column(String(200), index=True)
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -340,14 +333,111 @@ class RequestAuditLog(Base):
     actor_type = Column(String(20), nullable=False)  # "resident" or "staff"
     actor_name = Column(String(100))  # Username or "Resident"
     
-    # When
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
+    # When (Python-side default so the value is present at insert time for hashing)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), default=datetime.utcnow)
+
     # Additional context (JSON for flexibility)
     extra_data = Column(JSON)  # { substatus, completion_message, etc. }
-    
+
+    # Tamper-evidence: SHA-256 hash chain (OPRA-grade immutable audit trail).
+    # entry_hash = SHA256(previous_hash + canonical(this row)); computed
+    # automatically on insert (see the before_insert listener below). Any
+    # alteration or deletion of a row breaks the chain and is detectable via
+    # the audit-log verify endpoint.
+    previous_hash = Column(String(64))
+    entry_hash = Column(String(64))
+
     # Relationship
     service_request = relationship("ServiceRequest", backref="audit_logs")
+
+
+def _canonical_request_audit(action, old_value, new_value, actor_type,
+                             actor_name, created_at, extra_data, previous_hash) -> str:
+    """Deterministic serialization of a request-audit row for hashing."""
+    import json as _json
+    return _json.dumps({
+        "action": action,
+        "old_value": old_value,
+        "new_value": new_value,
+        "actor_type": actor_type,
+        "actor_name": actor_name,
+        "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at),
+        "extra_data": extra_data,
+        "previous_hash": previous_hash,
+    }, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _audit_chain_key() -> bytes:
+    """Server-held HMAC key for the audit chain, derived from SECRET_KEY.
+
+    An unkeyed hash chain only detects *accidental* edits: anyone who can
+    write to the DB can rewrite a row and recompute every hash after it with
+    the public algorithm. Keying the chain with a secret the DB does not hold
+    means a database-only attacker cannot forge a chain that verifies.
+    """
+    import hashlib as _hashlib
+    from app.core.config import get_settings
+    return _hashlib.sha256(b"pinpoint311-audit-chain:" + get_settings().secret_key.encode("utf-8")).digest()
+
+
+def compute_request_audit_hash(row: "RequestAuditLog", previous_hash) -> str:
+    """HMAC-SHA256 over the canonical row + previous hash (current scheme)."""
+    import hmac as _hmac
+    import hashlib as _hashlib
+    canonical = _canonical_request_audit(
+        row.action, row.old_value, row.new_value, row.actor_type,
+        row.actor_name, row.created_at, row.extra_data, previous_hash,
+    )
+    return _hmac.new(_audit_chain_key(), canonical.encode("utf-8"), _hashlib.sha256).hexdigest()
+
+
+def compute_request_audit_hash_legacy(row: "RequestAuditLog", previous_hash) -> str:
+    """Unkeyed SHA-256 (pre-HMAC scheme) — verification accepts it for rows
+    written before the upgrade so historical chains still validate."""
+    import hashlib as _hashlib
+    canonical = _canonical_request_audit(
+        row.action, row.old_value, row.new_value, row.actor_type,
+        row.actor_name, row.created_at, row.extra_data, previous_hash,
+    )
+    return _hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+import itertools as _itertools
+from sqlalchemy.orm import Session as _Session
+
+# Monotonic creation counter → deterministic chain order even when several
+# audit rows are created in the same commit (e.g. a status change that also
+# reassigns a department in one transaction).
+_audit_seq = _itertools.count()
+
+
+@event.listens_for(RequestAuditLog, "init")
+def _stamp_audit_seq(target, args, kwargs):
+    target._seq = next(_audit_seq)
+
+
+@event.listens_for(_Session, "before_flush")
+def _request_audit_hash_chain(session, flush_context, instances):
+    """Chain new request-audit rows into a SHA-256 hash chain at flush time.
+
+    Runs once per flush over all pending RequestAuditLog inserts (in creation
+    order), seeding from the last persisted entry_hash. Works under the async
+    engine and needs no changes at the ~15 call sites that create audit rows.
+    """
+    pending = [o for o in session.new if isinstance(o, RequestAuditLog)]
+    if not pending:
+        return
+    pending.sort(key=lambda o: getattr(o, "_seq", 0))
+    tbl = RequestAuditLog.__table__
+    running = session.execute(
+        select(tbl.c.entry_hash).order_by(tbl.c.id.desc()).limit(1)
+    ).scalar()
+    for row in pending:
+        if row.created_at is None:
+            row.created_at = datetime.utcnow()
+        row.previous_hash = running
+        row.entry_hash = compute_request_audit_hash(row, running)
+        running = row.entry_hash
 
 
 
@@ -558,6 +648,101 @@ class UptimeRecord(Base):
     response_time_ms = Column(Integer)  # Response time in milliseconds
     error_message = Column(String(500))  # Error details if status is not healthy
     checked_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class IntegrationConfig(Base):
+    """Connection settings for an external govtech platform (Accela, Tyler, CivicPlus, etc.).
+
+    Credentials are stored encrypted (Fernet via SECRET_KEY) as a JSON blob and
+    only decrypted when a connector needs them.
+    """
+    __tablename__ = "integration_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    platform = Column(String(50), nullable=False, index=True)  # accela, tyler, civicplus, sdl, edmunds, govpilot, fasttrackgov, polimorphic, open311
+    display_name = Column(String(100), nullable=False)
+    enabled = Column(Boolean, default=False, nullable=False)
+
+    # Non-secret settings: base_url, jurisdiction/agency ids, field & status mappings, share_pii flag
+    config = Column(JSON, default={})
+
+    # Encrypted JSON of secrets (api keys, client secrets, passwords)
+    _credentials_encrypted = Column("credentials", Text)
+
+    # push (Pinpoint -> platform), pull (platform -> Pinpoint), bidirectional
+    sync_direction = Column(String(20), default="push", nullable=False)
+
+    # Token authenticating inbound webhooks from this platform
+    webhook_token = Column(String(64), unique=True, index=True)
+
+    last_sync_at = Column(DateTime(timezone=True))
+    last_sync_status = Column(String(20))  # success, error
+    last_sync_error = Column(Text)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    @hybrid_property
+    def credentials(self):
+        """Decrypt credential JSON when accessing. Returns a dict."""
+        if not self._credentials_encrypted:
+            return {}
+        try:
+            from app.core.encryption import decrypt
+            import json as _json
+            return _json.loads(decrypt(self._credentials_encrypted))
+        except Exception:
+            return {}
+
+    @credentials.setter
+    def credentials(self, value):
+        """Encrypt credential dict when setting."""
+        if value:
+            from app.core.encryption import encrypt
+            import json as _json
+            self._credentials_encrypted = encrypt(_json.dumps(value))
+        else:
+            self._credentials_encrypted = None
+
+
+class IntegrationLink(Base):
+    """Maps a local service request to its record on an external platform."""
+    __tablename__ = "integration_links"
+
+    id = Column(Integer, primary_key=True, index=True)
+    integration_id = Column(Integer, ForeignKey("integration_configs.id", ondelete="CASCADE"), nullable=False, index=True)
+    service_request_id = Column(Integer, ForeignKey("service_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    external_id = Column(String(200), nullable=False, index=True)
+    external_status = Column(String(50))
+    direction = Column(String(10), default="pushed")  # pushed (we created it there) or pulled (it originated there)
+
+    last_pushed_at = Column(DateTime(timezone=True))
+    last_pulled_at = Column(DateTime(timezone=True))
+    sync_error = Column(Text)
+
+    # External comment ids created by our pushes — skipped on pull to avoid echo
+    pushed_comment_ids = Column(JSON, default=list)
+    # Whether local media/documents were uploaded to the external record
+    documents_pushed = Column(Boolean, default=False)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    integration = relationship("IntegrationConfig")
+    service_request = relationship("ServiceRequest")
+
+
+class IntegrationSyncLog(Base):
+    """Audit trail of sync operations against external platforms."""
+    __tablename__ = "integration_sync_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    integration_id = Column(Integer, ForeignKey("integration_configs.id", ondelete="CASCADE"), nullable=False, index=True)
+    operation = Column(String(30), nullable=False)  # test, push, push_status, pull, webhook
+    status = Column(String(20), nullable=False)  # success, error
+    detail = Column(Text)
+    request_count = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
 class ApiUsageRecord(Base):

@@ -9,7 +9,7 @@ from typing import List
 from app.db.session import get_db
 from app.models import RequestComment, ServiceRequest, User
 from app.schemas import RequestCommentCreate, RequestCommentResponse
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, get_current_staff
 
 router = APIRouter(prefix="/api/requests", tags=["comments"])
 
@@ -18,9 +18,9 @@ router = APIRouter(prefix="/api/requests", tags=["comments"])
 async def get_comments(
     request_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_staff)
 ):
-    """Get all comments for a service request"""
+    """Get all comments for a service request (staff/admin only — includes internal notes)"""
     # Verify request exists
     result = await db.execute(
         select(ServiceRequest).where(ServiceRequest.id == request_id)
@@ -45,9 +45,9 @@ async def create_comment(
     request_id: int,
     comment_data: RequestCommentCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_staff)
 ):
-    """Add a comment to a service request"""
+    """Add a comment to a service request (staff/admin only)"""
     # Verify request exists
     result = await db.execute(
         select(ServiceRequest).where(ServiceRequest.id == request_id)
@@ -77,7 +77,11 @@ async def create_comment(
             current_user.full_name or current_user.username,
             comment_data.content
         )
-    
+
+        # Mirror the comment to linked govtech platforms
+        from app.tasks.integrations import push_comment_to_integrations
+        push_comment_to_integrations.delay(comment.id)
+
     return comment
 
 

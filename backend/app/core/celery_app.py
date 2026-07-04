@@ -7,7 +7,7 @@ celery_app = Celery(
     "township_311",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.service_requests"]
+    include=["app.tasks.service_requests", "app.tasks.integrations"]
 )
 
 celery_app.conf.update(
@@ -27,6 +27,12 @@ celery_app.conf.update(
             "schedule": 60 * 60 * 24,  # Every 24 hours
             "options": {"queue": "default"}
         },
+        # Daily purge of IP addresses older than 90 days (privacy commitment)
+        "daily-ip-purge": {
+            "task": "app.tasks.service_requests.purge_old_ip_addresses",
+            "schedule": 60 * 60 * 24,  # Every 24 hours
+            "options": {"queue": "default"}
+        },
         # Daily database backup at 2:00 AM UTC
         "daily-database-backup": {
             "task": "app.tasks.service_requests.backup_database",
@@ -37,6 +43,24 @@ celery_app.conf.update(
         "weekly-backup-cleanup": {
             "task": "app.tasks.service_requests.cleanup_expired_backups",
             "schedule": 60 * 60 * 24 * 7,  # Every 7 days
+            "options": {"queue": "default"}
+        },
+        # Poll connected govtech platforms for external status changes
+        "pull-integration-updates": {
+            "task": "app.tasks.integrations.pull_integration_updates",
+            "schedule": 60 * 15,  # Every 15 minutes
+            "options": {"queue": "default"}
+        },
+        # Import new external comments on linked, active requests
+        "pull-integration-comments": {
+            "task": "app.tasks.integrations.pull_integration_comments",
+            "schedule": 60 * 15,  # Every 15 minutes
+            "options": {"queue": "default"}
+        },
+        # Mirror external asset inventories into Pinpoint map layers
+        "sync-integration-assets": {
+            "task": "app.tasks.integrations.sync_integration_assets",
+            "schedule": 60 * 60 * 24,  # Every 24 hours
             "options": {"queue": "default"}
         },
         # Weekly staff digest emails on Mondays at 8:00 AM UTC

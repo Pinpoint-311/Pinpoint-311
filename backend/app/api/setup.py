@@ -337,7 +337,7 @@ async def configure_auth0(
             )
             
             if token_response.status_code != 200:
-                logger.error(f"Auth0 Management API token failed: {token_response.text}")
+                logger.error(f"Auth0 Management API token failed: HTTP {token_response.status_code}")
                 raise HTTPException(
                     status_code=400,
                     detail="Failed to get Management API token"

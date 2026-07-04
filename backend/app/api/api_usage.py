@@ -11,7 +11,7 @@ from typing import Optional
 import logging
 
 from app.db.session import get_db
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, get_current_staff
 from app.models import User
 from app.services.api_usage import (
     get_usage_summary,
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 async def get_api_usage(
     days: int = Query(default=30, ge=1, le=365, description="Number of days to look back"),
     service: Optional[str] = Query(default=None, description="Filter by specific service"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -59,7 +59,7 @@ async def get_api_usage(
 @router.get("/cost-estimate")
 async def get_cost_estimate(
     days: int = Query(default=30, ge=1, le=365, description="Number of days to analyze"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -88,7 +88,7 @@ async def get_cost_estimate(
 async def get_daily_usage_data(
     days: int = Query(default=30, ge=1, le=365, description="Number of days to look back"),
     service: Optional[str] = Query(default=None, description="Filter by specific service"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -114,7 +114,7 @@ async def get_daily_usage_data(
 
 @router.get("/pricing")
 async def get_pricing_info(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_staff)
 ):
     """
     Get current pricing information for all tracked services.

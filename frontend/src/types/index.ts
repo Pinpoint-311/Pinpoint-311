@@ -214,10 +214,16 @@ export interface ManualIntakeCreate {
     service_code: string;
     description: string;
     address?: string;
+    lat?: number;
+    long?: number;
     first_name?: string;
     last_name?: string;
     email?: string;
     phone?: string;
+    preferred_language?: string;
+    media_urls?: string[];
+    matched_asset?: Record<string, any> | null;
+    custom_fields?: Record<string, string | string[]>;
     source: 'phone' | 'walk_in' | 'email';
 }
 
