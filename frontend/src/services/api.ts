@@ -19,6 +19,118 @@ import {
 
 const API_BASE = '/api';
 
+// GovTech platform integration types
+export interface IntegrationFieldSpec {
+    key: string;
+    label: string;
+    secret?: boolean;
+    placeholder?: string;
+    required?: boolean;
+}
+
+export interface IntegrationVendorAsk {
+    to_hint: string;
+    subject: string;
+    body: string;
+}
+
+export interface IntegrationPlatform {
+    platform: string;
+    name: string;
+    vendor: string;
+    category: string;
+    integration_mode: 'public_api' | 'open311' | 'partner_api';
+    docs_url: string;
+    description: string;
+    capabilities: string[];
+    credential_fields: IntegrationFieldSpec[];
+    config_fields: IntegrationFieldSpec[];
+    setup_notes: string;
+    // Clerk-friendly guidance
+    plain_summary: string;
+    what_you_need: string[];
+    vendor_ask: IntegrationVendorAsk | null;
+    field_help: Record<string, string>;
+    recommended_sync_direction: string;
+}
+
+export interface IntegrationTestResult {
+    ok: boolean;
+    detail: string;
+    friendly?: string;
+}
+
+export interface IntegrationConfig {
+    id: number;
+    platform: string;
+    platform_name: string;
+    display_name: string;
+    enabled: boolean;
+    sync_direction: 'push' | 'pull' | 'bidirectional';
+    config: Record<string, unknown>;
+    configured_credentials: string[];
+    webhook_path: string;
+    last_sync_at: string | null;
+    last_sync_status: string | null;
+    last_sync_error: string | null;
+    created_at: string | null;
+}
+
+export interface IntegrationSave {
+    platform: string;
+    display_name?: string;
+    enabled?: boolean;
+    sync_direction?: string;
+    config?: Record<string, unknown>;
+    credentials?: Record<string, string>;
+}
+
+export interface IntegrationSyncLog {
+    id: number;
+    operation: string;
+    status: string;
+    detail: string | null;
+    request_count: number;
+    created_at: string | null;
+}
+
+// Pluggable service-provider types (AI / translation / identity)
+export interface ProviderFieldSpec {
+    key: string;
+    label: string;
+    secret?: boolean;
+}
+
+export interface ProviderModelSpec {
+    id: string;
+    label: string;
+}
+
+export interface ProviderInfo {
+    provider: string;
+    name: string;
+    description?: string;
+    boundary?: string;
+    models?: ProviderModelSpec[];
+    default_model?: string;
+    credential_fields: ProviderFieldSpec[];
+    field_help?: Record<string, string>;
+}
+
+export interface ProviderCatalog {
+    current_provider: string;
+    default_provider?: string;
+    current_model?: string | null;
+    configured?: Record<string, boolean>;
+    providers: ProviderInfo[];
+}
+
+export interface ProviderSave {
+    provider: string;
+    model?: string;
+    settings?: Record<string, string>;
+}
+
 class ApiClient {
     private token: string | null = null;
     private onUnauthorized: (() => void) | null = null;
@@ -337,6 +449,65 @@ class ApiClient {
 
     async syncSecrets(): Promise<{ status: string; added_secrets: string[]; count: number }> {
         return this.request('/system/secrets/sync', { method: 'POST' });
+    }
+
+    // GovTech Platform Integrations (Admin)
+    async getIntegrationCatalog(): Promise<IntegrationPlatform[]> {
+        return this.request<IntegrationPlatform[]>('/integrations/catalog');
+    }
+
+    async getIntegrations(): Promise<IntegrationConfig[]> {
+        return this.request<IntegrationConfig[]>('/integrations');
+    }
+
+    async createIntegration(data: IntegrationSave): Promise<IntegrationConfig> {
+        return this.request<IntegrationConfig>('/integrations', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateIntegration(id: number, data: Partial<IntegrationSave>): Promise<IntegrationConfig> {
+        return this.request<IntegrationConfig>(`/integrations/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async deleteIntegration(id: number): Promise<{ message: string }> {
+        return this.request<{ message: string }>(`/integrations/${id}`, { method: 'DELETE' });
+    }
+
+    async testIntegration(id: number): Promise<IntegrationTestResult> {
+        return this.request<IntegrationTestResult>(`/integrations/${id}/test`, { method: 'POST' });
+    }
+
+    async syncIntegration(id: number): Promise<{ message: string }> {
+        return this.request<{ message: string }>(`/integrations/${id}/sync`, { method: 'POST' });
+    }
+
+    async syncIntegrationAssets(id: number): Promise<{ message: string }> {
+        return this.request<{ message: string }>(`/integrations/${id}/sync-assets`, { method: 'POST' });
+    }
+
+    async getIntegrationLogs(id: number): Promise<IntegrationSyncLog[]> {
+        return this.request<IntegrationSyncLog[]>(`/integrations/${id}/logs`);
+    }
+
+    // Service providers (AI / translation / identity)
+    async getProviderCatalog(capability: 'ai' | 'translation' | 'identity'): Promise<ProviderCatalog> {
+        return this.request<ProviderCatalog>(`/system/${capability}/catalog`);
+    }
+
+    async saveProvider(capability: string, data: ProviderSave): Promise<{ ok: boolean; provider: string }> {
+        return this.request(`/system/providers/${capability}/save`, {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async testProvider(capability: string): Promise<{ ok: boolean; detail: string }> {
+        return this.request(`/system/providers/${capability}/test`, { method: 'POST' });
     }
 
     // Statistics

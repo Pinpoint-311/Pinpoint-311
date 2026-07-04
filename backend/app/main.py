@@ -21,7 +21,7 @@ if SENTRY_DSN:
         send_default_pii=False,  # Don't send personally identifiable info
     )
 
-from app.api import auth, users, departments, services, system, open311, gis, map_layers, comments, research, health, audit, setup, api_usage, data_export
+from app.api import auth, users, departments, services, system, open311, gis, map_layers, comments, research, health, audit, setup, api_usage, data_export, integrations
 from app.db.init_db import seed_database
 
 # Rate limiting setup
@@ -179,6 +179,21 @@ async def lifespan(app: FastAPI):
             # Wait 5 minutes before next check
             await asyncio.sleep(300)
     
+    # Fail closed on insecure security configuration (default SECRET_KEY, etc.)
+    from app.core.config import get_settings as _get_settings
+    _settings = _get_settings()
+    _security_problems = _settings.validate_security()
+    if _security_problems:
+        _msg = "Insecure security configuration:\n  - " + "\n  - ".join(_security_problems)
+        if _settings.debug:
+            logger.warning(f"[Security] {_msg}\n[Security] Continuing because debug=True — DO NOT run like this in production.")
+        else:
+            logger.critical(f"[Security] {_msg}")
+            raise RuntimeError(
+                "Refusing to start with insecure security configuration. "
+                "Set a strong SECRET_KEY (or set DEBUG=true for local development only). " + _msg
+            )
+
     # Startup: Initialize database with default data
     await seed_database()
     
@@ -197,13 +212,18 @@ async def lifespan(app: FastAPI):
     logger.info("[Uptime Monitor] Stopped background health monitoring")
 
 
+# Only expose the API schema/docs when debug is on. In production these
+# would hand an attacker a full map of every route and model.
+from app.core.config import get_settings as _get_settings_for_docs
+_docs_enabled = _get_settings_for_docs().debug
+
 app = FastAPI(
     title="Township 311 API",
     description="Open311-compliant civic engagement platform for municipal request management",
     version="1.0.0",
-    docs_url=None,  # Disable default - we serve custom below
-    redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json",
+    docs_url=None,  # Disable default - we serve custom below (debug only)
+    redoc_url="/api/redoc" if _docs_enabled else None,
+    openapi_url="/api/openapi.json" if _docs_enabled else None,
     lifespan=lifespan
 )
 
@@ -212,7 +232,9 @@ from fastapi.responses import HTMLResponse
 
 @app.get("/api/docs", include_in_schema=False)
 async def custom_swagger_ui():
-    """Custom Swagger UI that explicitly loads all required JS/CSS."""
+    """Custom Swagger UI that explicitly loads all required JS/CSS. Debug only."""
+    if not _docs_enabled:
+        raise HTTPException(status_code=404, detail="Not found")
     return HTMLResponse("""
 <!DOCTYPE html>
 <html>
@@ -287,6 +309,18 @@ app.include_router(setup.router, prefix="/api/setup", tags=["Setup"])
 app.include_router(api_usage.router, prefix="/api/system/api-usage", tags=["API Usage"])
 
 app.include_router(data_export.router, prefix="/api", tags=["Data Export"])
+app.include_router(integrations.router, prefix="/api/integrations", tags=["GovTech Integrations"])
+
+# Built-in practice vendor so integrations can be verified without any real
+# platform account (see app/api/integration_sandbox.py). It is intentionally
+# unauthenticated, so it is only mounted for debug/demo builds — never in a
+# hardened production deployment, where it could be an unauthenticated path to
+# inject records into the request pipeline.
+_sandbox_enabled = _get_settings_for_docs().debug or os.environ.get("DEMO_MODE", "").lower() in ("true", "1", "yes") or os.environ.get("ENABLE_INTEGRATION_SANDBOX", "").lower() in ("true", "1", "yes")
+if _sandbox_enabled:
+    from app.api import integration_sandbox
+    app.include_router(integration_sandbox.router, prefix="/api/integrations/sandbox-vendor", tags=["Integration Sandbox"])
+    logger.info("[Integrations] Practice sandbox vendor mounted (debug/demo mode)")
 
 # Mount uploads directory for serving uploaded files
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/project/uploads")

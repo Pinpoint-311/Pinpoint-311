@@ -195,6 +195,11 @@ async def add_public_comment(
     db.add(comment)
     await db.commit()
     await db.refresh(comment)
+
+    # Mirror the comment to linked govtech platforms
+    from app.tasks.integrations import push_comment_to_integrations
+    push_comment_to_integrations.delay(comment.id)
+
     return comment
 
 
@@ -220,6 +225,59 @@ async def get_audit_log(
         .order_by(RequestAuditLog.created_at.asc())
     )
     return audit_result.scalars().all()
+
+
+@router.get("/requests/{request_id}/audit-log/verify")
+async def verify_audit_log(
+    request_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_staff)
+):
+    """Verify the tamper-evidence of a request's audit trail.
+
+    Recomputes each entry's chained HMAC-SHA256 from its stored fields +
+    stored previous_hash and reports any mismatch — proving to a records
+    officer (OPRA) that the log has not been altered since it was written.
+    Entries written before the keyed-chain upgrade are accepted under the
+    legacy unkeyed hash and counted separately, so an operator can see how
+    much of the trail carries the stronger guarantee.
+    """
+    from app.models import compute_request_audit_hash, compute_request_audit_hash_legacy
+    result = await db.execute(
+        select(ServiceRequest).where(ServiceRequest.service_request_id == request_id)
+    )
+    request = result.scalar_one_or_none()
+    if not request:
+        raise HTTPException(status_code=404, detail="Request not found")
+
+    entries = (await db.execute(
+        select(RequestAuditLog)
+        .where(RequestAuditLog.service_request_id == request.id)
+        .order_by(RequestAuditLog.id.asc())
+    )).scalars().all()
+
+    tampered = []
+    legacy_scheme = 0
+    for e in entries:
+        if not e.entry_hash:
+            continue  # legacy entry written before hashing existed
+        if compute_request_audit_hash(e, e.previous_hash) == e.entry_hash:
+            continue  # keyed (HMAC) chain — strongest guarantee
+        if compute_request_audit_hash_legacy(e, e.previous_hash) == e.entry_hash:
+            legacy_scheme += 1  # pre-HMAC row, still chain-consistent
+            continue
+        tampered.append(e.id)
+
+    hashed = [e for e in entries if e.entry_hash]
+    return {
+        "service_request_id": request_id,
+        "total_entries": len(entries),
+        "verified_entries": len(hashed),
+        "legacy_unhashed": len(entries) - len(hashed),
+        "legacy_scheme_entries": legacy_scheme,
+        "intact": len(tampered) == 0,
+        "tampered_entry_ids": tampered,
+    }
 
 
 @router.get("/public/requests/{request_id}/audit-log")
@@ -523,24 +581,8 @@ async def create_request(
         )
     
     # Auto-assignment based on service routing config
-    assigned_department_id = service.assigned_department_id
-    assigned_to = None
-    
-    if service.routing_config:
-        config = service.routing_config
-        # If routing to specific staff, pick the first one
-        if config.get('route_to') == 'specific_staff' and config.get('staff_ids'):
-            from app.models import User
-            staff_ids = config.get('staff_ids', [])
-            if staff_ids:
-                # Get the first available staff member
-                staff_result = await db.execute(
-                    select(User).where(User.id == staff_ids[0])
-                )
-                staff = staff_result.scalar_one_or_none()
-                if staff:
-                    assigned_to = staff.username
-    
+    assigned_department_id, assigned_to = await _resolve_assignment(db, service)
+
     # Create request with auto-assignment
     service_request = ServiceRequest(
         service_request_id=generate_request_id(),
@@ -562,40 +604,86 @@ async def create_request(
         assigned_department_id=assigned_department_id,
         assigned_to=assigned_to
     )
-    
+
     db.add(service_request)
     await db.commit()
     await db.refresh(service_request)
-    
-    # Create audit log entry for submission
+
+    # Run the shared post-creation pipeline (audit, AI triage, govtech push,
+    # resident confirmation, department notification).
+    await _finalize_new_request(
+        db, service_request, assigned_department_id,
+        actor_type="resident", actor_name="Resident", notify_resident=True,
+    )
+
+    return service_request
+
+
+async def _resolve_assignment(db: AsyncSession, service: ServiceDefinition):
+    """Resolve (assigned_department_id, assigned_to) from a service's routing
+    config. Shared by resident and manual intake so both route identically."""
+    assigned_department_id = service.assigned_department_id
+    assigned_to = None
+    if service.routing_config:
+        config = service.routing_config
+        if config.get('route_to') == 'specific_staff' and config.get('staff_ids'):
+            from app.models import User
+            staff_ids = config.get('staff_ids', [])
+            if staff_ids:
+                staff_result = await db.execute(
+                    select(User).where(User.id == staff_ids[0])
+                )
+                staff = staff_result.scalar_one_or_none()
+                if staff:
+                    assigned_to = staff.username
+    return assigned_department_id, assigned_to
+
+
+async def _finalize_new_request(
+    db: AsyncSession,
+    service_request: ServiceRequest,
+    assigned_department_id,
+    *,
+    actor_type: str,
+    actor_name: str,
+    notify_resident: bool,
+):
+    """Post-creation pipeline shared by resident and manual intake: audit log,
+    AI triage, govtech push, resident confirmation, and department notification.
+
+    `notify_resident` is False when no real resident email exists (e.g. a phone
+    caller who didn't leave one) so we never email a placeholder address.
+    """
     audit_entry = RequestAuditLog(
         service_request_id=service_request.id,
         action="submitted",
         new_value="open",
-        actor_type="resident",
-        actor_name="Resident"
+        actor_type=actor_type,
+        actor_name=actor_name,
     )
     db.add(audit_entry)
     await db.commit()
-    
-    # Trigger Celery task for AI analysis
+
     from app.tasks.service_requests import analyze_request, send_branded_notification, send_department_notification
+    # AI triage / priority — same as a resident submission
     analyze_request.delay(service_request.id)
-    
-    # Send branded confirmation email to resident
-    send_branded_notification.delay(service_request.id, "confirmation")
-    
+
+    # Push to any connected govtech platforms (Accela, Tyler, CivicPlus, etc.)
+    from app.tasks.integrations import push_request_to_integrations
+    push_request_to_integrations.delay(service_request.id)
+
+    # Send branded confirmation only when we have a real resident email
+    if notify_resident:
+        send_branded_notification.delay(service_request.id, "confirmation")
+
     # Notify department staff based on their notification preferences
     if assigned_department_id:
-        # Get department routing email for the notification
         dept_result = await db.execute(
             select(Department).where(Department.id == assigned_department_id)
         )
         dept = dept_result.scalar_one_or_none()
         if dept and dept.routing_email:
             send_department_notification.delay(service_request.id, dept.routing_email)
-    
-    return service_request
 
 
 @router.get("/requests.json", response_model=List[ServiceRequestResponse])
@@ -767,11 +855,15 @@ async def update_request_status(
     if "status" in update_dict and update_dict["status"] and update_dict["status"].value != old_status:
         from app.tasks.service_requests import send_branded_notification
         send_branded_notification.delay(
-            request.id, 
-            "status_update", 
+            request.id,
+            "status_update",
             old_status=old_status,
             completion_message=update_dict.get("completion_message")
         )
+
+        # Mirror the status change to linked govtech platforms
+        from app.tasks.integrations import push_status_to_integrations
+        push_status_to_integrations.delay(request.id, notes=update_dict.get("completion_message"))
     
     # Reload with relationship for response
     await db.refresh(request)
@@ -787,7 +879,12 @@ async def create_manual_intake(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_staff)
 ):
-    """Create a request from manual intake (phone/walk-in) - staff only"""
+    """Create a request from manual intake (phone, walk-in, or email) — staff only.
+
+    Runs the exact same pipeline as a resident submission (assignment, AI triage,
+    govtech push, notifications). Resident contact fields are optional; the
+    caller is emailed a confirmation only if they actually provided an address.
+    """
     # Validate service code
     result = await db.execute(
         select(ServiceDefinition).where(
@@ -801,23 +898,46 @@ async def create_manual_intake(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid service code"
         )
-    
+
+    # Same auto-assignment/routing as a resident submission
+    assigned_department_id, assigned_to = await _resolve_assignment(db, service)
+
+    # A caller may not leave an email; keep a unique placeholder for the row but
+    # remember whether a real one was given so we only email real addresses.
+    has_email = bool(intake_data.email)
+
     service_request = ServiceRequest(
         service_request_id=generate_request_id(),
         service_code=intake_data.service_code,
         service_name=service.service_name,
         description=intake_data.description,
         address=intake_data.address,
+        lat=intake_data.lat,
+        long=intake_data.long,
         first_name=intake_data.first_name,
         last_name=intake_data.last_name,
         email=intake_data.email or f"manual-{uuid.uuid4().hex[:8]}@intake.local",
         phone=intake_data.phone,
-        source=intake_data.source.value
+        preferred_language=intake_data.preferred_language or "en",
+        media_urls=intake_data.media_urls[:3] if intake_data.media_urls else [],
+        matched_asset=intake_data.matched_asset,
+        custom_fields=intake_data.custom_fields,
+        source=intake_data.source.value,
+        assigned_department_id=assigned_department_id,
+        assigned_to=assigned_to,
     )
-    
+
     db.add(service_request)
     await db.commit()
     await db.refresh(service_request)
+
+    # Attribute the submission to the staff member who took it down.
+    await _finalize_new_request(
+        db, service_request, assigned_department_id,
+        actor_type="staff", actor_name=current_user.username,
+        notify_resident=has_email,
+    )
+
     return service_request
 
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Form
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -37,27 +37,56 @@ _pending_states: dict = {}
 _bootstrap_tokens: dict = {}
 
 
+async def _bootstrap_gate_open(db: AsyncSession) -> bool:
+    """Bootstrap is permitted ONLY when NO identity provider is configured
+    (Auth0, Entra, Okta, or generic OIDC).
+
+    Fail-closed: gates on the *presence* of identity config, not its
+    reachability, so an IdP outage cannot re-open passwordless admin access.
+    """
+    return not await Auth0Service.is_identity_configured(db)
+
+
+def _verify_bootstrap_password(supplied: str) -> None:
+    """Require the deploy-time INITIAL_ADMIN_PASSWORD to authorize bootstrap.
+
+    Rejects the known default so a deployment that never set it cannot be
+    bootstrapped by an anonymous caller. Constant-time comparison.
+    """
+    from app.core.config import get_settings, INSECURE_SECRET_KEYS  # noqa
+    settings = get_settings()
+    expected = settings.initial_admin_password or ""
+    if not expected or expected == "admin123":
+        raise HTTPException(
+            status_code=403,
+            detail="Bootstrap is disabled: set a strong INITIAL_ADMIN_PASSWORD in the environment to enable first-run admin access.",
+        )
+    if not supplied or not secrets.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="Invalid bootstrap password.")
+
+
 @router.post("/bootstrap")
 async def generate_bootstrap_token(
+    password: str = Query(..., description="INITIAL_ADMIN_PASSWORD to authorize bootstrap"),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Generate a one-time magic link for admin access.
-    
+
     ONLY works when Auth0 is NOT configured. This allows the initial admin
     to log in and configure Auth0. Once Auth0 is configured, this endpoint
     returns an error.
-    
+
     Requires the INITIAL_ADMIN_PASSWORD from environment to authorize.
     """
-    # Check if Auth0 is already configured
-    status_info = await Auth0Service.check_status(db)
-    if status_info["status"] == "configured":
+    # Fail-closed: only when Auth0 has never been configured
+    if not await _bootstrap_gate_open(db):
         raise HTTPException(
             status_code=403,
             detail="Bootstrap access disabled - Auth0 is already configured. Use SSO to log in."
         )
-    
+    _verify_bootstrap_password(password)
+
     # Find admin user
     result = await db.execute(
         select(User).where(User.role == "admin", User.is_active == True).limit(1)
@@ -86,52 +115,89 @@ async def generate_bootstrap_token(
     }
 
 
+def _bootstrap_html_message(title: str, body_html: str, status_code: int):
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(
+        content=f"""<!DOCTYPE html><html><head><title>{title}</title></head>
+        <body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#151929;color:white;text-align:center">
+        <div style="max-width:24rem">{body_html}</div></body></html>""",
+        status_code=status_code,
+    )
+
+
 @router.get("/bootstrap/auto")
 async def auto_bootstrap(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    One-click browser-based bootstrap — navigate to this URL to auto-login as admin.
-    
+    Browser-based first-run bootstrap. Renders a password prompt (the
+    INITIAL_ADMIN_PASSWORD) which POSTs to /bootstrap/verify.
+
     ONLY works when Auth0 is NOT configured. This is the recommended way for
-    first-time setup. The login page shows a button that links here.
+    first-time setup. The login page links here.
     """
-    import time as time_module
-    
-    # Check if Auth0 is already configured
-    status_info = await Auth0Service.check_status(db)
-    if status_info["status"] == "configured":
-        from fastapi.responses import HTMLResponse
-        return HTMLResponse(
-            content="""<!DOCTYPE html><html><head><title>Setup Complete</title></head>
-            <body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#151929;color:white;text-align:center">
-            <div><h2>Auth0 is already configured</h2><p>Use SSO to log in.</p>
-            <a href="/login" style="color:#6366f1">Go to Login</a></div></body></html>""",
-            status_code=403
+    if not await _bootstrap_gate_open(db):
+        return _bootstrap_html_message(
+            "Setup Complete",
+            '<h2>Auth0 is already configured</h2><p>Use SSO to log in.</p>'
+            '<a href="/login" style="color:#6366f1">Go to Login</a>',
+            403,
         )
-    
-    # Find admin user
+
+    # Render a password form — no token is minted without the deploy-time secret.
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(content="""<!DOCTYPE html>
+    <html>
+    <head><title>First-run setup</title></head>
+    <body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#151929;color:white;text-align:center">
+        <form method="POST" action="/api/auth/bootstrap/verify" style="max-width:22rem">
+            <div style="font-size:2rem;margin-bottom:1rem">✦</div>
+            <h2 style="margin:0 0 .5rem">Welcome to Pinpoint 311</h2>
+            <p style="color:rgba(255,255,255,.6);margin-bottom:1rem">Enter the setup password (<code>INITIAL_ADMIN_PASSWORD</code>) to create your admin session.</p>
+            <input type="password" name="password" required autofocus placeholder="Setup password"
+                style="width:100%;padding:.6rem;border-radius:.5rem;border:1px solid #333;background:#0f1220;color:white;margin-bottom:.75rem" />
+            <button type="submit" style="width:100%;padding:.6rem;border-radius:.5rem;border:0;background:#6366f1;color:white;font-weight:600;cursor:pointer">Continue</button>
+        </form>
+    </body>
+    </html>""")
+
+
+@router.post("/bootstrap/verify")
+async def verify_bootstrap(
+    password: str = Form(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """Validate the setup password and mint the initial admin session."""
+    if not await _bootstrap_gate_open(db):
+        return _bootstrap_html_message(
+            "Setup Complete",
+            '<h2>Auth0 is already configured</h2><a href="/login" style="color:#6366f1">Go to Login</a>',
+            403,
+        )
+    try:
+        _verify_bootstrap_password(password)
+    except HTTPException as e:
+        return _bootstrap_html_message(
+            "Setup",
+            f'<h2>Could not continue</h2><p>{e.detail}</p>'
+            '<a href="/api/auth/bootstrap/auto" style="color:#6366f1">Try again</a>',
+            e.status_code,
+        )
+
     result = await db.execute(
         select(User).where(User.role == "admin", User.is_active == True).limit(1)
     )
     admin = result.scalar_one_or_none()
-    
     if not admin:
-        from fastapi.responses import HTMLResponse
-        return HTMLResponse(
-            content="""<!DOCTYPE html><html><head><title>Setup Error</title></head>
-            <body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#151929;color:white;text-align:center">
-            <div><h2>No admin user found</h2><p>The database may not be initialized yet.</p>
-            <a href="/login" style="color:#6366f1">Go back</a></div></body></html>""",
-            status_code=404
+        return _bootstrap_html_message(
+            "Setup Error",
+            '<h2>No admin user found</h2><p>The database may not be initialized yet.</p>',
+            404,
         )
-    
-    # Create JWT directly
+
     access_token = create_access_token(data={"sub": admin.username, "role": admin.role})
-    
-    logger.info(f"Auto-bootstrap login successful for: {admin.username}")
-    
-    # Return HTML that stores token and redirects to admin console
+    logger.info(f"Bootstrap login successful for: {admin.username}")
+
     import json as _json
     safe_token = _json.dumps(access_token)
     from fastapi.responses import HTMLResponse
@@ -164,9 +230,8 @@ async def use_bootstrap_token(
     """
     import time as time_module
     
-    # Check if SSO is already configured
-    status_info = await Auth0Service.check_status(db)
-    if status_info["status"] == "configured":
+    # Fail-closed: only when Auth0 has never been configured
+    if not await _bootstrap_gate_open(db):
         # Clear all bootstrap tokens since Auth0 is now configured
         _bootstrap_tokens.clear()
         raise HTTPException(

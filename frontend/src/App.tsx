@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { SettingsProvider } from './context/SettingsContext';
@@ -7,15 +8,19 @@ import { DialogProvider } from './components/DialogProvider';
 import { AutoTranslate } from './components/AutoTranslate';
 import ErrorBoundary from './components/ErrorBoundary';
 import ResidentPortal from './pages/ResidentPortal';
-import StaffDashboard from './pages/StaffDashboard';
-import AdminConsole from './pages/AdminConsole';
-import { ResearchLab } from './pages/ResearchLab';
-import NotFoundPage from './pages/NotFoundPage';
-
 import Login from './pages/Login';
-import PrivacyPolicy from './pages/PrivacyPolicy';
-import TermsOfService from './pages/TermsOfService';
-import AccessibilityPage from './pages/AccessibilityPage';
+
+// Staff/admin/research surfaces (and legal pages) are code-split so a
+// resident's first paint doesn't download the entire admin console,
+// integration wizard, and analytics lab. Each becomes its own chunk,
+// fetched on demand behind the auth wall.
+const StaffDashboard = lazy(() => import('./pages/StaffDashboard'));
+const AdminConsole = lazy(() => import('./pages/AdminConsole'));
+const ResearchLab = lazy(() => import('./pages/ResearchLab').then(m => ({ default: m.ResearchLab })));
+const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
+const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
+const TermsOfService = lazy(() => import('./pages/TermsOfService'));
+const AccessibilityPage = lazy(() => import('./pages/AccessibilityPage'));
 
 // Global error handlers — report unhandled errors to backend
 function reportError(payload: Record<string, unknown>) {
@@ -86,8 +91,19 @@ function ProtectedRoute({
     return <>{children}</>;
 }
 
+// Shared fallback shown while a code-split route chunk is loading.
+function RouteFallback() {
+    return (
+        <div className="min-h-screen flex items-center justify-center" role="status" aria-label="Loading">
+            <div className="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
+            <span className="sr-only">Loading, please wait...</span>
+        </div>
+    );
+}
+
 function AppRoutes() {
     return (
+        <Suspense fallback={<RouteFallback />}>
         <Routes>
             <Route path="/" element={<ResidentPortal />} />
             <Route path="/login" element={<Login />} />
@@ -129,6 +145,7 @@ function AppRoutes() {
             <Route path="/accessibility" element={<AccessibilityPage />} />
             <Route path="*" element={<NotFoundPage />} />
         </Routes>
+        </Suspense>
     );
 }
 

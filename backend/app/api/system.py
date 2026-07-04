@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
-from typing import List
+from typing import List, Optional, Dict
+from pydantic import BaseModel
 import subprocess
 import os
 import uuid
@@ -18,8 +19,14 @@ from app.schemas import (
     StatisticsResponse
 )
 from app.core.auth import get_current_admin, get_current_staff
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 router = APIRouter()
+
+# Tighter per-route limits for endpoints that call paid Google APIs, on top of
+# the app-wide default limit. Decorator-based enforcement (own in-memory store).
+_cost_limiter = Limiter(key_func=get_remote_address)
 
 
 # ============ Settings ============
@@ -36,6 +43,184 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
         await db.commit()
         await db.refresh(settings)
     return settings
+
+
+@router.get("/identity/catalog")
+async def get_identity_catalog(_: User = Depends(get_current_admin)):
+    """Identity provider catalog for the admin UI (Auth0 / Entra / Okta / OIDC),
+    plus which provider is active."""
+    from app.services.identity import catalog_for_api, IDENTITY_PROVIDER_KEY
+    from app.services.secret_manager import get_secret
+    current = (await get_secret(IDENTITY_PROVIDER_KEY)) or "auth0"
+    return {"current_provider": current.strip().lower(), "default_provider": "auth0", "providers": catalog_for_api()}
+
+
+@router.get("/translation/catalog")
+async def get_translation_catalog(_: User = Depends(get_current_admin)):
+    """Translation provider catalog (Google / Azure) + current selection."""
+    from app.services.translation_providers import catalog_for_api, TRANSLATION_PROVIDER_KEY
+    from app.services.secret_manager import get_secret
+    current = (await get_secret(TRANSLATION_PROVIDER_KEY)) or "google"
+    return {"current_provider": current.strip().lower(), "default_provider": "google", "providers": catalog_for_api()}
+
+
+@router.get("/ai/catalog")
+async def get_ai_catalog(_: User = Depends(get_current_admin)):
+    """AI provider catalog for the admin UI: available boundaries (Vertex /
+    Azure Government / Bedrock), their models, and the fields each needs, plus
+    which provider is currently selected and which are configured."""
+    from app.services.ai.registry import AI_CATALOG, catalog_for_api, AI_PROVIDER_KEY, AI_MODEL_KEY
+    from app.services.secret_manager import get_secret
+
+    current_provider = (await get_secret(AI_PROVIDER_KEY)) or "vertex"
+    current_model = await get_secret(AI_MODEL_KEY)
+
+    configured = {}
+    for key, meta in AI_CATALOG.items():
+        required = [f["key"] for f in meta["credential_fields"] if not f["label"].endswith("(optional)")]
+        # "configured" = the non-optional credential fields are all present
+        present = True
+        for field in meta["credential_fields"]:
+            if field["key"] in required:
+                if not await get_secret(field["key"]):
+                    present = False
+                    break
+        configured[key] = present
+
+    return {
+        "current_provider": current_provider,
+        "default_provider": "vertex",
+        "current_model": current_model or AI_CATALOG.get(current_provider, {}).get("default_model"),
+        "configured": configured,
+        "providers": catalog_for_api(),
+    }
+
+
+# ---- Unified provider save + test (AI / translation / identity) ----
+
+_PROVIDER_SELECT_KEY = {
+    "ai": "AI_PROVIDER",
+    "translation": "TRANSLATION_PROVIDER",
+    "identity": "IDENTITY_PROVIDER",
+}
+
+
+async def _persist_secret(db: AsyncSession, key_name: str, value: str):
+    """Write a secret to the configured store (Secret Manager / Key Vault when
+    available) and always keep an encrypted DB copy — same path as /secrets."""
+    from app.core.encryption import encrypt
+    from app.services.secret_manager import set_secret, clear_cache
+    bootstrap_keys = {"GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT"}
+    if value and key_name not in bootstrap_keys:
+        try:
+            if await set_secret(key_name, value):
+                clear_cache()
+        except Exception as e:
+            logger.warning(f"Provider secret store write failed for {key_name}: {e}")
+    result = await db.execute(select(SystemSecret).where(SystemSecret.key_name == key_name))
+    secret = result.scalar_one_or_none()
+    enc = encrypt(value) if value else None
+    if secret:
+        secret.key_value = enc
+        secret.is_configured = bool(value)
+    else:
+        db.add(SystemSecret(key_name=key_name, key_value=enc, is_configured=bool(value)))
+    await db.commit()
+
+
+class ProviderSaveRequest(BaseModel):
+    provider: str
+    model: Optional[str] = None
+    settings: Dict[str, str] = {}
+
+
+def _capability_catalog(capability: str) -> Dict:
+    if capability == "ai":
+        from app.services.ai.registry import AI_CATALOG
+        return AI_CATALOG
+    if capability == "translation":
+        from app.services.translation_providers import TRANSLATION_CATALOG
+        return TRANSLATION_CATALOG
+    if capability == "identity":
+        from app.services.identity import IDENTITY_CATALOG
+        return IDENTITY_CATALOG
+    return {}
+
+
+@router.post("/providers/{capability}/save")
+async def save_provider(
+    capability: str,
+    body: ProviderSaveRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Select a provider for a capability and save its settings/secrets.
+    Blank values are ignored (existing secret kept)."""
+    if capability not in _PROVIDER_SELECT_KEY:
+        raise HTTPException(status_code=400, detail=f"Unknown capability: {capability}")
+    catalog = _capability_catalog(capability)
+    provider_id = (body.provider or "").strip().lower()
+    if provider_id not in catalog:
+        raise HTTPException(status_code=400, detail=f"Unknown {capability} provider: {body.provider}")
+    # Only the credential keys this provider's catalog declares may be written
+    # through this endpoint — it must not become an arbitrary secret writer.
+    allowed_keys = {f["key"] for f in catalog[provider_id].get("credential_fields", [])}
+    unknown = [k for k in (body.settings or {}) if k not in allowed_keys]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unexpected settings for {provider_id}: {', '.join(sorted(unknown))}")
+    if capability == "ai" and body.model:
+        allowed_models = {m["id"] for m in catalog[provider_id].get("models", [])}
+        if allowed_models and body.model not in allowed_models:
+            raise HTTPException(status_code=400, detail=f"Unknown model for {provider_id}: {body.model}")
+    await _persist_secret(db, _PROVIDER_SELECT_KEY[capability], provider_id)
+    if capability == "ai" and body.model:
+        await _persist_secret(db, "AI_MODEL", body.model)
+    for key, value in (body.settings or {}).items():
+        if value:  # blank = keep existing
+            await _persist_secret(db, key, value)
+    from app.services.secret_manager import clear_cache
+    clear_cache()
+    return {"ok": True, "provider": provider_id}
+
+
+@router.post("/providers/{capability}/test")
+@_cost_limiter.limit("10/minute")  # live paid-API call — bound the cost
+async def test_provider(
+    request: Request,
+    capability: str,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Live connectivity check for the currently-configured provider of a
+    capability. Returns {ok, detail}."""
+    try:
+        if capability == "ai":
+            from app.services.ai import get_ai_provider
+            provider = await get_ai_provider(db)
+            if not provider:
+                return {"ok": False, "detail": "No AI provider is configured. Enter the required fields and save first."}
+            result = await provider.complete_json('Reply with {"priority_score": 5}. This is a connection test.')
+            ok = isinstance(result, dict) and "_error" not in result
+            return {"ok": ok, "detail": f"{provider.provider}/{provider.model} responded" if ok else f"Call failed: {result.get('_error', 'unknown')[:200]}"}
+        if capability == "translation":
+            from app.services.translation_providers import get_translation_provider
+            provider = await get_translation_provider()
+            if not provider:
+                return {"ok": False, "detail": "No translation provider is configured."}
+            out = await provider.translate(["hello"], "en", "es")
+            return {"ok": bool(out), "detail": f"Translated sample → {out[0]}" if out else "No translation returned"}
+        if capability == "identity":
+            from app.services.identity import resolve_identity_config, get_oidc_metadata
+            cfg = await resolve_identity_config(db)
+            if not cfg:
+                return {"ok": False, "detail": "No identity provider is configured."}
+            meta = await get_oidc_metadata(cfg)
+            return {"ok": bool(meta.get("authorization_endpoint")), "detail": f"Discovered {cfg['provider']} endpoints at {cfg['issuer_base']}"}
+        raise HTTPException(status_code=400, detail=f"Test not supported for: {capability}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"ok": False, "detail": f"Test failed: {str(e)[:200]}"}
 
 
 @router.post("/settings", response_model=SystemSettingsResponse)
@@ -2317,6 +2502,7 @@ ación de Baches", "description": "Reportar daños en carreteras"},
 
 
 @router.post("/translate/batch")
+@_cost_limiter.limit("60/minute")
 async def batch_translate(
     request: Request
 ):
@@ -2710,7 +2896,9 @@ class AnalyticsChatResponse(BaseModel):
 
 
 @router.post("/analytics-chat", response_model=AnalyticsChatResponse)
+@_cost_limiter.limit("20/minute")
 async def analytics_chat(
+    request: Request,
     body: AnalyticsChatRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_staff)

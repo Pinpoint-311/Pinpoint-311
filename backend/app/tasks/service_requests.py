@@ -110,18 +110,17 @@ def analyze_request(self, request_id: int):
             
             logger.info(f"[AI Analysis] AI module is enabled, proceeding...")
             
-            # Get Vertex AI credentials
-            project_id = await get_secret(db, "VERTEX_AI_PROJECT")
-            if not project_id:
-                msg = "[AI Analysis] Skipped - VERTEX_AI_PROJECT not configured"
+            # Select the configured AI provider (Vertex/Gemini is the default).
+            # None means AI is not configured for this instance → skip, as before.
+            from app.services.ai import get_ai_provider
+            ai_provider = await get_ai_provider(db)
+            if ai_provider is None:
+                msg = "[AI Analysis] Skipped - no AI provider configured"
                 logger.warning(msg)
-                return {"status": "skipped", "reason": "VERTEX_AI_PROJECT not configured"}
-            
-            logger.info("[AI Analysis] Project ID found: <set>")
-            
-            location = "global"  # Gemini 3.1 Flash-Lite is available on global endpoints
-            service_account_json = await get_secret(db, "VERTEX_AI_SERVICE_ACCOUNT_KEY")
-            
+                return {"status": "skipped", "reason": "AI provider not configured"}
+
+            logger.info(f"[AI Analysis] Using provider={ai_provider.provider} model={ai_provider.model}")
+
             # Get the request
             result = await db.execute(
                 select(ServiceRequest).where(ServiceRequest.id == request_id)
@@ -169,16 +168,10 @@ def analyze_request(self, request_id: int):
             # Get images for multimodal analysis
             image_data = request.media_urls[:3] if request.media_urls else None
             
-            # Call Vertex AI
-            logger.info(f"[AI Analysis] Calling Vertex AI for request {request_id}...")
-            
-            analysis_result = await analyze_with_gemini(
-                project_id=project_id,
-                location=location,
-                prompt=prompt,
-                image_data=image_data,
-                service_account_json=service_account_json if service_account_json else None
-            )
+            # Call the selected AI provider
+            logger.info(f"[AI Analysis] Calling {ai_provider.provider} for request {request_id}...")
+
+            analysis_result = await ai_provider.complete_json(prompt, image_data)
             
             logger.info(f"[AI Analysis] Got result: {analysis_result}")
             
@@ -672,16 +665,57 @@ New Request: {request.service_name}
 
 
 @celery_app.task
+def purge_old_ip_addresses():
+    """Null out IP addresses older than 90 days.
+
+    The Privacy Impact Assessment commits to a 90-day retention for IP
+    addresses while audit logs themselves are kept for 7 years, so we scrub
+    the IP field rather than deleting the log entry.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    async def _purge():
+        from datetime import datetime, timedelta, timezone
+        from sqlalchemy import update
+        from app.models import AuditLog, DisclaimerAcknowledgment
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+        async with SessionLocal() as db:
+            r1 = await db.execute(
+                update(AuditLog)
+                .where(AuditLog.timestamp < cutoff, AuditLog.ip_address.isnot(None))
+                .values(ip_address=None, user_agent=None)
+            )
+            r2 = await db.execute(
+                update(DisclaimerAcknowledgment)
+                .where(DisclaimerAcknowledgment.acknowledged_at < cutoff,
+                       DisclaimerAcknowledgment.ip_address.isnot(None))
+                .values(ip_address=None)
+            )
+            await db.commit()
+            purged = (r1.rowcount or 0) + (r2.rowcount or 0)
+            logger.info(f"[Retention] Purged IP addresses from {purged} record(s) older than 90 days")
+            return {"status": "success", "purged": purged}
+
+    try:
+        return run_async(_purge())
+    except Exception as e:
+        logger.error(f"[Retention] IP purge failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@celery_app.task
 def enforce_retention_policy():
     """
     Enforce document retention policy by archiving expired records.
-    
+
     Should be scheduled to run daily via Celery Beat.
     Respects legal holds (flagged records are never archived).
     """
     import logging
     logger = logging.getLogger(__name__)
-    
+
     async def _enforce():
         from app.models import SystemSettings
         from app.services.retention_service import (
