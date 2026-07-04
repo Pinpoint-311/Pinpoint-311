@@ -1,10 +1,10 @@
 # Orchestrator Layer — Build Plan & Downstream Changes
 
-> Companion to `HOSTED_MODEL_SCOPE.md` (on the `hosted-model-scope` branch).
-> That doc scopes *what* the state-hosted model is. **This doc is the
-> execution plan**: exactly how to build the orchestrator, and every concrete
-> change required in this app repo — grounded in the current code so a
-> developer can pick it up file-by-file.
+> Start with `VISION.md` for the plain-language "what we're trying to do."
+> `HOSTED_MODEL_SCOPE.md` (on the `hosted-model-scope` branch) scopes *what*
+> the state-hosted model is. **This doc is the execution plan**: exactly how to
+> build the orchestrator, and every concrete change required in this app repo —
+> grounded in the current code so a developer can pick it up file-by-file.
 
 ## Mental model in one paragraph
 
