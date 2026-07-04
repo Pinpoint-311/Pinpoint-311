@@ -155,7 +155,8 @@ async def create_integration(
     db.add(integration)
     await db.commit()
     await db.refresh(integration)
-    logger.info(f"[Integrations] {current_user.username} created integration {data.platform}")
+    from app.core.sanitize import sanitize_for_log
+    logger.info(f"[Integrations] {sanitize_for_log(current_user.username)} created integration {sanitize_for_log(data.platform)}")
     return _serialize(integration)
 
 

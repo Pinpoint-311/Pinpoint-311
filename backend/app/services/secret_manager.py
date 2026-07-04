@@ -234,7 +234,8 @@ async def get_secret(key_name: str) -> Optional[str]:
                 if val is not None:
                     return val
         except Exception as e:
-            logger.warning(f"Azure Key Vault secret read failed for {key_name}: {e}")
+            from app.core.sanitize import sanitize_for_log
+            logger.warning(f"Azure Key Vault secret read failed for {sanitize_for_log(key_name)}")
         return await _get_secret_from_db(key_name)
 
     if _is_gcp_available():
