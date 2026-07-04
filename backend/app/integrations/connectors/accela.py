@@ -90,7 +90,7 @@ class AccelaConnector(BaseConnector):
             try:
                 updated_dt = datetime.fromisoformat(str(updated).replace("Z", "+00:00"))
             except ValueError:
-                pass
+                pass  # unparseable vendor timestamp — leave as None
         return ExternalRecord(
             external_id=str(item.get("id") or item.get("customId") or ""),
             status=self.map_status_in(raw_status),
@@ -220,7 +220,7 @@ class AccelaConnector(BaseConnector):
                 try:
                     created = datetime.fromisoformat(str(item["createdDate"]).replace("Z", "+00:00"))
                 except ValueError:
-                    pass
+                    pass  # unparseable vendor timestamp — leave as None
             comments.append(ExternalComment(
                 external_id=str(item.get("id") or ""),
                 content=item.get("text") or "",

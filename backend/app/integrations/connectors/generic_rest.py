@@ -302,7 +302,7 @@ class GenericRestConnector(BaseConnector):
                 try:
                     created = datetime.fromisoformat(str(item[created_field]).replace("Z", "+00:00"))
                 except ValueError:
-                    pass
+                    pass  # unparseable vendor timestamp — leave as None
             comments.append(ExternalComment(
                 external_id=str(item[id_field]),
                 content=str(item[text_field]),
