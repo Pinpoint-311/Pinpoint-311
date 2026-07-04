@@ -6,6 +6,13 @@
 > build the orchestrator, and every concrete change required in this app repo —
 > grounded in the current code so a developer can pick it up file-by-file.
 
+> **Implementation status:** Part B (the orchestrator) is built in the
+> `centralizedhosting` repo. Part A hooks A1–A5 + A8, plus A7 suspend/resume,
+> are implemented in this repo (`app/core/managed.py`,
+> `app/api/provisioning.py`, `app/api/telemetry.py`, health stamping, managed
+> gates in `app/api/system.py`). Remaining: A6 verification passes, A7
+> whole-instance export archive, cloud drivers on the orchestrator side.
+
 ## Mental model in one paragraph
 
 The app you have today **is** the per-town unit — one instance = one
