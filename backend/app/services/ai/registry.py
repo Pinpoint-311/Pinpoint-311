@@ -133,7 +133,8 @@ async def get_ai_provider(db=None):
     provider = (await get_secret(AI_PROVIDER_KEY)) or "vertex"
     provider = provider.strip().lower()
     if provider not in AI_CATALOG:
-        logger.warning(f"[AI] Unknown AI_PROVIDER '{provider}', falling back to vertex")
+        from app.core.sanitize import sanitize_for_log
+        logger.warning(f"[AI] Unknown AI_PROVIDER '{sanitize_for_log(provider)}', falling back to vertex")
         provider = "vertex"
 
     model = (await get_secret(AI_MODEL_KEY)) or AI_CATALOG[provider].get("default_model")

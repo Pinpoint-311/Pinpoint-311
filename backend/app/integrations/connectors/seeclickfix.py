@@ -55,7 +55,7 @@ class SeeClickFixConnector(BaseConnector):
             try:
                 updated_dt = datetime.fromisoformat(str(issue["updated_at"]).replace("Z", "+00:00"))
             except ValueError:
-                pass
+                pass  # unparseable vendor timestamp — leave as None
         return ExternalRecord(
             external_id=str(issue.get("id") or ""),
             status=self.map_status_in(raw_status),

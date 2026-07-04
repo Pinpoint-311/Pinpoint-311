@@ -18,7 +18,7 @@ store is capped, and the endpoints only ever serve this practice data.
 import itertools
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Request
 from slowapi import Limiter

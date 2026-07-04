@@ -116,7 +116,8 @@ async def _persist_secret(db: AsyncSession, key_name: str, value: str):
             if await set_secret(key_name, value):
                 clear_cache()
         except Exception as e:
-            logger.warning(f"Provider secret store write failed for {key_name}: {e}")
+            from app.core.sanitize import sanitize_for_log
+            logger.warning(f"Provider secret store write failed for {sanitize_for_log(key_name)}: {sanitize_for_log(str(e))}")
     result = await db.execute(select(SystemSecret).where(SystemSecret.key_name == key_name))
     secret = result.scalar_one_or_none()
     enc = encrypt(value) if value else None
