@@ -270,12 +270,12 @@ def _track(op: str) -> None:
                 async with SessionLocal() as db:
                     await track_api_usage(db, service_name="kms", operation=op, api_calls=1)
             except Exception:
-                pass
+                logger.debug("KMS usage tracking failed (non-fatal)", exc_info=True)
         task = loop.create_task(_go())
         _bg_tasks.add(task)
         task.add_done_callback(_bg_tasks.discard)
     except Exception:
-        pass
+        logger.debug("Could not schedule KMS usage tracking (non-fatal)", exc_info=True)
 
 
 _bg_tasks: set = set()
