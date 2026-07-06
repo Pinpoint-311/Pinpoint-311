@@ -351,12 +351,39 @@ async def health_check(
 async def quick_health_check():
     """
     Quick health check for monitoring (no auth required).
-    
+
     Just checks if the API is responding.
     """
+    from app.core.config import get_settings
+    settings = get_settings()
     return {
         "status": "ok",
+        "version": settings.app_version,
         "timestamp": __import__("datetime").datetime.now().isoformat()
+    }
+
+
+@router.get("/version")
+async def version_info(db: AsyncSession = Depends(get_db)):
+    """Build + schema version stamp for the orchestrator/control plane.
+
+    Metadata only (no resident data) — the panel polls this fleet-wide to
+    detect version drift and gate canary rollouts on DB-migration compatibility.
+    """
+    from app.core.config import get_settings
+    from sqlalchemy import text
+    settings = get_settings()
+    db_revision = None
+    try:
+        db_revision = (await db.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))).scalar()
+    except Exception:
+        db_revision = None  # alembic table absent (fresh DB) — panel treats as unmigrated
+    return {
+        "version": settings.app_version,
+        "git_sha": settings.git_sha,
+        "app_name": settings.app_name,
+        "managed_mode": settings.managed_mode,
+        "db_revision": db_revision,
     }
 
 

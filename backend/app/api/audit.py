@@ -339,3 +339,43 @@ async def verify_audit_log_integrity(
         "message": "Audit log chain is intact" if is_valid else "WARNING: Tampering detected in audit logs",
         "timestamp": datetime.utcnow().isoformat()
     }
+
+
+@router.get("/anchors")
+async def list_audit_anchors(
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Recent append-only anchors of the request-audit hash-chain head, plus
+    whether the live chain head still matches the most recent anchor.
+
+    The anchors (and their matching log lines) let a records officer confirm
+    the audit trail hasn't been rewritten even against a full-DB attacker: the
+    current head must equal the last anchored head, and each anchor is also in
+    the external log stream."""
+    from app.models import AuditAnchor, RequestAuditLog
+
+    anchors = (await db.execute(
+        select(AuditAnchor).order_by(desc(AuditAnchor.id)).limit(limit)
+    )).scalars().all()
+    live_head = (await db.execute(
+        select(RequestAuditLog.entry_hash)
+        .where(RequestAuditLog.entry_hash.isnot(None))
+        .order_by(desc(RequestAuditLog.id)).limit(1)
+    )).scalar()
+    latest = anchors[0] if anchors else None
+    # Head matches the last anchor, or has legitimately advanced since (more
+    # entries added). A shrinking count or a head that predates the anchor is
+    # the suspicious case.
+    matches = bool(latest and live_head and latest.head_hash == live_head)
+    return {
+        "live_head": live_head,
+        "latest_anchor_head": latest.head_hash if latest else None,
+        "head_matches_latest_anchor": matches,
+        "anchors": [
+            {"id": a.id, "created_at": a.created_at.isoformat() if a.created_at else None,
+             "head_hash": a.head_hash, "entry_count": a.entry_count}
+            for a in anchors
+        ],
+    }

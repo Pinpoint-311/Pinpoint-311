@@ -1078,3 +1078,46 @@ def send_weekly_digest():
         logger.error(f"[Weekly Digest] Task failed: {e}")
         return {"status": "error", "error": str(e)}
 
+
+
+@celery_app.task(bind=True)
+def anchor_audit_chain(self):
+    """Record the request-audit hash-chain head to the append-only AuditAnchor
+    table AND emit it to the application log. Runs daily via Celery Beat.
+
+    This puts the chain head outside the mutable audit table (and, in hosted
+    mode, outside the instance entirely via log shipping), so a full-history
+    rewrite can't pass silently — the anchors and external logs would disagree.
+    """
+    from app.models import RequestAuditLog, AuditAnchor
+    from sqlalchemy import func as _func
+
+    async def _anchor():
+        async with SessionLocal() as db:
+            head = (await db.execute(
+                select(RequestAuditLog.entry_hash)
+                .where(RequestAuditLog.entry_hash.isnot(None))
+                .order_by(RequestAuditLog.id.desc()).limit(1)
+            )).scalar()
+            if not head:
+                return {"status": "skipped", "reason": "no hashed audit entries yet"}
+            count = (await db.execute(
+                select(_func.count()).select_from(RequestAuditLog)
+                .where(RequestAuditLog.entry_hash.isnot(None))
+            )).scalar() or 0
+            last = (await db.execute(
+                select(AuditAnchor).order_by(AuditAnchor.id.desc()).limit(1)
+            )).scalar_one_or_none()
+            if last and last.head_hash == head:
+                return {"status": "unchanged", "head": head, "count": count}
+            db.add(AuditAnchor(head_hash=head, entry_count=count))
+            await db.commit()
+            # External-visible line (shipped to central log aggregation in hosted mode)
+            logger.info(f"[AUDIT ANCHOR] head={head} count={count}")
+            return {"status": "anchored", "head": head, "count": count}
+
+    try:
+        return run_async(_anchor())
+    except Exception as e:
+        logger.error(f"[AUDIT ANCHOR] task failed: {e}")
+        return {"status": "error", "error": str(e)}

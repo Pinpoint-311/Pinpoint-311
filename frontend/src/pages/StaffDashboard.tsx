@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback, FormEvent } f
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
+    RefreshCw,
     Menu,
     X,
     Search,
@@ -157,6 +158,7 @@ export default function StaffDashboard() {
 
     // Closed substatus state
     const [showClosedModal, setShowClosedModal] = useState(false);
+    const [woRefresh, setWoRefresh] = useState<{ busy: boolean; msg: string | null }>({ busy: false, msg: null });
     const [closedSubstatus, setClosedSubstatus] = useState<ClosedSubstatus>('resolved');
     const [completionMessage, setCompletionMessage] = useState('');
     const [completionPhotoUrl, setCompletionPhotoUrl] = useState('');
@@ -530,6 +532,26 @@ export default function StaffDashboard() {
         } catch (err) {
             console.error('Failed to load request detail:', err);
         }
+    };
+
+    const handleRefreshWorkOrder = async () => {
+        if (!selectedRequest) return;
+        setWoRefresh({ busy: true, msg: null });
+        try {
+            const res = await api.refreshRequestWorkOrder(selectedRequest.service_request_id);
+            setWoRefresh({ busy: false, msg: res.detail });
+            // Synced work-order updates land as status/assignment/timeline notes;
+            // reload the detail + comments shortly so they show up.
+            if (res.ok) {
+                setTimeout(() => {
+                    loadRequestDetail(selectedRequest.service_request_id);
+                    if (selectedRequest.id) loadComments(selectedRequest.id);
+                }, 2500);
+            }
+        } catch (err: any) {
+            setWoRefresh({ busy: false, msg: err?.message || 'Could not refresh the work order.' });
+        }
+        setTimeout(() => setWoRefresh(s => ({ ...s, msg: null })), 6000);
     };
 
     const handleStatusChange = async (status: string) => {
@@ -1774,15 +1796,31 @@ export default function StaffDashboard() {
                                                 </div>
                                                 <h1 className="text-base sm:text-lg font-semibold text-white truncate">{selectedRequest.service_name}</h1>
                                             </div>
-                                            <PrintWorkOrder
-                                                request={selectedRequest}
-                                                auditLog={auditLog}
-                                                comments={comments}
-                                                townshipName={settings?.township_name}
-                                                logoUrl={settings?.logo_url || undefined}
-                                                mapsApiKey={mapsConfig?.google_maps_api_key}
-                                            />
+                                            <div className="flex items-center gap-1.5 shrink-0">
+                                                <button
+                                                    onClick={handleRefreshWorkOrder}
+                                                    disabled={woRefresh.busy}
+                                                    title="Pull the latest work-order status (assignment, schedule, resolution) from any connected system"
+                                                    className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-white/70 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-colors disabled:opacity-50"
+                                                >
+                                                    <RefreshCw className={`w-3.5 h-3.5 ${woRefresh.busy ? 'animate-spin' : ''}`} aria-hidden="true" />
+                                                    <span className="hidden sm:inline">{woRefresh.busy ? 'Refreshing…' : 'Refresh work order'}</span>
+                                                </button>
+                                                <PrintWorkOrder
+                                                    request={selectedRequest}
+                                                    auditLog={auditLog}
+                                                    comments={comments}
+                                                    townshipName={settings?.township_name}
+                                                    logoUrl={settings?.logo_url || undefined}
+                                                    mapsApiKey={mapsConfig?.google_maps_api_key}
+                                                />
+                                            </div>
                                         </div>
+                                        {woRefresh.msg && (
+                                            <div className="mt-1.5 text-[11px] text-white/60 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5">
+                                                {woRefresh.msg}
+                                            </div>
+                                        )}
 
                                         {/* Row 2: Status Actions - Compact on mobile */}
                                         <div className="flex gap-1.5 sm:gap-2">

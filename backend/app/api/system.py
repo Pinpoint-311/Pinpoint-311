@@ -1441,9 +1441,23 @@ async def get_heatmap_data(
 # ============ System Update ============
 
 
+def _reject_if_managed():
+    """In state-hosted (managed) mode, in-app self-update is disabled — upgrades
+    come only from the orchestrator (publish image → panel rolls out). This also
+    removes the biggest infra risk (git pull + docker compose via a mounted
+    Docker socket) from the hosted fleet."""
+    from app.core.config import get_settings
+    if get_settings().managed_mode:
+        raise HTTPException(
+            status_code=403,
+            detail="Updates are managed by your state's hosting platform and can't be triggered from here.",
+        )
+
+
 @router.post("/update")
 async def update_system(_: User = Depends(get_current_admin)):
     """Pull updates from GitHub (admin only). Code changes reload automatically."""
+    _reject_if_managed()
     try:
         # Get the project root
         project_root = os.environ.get("PROJECT_ROOT", "/project")
@@ -1783,6 +1797,7 @@ async def switch_version(
     6. Health check the new deployment
     7. Automatic rollback on any failure
     """
+    _reject_if_managed()
     import httpx
     from datetime import datetime
     
