@@ -21,6 +21,12 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     # Celery Beat Schedule
     beat_schedule={
+        # Daily anchor of the audit hash-chain head (tamper-evidence beyond the DB)
+        "daily-audit-anchor": {
+            "task": "app.tasks.service_requests.anchor_audit_chain",
+            "schedule": 60 * 60 * 24,  # Every 24 hours
+            "options": {"queue": "default"}
+        },
         # Daily retention enforcement at 1:00 AM UTC (before backup)
         "daily-retention-enforcement": {
             "task": "app.tasks.service_requests.enforce_retention_policy",

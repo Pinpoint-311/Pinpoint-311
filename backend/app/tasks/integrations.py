@@ -149,42 +149,77 @@ async def _apply_work_order_fields(db, sr, record, integration) -> bool:
     return True
 
 
-def _decode_media(sr: ServiceRequest, max_items: int = 3):
-    """Extract embedded base64 photos as (filename, bytes, content_type) tuples."""
+_MAX_MEDIA = 3
+_MAX_MEDIA_BYTES = 15 * 1024 * 1024  # 15 MB per photo
+
+
+async def _decode_media(sr: ServiceRequest, max_items: int = _MAX_MEDIA):
+    """Resolve a request's photos to (filename, bytes, content_type) tuples.
+
+    Handles both embedded base64 data-URIs and http(s)-hosted images — the
+    latter are downloaded (SSRF-guarded, size-capped) so an externally-hosted
+    photo actually attaches to the work order instead of being skipped."""
+    from app.integrations.base import _assert_public_url, HTTP_TIMEOUT
+    import httpx
+
     documents = []
     for i, url in enumerate((sr.media_urls or [])[:max_items]):
         if not isinstance(url, str):
             continue
         match = _DATA_URI_RE.match(url)
-        if not match:
+        if match:
+            mime, b64 = match.groups()
+            try:
+                content = base64.b64decode(b64)
+            except Exception:
+                continue
+            ext = _EXT_BY_MIME.get(mime, "bin")
+            documents.append((f"{sr.service_request_id}-photo-{i + 1}.{ext}", content, mime))
             continue
-        mime, b64 = match.groups()
-        try:
-            content = base64.b64decode(b64)
-        except Exception:
-            continue
-        ext = _EXT_BY_MIME.get(mime, "bin")
-        documents.append((f"{sr.service_request_id}-photo-{i + 1}.{ext}", content, mime))
+        if url.startswith(("http://", "https://")):
+            try:
+                _assert_public_url(url)
+                async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=False) as client:
+                    resp = await client.get(url)
+                    resp.raise_for_status()
+                    content = resp.content
+                    if not content or len(content) > _MAX_MEDIA_BYTES:
+                        continue
+                    mime = (resp.headers.get("content-type") or "application/octet-stream").split(";")[0].strip()
+                    if not mime.startswith("image/"):
+                        continue
+                    ext = _EXT_BY_MIME.get(mime, "bin")
+                    documents.append((f"{sr.service_request_id}-photo-{i + 1}.{ext}", content, mime))
+            except Exception as e:
+                logger.debug(f"[Integrations] Could not fetch hosted photo for {sr.service_request_id}: {e}")
+                continue
     return documents
 
 
 async def _push_documents(db, connector, integration, link, sr):
-    """Upload the request's embedded photos to the linked external record."""
-    if "documents" not in connector.capabilities or link.documents_pushed:
+    """Upload any not-yet-pushed photos to the linked external record. Tracks a
+    per-link count so photos added after the initial push sync on a later run
+    (e.g. on the next status change)."""
+    if "documents" not in connector.capabilities:
         return
-    documents = _decode_media(sr)
-    if not documents:
+    already = link.documents_pushed_count or 0
+    documents = await _decode_media(sr)
+    new_docs = documents[already:]
+    if not new_docs:
         link.documents_pushed = True
         return
     pushed = 0
     try:
-        for filename, content, mime in documents:
+        for filename, content, mime in new_docs:
             await connector.push_document(link.external_id, filename, content, mime)
             pushed += 1
+        link.documents_pushed_count = already + pushed
         link.documents_pushed = True
         await _log(db, integration.id, "push_documents", "success",
                    f"{sr.service_request_id}: {pushed} photo(s) attached", pushed)
     except Exception as e:
+        # Persist however many succeeded so a retry doesn't re-upload them.
+        link.documents_pushed_count = already + pushed
         await _log(db, integration.id, "push_documents", "error",
                    f"{sr.service_request_id}: {e} ({pushed} uploaded before failure)")
         logger.warning(f"[Integrations] Document push to {integration.platform} failed: {e}")
@@ -360,6 +395,8 @@ def push_status_to_integrations(self, request_id: int, notes: str = None):
                     link.sync_error = None
                     await _log(db, integration.id, "push_status", "success",
                                f"{sr.service_request_id} -> {sr.status}", 1)
+                    # Attach any photos added since the last push (idempotent).
+                    await _push_documents(db, connector, integration, link, sr)
                 except Exception as e:
                     link.sync_error = str(e)[:1000]
                     await _log(db, integration.id, "push_status", "error",
