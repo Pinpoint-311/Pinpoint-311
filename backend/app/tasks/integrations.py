@@ -17,6 +17,7 @@ import hashlib
 import logging
 import re
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import select
 
@@ -54,9 +55,11 @@ _DATA_URI_RE = re.compile(r"^data:(image/[a-zA-Z0-9.+-]+);base64,(.+)$", re.DOTA
 _EXT_BY_MIME = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}
 
 
-def _build_payload(sr: ServiceRequest, config: dict) -> dict:
+def _build_payload(sr: ServiceRequest, config: dict, dept_name: Optional[str] = None) -> dict:
     """Normalized outbound payload. PII is only included when the integration
-    is explicitly configured to share it (config.share_pii)."""
+    is explicitly configured to share it (config.share_pii). Work-order fields
+    (priority, assignment, due date) are carried so a work-order management
+    system can open a properly-routed work order."""
     payload = {
         "service_request_id": sr.service_request_id,
         "service_code": sr.service_code,
@@ -72,7 +75,11 @@ def _build_payload(sr: ServiceRequest, config: dict) -> dict:
         "media_urls": [u for u in (sr.media_urls or []) if isinstance(u, str) and u.startswith("http")],
         "matched_asset": sr.matched_asset,
         "custom_fields": sr.custom_fields,
-        "priority": sr.manual_priority_score,
+        # Work-order routing fields
+        "priority": sr.manual_priority_score if sr.manual_priority_score is not None else sr.priority,
+        "assigned_to": sr.assigned_to,
+        "assigned_department": dept_name,
+        "due_date": sr.due_datetime.isoformat() if getattr(sr, "due_datetime", None) else None,
     }
     if _flag(config, "share_pii"):
         payload.update({
@@ -82,6 +89,64 @@ def _build_payload(sr: ServiceRequest, config: dict) -> dict:
             "phone": sr.phone,
         })
     return payload
+
+
+async def _dept_name(db, sr: ServiceRequest) -> Optional[str]:
+    """Resolve the assigned department's name for the outbound payload without
+    relying on a lazy relationship load (which errors under the async engine)."""
+    if not sr.assigned_department_id:
+        return None
+    from app.models import Department
+    dept = (await db.execute(
+        select(Department).where(Department.id == sr.assigned_department_id)
+    )).scalar_one_or_none()
+    return dept.name if dept else None
+
+
+async def _apply_work_order_fields(db, sr, record, integration) -> bool:
+    """Reflect a work-order update from the vendor into Pinpoint as an internal
+    timeline comment (and fill assignment if we don't have one locally), without
+    clobbering staff-owned fields. Returns True if anything was recorded."""
+    bits = []
+    if record.work_order_id:
+        bits.append(f"work order {record.work_order_id}")
+    if record.assigned_department:
+        bits.append(f"dept: {record.assigned_department}")
+    if record.assigned_to:
+        bits.append(f"assigned to: {record.assigned_to}")
+    if record.scheduled_datetime:
+        bits.append(f"scheduled: {record.scheduled_datetime.date().isoformat()}")
+    if record.due_datetime:
+        bits.append(f"due: {record.due_datetime.date().isoformat()}")
+    if record.priority:
+        bits.append(f"priority: {record.priority}")
+    if record.resolution:
+        bits.append(f"resolution: {record.resolution}")
+    if not bits:
+        return False
+
+    # Fill local assignment only if empty — never overwrite a staff assignment.
+    if record.assigned_to and not sr.assigned_to:
+        sr.assigned_to = record.assigned_to[:100]
+
+    from app.models import RequestComment
+    summary = f"[{integration.display_name}] Work order update — " + "; ".join(bits)
+    # De-dupe: skip if the most recent integration note is identical.
+    last = (await db.execute(
+        select(RequestComment).where(
+            RequestComment.service_request_id == sr.id,
+            RequestComment.username == integration.display_name,
+        ).order_by(RequestComment.id.desc()).limit(1)
+    )).scalar_one_or_none()
+    if last and last.content == summary:
+        return False
+    db.add(RequestComment(
+        service_request_id=sr.id,
+        username=integration.display_name,
+        content=summary,
+        visibility="internal",
+    ))
+    return True
 
 
 def _decode_media(sr: ServiceRequest, max_items: int = 3):
@@ -234,7 +299,9 @@ def push_request_to_integrations(self, request_id: int):
                     )
                     if "push" not in connector.capabilities:
                         continue
-                    record = await connector.push_request(_build_payload(sr, integration.config or {}))
+                    record = await connector.push_request(
+                        _build_payload(sr, integration.config or {}, await _dept_name(db, sr))
+                    )
                     link = IntegrationLink(
                         integration_id=integration.id,
                         service_request_id=sr.id,
@@ -345,20 +412,32 @@ def pull_integration_updates():
                         link.last_pulled_at = datetime.utcnow()
                         if record.raw_status and record.raw_status != link.external_status:
                             link.external_status = record.raw_status
-                        if not record.status:
-                            continue
                         sr = (await db.execute(
                             select(ServiceRequest).where(ServiceRequest.id == link.service_request_id)
                         )).scalar_one_or_none()
-                        if not sr or sr.status == record.status:
+                        if not sr:
+                            continue
+
+                        # Reflect work-order fields (assignment/schedule/
+                        # resolution) as an internal timeline note — these often
+                        # change without a status change, so do it first.
+                        if await _apply_work_order_fields(db, sr, record, integration):
+                            updated += 1
+
+                        # Status change (if any)
+                        if not record.status or sr.status == record.status:
                             continue
                         old_status = sr.status
                         sr.status = record.status
                         sr.updated_datetime = datetime.utcnow()
                         if record.status == "closed":
                             sr.closed_datetime = datetime.utcnow()
-                            if record.status_notes:
+                            if record.resolution and not sr.completion_message:
+                                sr.completion_message = record.resolution
+                            elif record.status_notes:
                                 sr.completion_message = record.status_notes
+                            if not sr.closed_substatus:
+                                sr.closed_substatus = "resolved"
                         db.add(RequestAuditLog(
                             service_request_id=sr.id,
                             action="status_change",
@@ -388,6 +467,71 @@ def pull_integration_updates():
             await db.commit()
 
     run_async(_pull())
+
+
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
+def refresh_request_from_integrations(self, request_id: int):
+    """On-demand: pull the latest work-order state for ONE request from each
+    platform it's linked to (uses the connector's fetch_record). Lets staff hit
+    "Refresh work order" and see current assignment/schedule/status without
+    waiting for the scheduled pull. Returns a small summary dict."""
+    from app.integrations import build_connector
+
+    async def _refresh():
+        applied = 0
+        async with SessionLocal() as db:
+            sr = (await db.execute(
+                select(ServiceRequest).where(ServiceRequest.id == request_id)
+            )).scalar_one_or_none()
+            if not sr:
+                return {"ok": False, "detail": "Request not found"}
+
+            links = (await db.execute(
+                select(IntegrationLink).where(IntegrationLink.service_request_id == sr.id)
+            )).scalars().all()
+            for link in links:
+                integration = (await db.execute(
+                    select(IntegrationConfig).where(
+                        IntegrationConfig.id == link.integration_id,
+                        IntegrationConfig.enabled == True,  # noqa: E712
+                    )
+                )).scalar_one_or_none()
+                if not integration:
+                    continue
+                try:
+                    connector = build_connector(
+                        integration.platform, integration.config or {}, integration.credentials
+                    )
+                    record = await connector.fetch_record(link.external_id)
+                    if not record:
+                        continue
+                    if record.raw_status and record.raw_status != link.external_status:
+                        link.external_status = record.raw_status
+                    link.last_pulled_at = datetime.utcnow()
+                    if await _apply_work_order_fields(db, sr, record, integration):
+                        applied += 1
+                    if record.status and record.status != sr.status:
+                        old = sr.status
+                        sr.status = record.status
+                        sr.updated_datetime = datetime.utcnow()
+                        if record.status == "closed":
+                            sr.closed_datetime = datetime.utcnow()
+                            if record.resolution and not sr.completion_message:
+                                sr.completion_message = record.resolution
+                            if not sr.closed_substatus:
+                                sr.closed_substatus = "resolved"
+                        db.add(RequestAuditLog(
+                            service_request_id=sr.id, action="status_change",
+                            old_value=old, new_value=record.status,
+                            actor_type="integration", actor_name=integration.display_name,
+                        ))
+                        applied += 1
+                except Exception as e:
+                    logger.warning(f"[Integrations] Refresh from {integration.platform} failed: {e}")
+            await db.commit()
+        return {"ok": True, "applied": applied}
+
+    return run_async(_refresh())
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=60)

@@ -4,7 +4,7 @@ import {
     Landmark, CheckCircle, AlertCircle, ExternalLink, RefreshCw,
     Plug, Trash2, Copy, Check, Mail, ClipboardList, Loader2, ArrowLeft,
     ChevronDown, ChevronUp, PartyPopper, Sparkles, Search,
-    ArrowUpRight, ArrowDownLeft, MessageSquare, Image as ImageIcon, MapPin,
+    ArrowUpRight, ArrowDownLeft, MessageSquare, Image as ImageIcon, MapPin, ClipboardCheck,
 } from 'lucide-react';
 
 import { Button, Modal } from './ui';
@@ -28,6 +28,7 @@ const CAPABILITY_CHIPS: { key: string; label: string; icon: typeof Sparkles }[] 
     { key: 'comments', label: 'Comments', icon: MessageSquare },
     { key: 'documents', label: 'Photos & files', icon: ImageIcon },
     { key: 'assets', label: 'Assets → map', icon: MapPin },
+    { key: 'work_orders', label: 'Work orders', icon: ClipboardCheck },
 ];
 
 const SYNC_CHOICES = (name: string) => [
