@@ -100,8 +100,15 @@ async def bootstrap_township(
 
     onboarding_link = None
     if admin_user:
+        # Single-purpose + single-use: get_current_user rejects purpose-bearing
+        # tokens, so this link is only redeemable at /api/auth/onboarding/redeem
+        # (which burns the jti).
         token = create_access_token(
-            data={"sub": admin_user.username, "purpose": "onboarding"},
+            data={
+                "sub": admin_user.username,
+                "purpose": "onboarding",
+                "jti": pysecrets.token_hex(16),
+            },
             expires_delta=timedelta(hours=ONBOARDING_LINK_TTL_HOURS),
         )
         host = settings_row.custom_domain or "localhost"

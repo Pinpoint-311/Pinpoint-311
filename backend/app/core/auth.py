@@ -61,7 +61,16 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
         )
-    
+
+    # Single-purpose tokens (e.g. purpose="onboarding" links minted by the
+    # provisioning API) are not session tokens — they must be redeemed at
+    # their dedicated endpoint, never used directly against the API.
+    if payload.get("purpose"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Single-purpose token cannot be used for API access",
+        )
+
     result = await db.execute(select(User).where(User.username == username))
     user = result.scalar_one_or_none()
     
