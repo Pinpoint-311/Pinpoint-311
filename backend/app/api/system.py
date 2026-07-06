@@ -2581,8 +2581,10 @@ async def create_backup_endpoint(
     _: User = Depends(get_current_admin)
 ):
     """Trigger a manual database backup"""
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Backup management")  # state-run DR in hosted mode (A1)
     from app.services.backup_service import create_backup
-    
+
     result = await create_backup()
     if result["status"] == "error":
         raise HTTPException(status_code=500, detail="Backup failed")
@@ -2596,6 +2598,8 @@ async def cleanup_backups_endpoint(
     _: User = Depends(get_current_admin)
 ):
     """Clean up old backups based on retention policy"""
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Backup management")
     from app.services.backup_service import cleanup_old_backups
     return await cleanup_old_backups(retention_days)
 
@@ -2606,8 +2610,10 @@ async def delete_backup_endpoint(
     _: User = Depends(get_current_admin)
 ):
     """Delete a specific backup"""
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Backup management")
     from app.services.backup_service import delete_backup
-    
+
     result = await delete_backup(backup_name)
     if result["status"] == "error":
         raise HTTPException(status_code=500, detail="Delete failed")
@@ -2627,6 +2633,8 @@ async def restore_backup_endpoint(
     WARNING: This will overwrite the current database!
     You must pass confirm=true to proceed.
     """
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Backup restore")
     if not confirm:
         raise HTTPException(
             status_code=400, 
