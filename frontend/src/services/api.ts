@@ -494,6 +494,13 @@ class ApiClient {
         return this.request<IntegrationSyncLog[]>(`/integrations/${id}/logs`);
     }
 
+    // Pull the latest work-order state for one request from its linked platforms
+    async refreshRequestWorkOrder(requestId: string): Promise<{ ok: boolean; detail: string }> {
+        return this.request<{ ok: boolean; detail: string }>(
+            `/integrations/requests/${requestId}/refresh`, { method: 'POST' }
+        );
+    }
+
     // Service providers (AI / translation / identity)
     async getProviderCatalog(capability: 'ai' | 'translation' | 'identity'): Promise<ProviderCatalog> {
         return this.request<ProviderCatalog>(`/system/${capability}/catalog`);

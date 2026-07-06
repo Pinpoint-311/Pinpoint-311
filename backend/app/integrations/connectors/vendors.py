@@ -107,3 +107,41 @@ class PolimorphicConnector(GenericRestConnector):
     def __init__(self, config, credentials):
         config = {"auth_style": "bearer", **(config or {})}
         super().__init__(config, credentials)
+
+
+class CityworksConnector(GenericRestConnector):
+    """Trimble Cityworks — the dominant public-works work-order & asset
+    management system (AMS/PLL).
+
+    Cityworks exposes a token-based REST API. Reports become Cityworks work
+    orders; the connector maps the work-order lifecycle (assignment, schedule,
+    status, resolution) back into Pinpoint. Ships with Cityworks-oriented field
+    defaults that remain configurable to your instance — run the connection
+    check to confirm your endpoints.
+    """
+    platform = "cityworks"
+
+    def __init__(self, config, credentials):
+        config = {
+            "auth_style": "bearer",
+            "field_map": {
+                "service_request_id": "SourceId",
+                "description": "Description",
+                "address": "Address",
+                "priority": "Priority",
+                "assigned_to": "AssignedTo",
+                "assigned_department": "WorkOrderCategory",
+                "due_date": "ProjectedFinishDate",
+            },
+            "id_field": "WorkOrderId",
+            "status_field": "Status",
+            "work_order_id_field": "WorkOrderId",
+            "priority_field": "Priority",
+            "assigned_to_field": "AssignedTo",
+            "assigned_department_field": "WorkOrderCategory",
+            "scheduled_date_field": "ScheduledDate",
+            "due_date_field": "ProjectedFinishDate",
+            "resolution_field": "ClosedComments",
+            **(config or {}),
+        }
+        super().__init__(config, credentials)

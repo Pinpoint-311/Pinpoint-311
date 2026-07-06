@@ -308,6 +308,32 @@ async def trigger_asset_sync(
     return {"message": "Asset sync started", "platform": integration.platform}
 
 
+@router.post("/requests/{request_id}/refresh")
+@limiter.limit("20/minute")
+async def refresh_request_work_order(
+    request: Request,
+    request_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_staff),
+):
+    """Pull the latest work-order state (assignment, schedule, status,
+    resolution) for a single request from every platform it's linked to.
+    Staff-triggered on-demand refresh — complements the scheduled pull."""
+    sr = (await db.execute(
+        select(ServiceRequest).where(ServiceRequest.service_request_id == request_id)
+    )).scalar_one_or_none()
+    if not sr:
+        raise HTTPException(status_code=404, detail="Request not found")
+    links = (await db.execute(
+        select(IntegrationLink).where(IntegrationLink.service_request_id == sr.id)
+    )).scalars().all()
+    if not links:
+        return {"ok": False, "detail": "This request isn't linked to any external platform."}
+    from app.tasks.integrations import refresh_request_from_integrations
+    refresh_request_from_integrations.delay(sr.id)
+    return {"ok": True, "detail": "Refreshing the latest work-order status — updates appear on the request in a moment."}
+
+
 @router.get("/{integration_id}/logs")
 async def get_sync_logs(
     integration_id: int,
