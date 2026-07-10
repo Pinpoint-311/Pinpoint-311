@@ -183,7 +183,8 @@ class ConnectorError(Exception):
 
 @dataclass
 class ExternalRecord:
-    """Normalized view of a service request as it exists on an external platform."""
+    """Normalized view of a service request / work order as it exists on an
+    external platform."""
     external_id: str
     status: Optional[str] = None          # Normalized: open, in_progress, closed
     raw_status: Optional[str] = None      # The platform's native status string
@@ -196,6 +197,18 @@ class ExternalRecord:
     address: Optional[str] = None
     lat: Optional[float] = None
     long: Optional[float] = None
+    # ---- Work-order fields (capability "work_orders") ----
+    # A work-order management system (Accela, Cityworks, Edmunds MCSJ, SDL, …)
+    # owns dispatch: who it's assigned to, when it's scheduled/due, and how it
+    # was resolved. These flow back into Pinpoint as timeline updates so staff
+    # see the full work-order lifecycle without leaving the request.
+    work_order_id: Optional[str] = None       # vendor's WO number (distinct from record id)
+    priority: Optional[str] = None            # vendor priority label/number
+    assigned_to: Optional[str] = None         # crew / technician / user
+    assigned_department: Optional[str] = None # division / department / queue
+    scheduled_datetime: Optional[datetime] = None
+    due_datetime: Optional[datetime] = None
+    resolution: Optional[str] = None          # how the work order was closed out
 
 
 @dataclass
@@ -219,7 +232,12 @@ class BaseConnector:
     """Abstract base for platform connectors."""
 
     platform: str = "base"
-    # What this connector supports: subset of {"push", "push_status", "pull", "test"}
+    # What this connector supports: subset of
+    #   {"push", "push_status", "pull", "comments", "documents", "assets",
+    #    "work_orders", "test"}
+    # "work_orders" means pull_updates / fetch_record populate the work-order
+    # fields on ExternalRecord (assignment, schedule, resolution) and push
+    # carries assignment/priority outbound.
     capabilities = {"test"}
 
     def __init__(self, config: Dict[str, Any], credentials: Dict[str, Any]):

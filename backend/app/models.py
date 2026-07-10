@@ -351,6 +351,23 @@ class RequestAuditLog(Base):
     service_request = relationship("ServiceRequest", backref="audit_logs")
 
 
+class AuditAnchor(Base):
+    """Append-only anchor of the request-audit hash-chain head.
+
+    The HMAC chain detects tampering *within* the DB, but an attacker with full
+    DB write access could rewrite the chain and re-anchor it. Periodically
+    recording the chain head here AND emitting it to the application log (which
+    ships to external aggregation in hosted mode) means the head at each point
+    in time also lives outside this table — so a silent full-history rewrite
+    would have to defeat the external log too. Never updated or deleted."""
+    __tablename__ = "audit_anchors"
+
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), default=datetime.utcnow)
+    head_hash = Column(String(64))   # latest RequestAuditLog.entry_hash at anchor time
+    entry_count = Column(Integer)    # number of hashed entries at anchor time
+
+
 def _canonical_request_audit(action, old_value, new_value, actor_type,
                              actor_name, created_at, extra_data, previous_hash) -> str:
     """Deterministic serialization of a request-audit row for hashing."""
@@ -725,6 +742,9 @@ class IntegrationLink(Base):
     pushed_comment_ids = Column(JSON, default=list)
     # Whether local media/documents were uploaded to the external record
     documents_pushed = Column(Boolean, default=False)
+    # How many media items have been pushed — lets photos added after the
+    # initial push sync on a later run (push only media beyond this count).
+    documents_pushed_count = Column(Integer, default=0)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

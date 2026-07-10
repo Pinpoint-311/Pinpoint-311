@@ -38,9 +38,19 @@ class Settings(BaseSettings):
     # Application
     app_name: str = "Township 311"
     debug: bool = False
-    
+    # Build/version stamp (set by the image build; surfaced on /health for the
+    # orchestrator to detect drift and gate rollouts).
+    app_version: str = "dev"
+    git_sha: str = "unknown"
+
     # Demo mode - single shared demo environment
     demo_mode: bool = False
+
+    # Managed (state-hosted) mode: when true, this instance is run by an
+    # orchestrator/control plane. Platform-owned settings (infra, backups,
+    # domain) and the in-app self-update are locked; the panel manages them.
+    # Off = fully self-contained single-tenant behavior (unchanged default).
+    managed_mode: bool = False
 
     class Config:
         env_file = ".env"

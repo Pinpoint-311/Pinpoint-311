@@ -49,19 +49,30 @@ DEFAULT_FIELD_MAP = {
     "phone": "phone",
     "media_urls": "attachments",
     "requested_datetime": "submitted_at",
+    # Work-order fields carried outbound so a WOMS can open a proper work order
+    "priority": "priority",
+    "assigned_to": "assigned_to",
+    "assigned_department": "department",
+    "due_date": "due_date",
 }
 
 
 class GenericRestConnector(BaseConnector):
     platform = "generic_rest"
-    capabilities = {"test", "push", "push_status", "pull", "comments", "documents", "assets"}
+    capabilities = {"test", "push", "push_status", "pull", "comments", "documents", "assets", "work_orders"}
 
     DEFAULT_STATUS_MAP_OUT = {"open": "open", "in_progress": "in_progress", "closed": "closed"}
     DEFAULT_STATUS_MAP_IN = {
-        "open": "open", "new": "open", "submitted": "open", "received": "open",
+        "open": "open", "new": "open", "submitted": "open", "received": "open", "created": "open",
+        # Work-order lifecycle states → in progress
         "in_progress": "in_progress", "in progress": "in_progress",
         "assigned": "in_progress", "acknowledged": "in_progress", "pending": "in_progress",
+        "scheduled": "in_progress", "dispatched": "in_progress", "en_route": "in_progress",
+        "en route": "in_progress", "on_hold": "in_progress", "on hold": "in_progress",
+        "active": "in_progress", "started": "in_progress", "working": "in_progress",
+        # Terminal states → closed
         "closed": "closed", "resolved": "closed", "complete": "closed", "completed": "closed",
+        "cancelled": "closed", "canceled": "closed", "done": "closed", "finished": "closed",
     }
 
     @property
@@ -114,6 +125,22 @@ class GenericRestConnector(BaseConnector):
             return item.get(field_map.get(ours) or fallback)
         lat = theirs("lat", "latitude")
         lng = theirs("long", "longitude")
+
+        # Work-order fields are read from dedicated, per-vendor field-name keys
+        # (distinct from the outbound field_map) so a WOMS's own column names map cleanly.
+        def _wo_str(cfg_key: str, default_field: str):
+            v = item.get(self.config.get(cfg_key, default_field))
+            return str(v) if v is not None else None
+
+        def _wo_dt(cfg_key: str, default_field: str):
+            v = item.get(self.config.get(cfg_key, default_field))
+            if not v:
+                return None
+            try:
+                return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+            except ValueError:
+                return None
+
         return ExternalRecord(
             external_id=str(item.get(id_field) or ""),
             status=self.map_status_in(raw_status) if raw_status is not None else None,
@@ -124,6 +151,14 @@ class GenericRestConnector(BaseConnector):
             address=theirs("address", "address"),
             lat=float(lat) if lat is not None else None,
             long=float(lng) if lng is not None else None,
+            # Work-order fields (configurable vendor field names)
+            work_order_id=_wo_str("work_order_id_field", "work_order_id"),
+            priority=_wo_str("priority_field", "priority"),
+            assigned_to=_wo_str("assigned_to_field", "assigned_to"),
+            assigned_department=_wo_str("assigned_department_field", "department"),
+            scheduled_datetime=_wo_dt("scheduled_date_field", "scheduled_date"),
+            due_datetime=_wo_dt("due_date_field", "due_date"),
+            resolution=_wo_str("resolution_field", "resolution"),
             raw=item,
         )
 

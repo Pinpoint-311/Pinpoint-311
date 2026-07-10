@@ -1,0 +1,27 @@
+name: Backend tests
+
+on:
+  push:
+    branches: [main]
+    paths: ["backend/**", ".github/workflows/backend-tests.yml"]
+  pull_request:
+    paths: ["backend/**", ".github/workflows/backend-tests.yml"]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        # The security/integration logic tests are self-contained (no DB); they
+        # need only the crypto + HTTP libraries plus pytest.
+        run: pip install cryptography httpx pytest pytest-asyncio
+      - name: Run tests
+        run: python -m pytest tests/ -q
