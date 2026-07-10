@@ -12,6 +12,153 @@ interface SpatialBiasHeatmapProps {
 
 type HeatmapMode = 'reports' | 'reporters' | 'bias';
 
+// Color gradients per mode (low → white-hot). Index 0 is transparent.
+const GRADIENTS: Record<HeatmapMode, string[]> = {
+    reports: [
+        'rgba(0, 0, 0, 0)',
+        'rgba(99, 102, 241, 0.4)',   // indigo
+        'rgba(139, 92, 246, 0.6)',    // purple
+        'rgba(236, 72, 153, 0.7)',    // pink
+        'rgba(239, 68, 68, 0.8)',     // red
+        'rgba(245, 158, 11, 0.9)',    // amber
+        'rgba(255, 255, 255, 1)',     // white hot
+    ],
+    reporters: [
+        'rgba(0, 0, 0, 0)',
+        'rgba(16, 185, 129, 0.3)',    // emerald
+        'rgba(34, 197, 94, 0.5)',     // green
+        'rgba(132, 204, 22, 0.6)',    // lime
+        'rgba(234, 179, 8, 0.7)',     // yellow
+        'rgba(249, 115, 22, 0.8)',    // orange
+        'rgba(255, 255, 255, 1)',
+    ],
+    bias: [
+        'rgba(0, 0, 0, 0)',
+        'rgba(99, 102, 241, 0.4)',
+        'rgba(139, 92, 246, 0.6)',
+        'rgba(236, 72, 153, 0.7)',
+        'rgba(239, 68, 68, 0.8)',
+        'rgba(245, 158, 11, 0.9)',
+        'rgba(255, 255, 255, 1)',
+    ],
+};
+
+// Build a 256-entry RGBA lookup table from gradient stops.
+function buildPalette(stops: string[]): Uint8ClampedArray {
+    const c = document.createElement('canvas');
+    c.width = 256;
+    c.height = 1;
+    const g = c.getContext('2d')!;
+    const grad = g.createLinearGradient(0, 0, 256, 0);
+    stops.forEach((s, i) => grad.addColorStop(i / (stops.length - 1), s));
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 256, 1);
+    return g.getImageData(0, 0, 256, 1).data;
+}
+
+/**
+ * Canvas heatmap rendered as a Google Maps OverlayView.
+ *
+ * Replaces google.maps.visualization.HeatmapLayer, which was removed from the
+ * Maps JavaScript API in v3.65. Uses the well-known intensity-accumulation
+ * technique (radial alpha gradients per point → colorize the alpha channel
+ * through a gradient palette), so it needs no deprecated library and no extra
+ * dependency, and keeps the same look.
+ */
+function createHeatmapOverlay(
+    map: google.maps.Map,
+    getPoints: () => { lat: number; lng: number; weight: number }[],
+    getGradient: () => string[],
+    radius: number,
+    opacity: number,
+) {
+    class HeatmapOverlay extends google.maps.OverlayView {
+        private canvas: HTMLCanvasElement | null = null;
+
+        onAdd() {
+            const canvas = document.createElement('canvas');
+            canvas.style.position = 'absolute';
+            canvas.style.pointerEvents = 'none';
+            this.canvas = canvas;
+            this.getPanes()!.overlayLayer.appendChild(canvas);
+        }
+
+        onRemove() {
+            this.canvas?.parentNode?.removeChild(this.canvas);
+            this.canvas = null;
+        }
+
+        redraw() {
+            this.draw();
+        }
+
+        draw() {
+            const proj = this.getProjection();
+            const canvas = this.canvas;
+            if (!proj || !canvas) return;
+            const bounds = map.getBounds();
+            if (!bounds) return;
+
+            // Position the canvas over the current viewport in the pane's
+            // (div-pixel) coordinate space — the same space fromLatLngToDivPixel
+            // returns, so points line up exactly.
+            const ne = proj.fromLatLngToDivPixel(bounds.getNorthEast());
+            const sw = proj.fromLatLngToDivPixel(bounds.getSouthWest());
+            if (!ne || !sw) return;
+            const left = Math.min(ne.x, sw.x);
+            const top = Math.min(ne.y, sw.y);
+            const width = Math.max(1, Math.round(Math.abs(ne.x - sw.x)));
+            const height = Math.max(1, Math.round(Math.abs(ne.y - sw.y)));
+
+            canvas.style.left = `${left}px`;
+            canvas.style.top = `${top}px`;
+            canvas.width = width;
+            canvas.height = height;
+
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            ctx.clearRect(0, 0, width, height);
+
+            const points = getPoints();
+            if (!points.length) return;
+
+            // Pass 1: accumulate intensity as grayscale alpha.
+            for (const p of points) {
+                const px = proj.fromLatLngToDivPixel(new google.maps.LatLng(p.lat, p.lng));
+                if (!px) continue;
+                const x = px.x - left;
+                const y = px.y - top;
+                if (x < -radius || x > width + radius || y < -radius || y > height + radius) continue;
+                const a = Math.max(0.08, Math.min(1, p.weight || 0.5));
+                const grad = ctx.createRadialGradient(x, y, 0, x, y, radius);
+                grad.addColorStop(0, `rgba(0,0,0,${a})`);
+                grad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+            }
+
+            // Pass 2: map the accumulated alpha through the color palette.
+            const palette = buildPalette(getGradient());
+            const img = ctx.getImageData(0, 0, width, height);
+            const d = img.data;
+            for (let i = 0; i < d.length; i += 4) {
+                const alpha = d[i + 3];
+                if (alpha === 0) continue;
+                const off = alpha * 4;
+                d[i] = palette[off];
+                d[i + 1] = palette[off + 1];
+                d[i + 2] = palette[off + 2];
+                d[i + 3] = Math.round(Math.min(255, alpha) * opacity);
+            }
+            ctx.putImageData(img, 0, 0);
+        }
+    }
+
+    const overlay = new HeatmapOverlay();
+    overlay.setMap(map);
+    return overlay as google.maps.OverlayView & { redraw: () => void };
+}
+
 export default function SpatialBiasHeatmap({
     heatmapData,
     hotspots,
@@ -21,7 +168,7 @@ export default function SpatialBiasHeatmap({
 }: SpatialBiasHeatmapProps) {
     const mapRef = useRef<HTMLDivElement>(null);
     const mapInstanceRef = useRef<google.maps.Map | null>(null);
-    const heatmapLayerRef = useRef<google.maps.visualization.HeatmapLayer | null>(null);
+    const heatmapOverlayRef = useRef<(google.maps.OverlayView & { redraw: () => void }) | null>(null);
     const biasMarkersRef = useRef<google.maps.Marker[]>([]);
     const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
 
@@ -30,59 +177,31 @@ export default function SpatialBiasHeatmap({
     const [mode, setMode] = useState<HeatmapMode>('reports');
     const [showHotspotOverlay, setShowHotspotOverlay] = useState(true);
 
-    // Load Google Maps with visualization library
+    // Load Google Maps (core only — no deprecated visualization library).
     useEffect(() => {
         if (!apiKey) {
             setIsLoading(false);
             return;
         }
+        const start = () => setTimeout(() => initMap(), 100);
 
-        const ensureVisualization = async () => {
-            // Case 1: Already fully loaded
-            if (window.google?.maps?.visualization) {
-                setTimeout(() => initMap(), 100);
-                return;
-            }
-
-            // Case 2: Maps loaded but missing visualization — use importLibrary
-            if (window.google?.maps?.importLibrary) {
-                try {
-                    await window.google.maps.importLibrary('visualization');
-                    setTimeout(() => initMap(), 100);
-                    return;
-                } catch {
-                    // Fall through to script loading
-                }
-            }
-
-            // Case 3: Maps not loaded at all — load fresh with visualization
-            if (!window.google?.maps) {
-                const script = document.createElement('script');
-                script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places,visualization&loading=async`;
-                script.async = true;
-                script.onload = () => setTimeout(() => initMap(), 200);
-                script.onerror = () => setIsLoading(false);
-                document.head.appendChild(script);
-                return;
-            }
-
-            // Case 4: Maps loaded but importLibrary not available (older API version)
-            // Poll for visualization to become available (other scripts may load it)
-            let attempts = 0;
-            const poll = setInterval(() => {
-                attempts++;
-                if (window.google?.maps?.visualization) {
-                    clearInterval(poll);
-                    setTimeout(() => initMap(), 100);
-                } else if (attempts > 30) {
-                    clearInterval(poll);
-                    // Initialize map anyway — heatmap just won't render
-                    initMap();
-                }
-            }, 200);
-        };
-
-        ensureVisualization();
+        if (window.google?.maps) {
+            start();
+            return;
+        }
+        const existing = document.querySelector<HTMLScriptElement>('script[data-gmaps-loader]');
+        if (existing) {
+            existing.addEventListener('load', start);
+            return;
+        }
+        const script = document.createElement('script');
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&loading=async`;
+        script.async = true;
+        script.dataset.gmapsLoader = '1';
+        script.onload = start;
+        script.onerror = () => setIsLoading(false);
+        document.head.appendChild(script);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [apiKey]);
 
     const initMap = useCallback(() => {
@@ -124,73 +243,34 @@ export default function SpatialBiasHeatmap({
         setMapReady(true);
     }, [defaultCenter]);
 
-    // Update heatmap layer when mode or data changes
+    // Render / refresh the custom canvas heatmap when mode or data changes.
     useEffect(() => {
-        if (!mapInstanceRef.current || !mapReady || !window.google?.maps?.visualization) return;
-        if (!heatmapData) return;
+        if (!mapInstanceRef.current || !mapReady || !window.google?.maps) return;
 
         const map = mapInstanceRef.current;
+        const points = (mode === 'reporters' ? heatmapData?.reporter_points : heatmapData?.report_points) || [];
 
-        // Clear existing heatmap
-        if (heatmapLayerRef.current) {
-            heatmapLayerRef.current.setMap(null);
+        // Recreate the overlay for the current mode/data (avoids stale closures).
+        if (heatmapOverlayRef.current) {
+            heatmapOverlayRef.current.setMap(null);
+            heatmapOverlayRef.current = null;
         }
+        if (!points.length) return;
 
-        const points = mode === 'reporters' ? heatmapData.reporter_points : heatmapData.report_points;
-        if (!points || points.length === 0) return;
-
-        const heatmapPoints = points.map(p => ({
-            location: new window.google.maps.LatLng(p.lat, p.lng),
-            weight: p.weight,
-        }));
-
-        // Color gradients per mode
-        const gradients: Record<HeatmapMode, string[]> = {
-            reports: [
-                'rgba(0, 0, 0, 0)',
-                'rgba(99, 102, 241, 0.4)',   // indigo
-                'rgba(139, 92, 246, 0.6)',    // purple
-                'rgba(236, 72, 153, 0.7)',    // pink
-                'rgba(239, 68, 68, 0.8)',     // red
-                'rgba(245, 158, 11, 0.9)',    // amber
-                'rgba(255, 255, 255, 1)',     // white hot
-            ],
-            reporters: [
-                'rgba(0, 0, 0, 0)',
-                'rgba(16, 185, 129, 0.3)',    // emerald
-                'rgba(34, 197, 94, 0.5)',     // green
-                'rgba(132, 204, 22, 0.6)',    // lime
-                'rgba(234, 179, 8, 0.7)',     // yellow
-                'rgba(249, 115, 22, 0.8)',    // orange
-                'rgba(255, 255, 255, 1)',
-            ],
-            bias: [
-                'rgba(0, 0, 0, 0)',
-                'rgba(99, 102, 241, 0.4)',
-                'rgba(139, 92, 246, 0.6)',
-                'rgba(236, 72, 153, 0.7)',
-                'rgba(239, 68, 68, 0.8)',
-                'rgba(245, 158, 11, 0.9)',
-                'rgba(255, 255, 255, 1)',
-            ],
-        };
-
-        const heatmap = new window.google.maps.visualization.HeatmapLayer({
-            data: heatmapPoints,
+        const radius = mode === 'reporters' ? 30 : 25;
+        heatmapOverlayRef.current = createHeatmapOverlay(
             map,
-            radius: mode === 'reporters' ? 30 : 25,
-            opacity: 0.8,
-            gradient: gradients[mode],
-        });
+            () => points,
+            () => GRADIENTS[mode],
+            radius,
+            0.85,
+        );
 
-        heatmapLayerRef.current = heatmap;
-
-        // Auto-fit bounds to data
-        if (points.length > 0) {
-            const bounds = new window.google.maps.LatLngBounds();
-            points.forEach(p => bounds.extend(new window.google.maps.LatLng(p.lat, p.lng)));
-            map.fitBounds(bounds, 50);
-        }
+        // Auto-fit bounds to the data.
+        const bounds = new window.google.maps.LatLngBounds();
+        points.forEach(p => bounds.extend(new window.google.maps.LatLng(p.lat, p.lng)));
+        map.fitBounds(bounds, 50);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [mode, heatmapData, mapReady]);
 
     // Hotspot bias markers overlay
@@ -364,11 +444,6 @@ export default function SpatialBiasHeatmap({
                 {(isLoading || externalLoading) && (
                     <div className="absolute inset-0 flex items-center justify-center bg-slate-900 z-10">
                         <div className="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
-                    </div>
-                )}
-                {!window.google?.maps?.visualization && mapReady && (
-                    <div className="absolute top-2 left-2 right-2 z-10 bg-amber-500/20 border border-amber-500/30 rounded-lg p-2 text-xs text-amber-300 text-center">
-                        Visualization library loading... Heatmap will appear shortly.
                     </div>
                 )}
                 <div ref={mapRef} className="w-full h-full" />
