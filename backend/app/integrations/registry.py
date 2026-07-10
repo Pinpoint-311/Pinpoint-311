@@ -12,6 +12,7 @@ from app.integrations.connectors.accela import AccelaConnector
 from app.integrations.connectors.open311 import Open311Connector
 from app.integrations.connectors.seeclickfix import SeeClickFixConnector
 from app.integrations.connectors.vendors import (
+    CityworksConnector,
     EdmundsConnector,
     FastTrackGovConnector,
     GovPilotConnector,
@@ -33,7 +34,7 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "integration_mode": "sandbox",
         "docs_url": "https://github.com/Pinpoint-311/Pinpoint-311/blob/main/docs/INTEGRATIONS.md",
         "description": "A pretend town system built into Pinpoint. Connect it to watch reports, photos, comments, status changes, and assets flow both ways — then disconnect when you're done.",
-        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "test"],
+        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "work_orders", "test"],
         "credential_fields": [],
         "config_fields": [
             # NOTE: no base_url field — the sandbox address is pinned server-side
@@ -50,7 +51,7 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "integration_mode": "public_api",
         "docs_url": "https://developer.accela.com",
         "description": "Full two-way sync with Accela Civic Platform via the Construct API v4: records, status, comments, photo attachments, and asset inventory sync into Pinpoint map layers.",
-        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "test"],
+        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "work_orders", "test"],
         "credential_fields": [
             {"key": "client_id", "label": "Client ID", "secret": False},
             {"key": "client_secret", "label": "Client Secret", "secret": True},
@@ -110,7 +111,7 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "integration_mode": "partner_api",
         "docs_url": "https://www.spatialdatalogic.com",
         "description": "Prebuilt two-way connector for SDL's customer REST API: requests, status, comments, photo attachments, and asset sync. Ships with sensible endpoint defaults that are configurable to your tenant — run the connection check to confirm your endpoints.",
-        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "test"],
+        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "work_orders", "test"],
         "credential_fields": [
             {"key": "api_key", "label": "SDL API Key", "secret": True},
         ],
@@ -126,7 +127,7 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "integration_mode": "partner_api",
         "docs_url": "https://edmundsgovtech.com",
         "description": "Prebuilt two-way connector for MCSJ work orders via the Edmunds web-service interface: requests, status, comments, attachments, and asset sync. Endpoint paths are configurable to your tenant — run the connection check to confirm.",
-        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "test"],
+        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "work_orders", "test"],
         "credential_fields": [
             {"key": "username", "label": "Service Username", "secret": False},
             {"key": "password", "label": "Service Password", "secret": True},
@@ -143,7 +144,7 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "integration_mode": "partner_api",
         "docs_url": "https://www.govpilot.com",
         "description": "Prebuilt two-way connector for GovPilot's report-a-concern and records modules: requests, status, comments, attachments, and GIS asset sync. Endpoint paths are configurable to your account — run the connection check to confirm.",
-        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "test"],
+        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "work_orders", "test"],
         "credential_fields": [
             {"key": "api_key", "label": "GovPilot API Key", "secret": True},
         ],
@@ -159,7 +160,7 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "integration_mode": "partner_api",
         "docs_url": "https://www.fasttrackgov.com",
         "description": "Prebuilt two-way connector for FastTrackGov cases through the customer API gateway: requests, status, comments, attachments, and asset sync. Endpoint paths are configurable to your gateway — run the connection check to confirm.",
-        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "test"],
+        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "work_orders", "test"],
         "credential_fields": [
             {"key": "api_key", "label": "Subscription Key", "secret": True},
         ],
@@ -183,6 +184,22 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
             {"key": "base_url", "label": "Workspace API URL", "placeholder": "https://api.polimorphic.com/workspaces/yourtown", "required": True},
         ],
         "setup_notes": "Give Polimorphic your Pinpoint inbound webhook URL (shown after connecting) so their AI intake can create requests here, and paste their workspace endpoint + token for outbound sync.",
+    },
+    "cityworks": {
+        "name": "Trimble Cityworks",
+        "vendor": "Trimble (Cityworks AMS / PLL)",
+        "category": "Public works — work order & asset management",
+        "integration_mode": "partner_api",
+        "docs_url": "https://www.cityworks.com",
+        "description": "Prebuilt work-order connector for Trimble Cityworks: resident reports become Cityworks work orders, and the full work-order lifecycle — crew assignment, scheduled/due dates, status, and closeout resolution — syncs back onto the request. Ships with Cityworks field defaults that are configurable to your instance; run the connection check to confirm your endpoints.",
+        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "work_orders", "test"],
+        "credential_fields": [
+            {"key": "api_key", "label": "Cityworks API Token", "secret": True},
+        ],
+        "config_fields": [
+            {"key": "base_url", "label": "Cityworks API Base URL", "placeholder": "https://cityworks.yourtown.gov/api", "required": True},
+        ],
+        "setup_notes": "Request a Cityworks REST API token from your Cityworks administrator. The connector maps Cityworks work-order fields (WorkOrderId, AssignedTo, Status, ScheduledDate) by default; these are configurable if your instance differs.",
     },
     "open311": {
         "name": "Generic Open311",
@@ -376,6 +393,22 @@ CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
         },
         "recommended_sync_direction": "bidirectional",
     },
+    "cityworks": {
+        "plain_summary": "Reports here become Cityworks work orders. When your crews assign, schedule, and complete the work order in Cityworks, that progress shows up right on the request here.",
+        "what_you_need": [
+            "A Cityworks API token and your Cityworks web address — your Cityworks administrator can provide both",
+        ],
+        "vendor_ask": {
+            "to_hint": "Your Cityworks administrator or Trimble support",
+            "subject": "API access for our 311 system (Pinpoint 311)",
+            "body": "Hello,\n\nWe use Cityworks and are connecting our resident request system (Pinpoint 311) so resident reports become Cityworks work orders automatically and the work-order status flows back.\n\nCould you please send us:\n1. Our Cityworks REST API base URL\n2. An API token with permission to create and read work orders\n3. Any notes if our work-order field names differ from the Cityworks defaults\n\nThank you!",
+        },
+        "field_help": {
+            "api_key": "The Cityworks API token from your administrator.",
+            "base_url": "Paste your Cityworks web address exactly, e.g. https://cityworks.yourtown.gov/api.",
+        },
+        "recommended_sync_direction": "bidirectional",
+    },
     "open311": {
         "plain_summary": "Connects to any system that speaks the Open311 standard — a fallback for vendors not listed above.",
         "what_you_need": [
@@ -411,6 +444,7 @@ _CONNECTOR_CLASSES = {
     "govpilot": GovPilotConnector,
     "fasttrackgov": FastTrackGovConnector,
     "polimorphic": PolimorphicConnector,
+    "cityworks": CityworksConnector,
     "open311": Open311Connector,
 }
 

@@ -32,7 +32,7 @@ DEFAULT_AUTH_BASE = "https://auth.accela.com"
 
 class AccelaConnector(BaseConnector):
     platform = "accela"
-    capabilities = {"test", "push", "push_status", "pull", "comments", "documents", "assets"}
+    capabilities = {"test", "push", "push_status", "pull", "comments", "documents", "assets", "work_orders"}
 
     DEFAULT_STATUS_MAP_OUT = {"open": "Open", "in_progress": "In Progress", "closed": "Closed"}
     DEFAULT_STATUS_MAP_IN = {
@@ -91,12 +91,32 @@ class AccelaConnector(BaseConnector):
                 updated_dt = datetime.fromisoformat(str(updated).replace("Z", "+00:00"))
             except ValueError:
                 pass  # unparseable vendor timestamp — leave as None
+
+        def _text(v):
+            return v.get("text") if isinstance(v, dict) else (str(v) if v is not None else None)
+
+        def _accela_dt(v):
+            if not v:
+                return None
+            try:
+                return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+            except ValueError:
+                return None
+
         return ExternalRecord(
             external_id=str(item.get("id") or item.get("customId") or ""),
             status=self.map_status_in(raw_status),
             raw_status=raw_status,
             status_notes=item.get("statusReason", {}).get("text") if isinstance(item.get("statusReason"), dict) else None,
             updated_at=updated_dt,
+            # Work-order fields from the Accela record
+            work_order_id=str(item.get("customId")) if item.get("customId") else None,
+            priority=_text(item.get("priority")),
+            assigned_to=_text(item.get("assignedUser")) or _text(item.get("assignedTo")),
+            assigned_department=_text(item.get("assignedToDepartment")) or _text(item.get("assignedDepartment")),
+            scheduled_datetime=_accela_dt(item.get("scheduledDate") or item.get("assignedDate")),
+            due_datetime=_accela_dt(item.get("dueDate") or item.get("estimatedDueDate")),
+            resolution=_text(item.get("statusReason")) if self.map_status_in(raw_status) == "closed" else None,
             raw=item,
         )
 
