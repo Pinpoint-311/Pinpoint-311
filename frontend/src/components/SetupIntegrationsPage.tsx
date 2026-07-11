@@ -1324,23 +1324,24 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             {/* GovTech Platform Connections */}
             <GovtechIntegrations />
 
-            {/* Help Link */}
-            <Card className="bg-blue-500/10 border-blue-500/20">
-                <div className="flex items-center gap-3">
-                    <AlertCircle className="w-5 h-5 text-blue-400" />
-                    <p className="text-blue-200/80 text-sm flex-1">
-                        Need help? Check the <strong>System Health</strong> tab to verify your integrations are working correctly.
+            {/* Help Link — dark surface (not the translucent glass-card, whose
+                white veil dropped these blues below AA contrast) with light text. */}
+            <div className="rounded-2xl border border-blue-400/30 bg-blue-950/50 p-5">
+                <div className="flex flex-wrap items-center gap-3">
+                    <AlertCircle className="w-5 h-5 text-blue-300 shrink-0" aria-hidden="true" />
+                    <p className="text-blue-50 text-sm flex-1 min-w-0">
+                        Need help? Check the <strong className="text-white">System Health</strong> tab to verify your integrations are working correctly.
                     </p>
                     <a
                         href="https://github.com/Pinpoint-311/Pinpoint-311/blob/main/docs/SETUP.md"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-blue-400 text-sm hover:underline flex items-center gap-1"
+                        className="text-blue-200 text-sm font-medium hover:text-white hover:underline flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 rounded"
                     >
-                        Setup Docs <ExternalLink className="w-3 h-3" />
+                        Setup Docs <ExternalLink className="w-3 h-3" aria-hidden="true" />
                     </a>
                 </div>
-            </Card>
+            </div>
         </div>
     );
 }

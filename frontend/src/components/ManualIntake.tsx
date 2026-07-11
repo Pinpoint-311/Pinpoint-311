@@ -389,7 +389,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                         </button>
                     </div>
                 </div>
-                <p className="text-white/30 text-[11px] text-right -mt-2">Tip: press ⌘/Ctrl + Enter to log.</p>
+                <p className="text-white/60 text-[11px] text-right -mt-2">Tip: press ⌘/Ctrl + Enter to log.</p>
             </div>
         </Modal>
     );
