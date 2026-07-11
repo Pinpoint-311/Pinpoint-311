@@ -128,6 +128,42 @@ async def list_integrations(
     return [_serialize(i) for i in integrations]
 
 
+async def _mirror_credentials_to_secret_manager(platform: str, credentials: dict) -> None:
+    """Best-effort push of a govtech integration's credentials into the configured
+    Secret Manager (Google Secret Manager / Azure Key Vault), same store used for
+    service-provider keys. The encrypted DB copy on IntegrationConfig remains the
+    canonical read path and fallback, so a Secret Manager outage never blocks a
+    save — this just ensures the secret of record also lives in the vault.
+
+    Keys are namespaced by platform (one integration per platform is enforced),
+    e.g. Accela's api_key becomes INTEGRATION_ACCELA_API_KEY.
+    """
+    if not credentials:
+        return
+    try:
+        from app.services.secret_manager import set_secret, clear_cache
+        from app.core.sanitize import sanitize_for_log
+        prefix = f"INTEGRATION_{platform.upper()}_"
+        wrote = False
+        for key, value in credentials.items():
+            if not value:
+                continue
+            sm_key = f"{prefix}{str(key).upper()}"
+            try:
+                if await set_secret(sm_key, value):
+                    wrote = True
+            except Exception as e:
+                logger.warning(
+                    f"[Integrations] Secret Manager mirror failed for "
+                    f"{sanitize_for_log(sm_key)}: {sanitize_for_log(str(e))}"
+                )
+        if wrote:
+            clear_cache()
+    except Exception as e:  # never let vault issues break a save
+        from app.core.sanitize import sanitize_for_log
+        logger.warning(f"[Integrations] Secret Manager mirror skipped: {sanitize_for_log(str(e))}")
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_integration(
     data: IntegrationCreate,
@@ -151,10 +187,12 @@ async def create_integration(
         config=data.config,
         webhook_token=pysecrets.token_urlsafe(32),
     )
-    integration.credentials = {k: v for k, v in (data.credentials or {}).items() if v}
+    creds = {k: v for k, v in (data.credentials or {}).items() if v}
+    integration.credentials = creds
     db.add(integration)
     await db.commit()
     await db.refresh(integration)
+    await _mirror_credentials_to_secret_manager(integration.platform, creds)
     from app.core.sanitize import sanitize_for_log
     logger.info(f"[Integrations] {sanitize_for_log(current_user.username)} created integration {sanitize_for_log(data.platform)}")
     return _serialize(integration)
@@ -177,17 +215,22 @@ async def update_integration(
         integration.sync_direction = data.sync_direction
     if data.config is not None:
         integration.config = {**(integration.config or {}), **data.config}
+    changed_creds = {}
     if data.credentials:
         merged = integration.credentials
         for key, value in data.credentials.items():
             if value:  # blank means "keep existing"
                 merged[key] = value
+                changed_creds[key] = value
         integration.credentials = merged
 
     integration.updated_at = datetime.utcnow()
     await db.commit()
     await db.refresh(integration)
-    logger.info(f"[Integrations] {current_user.username} updated integration {integration.platform}")
+    if changed_creds:
+        await _mirror_credentials_to_secret_manager(integration.platform, changed_creds)
+    from app.core.sanitize import sanitize_for_log
+    logger.info(f"[Integrations] {sanitize_for_log(current_user.username)} updated integration {sanitize_for_log(integration.platform)}")
     return _serialize(integration)
 
 

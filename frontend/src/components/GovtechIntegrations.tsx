@@ -49,6 +49,10 @@ export default function GovtechIntegrations() {
     const [copied, setCopied] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [query, setQuery] = useState('');
+    // Which connector cards are expanded. With 11 platforms, showing every card
+    // fully expanded is a wall — collapse to a compact row and open on demand.
+    const [openCards, setOpenCards] = useState<Set<string>>(new Set());
+    const initialized = useRef(false);
 
     // Wizard state
     const [wizard, setWizard] = useState<IntegrationPlatform | null>(null);
@@ -73,6 +77,24 @@ export default function GovtechIntegrations() {
     }, []);
 
     useEffect(() => { load(); }, [load]);
+
+    // Once configs first load, auto-expand the connected ones (the cards a clerk
+    // actually manages); leave the rest collapsed. Only runs once so it never
+    // fights a manual toggle.
+    useEffect(() => {
+        if (initialized.current || configs.length === 0) return;
+        initialized.current = true;
+        const connected = configs.filter(c => c.enabled).map(c => c.platform);
+        if (connected.length) setOpenCards(new Set(connected));
+    }, [configs]);
+
+    const toggleCard = (platform: string) => {
+        setOpenCards(prev => {
+            const next = new Set(prev);
+            next.has(platform) ? next.delete(platform) : next.add(platform);
+            return next;
+        });
+    };
 
     const configFor = (platform: string) => configs.find(c => c.platform === platform);
 
@@ -345,6 +367,7 @@ export default function GovtechIntegrations() {
                     const platformLogs = logs[platform.platform];
                     const isWorking = existing?.enabled && existing.last_sync_status !== 'error';
                     const needsAttention = existing?.enabled && existing.last_sync_status === 'error';
+                    const isOpen = openCards.has(platform.platform);
 
                     return (
                         <motion.div
@@ -357,7 +380,13 @@ export default function GovtechIntegrations() {
                             {isWorking && (
                                 <div className="absolute -inset-px rounded-[20px] bg-gradient-to-br from-primary-500/10 via-transparent to-primary-500/5 pointer-events-none" aria-hidden="true" />
                             )}
-                            <div className="relative flex items-start justify-between gap-3">
+                            <button
+                                type="button"
+                                onClick={() => toggleCard(platform.platform)}
+                                aria-expanded={isOpen}
+                                aria-controls={`conn-body-${platform.platform}`}
+                                className="relative w-full flex items-center justify-between gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 rounded-xl"
+                            >
                                 <div className="flex items-center gap-3.5 min-w-0">
                                     <div className="relative shrink-0">
                                         {existing?.enabled && (
@@ -375,7 +404,7 @@ export default function GovtechIntegrations() {
                                         <p className="text-white/45 text-xs truncate">{platform.category}</p>
                                     </div>
                                 </div>
-                                <div className="shrink-0">
+                                <div className="shrink-0 flex items-center gap-2">
                                     {isWorking ? (
                                         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-200 border border-emerald-400/30">
                                             <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400" aria-hidden="true" /> Connected
@@ -391,9 +420,20 @@ export default function GovtechIntegrations() {
                                     ) : (
                                         <span className="text-white/30 text-xs">Not connected</span>
                                     )}
+                                    <motion.span animate={{ rotate: isOpen ? 180 : 0 }} transition={{ duration: 0.3 }} aria-hidden="true" className="text-white/40">
+                                        <ChevronDown className="w-4 h-4" />
+                                    </motion.span>
                                 </div>
-                            </div>
+                            </button>
 
+                            {/* Collapsed preview: mode label so the card is still scannable */}
+                            {!isOpen && (
+                                <span className={`relative inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border mt-3 ${mode.className}`}>
+                                    {mode.label}
+                                </span>
+                            )}
+
+                            <div id={`conn-body-${platform.platform}`} className={isOpen ? 'block' : 'hidden'}>
                             <span className={`relative inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border mt-3 ${mode.className}`}>
                                 {mode.label}
                             </span>
@@ -496,6 +536,7 @@ export default function GovtechIntegrations() {
                                     ))}
                                 </div>
                             )}
+                            </div>
                         </motion.div>
                     );
                 })}
@@ -598,13 +639,21 @@ export default function GovtechIntegrations() {
                                 </div>
                             )}
 
+                            {(() => {
+                                const syncOptions = SYNC_CHOICES(wizard.name).filter(c => c.value === 'bidirectional'
+                                    ? wizard.capabilities.includes('push') && wizard.capabilities.includes('pull')
+                                    : wizard.capabilities.includes(c.value));
+                                // A single possible direction isn't a choice — don't ask. Just
+                                // pin it so the payload is correct and skip the redundant panel.
+                                if (syncOptions.length <= 1) {
+                                    if (syncOptions[0] && syncChoice !== syncOptions[0].value) setSyncChoice(syncOptions[0].value);
+                                    return null;
+                                }
+                                return (
                             <div className="rounded-xl bg-white/[0.04] border border-white/10 p-4">
                                 <h4 className="text-white font-semibold text-sm mb-3">How should the two systems work together?</h4>
                                 <div className="space-y-2" role="radiogroup" aria-label="Sync direction">
-                                    {SYNC_CHOICES(wizard.name)
-                                        .filter(c => c.value === 'bidirectional'
-                                            ? wizard.capabilities.includes('push') && wizard.capabilities.includes('pull')
-                                            : wizard.capabilities.includes(c.value))
+                                    {syncOptions
                                         .map(choice => {
                                             const isSel = syncChoice === choice.value;
                                             const recommended = choice.value === (wizard.recommended_sync_direction || 'bidirectional');
@@ -636,6 +685,8 @@ export default function GovtechIntegrations() {
                                         })}
                                 </div>
                             </div>
+                                );
+                            })()}
 
                             {requiredMissing(wizard).length > 0 && (
                                 <p className="text-amber-300/80 text-xs">

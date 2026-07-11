@@ -12,6 +12,14 @@ interface ModalProps {
     triggerRef?: React.RefObject<HTMLElement>;
     /** Description for screen readers */
     'aria-describedby'?: string;
+    /**
+     * Override the panel surface. Defaults to the translucent `glass-card`.
+     * Pass a solid class (e.g. a slate gradient) for dialogs that must sit
+     * opaquely over busy backgrounds like a map.
+     */
+    panelClassName?: string;
+    /** Optional class for the sticky header surface (defaults to bg-slate-900). */
+    headerClassName?: string;
 }
 
 export const Modal: React.FC<ModalProps> = ({
@@ -22,6 +30,8 @@ export const Modal: React.FC<ModalProps> = ({
     size = 'md',
     triggerRef,
     'aria-describedby': ariaDescribedBy,
+    panelClassName,
+    headerClassName,
 }) => {
     const modalRef = useRef<HTMLDivElement>(null);
     const previousActiveElement = useRef<HTMLElement | null>(null);
@@ -132,7 +142,7 @@ export const Modal: React.FC<ModalProps> = ({
                             initial={{ opacity: 0, scale: 0.95, y: 20 }}
                             animate={{ opacity: 1, scale: 1, y: 0 }}
                             exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                            className={`w-full ${sizeStyles[size]} glass-card p-0 pointer-events-auto max-h-[90vh] overflow-auto`}
+                            className={`w-full ${sizeStyles[size]} ${panelClassName ?? 'glass-card'} rounded-2xl p-0 pointer-events-auto max-h-[90vh] overflow-auto`}
                             role="dialog"
                             aria-modal="true"
                             aria-labelledby={titleId}
@@ -141,7 +151,7 @@ export const Modal: React.FC<ModalProps> = ({
                         >
                             {/* Header — opaque so scrolled content never shows through it */}
                             {title && (
-                                <div className="flex items-center justify-between gap-3 p-4 sm:p-6 border-b border-white/10 sticky top-0 z-20 bg-slate-900 rounded-t-2xl">
+                                <div className={`flex items-center justify-between gap-3 p-4 sm:p-6 border-b border-white/10 sticky top-0 z-20 rounded-t-2xl ${headerClassName ?? 'bg-slate-900'}`}>
                                     <h2
                                         id={titleId}
                                         className="text-lg sm:text-xl font-semibold text-white"

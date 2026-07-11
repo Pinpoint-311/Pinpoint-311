@@ -931,12 +931,22 @@ async def create_manual_intake(
     await db.commit()
     await db.refresh(service_request)
 
-    # Attribute the submission to the staff member who took it down.
-    await _finalize_new_request(
-        db, service_request, assigned_department_id,
-        actor_type="staff", actor_name=current_user.username,
-        notify_resident=has_email,
-    )
+    # Attribute the submission to the staff member who took it down. The row is
+    # already persisted, so a hiccup in the best-effort background pipeline
+    # (AI triage, govtech push, notifications — all dispatched via the task
+    # broker) must NOT fail the intake in the call taker's face. Log and return
+    # the created request either way.
+    try:
+        await _finalize_new_request(
+            db, service_request, assigned_department_id,
+            actor_type="staff", actor_name=current_user.username,
+            notify_resident=has_email,
+        )
+    except Exception:
+        logger.exception(
+            "Manual intake %s saved but post-creation pipeline dispatch failed",
+            service_request.service_request_id,
+        )
 
     return service_request
 
