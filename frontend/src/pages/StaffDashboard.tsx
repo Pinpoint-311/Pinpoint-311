@@ -796,9 +796,8 @@ export default function StaffDashboard() {
                                     </div>
                                 )}
                                 <div className="text-left" data-no-translate>
-                                    <h2 className="font-semibold text-white flex items-center gap-1.5">
+                                    <h2 className="font-semibold text-white">
                                         Staff Command
-                                        <Home className="w-3.5 h-3.5 text-white/40 group-hover:text-white/70 transition-colors" />
                                     </h2>
                                     <p className="text-xs text-white/50">{settings?.township_name}</p>
                                 </div>
