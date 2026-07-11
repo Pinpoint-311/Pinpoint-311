@@ -139,7 +139,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                             <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400" aria-hidden="true" />
                             <p className="text-white/55 text-xs">
                                 Active: <span className="text-white/80 font-medium">{currentName}</span>
-                                {cap === 'ai' && catalog.current_model ? <span className="text-white/45"> · {catalog.current_model}</span> : ''}
+                                {cap === 'ai' && catalog.current_model ? <span className="text-white/65"> · {catalog.current_model}</span> : ''}
                             </p>
                         </div>
                     </div>
@@ -224,7 +224,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                     <div className="mt-2.5 rounded-lg bg-white/[0.03] border border-white/10 px-3 py-2 space-y-1">
                                         {active?.description && <p className="text-white/55 text-xs leading-relaxed">{active.description}</p>}
                                         {active?.boundary && (
-                                            <p className="text-white/40 text-[11px] flex items-center gap-1.5">
+                                            <p className="text-white/60 text-[11px] flex items-center gap-1.5">
                                                 <ShieldCheck className="w-3 h-3 text-primary-300/70 shrink-0" aria-hidden="true" />
                                                 Compliance boundary: {active.boundary}
                                             </p>
@@ -293,7 +293,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                     {busy === 'test' ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Testing…</> : 'Test connection'}
                                 </button>
                                 {cap === 'identity' && (
-                                    <span className="text-white/30 text-[11px] ml-auto hidden sm:block">Auth0 default · Entra / Okta supported</span>
+                                    <span className="text-white/60 text-[11px] ml-auto hidden sm:block">Auth0 default · Entra / Okta supported</span>
                                 )}
                             </div>
                         </div>
@@ -399,7 +399,7 @@ function CloudEnvironment({ onApplied }: { onApplied: () => void }) {
                                 {isBusy ? <Loader2 className="w-4 h-4 animate-spin text-primary-200" />
                                     : isActive && <span className="shrink-0 w-5 h-5 rounded-full bg-primary-400 flex items-center justify-center"><Check className="w-3 h-3 text-primary-950" strokeWidth={3} /></span>}
                             </div>
-                            <p className="text-[11px] text-white/45 mt-1 flex items-start gap-1.5 leading-relaxed">
+                            <p className="text-[11px] text-white/65 mt-1 flex items-start gap-1.5 leading-relaxed">
                                 <ShieldCheck className="w-3 h-3 text-primary-300/70 shrink-0 mt-0.5" aria-hidden="true" />
                                 {p.boundary}
                             </p>
@@ -445,7 +445,7 @@ function CloudEnvironment({ onApplied }: { onApplied: () => void }) {
                 </div>
             )}
 
-            <div className="mt-3 pt-3 border-t border-white/10 flex items-center gap-1.5 text-[11px] text-white/40">
+            <div className="mt-3 pt-3 border-t border-white/10 flex items-center gap-1.5 text-[11px] text-white/60">
                 <MapPin className="w-3 h-3 text-primary-300/70 shrink-0" aria-hidden="true" />
                 Mapping always uses <span className="text-white/60">{state.maps.label}</span> — it isn't affected by the cloud choice.
             </div>

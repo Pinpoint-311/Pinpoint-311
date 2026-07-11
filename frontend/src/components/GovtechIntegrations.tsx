@@ -401,7 +401,7 @@ export default function GovtechIntegrations() {
                                     </div>
                                     <div className="min-w-0">
                                         <h3 className="font-semibold text-white tracking-tight truncate">{platform.name}</h3>
-                                        <p className="text-white/45 text-xs truncate">{platform.category}</p>
+                                        <p className="text-white/65 text-xs truncate">{platform.category}</p>
                                     </div>
                                 </div>
                                 <div className="shrink-0 flex items-center gap-2">
@@ -418,9 +418,9 @@ export default function GovtechIntegrations() {
                                             Turned off
                                         </span>
                                     ) : (
-                                        <span className="text-white/30 text-xs">Not connected</span>
+                                        <span className="text-white/60 text-xs">Not connected</span>
                                     )}
-                                    <motion.span animate={{ rotate: isOpen ? 180 : 0 }} transition={{ duration: 0.3 }} aria-hidden="true" className="text-white/40">
+                                    <motion.span animate={{ rotate: isOpen ? 180 : 0 }} transition={{ duration: 0.3 }} aria-hidden="true" className="text-white/60">
                                         <ChevronDown className="w-4 h-4" />
                                     </motion.span>
                                 </div>
@@ -443,14 +443,14 @@ export default function GovtechIntegrations() {
                             {/* Capability chips — what actually flows with this connector */}
                             <div className="relative flex flex-wrap gap-1.5 mt-3">
                                 {CAPABILITY_CHIPS.filter(c => platform.capabilities.includes(c.key)).map(c => (
-                                    <span key={c.key} className="inline-flex items-center gap-1 rounded-md bg-white/[0.04] border border-white/10 px-1.5 py-0.5 text-[10px] text-white/55">
+                                    <span key={c.key} className="inline-flex items-center gap-1 rounded-md bg-white/[0.04] border border-white/10 px-1.5 py-0.5 text-[10px] text-white/75">
                                         <c.icon className="w-2.5 h-2.5 text-primary-300/80" aria-hidden="true" /> {c.label}
                                     </span>
                                 ))}
                             </div>
 
                             {existing?.last_sync_at && (
-                                <p className={`relative text-[11px] mt-2 ${existing.last_sync_status === 'error' ? 'text-amber-300' : 'text-white/40'}`}>
+                                <p className={`relative text-[11px] mt-2 ${existing.last_sync_status === 'error' ? 'text-amber-300' : 'text-white/60'}`}>
                                     {existing.last_sync_status === 'error'
                                         ? 'The last update check hit a problem — press "Check connection" for a plain-language explanation.'
                                         : `Last checked ${new Date(existing.last_sync_at).toLocaleString()} — all good.`}
@@ -521,7 +521,7 @@ export default function GovtechIntegrations() {
                             {logsOpen === platform.platform && platformLogs && (
                                 <div className="relative mt-3 rounded-lg border border-white/10 divide-y divide-white/5 max-h-48 overflow-y-auto">
                                     {platformLogs.length === 0 && (
-                                        <p className="text-white/30 text-xs px-3 py-2">Nothing has synced yet. Activity will show up here once reports start flowing.</p>
+                                        <p className="text-white/60 text-xs px-3 py-2">Nothing has synced yet. Activity will show up here once reports start flowing.</p>
                                     )}
                                     {platformLogs.map(entry => (
                                         <div key={entry.id} className="px-3 py-2 flex items-start gap-2">
@@ -530,7 +530,7 @@ export default function GovtechIntegrations() {
                                                 : <AlertCircle className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />}
                                             <div className="min-w-0">
                                                 <p className="text-white/70 text-xs">{entry.detail || entry.operation}</p>
-                                                <p className="text-white/30 text-[10px]">{entry.created_at ? new Date(entry.created_at).toLocaleString() : ''}</p>
+                                                <p className="text-white/60 text-[10px]">{entry.created_at ? new Date(entry.created_at).toLocaleString() : ''}</p>
                                             </div>
                                         </div>
                                     ))}
@@ -591,7 +591,7 @@ export default function GovtechIntegrations() {
                                     >
                                         {copied === 'email' ? 'Copied — paste it into an email' : 'Copy this email'}
                                     </Button>
-                                    <p className="text-white/40 text-xs mt-2">
+                                    <p className="text-white/60 text-xs mt-2">
                                         You can close this window and come back once they reply — nothing is lost.
                                     </p>
                                 </div>
@@ -626,7 +626,7 @@ export default function GovtechIntegrations() {
                                 <div>
                                     <button
                                         onClick={() => setShowAdvanced(v => !v)}
-                                        className="text-white/40 text-xs hover:text-white/70 inline-flex items-center gap-1"
+                                        className="text-white/60 text-xs hover:text-white/70 inline-flex items-center gap-1"
                                     >
                                         {showAdvanced ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                                         Optional settings — most towns skip these
@@ -679,7 +679,7 @@ export default function GovtechIntegrations() {
                                                             </span>
                                                         )}
                                                     </span>
-                                                    <span className="block text-white/45 text-xs mt-0.5">{choice.help}</span>
+                                                    <span className="block text-white/65 text-xs mt-0.5">{choice.help}</span>
                                                 </button>
                                             );
                                         })}
@@ -724,7 +724,7 @@ export default function GovtechIntegrations() {
                                 <div className="flex flex-col items-center py-8 text-center">
                                     <Loader2 className="w-8 h-8 text-indigo-300 animate-spin mb-3" />
                                     <p className="text-white/70 text-sm">Checking the connection to {wizard.name}…</p>
-                                    <p className="text-white/40 text-xs mt-1">This usually takes a few seconds.</p>
+                                    <p className="text-white/60 text-xs mt-1">This usually takes a few seconds.</p>
                                 </div>
                             )}
 
@@ -787,7 +787,7 @@ export default function GovtechIntegrations() {
                                             <code className="block mt-2 bg-black/30 rounded-lg px-3 py-2 text-[11px] text-white/50 break-all">{testResult.detail}</code>
                                         )}
                                     </div>
-                                    <p className="text-white/40 text-xs">
+                                    <p className="text-white/60 text-xs">
                                         Your entries are saved. You can fix them now, or close this window and try again later —
                                         the connection stays off until a check passes.
                                     </p>
