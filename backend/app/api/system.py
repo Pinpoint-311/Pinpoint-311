@@ -224,6 +224,146 @@ async def test_provider(
         return {"ok": False, "detail": f"Test failed: {str(e)[:200]}"}
 
 
+# ---- Cloud environment profile (hybrid one-choice front door) ----
+#
+# The real decision a jurisdiction makes is its compliance boundary — it is
+# authorized under ONE cloud (Google, or Azure Government / GCC High), so a
+# single choice should set AI + translation + secret-store together. Identity is
+# deliberately NOT bundled: an Azure-cloud town may still use Auth0/Okta for SSO,
+# so we only *recommend* the matching IdP and switch it on explicit opt-in.
+# Google Maps is fixed regardless of profile.
+CLOUD_PROFILES: Dict[str, Dict[str, str]] = {
+    "google": {
+        "label": "Google Cloud",
+        "boundary": "Google Cloud — FedRAMP High / StateRAMP",
+        "ai": "vertex",
+        "translation": "google",
+        "secrets": "google",
+        "identity_recommended": "auth0",
+    },
+    "azure": {
+        "label": "Microsoft Azure (Government)",
+        "boundary": "Azure Government / GCC High — FedRAMP High, DoD IL4/5",
+        "ai": "azure",
+        "translation": "azure",
+        "secrets": "azure",
+        "identity_recommended": "entra",
+    },
+}
+
+
+def _derive_cloud_profile(ai: str, translation: str, secrets: str) -> str:
+    """Report which named profile the current selections match, or 'mixed'."""
+    for pid, p in CLOUD_PROFILES.items():
+        if ai == p["ai"] and translation == p["translation"] and secrets == p["secrets"]:
+            return pid
+    return "mixed"
+
+
+class CloudProfileRequest(BaseModel):
+    profile: str
+    # Opt-in: also switch the staff sign-in provider to the profile's
+    # recommended IdP. Off by default because identity is a separate contract.
+    apply_identity: bool = False
+
+
+@router.get("/providers/cloud-profile")
+async def get_cloud_profile(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Report the current cloud environment: the matched profile (or 'mixed'),
+    the per-capability selections behind it, and the fixed Maps provider."""
+    from app.services.secret_manager import get_secret, _secrets_provider
+    from app.core.config import get_settings as _app_settings
+    ai = (await get_secret("AI_PROVIDER")) or "vertex"
+    translation = (await get_secret("TRANSLATION_PROVIDER")) or "google"
+    identity = (await get_secret("IDENTITY_PROVIDER")) or "auth0"
+    secrets = _secrets_provider()
+    return {
+        "profile": _derive_cloud_profile(ai, translation, secrets),
+        "managed": _app_settings().managed_mode,
+        "components": {"ai": ai, "translation": translation, "secrets": secrets, "identity": identity},
+        "maps": {"provider": "google", "locked": True, "label": "Google Maps (required)"},
+        "profiles": [{"id": k, **v} for k, v in CLOUD_PROFILES.items()],
+    }
+
+
+@router.post("/providers/cloud-profile")
+async def set_cloud_profile(
+    body: CloudProfileRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """Apply a whole cloud environment in one choice: sets the AI, translation and
+    secret-store providers to the profile's defaults. In managed (state-hosted)
+    mode this is locked — the compliance boundary is set by the hosting platform.
+    """
+    # The compliance boundary is a state-level decision when hosted centrally.
+    from app.core.config import get_settings as _app_settings
+    if _app_settings().managed_mode:
+        raise HTTPException(
+            status_code=403,
+            detail="The cloud environment is set by your state's hosting platform and can't be changed here.",
+        )
+    pid = (body.profile or "").strip().lower()
+    if pid not in CLOUD_PROFILES:
+        raise HTTPException(status_code=400, detail=f"Unknown cloud profile: {body.profile}")
+    p = CLOUD_PROFILES[pid]
+
+    await _persist_secret(db, _PROVIDER_SELECT_KEY["ai"], p["ai"])
+    await _persist_secret(db, _PROVIDER_SELECT_KEY["translation"], p["translation"])
+    await _persist_secret(db, "SECRETS_PROVIDER", p["secrets"])
+
+    warnings: List[str] = []
+    # Gov-readiness: flipping the secret store to a vault that isn't wired up yet
+    # is allowed (writes fall back to the encrypted DB), but say so plainly.
+    if p["secrets"] == "azure":
+        try:
+            from app.core import azure_keyvault
+            if not azure_keyvault.is_configured():
+                warnings.append(
+                    "Azure Key Vault isn't configured yet — secrets stay in the encrypted "
+                    "database until Key Vault credentials are added."
+                )
+        except Exception:
+            warnings.append("Could not verify Azure Key Vault configuration.")
+    elif p["secrets"] == "google":
+        try:
+            from app.services.secret_manager import _is_gcp_available
+            if not _is_gcp_available():
+                warnings.append(
+                    "Google Secret Manager isn't reachable yet — secrets stay in the "
+                    "encrypted database until GOOGLE_CLOUD_PROJECT and credentials are set."
+                )
+        except Exception:
+            pass
+
+    identity_applied = False
+    if body.apply_identity:
+        await _persist_secret(db, _PROVIDER_SELECT_KEY["identity"], p["identity_recommended"])
+        identity_applied = True
+
+    from app.services.secret_manager import clear_cache
+    clear_cache()
+
+    from app.core.sanitize import sanitize_for_log
+    logger.info(
+        f"[Providers] {sanitize_for_log(current_user.username)} set cloud profile → "
+        f"{sanitize_for_log(pid)} (identity_applied={identity_applied})"
+    )
+    return {
+        "ok": True,
+        "profile": pid,
+        "components": {
+            "ai": p["ai"], "translation": p["translation"], "secrets": p["secrets"],
+        },
+        "identity_recommended": p["identity_recommended"],
+        "identity_applied": identity_applied,
+        "warnings": warnings,
+    }
+
+
 @router.post("/settings", response_model=SystemSettingsResponse)
 async def update_settings(
     settings_data: SystemSettingsBase,

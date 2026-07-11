@@ -3,11 +3,12 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     Sparkles, Languages, KeyRound, CheckCircle, AlertCircle,
     ChevronDown, Loader2, Check, ShieldCheck, RefreshCw,
+    Cloud, MapPin, Lock, Info,
 } from 'lucide-react';
 
 import { Select } from './ui';
 import SecretField from './SecretField';
-import { api, ProviderCatalog, ProviderInfo } from '../services/api';
+import { api, ProviderCatalog, ProviderInfo, CloudProfileState } from '../services/api';
 
 type Capability = 'ai' | 'translation' | 'identity';
 
@@ -19,9 +20,9 @@ const CAPS: { key: Capability; title: string; blurb: string; icon: typeof Sparkl
 
 export interface CapStatus { providerName?: string; onDefault?: boolean; verified?: boolean | null }
 
-function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, onStatus }: {
+function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus }: {
     cap: Capability; title: string; blurb: string; icon: typeof Sparkles; delay: number;
-    recheckToken: number; onStatus: (cap: Capability, s: CapStatus) => void;
+    recheckToken: number; reloadToken: number; onStatus: (cap: Capability, s: CapStatus) => void;
 }) {
     const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
     const [selected, setSelected] = useState<string>('');
@@ -48,6 +49,13 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, on
     }, [cap, onStatus]);
 
     useEffect(() => { load(); }, [load]);
+
+    // A cloud-profile switch changes the selected provider server-side; reload so
+    // the card reflects the new selection (and its credential fields).
+    useEffect(() => {
+        if (reloadToken > 0) load();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [reloadToken]);
 
     // Parent "Recheck all" bumps this token — each card verifies its own live
     // connection and reports the result up for the summary.
@@ -296,8 +304,158 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, on
     );
 }
 
+const COMPONENT_LABEL: Record<string, string> = {
+    vertex: 'Google Vertex AI', azure: 'Azure', google: 'Google', auth0: 'Auth0', entra: 'Microsoft Entra ID',
+};
+
+// Hybrid "one choice" front door: a jurisdiction is authorized under one cloud
+// boundary, so picking it sets AI + translation + secret store together. Identity
+// stays separate (only recommended). Google Maps is fixed.
+function CloudEnvironment({ onApplied }: { onApplied: () => void }) {
+    const [state, setState] = useState<CloudProfileState | null>(null);
+    const [busy, setBusy] = useState<string | null>(null);
+    const [result, setResult] = useState<{ profile: string; warnings: string[]; identity_recommended: string } | null>(null);
+    const [error, setError] = useState<string | null>(null);
+
+    const load = useCallback(async () => {
+        try { setState(await api.getCloudProfile()); }
+        catch (e: any) { setError(e?.message || 'Could not load the cloud environment.'); }
+    }, []);
+    useEffect(() => { load(); }, [load]);
+
+    const apply = async (profileId: string, applyIdentity = false) => {
+        if (!state || state.managed) return;
+        setBusy(profileId); setError(null); setResult(null);
+        try {
+            const r = await api.setCloudProfile(profileId, applyIdentity);
+            setResult({ profile: r.profile, warnings: r.warnings || [], identity_recommended: r.identity_recommended });
+            await load();
+            onApplied(); // refresh the capability cards to show the new selections
+        } catch (e: any) {
+            setError(e?.message || 'Could not switch the cloud environment.');
+        } finally {
+            setBusy(null);
+        }
+    };
+
+    if (error && !state) {
+        return (
+            <div className="mb-5 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" /> {error}
+            </div>
+        );
+    }
+    if (!state) return <div className="premium-card p-6 h-40 mb-5 animate-pulse" aria-busy="true" />;
+
+    const identityLabel = COMPONENT_LABEL[state.components.identity] || state.components.identity;
+
+    return (
+        <motion.div
+            initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+            className="premium-card p-5 mb-5"
+        >
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-3 min-w-0">
+                    <div className="relative shrink-0">
+                        <div className="absolute -inset-1 rounded-2xl bg-gradient-to-br from-primary-400/40 to-primary-600/20 blur-md" aria-hidden="true" />
+                        <div className="relative w-11 h-11 rounded-2xl bg-gradient-to-br from-primary-500/30 to-primary-700/20 border border-primary-400/30 flex items-center justify-center shadow-lg shadow-primary-900/40">
+                            <Cloud className="w-5 h-5 text-primary-200" />
+                        </div>
+                    </div>
+                    <div className="min-w-0">
+                        <h3 className="font-semibold text-white tracking-tight">Cloud environment</h3>
+                        <p className="text-white/50 text-xs mt-0.5 max-w-xl leading-relaxed">
+                            One choice sets your AI, translation, and secret storage to match your authorized cloud.
+                            Sign-in and Google Maps are configured separately below.
+                        </p>
+                    </div>
+                </div>
+                {state.managed && (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-white/10 text-white/60 border border-white/10">
+                        <Lock className="w-3 h-3" aria-hidden="true" /> Managed by your state
+                    </span>
+                )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4" role="radiogroup" aria-label="Cloud environment">
+                {state.profiles.map(p => {
+                    const isActive = state.profile === p.id;
+                    const isBusy = busy === p.id;
+                    return (
+                        <button
+                            key={p.id}
+                            type="button"
+                            role="radio"
+                            aria-checked={isActive}
+                            disabled={state.managed || busy !== null}
+                            onClick={() => apply(p.id)}
+                            className={`relative text-left rounded-2xl p-4 border transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 disabled:cursor-not-allowed ${isActive
+                                ? 'bg-gradient-to-br from-primary-500/25 to-primary-700/15 border-primary-400/50 shadow-lg shadow-primary-900/30'
+                                : 'bg-white/[0.03] border-white/10 hover:bg-white/[0.06] hover:border-white/20 disabled:opacity-60'}`}
+                        >
+                            <div className="flex items-center justify-between gap-2">
+                                <span className={`font-semibold ${isActive ? 'text-white' : 'text-white/80'}`}>{p.label}</span>
+                                {isBusy ? <Loader2 className="w-4 h-4 animate-spin text-primary-200" />
+                                    : isActive && <span className="shrink-0 w-5 h-5 rounded-full bg-primary-400 flex items-center justify-center"><Check className="w-3 h-3 text-primary-950" strokeWidth={3} /></span>}
+                            </div>
+                            <p className="text-[11px] text-white/45 mt-1 flex items-start gap-1.5 leading-relaxed">
+                                <ShieldCheck className="w-3 h-3 text-primary-300/70 shrink-0 mt-0.5" aria-hidden="true" />
+                                {p.boundary}
+                            </p>
+                            <div className="flex flex-wrap gap-1.5 mt-2.5">
+                                {[`AI · ${COMPONENT_LABEL[p.ai] || p.ai}`, `Translation · ${COMPONENT_LABEL[p.translation] || p.translation}`, `Secrets · ${p.secrets === 'google' ? 'Secret Manager' : 'Key Vault'}`].map(t => (
+                                    <span key={t} className="inline-flex items-center rounded-md bg-white/[0.05] border border-white/10 px-1.5 py-0.5 text-[10px] text-white/55">{t}</span>
+                                ))}
+                            </div>
+                        </button>
+                    );
+                })}
+            </div>
+
+            {state.profile === 'mixed' && (
+                <p className="text-white/50 text-xs mt-3 flex items-center gap-1.5">
+                    <Info className="w-3.5 h-3.5 text-primary-300/70 shrink-0" aria-hidden="true" />
+                    You're running a custom mix of providers. Pick a cloud above to standardize, or fine-tune each capability below.
+                </p>
+            )}
+
+            {result && result.warnings.length > 0 && (
+                <div className="mt-3 rounded-xl bg-amber-500/10 border border-amber-400/30 px-3 py-2.5 text-xs text-amber-200 space-y-1">
+                    {result.warnings.map((w, i) => (
+                        <p key={i} className="flex items-start gap-2"><AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {w}</p>
+                    ))}
+                </div>
+            )}
+
+            {/* Identity is orthogonal — recommend, never force. */}
+            {result && result.identity_recommended && state.components.identity !== result.identity_recommended && !state.managed && (
+                <div className="mt-3 rounded-xl bg-white/[0.04] border border-white/10 px-3 py-2.5 text-xs text-white/60 flex flex-wrap items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5">
+                        <KeyRound className="w-3.5 h-3.5 text-primary-300/80" aria-hidden="true" />
+                        Recommended sign-in for this cloud: <span className="text-white/85 font-medium">{COMPONENT_LABEL[result.identity_recommended] || result.identity_recommended}</span> (currently {identityLabel}).
+                    </span>
+                    <button
+                        onClick={() => apply(result.profile, true)}
+                        disabled={busy !== null}
+                        className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 font-medium text-primary-100 bg-primary-500/20 hover:bg-primary-500/30 border border-primary-400/30 transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                    >
+                        Switch sign-in too
+                    </button>
+                </div>
+            )}
+
+            <div className="mt-3 pt-3 border-t border-white/10 flex items-center gap-1.5 text-[11px] text-white/40">
+                <MapPin className="w-3 h-3 text-primary-300/70 shrink-0" aria-hidden="true" />
+                Mapping always uses <span className="text-white/60">{state.maps.label}</span> — it isn't affected by the cloud choice.
+            </div>
+        </motion.div>
+    );
+}
+
 export default function ServiceProviders() {
     const [recheckToken, setRecheckToken] = useState(0);
+    const [reloadToken, setReloadToken] = useState(0);
     const [statuses, setStatuses] = useState<Record<string, CapStatus>>({});
 
     const onStatus = useCallback((cap: Capability, s: CapStatus) => {
@@ -345,10 +503,12 @@ export default function ServiceProviders() {
                 </div>
             </div>
 
+            <CloudEnvironment onApplied={() => setReloadToken(t => t + 1)} />
+
             <div className="relative grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {CAPS.map((c, i) => (
                     <CapabilityCard key={c.key} cap={c.key} title={c.title} blurb={c.blurb} icon={c.icon} delay={i * 0.08}
-                        recheckToken={recheckToken} onStatus={onStatus} />
+                        recheckToken={recheckToken} reloadToken={reloadToken} onStatus={onStatus} />
                 ))}
             </div>
         </div>

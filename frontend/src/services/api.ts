@@ -131,6 +131,33 @@ export interface ProviderSave {
     settings?: Record<string, string>;
 }
 
+export interface CloudProfileOption {
+    id: string;
+    label: string;
+    boundary: string;
+    ai: string;
+    translation: string;
+    secrets: string;
+    identity_recommended: string;
+}
+
+export interface CloudProfileState {
+    profile: 'google' | 'azure' | 'mixed';
+    managed: boolean;
+    components: { ai: string; translation: string; secrets: string; identity: string };
+    maps: { provider: string; locked: boolean; label: string };
+    profiles: CloudProfileOption[];
+}
+
+export interface CloudProfileResult {
+    ok: boolean;
+    profile: string;
+    components: { ai: string; translation: string; secrets: string };
+    identity_recommended: string;
+    identity_applied: boolean;
+    warnings: string[];
+}
+
 class ApiClient {
     private token: string | null = null;
     private onUnauthorized: (() => void) | null = null;
@@ -515,6 +542,17 @@ class ApiClient {
 
     async testProvider(capability: string): Promise<{ ok: boolean; detail: string }> {
         return this.request(`/system/providers/${capability}/test`, { method: 'POST' });
+    }
+
+    async getCloudProfile(): Promise<CloudProfileState> {
+        return this.request<CloudProfileState>('/system/providers/cloud-profile');
+    }
+
+    async setCloudProfile(profile: string, applyIdentity = false): Promise<CloudProfileResult> {
+        return this.request<CloudProfileResult>('/system/providers/cloud-profile', {
+            method: 'POST',
+            body: JSON.stringify({ profile, apply_identity: applyIdentity }),
+        });
     }
 
     // Statistics
