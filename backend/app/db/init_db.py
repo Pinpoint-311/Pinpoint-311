@@ -171,6 +171,24 @@ async def _run_schema_migrations():
         # Immutable/tamper-evident request audit log hash chain (added 2026-07-02)
         "ALTER TABLE request_audit_logs ADD COLUMN IF NOT EXISTS previous_hash VARCHAR(64)",
         "ALTER TABLE request_audit_logs ADD COLUMN IF NOT EXISTS entry_hash VARCHAR(64)",
+        # PostGIS location geometry + auto-populate trigger (added 2026-07-11).
+        # Every geospatial analytic (hotspot clustering, coverage/spread metrics,
+        # AI nearby-context) reads service_requests.location. That column is only
+        # ever filled by this trigger — previously it lived in an orphaned .sql
+        # that nothing ran, so on a fresh deploy location stayed NULL and all of
+        # those features silently returned empty. Applying it here (idempotently)
+        # guarantees it on every startup. On non-PostGIS/dev DBs these fail
+        # harmlessly and are skipped by the per-statement try/except below.
+        "CREATE EXTENSION IF NOT EXISTS postgis",
+        "UPDATE service_requests SET location = ST_SetSRID(ST_MakePoint(long, lat), 4326) "
+        "WHERE lat IS NOT NULL AND long IS NOT NULL AND location IS NULL",
+        "CREATE OR REPLACE FUNCTION update_location_geometry() RETURNS TRIGGER AS $$ "
+        "BEGIN IF NEW.lat IS NOT NULL AND NEW.long IS NOT NULL THEN "
+        "NEW.location := ST_SetSRID(ST_MakePoint(NEW.long, NEW.lat), 4326); "
+        "END IF; RETURN NEW; END; $$ LANGUAGE plpgsql",
+        "DROP TRIGGER IF EXISTS set_location_geometry ON service_requests",
+        "CREATE TRIGGER set_location_geometry BEFORE INSERT OR UPDATE ON service_requests "
+        "FOR EACH ROW EXECUTE FUNCTION update_location_geometry()",
     ]
     
     try:
