@@ -312,15 +312,21 @@ app.include_router(data_export.router, prefix="/api", tags=["Data Export"])
 app.include_router(integrations.router, prefix="/api/integrations", tags=["GovTech Integrations"])
 
 # Built-in practice vendor so integrations can be verified without any real
-# platform account (see app/api/integration_sandbox.py). It is intentionally
-# unauthenticated, so it is only mounted for debug/demo builds — never in a
-# hardened production deployment, where it could be an unauthenticated path to
-# inject records into the request pipeline.
-_sandbox_enabled = _get_settings_for_docs().debug or os.environ.get("DEMO_MODE", "").lower() in ("true", "1", "yes") or os.environ.get("ENABLE_INTEGRATION_SANDBOX", "").lower() in ("true", "1", "yes")
-if _sandbox_enabled:
+# platform account (see app/api/integration_sandbox.py). The "Practice Sandbox"
+# connector card advertises "no account needed — try it now", so this MUST be
+# available in every deployment or the connection check 404s.
+#
+# It is safe to mount unconditionally: the endpoints only ever read/write an
+# ephemeral, process-local, size-bounded in-memory store — they never touch the
+# real request database. Records only reach the live pipeline when authenticated
+# staff explicitly configure and enable the Practice Sandbox connector, which
+# then pulls from here like any other vendor. Operators who want it gone can set
+# DISABLE_INTEGRATION_SANDBOX=true.
+_sandbox_disabled = os.environ.get("DISABLE_INTEGRATION_SANDBOX", "").lower() in ("true", "1", "yes")
+if not _sandbox_disabled:
     from app.api import integration_sandbox
     app.include_router(integration_sandbox.router, prefix="/api/integrations/sandbox-vendor", tags=["Integration Sandbox"])
-    logger.info("[Integrations] Practice sandbox vendor mounted (debug/demo mode)")
+    logger.info("[Integrations] Practice sandbox vendor mounted")
 
 # Mount uploads directory for serving uploaded files
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/project/uploads")

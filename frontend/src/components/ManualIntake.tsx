@@ -17,6 +17,63 @@ const SOURCES: { value: Source; label: string; icon: typeof Phone }[] = [
     { value: 'walk_in', label: 'Walk-in', icon: Footprints },
 ];
 
+// Per-channel copy — a phone caller, an email sender and a walk-in visitor are
+// three different intake situations, so the labels, examples and contact hints
+// are tailored to each rather than defaulting everything to "caller".
+const COPY: Record<Source, {
+    lead: string;
+    descLabel: string;
+    descPlaceholder: string;
+    phoneLabel: string;
+    phoneIcon: typeof Phone;
+    phonePlaceholder: string;
+    contactToggle: string;
+    contactBlurb: string;
+    emailLabel: string;
+    emailPlaceholder: string;
+    logCta: string;
+}> = {
+    phone: {
+        lead: 'Take a request over the phone on a resident’s behalf. It’s triaged, routed, and synced exactly like a report filed online — contact details are optional.',
+        descLabel: 'What is the caller reporting?',
+        descPlaceholder: 'e.g. Caller reports a large pothole in the eastbound lane of Main St near the library, damaging tires.',
+        phoneLabel: 'Callback number',
+        phoneIcon: Phone,
+        phonePlaceholder: '(555) 123-4567',
+        contactToggle: 'Caller details (optional — for follow-up & confirmation)',
+        contactBlurb: 'Only needed if the caller wants a status update or callback.',
+        emailLabel: 'Caller email',
+        emailPlaceholder: 'If given, the caller gets the same confirmation as an online report',
+        logCta: 'Log request',
+    },
+    email: {
+        lead: 'Log a request from an email a resident sent in. It’s triaged, routed, and synced exactly like a report filed online — paste the details below.',
+        descLabel: 'What does the email say?',
+        descPlaceholder: 'e.g. Resident emailed that the streetlight at 4th & Elm has been out for a week, leaving the crosswalk dark at night. Paste or summarize the message here.',
+        phoneLabel: 'Contact number',
+        phoneIcon: Phone,
+        phonePlaceholder: '(555) 123-4567 — if included in the email',
+        contactToggle: 'Sender details (optional — pull from the email)',
+        contactBlurb: 'Copy the sender’s name and address from the email so replies reach them.',
+        emailLabel: 'Sender email',
+        emailPlaceholder: 'sender@email.com — they’ll get the same confirmation as an online report',
+        logCta: 'Log request',
+    },
+    walk_in: {
+        lead: 'Log a request for someone at the counter. It’s triaged, routed, and synced exactly like a report filed online — contact details are optional.',
+        descLabel: 'What is the visitor reporting?',
+        descPlaceholder: 'e.g. Visitor reports the playground gate at Riverside Park is broken and won’t latch, so it swings into the path.',
+        phoneLabel: 'Contact number',
+        phoneIcon: Phone,
+        phonePlaceholder: '(555) 123-4567',
+        contactToggle: 'Visitor details (optional — for follow-up & confirmation)',
+        contactBlurb: 'Only needed if the visitor wants a status update or callback.',
+        emailLabel: 'Visitor email',
+        emailPlaceholder: 'If given, they’ll get the same confirmation as an online report',
+        logCta: 'Log request',
+    },
+};
+
 interface ManualIntakeProps {
     isOpen: boolean;
     onClose: () => void;
@@ -114,10 +171,20 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
     };
 
     const labelCls = 'text-[11px] uppercase tracking-wider text-white/60 mb-1.5 font-semibold block';
-    const inputCls = 'w-full rounded-xl bg-white/[0.04] border border-white/10 text-white text-sm px-3.5 py-2.5 placeholder:text-white/40 transition-all focus:outline-none focus:border-primary-400/50 focus:bg-white/[0.06] focus:shadow-[0_0_0_3px_rgba(99,102,241,0.15)]';
+    const inputCls = 'w-full rounded-xl bg-white/[0.05] border border-white/12 text-white text-sm px-3.5 py-2.5 placeholder:text-white/40 transition-all focus:outline-none focus:border-primary-400/50 focus:bg-white/[0.08] focus:shadow-[0_0_0_3px_rgba(99,102,241,0.15)]';
+
+    const copy = COPY[source];
+    const PhoneIcon = copy.phoneIcon;
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Log a request" size="lg">
+        <Modal
+            isOpen={isOpen}
+            onClose={onClose}
+            title="Log a request"
+            size="lg"
+            panelClassName="bg-gradient-to-b from-slate-900 to-slate-950 border border-white/10 shadow-2xl shadow-black/60"
+            headerClassName="bg-slate-900/95 backdrop-blur-xl"
+        >
             <div className="space-y-5" onKeyDown={onKeyDown}>
                 {/* Session counter — reassures a call taker doing back-to-back intake */}
                 {sessionCount > 0 && (
@@ -130,10 +197,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                     </div>
                 )}
 
-                <p className="text-white/50 text-sm">
-                    Enter a request on a resident’s behalf. It’s triaged, routed, and synced exactly like a report
-                    filed online — <span className="text-white/70">contact details are optional</span>.
-                </p>
+                <p className="text-white/55 text-sm leading-relaxed">{copy.lead}</p>
 
                 {/* How it came in */}
                 <div>
@@ -147,7 +211,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                                     type="button"
                                     role="radio"
                                     aria-checked={isSel}
-                                    onClick={() => setSource(s.value)}
+                                    onClick={() => { setSource(s.value); if (s.value === 'email') setShowContact(true); }}
                                     className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 border text-sm font-medium transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${isSel
                                         ? 'bg-gradient-to-br from-primary-500/25 to-primary-700/15 border-primary-400/50 text-white shadow-lg shadow-primary-900/30'
                                         : 'bg-white/[0.03] border-white/10 text-white/70 hover:bg-white/[0.06] hover:border-white/20'}`}
@@ -217,13 +281,13 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
 
                 {/* Description */}
                 <div>
-                    <span className={labelCls}>What’s the issue? <span className="normal-case tracking-normal text-amber-300 font-medium">(required)</span></span>
+                    <span className={labelCls}>{copy.descLabel} <span className="normal-case tracking-normal text-amber-300 font-medium">(required)</span></span>
                     <textarea
                         ref={descRef}
                         value={description}
                         onChange={e => setDescription(e.target.value)}
                         rows={3}
-                        placeholder="e.g. Caller reports a large pothole in the eastbound lane of Main St near the library, damaging tires."
+                        placeholder={copy.descPlaceholder}
                         className={`${inputCls} resize-y min-h-[84px]`}
                     />
                     <p className="text-white/40 text-xs mt-1.5">AI triage sets a suggested priority automatically once you log it.</p>
@@ -233,13 +297,13 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                         <span className={labelCls}>
-                            {source === 'email' ? 'Reply-to phone' : 'Callback number'}
+                            {copy.phoneLabel}
                             <span className="normal-case tracking-normal text-white/40 font-normal ml-1">(optional)</span>
                         </span>
                         <div className="relative">
-                            <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/35" aria-hidden="true" />
+                            <PhoneIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/35" aria-hidden="true" />
                             <input value={phone} onChange={e => setPhone(e.target.value)} inputMode="tel"
-                                placeholder="(555) 123-4567" className={`${inputCls} pl-9`} />
+                                placeholder={copy.phonePlaceholder} className={`${inputCls} pl-9`} />
                         </div>
                     </div>
                     <div>
@@ -261,7 +325,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                         aria-expanded={showContact}
                     >
                         <UserIcon className="w-3.5 h-3.5" aria-hidden="true" />
-                        Caller details (optional — for follow-up & confirmation)
+                        {copy.contactToggle}
                         <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showContact ? 'rotate-180' : ''}`} aria-hidden="true" />
                     </button>
                     <AnimatePresence initial={false}>
@@ -270,6 +334,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                                 initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
                                 className="overflow-hidden"
                             >
+                                <p className="text-white/40 text-xs pt-2.5">{copy.contactBlurb}</p>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3">
                                     <div>
                                         <span className={labelCls}>First name</span>
@@ -280,9 +345,9 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                                         <input value={lastName} onChange={e => setLastName(e.target.value)} className={inputCls} />
                                     </div>
                                     <div className="sm:col-span-2">
-                                        <span className={labelCls}>Email</span>
+                                        <span className={labelCls}>{copy.emailLabel}</span>
                                         <input value={email} onChange={e => setEmail(e.target.value)} type="email" inputMode="email"
-                                            placeholder="If given, the caller gets the same confirmation as an online report" className={inputCls} />
+                                            placeholder={copy.emailPlaceholder} className={inputCls} />
                                     </div>
                                 </div>
                             </motion.div>
@@ -320,7 +385,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                             disabled={!canSubmit}
                             className="shimmer-sweep inline-flex items-center justify-center gap-1.5 rounded-xl px-5 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-900/40 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
                         >
-                            {saving === 'close' ? <><Loader2 className="w-4 h-4 animate-spin" /> Logging…</> : <><Sparkles className="w-4 h-4" /> Log request</>}
+                            {saving === 'close' ? <><Loader2 className="w-4 h-4 animate-spin" /> Logging…</> : <><Sparkles className="w-4 h-4" /> {copy.logCta}</>}
                         </button>
                     </div>
                 </div>
