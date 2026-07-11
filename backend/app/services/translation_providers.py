@@ -91,6 +91,54 @@ class AzureTranslationProvider(TranslationProvider):
         return out
 
 
+class AWSTranslateProvider(TranslationProvider):
+    """Amazon Translate via boto3. boto3 is synchronous, so calls run in a
+    thread executor. For AWS GovCloud stacks (us-gov-*)."""
+    provider = "aws"
+
+    def __init__(self, region: str, access_key: Optional[str] = None,
+                 secret_key: Optional[str] = None, session_token: Optional[str] = None):
+        self.region = region
+        self.access_key = access_key
+        self.secret_key = secret_key
+        self.session_token = session_token
+
+    def _client(self):
+        import boto3
+        kwargs = {"region_name": self.region}
+        if self.access_key and self.secret_key:
+            kwargs["aws_access_key_id"] = self.access_key
+            kwargs["aws_secret_access_key"] = self.secret_key
+            if self.session_token:
+                kwargs["aws_session_token"] = self.session_token
+        return boto3.client("translate", **kwargs)
+
+    async def translate(self, texts, source_lang, target_lang):
+        if not self.region:
+            return None
+        import asyncio
+
+        def _run():
+            client = self._client()
+            out = []
+            # Amazon Translate is one string per call; batch sequentially.
+            for t in texts:
+                try:
+                    resp = client.translate_text(
+                        Text=t, SourceLanguageCode=source_lang, TargetLanguageCode=target_lang,
+                    )
+                    out.append(resp.get("TranslatedText", t))
+                except Exception:
+                    out.append(t)
+            return out
+
+        try:
+            return await asyncio.get_event_loop().run_in_executor(None, _run)
+        except Exception as e:
+            logger.warning(f"AWS Translate failed: {e}")
+            return None
+
+
 TRANSLATION_CATALOG: Dict[str, Dict[str, Any]] = {
     "google": {
         "name": "Google Cloud Translation",
@@ -112,6 +160,20 @@ TRANSLATION_CATALOG: Dict[str, Dict[str, Any]] = {
             "AZURE_TRANSLATOR_KEY": "Key from your Azure Translator resource.",
             "AZURE_TRANSLATOR_REGION": "e.g. usgovvirginia or eastus.",
             "AZURE_TRANSLATOR_ENDPOINT": "Leave blank for global; use https://api.cognitive.microsofttranslator.us for Azure Government.",
+        },
+    },
+    "aws": {
+        "name": "Amazon Translate",
+        "description": "AWS Translate — for AWS GovCloud stacks; uses your AWS credentials.",
+        "credential_fields": [
+            {"key": "AWS_REGION", "label": "AWS Region", "secret": False},
+            {"key": "AWS_ACCESS_KEY_ID", "label": "Access Key ID (optional with instance role)", "secret": False},
+            {"key": "AWS_SECRET_ACCESS_KEY", "label": "Secret Access Key (optional with instance role)", "secret": True},
+        ],
+        "field_help": {
+            "AWS_REGION": "e.g. us-gov-west-1.",
+            "AWS_ACCESS_KEY_ID": "Leave blank to use the instance role / default credential chain.",
+            "AWS_SECRET_ACCESS_KEY": "Leave blank to use the instance role / default credential chain.",
         },
     },
 }
@@ -136,6 +198,16 @@ async def get_translation_provider() -> Optional[TranslationProvider]:
             api_key=key,
             region=await get_secret("AZURE_TRANSLATOR_REGION") or "",
             endpoint=await get_secret("AZURE_TRANSLATOR_ENDPOINT"),
+        )
+    if provider == "aws":
+        region = await get_secret("AWS_REGION")
+        if not region:
+            return None
+        return AWSTranslateProvider(
+            region=region,
+            access_key=await get_secret("AWS_ACCESS_KEY_ID"),
+            secret_key=await get_secret("AWS_SECRET_ACCESS_KEY"),
+            session_token=await get_secret("AWS_SESSION_TOKEN"),
         )
     # Google is validated by _get_auth_headers at call time
     return GoogleTranslationProvider()

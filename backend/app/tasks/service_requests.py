@@ -61,24 +61,60 @@ async def configure_notifications(db):
             "from_number": await get_secret(db, "SMS_FROM_NUMBER")
         })
         logger.info("[SMS Config] Configured HTTP/Textbelt provider")
+    elif sms_provider == "sns":
+        notification_service.configure_sms("sns", {
+            "region": await get_secret(db, "AWS_REGION"),
+            "sender_id": await get_secret(db, "SMS_SENDER_ID"),
+            "access_key": await get_secret(db, "AWS_ACCESS_KEY_ID"),
+            "secret_key": await get_secret(db, "AWS_SECRET_ACCESS_KEY"),
+            "session_token": await get_secret(db, "AWS_SESSION_TOKEN"),
+        })
+        logger.info("[SMS Config] Configured Amazon SNS provider")
+    elif sms_provider == "acs":
+        notification_service.configure_sms("acs", {
+            "endpoint": await get_secret(db, "ACS_ENDPOINT"),
+            "access_key": await get_secret(db, "ACS_ACCESS_KEY"),
+            "from_number": await get_secret(db, "SMS_FROM_NUMBER"),
+        })
+        logger.info("[SMS Config] Configured Azure Communication Services provider")
     else:
         logger.warning("[SMS Config] Unknown or empty SMS_PROVIDER - SMS will not work")
-    
+
     # Configure Email provider
     email_enabled = await get_secret(db, "EMAIL_ENABLED")
     if email_enabled.lower() == "true":
-        smtp_port_str = await get_secret(db, "SMTP_PORT")
-        use_tls_str = await get_secret(db, "SMTP_USE_TLS")
-        
-        notification_service.configure_email({
-            "smtp_host": await get_secret(db, "SMTP_HOST"),
-            "smtp_port": int(smtp_port_str) if smtp_port_str else 587,
-            "smtp_user": await get_secret(db, "SMTP_USER"),
-            "smtp_password": await get_secret(db, "SMTP_PASSWORD"),
-            "from_email": await get_secret(db, "SMTP_FROM_EMAIL"),
-            "from_name": await get_secret(db, "SMTP_FROM_NAME") or "Township 311",
-            "use_tls": use_tls_str.lower() != "false" if use_tls_str else True
-        })
+        email_provider = (await get_secret(db, "EMAIL_PROVIDER") or "smtp").strip().lower()
+        from_name = await get_secret(db, "SMTP_FROM_NAME") or "Township 311"
+        if email_provider == "ses":
+            notification_service.configure_email({
+                "region": await get_secret(db, "AWS_REGION"),
+                "from_email": await get_secret(db, "SES_FROM_EMAIL") or await get_secret(db, "SMTP_FROM_EMAIL"),
+                "from_name": from_name,
+                "access_key": await get_secret(db, "AWS_ACCESS_KEY_ID"),
+                "secret_key": await get_secret(db, "AWS_SECRET_ACCESS_KEY"),
+                "session_token": await get_secret(db, "AWS_SESSION_TOKEN"),
+            }, provider_type="ses")
+            logger.info("[Email Config] Configured Amazon SES provider")
+        elif email_provider == "acs":
+            notification_service.configure_email({
+                "endpoint": await get_secret(db, "ACS_ENDPOINT"),
+                "access_key": await get_secret(db, "ACS_ACCESS_KEY"),
+                "from_email": await get_secret(db, "ACS_FROM_EMAIL") or await get_secret(db, "SMTP_FROM_EMAIL"),
+                "from_name": from_name,
+            }, provider_type="acs")
+            logger.info("[Email Config] Configured Azure Communication Services email provider")
+        else:
+            smtp_port_str = await get_secret(db, "SMTP_PORT")
+            use_tls_str = await get_secret(db, "SMTP_USE_TLS")
+            notification_service.configure_email({
+                "smtp_host": await get_secret(db, "SMTP_HOST"),
+                "smtp_port": int(smtp_port_str) if smtp_port_str else 587,
+                "smtp_user": await get_secret(db, "SMTP_USER"),
+                "smtp_password": await get_secret(db, "SMTP_PASSWORD"),
+                "from_email": await get_secret(db, "SMTP_FROM_EMAIL"),
+                "from_name": from_name,
+                "use_tls": use_tls_str.lower() != "false" if use_tls_str else True
+            }, provider_type="smtp")
 
 
 @celery_app.task(bind=True, max_retries=3)

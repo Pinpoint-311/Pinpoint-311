@@ -127,8 +127,9 @@ def _get_sm_client():
 
 
 def _secrets_provider() -> str:
-    """Which secret store to use: 'google' (default, GCP Secret Manager + DB
-    fallback) or 'azure' (Azure Key Vault + DB fallback)."""
+    """Which secret store to use: 'google' (default, GCP Secret Manager),
+    'azure' (Azure Key Vault) or 'aws' (AWS Secrets Manager). All keep an
+    encrypted DB copy as fallback."""
     val = os.getenv("SECRETS_PROVIDER")
     if val:
         return val.strip().lower()
@@ -236,6 +237,19 @@ async def get_secret(key_name: str) -> Optional[str]:
         except Exception as e:
             from app.core.sanitize import sanitize_for_log
             logger.warning(f"Azure Key Vault secret read failed for {sanitize_for_log(key_name)}")
+        return await _get_secret_from_db(key_name)
+
+    # AWS Secrets Manager backend (host-selected via SECRETS_PROVIDER=aws)
+    if _secrets_provider() == "aws":
+        try:
+            from app.core import aws_secretsmanager
+            if aws_secretsmanager.is_configured():
+                val = aws_secretsmanager.get_secret(key_name)
+                if val is not None:
+                    return val
+        except Exception:
+            from app.core.sanitize import sanitize_for_log
+            logger.warning(f"AWS Secrets Manager read failed for {sanitize_for_log(key_name)}")
         return await _get_secret_from_db(key_name)
 
     if _is_gcp_available():
@@ -404,6 +418,16 @@ def set_secret_sync(key_name: str, value: str) -> bool:
                 return azure_keyvault.set_secret(key_name, value)
         except Exception as e:
             logger.error(f"Azure Key Vault secret write failed for {key_name}: {e}")
+        return False
+
+    # AWS Secrets Manager backend
+    if _secrets_provider() == "aws":
+        try:
+            from app.core import aws_secretsmanager
+            if aws_secretsmanager.is_configured():
+                return aws_secretsmanager.set_secret(key_name, value)
+        except Exception as e:
+            logger.error(f"AWS Secrets Manager write failed for {key_name}: {e}")
         return False
 
     if not _is_gcp_available():

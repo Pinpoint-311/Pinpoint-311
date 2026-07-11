@@ -162,6 +162,195 @@ class EmailProvider:
             return False
 
 
+# ============ Native cloud SMS providers ============
+
+class SNSProvider(SMSProvider):
+    """Amazon SNS SMS (boto3). For AWS GovCloud stacks. Credentials fall back to
+    the instance role / default chain when explicit keys aren't given."""
+
+    def __init__(self, region: str, sender_id: str = "",
+                 access_key: str = "", secret_key: str = "", session_token: str = ""):
+        self.region = region
+        self.sender_id = sender_id
+        self.access_key = access_key
+        self.secret_key = secret_key
+        self.session_token = session_token
+
+    def _client(self):
+        import boto3
+        kwargs = {"region_name": self.region}
+        if self.access_key and self.secret_key:
+            kwargs["aws_access_key_id"] = self.access_key
+            kwargs["aws_secret_access_key"] = self.secret_key
+            if self.session_token:
+                kwargs["aws_session_token"] = self.session_token
+        return boto3.client("sns", **kwargs)
+
+    async def send_sms(self, to: str, message: str) -> bool:
+        if not self.region:
+            return False
+        import asyncio
+
+        def _run():
+            client = self._client()
+            attrs = {}
+            if self.sender_id:
+                attrs["AWS.SNS.SMS.SenderID"] = {"DataType": "String", "StringValue": self.sender_id}
+            resp = client.publish(PhoneNumber=to, Message=message, MessageAttributes=attrs or {})
+            return bool(resp.get("MessageId"))
+
+        try:
+            return await asyncio.get_event_loop().run_in_executor(None, _run)
+        except Exception as e:
+            logger.warning(f"SNS SMS error: {e}")
+            return False
+
+
+def _acs_auth_headers(method: str, url: str, body_bytes: bytes, access_key: str) -> Dict[str, str]:
+    """Azure Communication Services HMAC-SHA256 request signing (shared by ACS
+    SMS + email). Signs date;host;content-hash with the base64 access key."""
+    import base64
+    import hashlib
+    import hmac
+    from email.utils import formatdate
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    host = parsed.netloc
+    path_and_query = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+    content_hash = base64.b64encode(hashlib.sha256(body_bytes).digest()).decode("ascii")
+    date = formatdate(usegmt=True)  # RFC1123 GMT
+    string_to_sign = f"{method}\n{path_and_query}\n{date};{host};{content_hash}"
+    signature = base64.b64encode(
+        hmac.new(base64.b64decode(access_key), string_to_sign.encode("utf-8"), hashlib.sha256).digest()
+    ).decode("ascii")
+    return {
+        "x-ms-date": date,
+        "x-ms-content-sha256": content_hash,
+        "Authorization": (
+            "HMAC-SHA256 SignedHeaders=x-ms-date;host;x-ms-content-sha256&"
+            f"Signature={signature}"
+        ),
+        "Content-Type": "application/json",
+    }
+
+
+class ACSSMSProvider(SMSProvider):
+    """Azure Communication Services SMS over REST + HMAC auth (no azure SDK)."""
+
+    def __init__(self, endpoint: str, access_key: str, from_number: str):
+        self.endpoint = (endpoint or "").rstrip("/")
+        self.access_key = access_key
+        self.from_number = from_number
+
+    async def send_sms(self, to: str, message: str) -> bool:
+        if not (self.endpoint and self.access_key and self.from_number):
+            return False
+        import json as _json
+        url = f"{self.endpoint}/sms?api-version=2021-03-07"
+        body = _json.dumps({
+            "from": self.from_number,
+            "smsRecipients": [{"to": to}],
+            "message": message,
+            "smsSendOptions": {"enableDeliveryReport": False},
+        }).encode("utf-8")
+        try:
+            headers = _acs_auth_headers("POST", url, body, self.access_key)
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(url, content=body, headers=headers)
+                return resp.is_success
+        except Exception as e:
+            logger.warning(f"ACS SMS error: {e}")
+            return False
+
+
+# ============ Native cloud email providers ============
+
+class SESEmailProvider:
+    """Amazon SES email (boto3). Same send_email signature as EmailProvider so
+    NotificationService can use either interchangeably."""
+
+    def __init__(self, region: str, from_email: str, from_name: str = "Township 311",
+                 access_key: str = "", secret_key: str = "", session_token: str = ""):
+        self.region = region
+        self.from_email = from_email
+        self.from_name = from_name
+        self.access_key = access_key
+        self.secret_key = secret_key
+        self.session_token = session_token
+
+    def _client(self):
+        import boto3
+        kwargs = {"region_name": self.region}
+        if self.access_key and self.secret_key:
+            kwargs["aws_access_key_id"] = self.access_key
+            kwargs["aws_secret_access_key"] = self.secret_key
+            if self.session_token:
+                kwargs["aws_session_token"] = self.session_token
+        return boto3.client("ses", **kwargs)
+
+    def send_email(self, to: str, subject: str, body_html: str,
+                   body_text: Optional[str] = None, from_name: Optional[str] = None) -> bool:
+        if not (self.region and self.from_email):
+            logger.warning("[SES] region/from_email not configured")
+            return False
+        try:
+            sender = f"{from_name or self.from_name} <{self.from_email}>"
+            body: Dict[str, Any] = {"Html": {"Data": body_html, "Charset": "UTF-8"}}
+            if body_text:
+                body["Text"] = {"Data": body_text, "Charset": "UTF-8"}
+            self._client().send_email(
+                Source=sender,
+                Destination={"ToAddresses": [to]},
+                Message={"Subject": {"Data": subject, "Charset": "UTF-8"}, "Body": body},
+            )
+            logger.info(f"[SES] Sent email to {to}")
+            return True
+        except Exception as e:
+            logger.error(f"[SES] Error sending to {to}: {e}")
+            return False
+
+
+class ACSEmailProvider:
+    """Azure Communication Services Email over REST + HMAC auth (no azure SDK).
+    Mirrors EmailProvider.send_email so the two are interchangeable."""
+
+    def __init__(self, endpoint: str, access_key: str, from_email: str, from_name: str = "Township 311"):
+        self.endpoint = (endpoint or "").rstrip("/")
+        self.access_key = access_key
+        self.from_email = from_email  # must be a verified ACS sender address
+        self.from_name = from_name
+
+    def send_email(self, to: str, subject: str, body_html: str,
+                   body_text: Optional[str] = None, from_name: Optional[str] = None) -> bool:
+        if not (self.endpoint and self.access_key and self.from_email):
+            logger.warning("[ACS Email] endpoint/key/sender not configured")
+            return False
+        import json as _json
+        url = f"{self.endpoint}/emails:send?api-version=2023-03-31"
+        content: Dict[str, Any] = {"subject": subject, "html": body_html}
+        if body_text:
+            content["plainText"] = body_text
+        payload = {
+            "senderAddress": self.from_email,
+            "content": content,
+            "recipients": {"to": [{"address": to, "displayName": to}]},
+        }
+        body = _json.dumps(payload).encode("utf-8")
+        try:
+            headers = _acs_auth_headers("POST", url, body, self.access_key)
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.post(url, content=body, headers=headers)
+                if resp.is_success:
+                    logger.info(f"[ACS Email] Queued email to {to}")
+                    return True
+                logger.error(f"[ACS Email] HTTP {resp.status_code}: {resp.text[:200]}")
+                return False
+        except Exception as e:
+            logger.error(f"[ACS Email] Error sending to {to}: {e}")
+            return False
+
+
 # ============ Notification Service ============
 
 class NotificationService:
@@ -191,18 +380,50 @@ class NotificationService:
                 api_key=config.get("api_key", ""),
                 from_number=config.get("from_number", "")
             )
-    
-    def configure_email(self, config: Dict[str, Any]):
-        """Configure Email provider"""
-        self._email_provider = EmailProvider(
-            smtp_host=config.get("smtp_host", ""),
-            smtp_port=config.get("smtp_port", 587),
-            smtp_user=config.get("smtp_user", ""),
-            smtp_password=config.get("smtp_password", ""),
-            from_email=config.get("from_email", ""),
-            from_name=config.get("from_name", "Township 311"),
-            use_tls=config.get("use_tls", True)
-        )
+        elif provider_type == "sns":
+            self._sms_provider = SNSProvider(
+                region=config.get("region", ""),
+                sender_id=config.get("sender_id", ""),
+                access_key=config.get("access_key", ""),
+                secret_key=config.get("secret_key", ""),
+                session_token=config.get("session_token", ""),
+            )
+        elif provider_type == "acs":
+            self._sms_provider = ACSSMSProvider(
+                endpoint=config.get("endpoint", ""),
+                access_key=config.get("access_key", ""),
+                from_number=config.get("from_number", ""),
+            )
+
+    def configure_email(self, config: Dict[str, Any], provider_type: str = "smtp"):
+        """Configure the Email provider. Defaults to SMTP (works with any relay,
+        including SES/ACS SMTP endpoints); 'ses' and 'acs' use the native APIs."""
+        if provider_type == "ses":
+            self._email_provider = SESEmailProvider(
+                region=config.get("region", ""),
+                from_email=config.get("from_email", ""),
+                from_name=config.get("from_name", "Township 311"),
+                access_key=config.get("access_key", ""),
+                secret_key=config.get("secret_key", ""),
+                session_token=config.get("session_token", ""),
+            )
+        elif provider_type == "acs":
+            self._email_provider = ACSEmailProvider(
+                endpoint=config.get("endpoint", ""),
+                access_key=config.get("access_key", ""),
+                from_email=config.get("from_email", ""),
+                from_name=config.get("from_name", "Township 311"),
+            )
+        else:
+            self._email_provider = EmailProvider(
+                smtp_host=config.get("smtp_host", ""),
+                smtp_port=config.get("smtp_port", 587),
+                smtp_user=config.get("smtp_user", ""),
+                smtp_password=config.get("smtp_password", ""),
+                from_email=config.get("from_email", ""),
+                from_name=config.get("from_name", "Township 311"),
+                use_tls=config.get("use_tls", True)
+            )
     
     async def send_sms(self, to: str, message: str) -> bool:
         """Send SMS notification"""

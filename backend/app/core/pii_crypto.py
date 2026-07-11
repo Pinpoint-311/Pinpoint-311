@@ -46,6 +46,7 @@ PII_V2_PREFIX = "pii2:"
 # Backend tags stored as the first byte of a wrapped DEK.
 _WRAP_GOOGLE = b"g"
 _WRAP_AZURE = b"a"
+_WRAP_AWS = b"w"
 _WRAP_LOCAL = b"l"
 
 # AES-GCM associated data — binds ciphertext to its purpose so a wrapped DEK
@@ -110,6 +111,16 @@ def _wrap_dek(dek: bytes) -> bytes:
             raise RuntimeError("REQUIRE_KMS is set but Azure Key Vault is not configured.")
         return _WRAP_LOCAL + _local_wrap(dek)
 
+    if provider == "aws":
+        from app.core import aws_kms
+        if aws_kms.is_configured():
+            wrapped = aws_kms.encrypt(dek)
+            _track("wrap")
+            return _WRAP_AWS + wrapped
+        if _kms_required():
+            raise RuntimeError("REQUIRE_KMS is set but AWS KMS is not configured.")
+        return _WRAP_LOCAL + _local_wrap(dek)
+
     if provider == "google" and _is_kms_available():
         from app.core.encryption import _get_kms_client, _get_kms_key_name
         client, key_name = _get_kms_client(), _get_kms_key_name()
@@ -146,6 +157,11 @@ def _unwrap_dek(wrapped: bytes) -> bytes:
         dek_b64 = azure_keyvault.decrypt(payload.decode("ascii"))
         _track("unwrap")
         return _unb64(dek_b64)
+    if tag == _WRAP_AWS:
+        from app.core import aws_kms
+        dek = aws_kms.decrypt(payload)
+        _track("unwrap")
+        return dek
     raise ValueError(f"Unknown DEK wrap tag: {tag!r}")
 
 
@@ -239,7 +255,7 @@ def active_backend() -> str:
     management is actually in effect."""
     wrapped_b64, _ = _get_active_dek()
     tag = base64.b64decode(wrapped_b64)[:1]
-    return {_WRAP_GOOGLE: "google", _WRAP_AZURE: "azure", _WRAP_LOCAL: "local"}.get(tag, "unknown")
+    return {_WRAP_GOOGLE: "google", _WRAP_AZURE: "azure", _WRAP_AWS: "aws", _WRAP_LOCAL: "local"}.get(tag, "unknown")
 
 
 def clear_caches() -> None:
