@@ -138,13 +138,26 @@ export interface CloudProfileOption {
     ai: string;
     translation: string;
     secrets: string;
+    kms: string;
+    email: string;
+    sms: string;
     identity_recommended: string;
 }
 
+export interface CloudProfileComponents {
+    ai: string;
+    translation: string;
+    secrets: string;
+    kms: string;
+    identity: string;
+    email: string;
+    sms: string;
+}
+
 export interface CloudProfileState {
-    profile: 'google' | 'azure' | 'mixed';
+    profile: 'google' | 'azure' | 'aws' | 'mixed';
     managed: boolean;
-    components: { ai: string; translation: string; secrets: string; identity: string };
+    components: CloudProfileComponents;
     maps: { provider: string; locked: boolean; label: string };
     profiles: CloudProfileOption[];
 }
@@ -152,7 +165,7 @@ export interface CloudProfileState {
 export interface CloudProfileResult {
     ok: boolean;
     profile: string;
-    components: { ai: string; translation: string; secrets: string };
+    components: { ai: string; translation: string; secrets: string; kms: string; email: string; sms: string };
     identity_recommended: string;
     identity_applied: boolean;
     warnings: string[];

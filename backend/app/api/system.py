@@ -239,6 +239,10 @@ CLOUD_PROFILES: Dict[str, Dict[str, str]] = {
         "ai": "vertex",
         "translation": "google",
         "secrets": "google",
+        "kms": "google",
+        # Google has no first-party SMS; email works via SMTP (Workspace/relay).
+        "email": "smtp",
+        "sms": "",
         "identity_recommended": "auth0",
     },
     "azure": {
@@ -247,15 +251,33 @@ CLOUD_PROFILES: Dict[str, Dict[str, str]] = {
         "ai": "azure",
         "translation": "azure",
         "secrets": "azure",
+        "kms": "azure",
+        "email": "acs",
+        "sms": "acs",
         "identity_recommended": "entra",
+    },
+    "aws": {
+        "label": "Amazon Web Services (GovCloud)",
+        "boundary": "AWS GovCloud — FedRAMP High, DoD IL4/5",
+        "ai": "bedrock",
+        "translation": "aws",
+        "secrets": "aws",
+        "kms": "aws",
+        "email": "ses",
+        "sms": "sns",
+        "identity_recommended": "oidc",
     },
 }
 
 
-def _derive_cloud_profile(ai: str, translation: str, secrets: str) -> str:
-    """Report which named profile the current selections match, or 'mixed'."""
+def _derive_cloud_profile(ai: str, translation: str, secrets: str, kms: str = None) -> str:
+    """Report which named profile the current core selections match, or 'mixed'.
+    Matches on the boundary-defining set (AI, translation, secret store, and KMS
+    when provided); email/SMS can legitimately differ and aren't part of the match."""
     for pid, p in CLOUD_PROFILES.items():
         if ai == p["ai"] and translation == p["translation"] and secrets == p["secrets"]:
+            if kms is not None and kms != p["kms"]:
+                continue
             return pid
     return "mixed"
 
@@ -276,14 +298,21 @@ async def get_cloud_profile(
     the per-capability selections behind it, and the fixed Maps provider."""
     from app.services.secret_manager import get_secret, _secrets_provider
     from app.core.config import get_settings as _app_settings
+    from app.core.encryption import _kms_provider
     ai = (await get_secret("AI_PROVIDER")) or "vertex"
     translation = (await get_secret("TRANSLATION_PROVIDER")) or "google"
     identity = (await get_secret("IDENTITY_PROVIDER")) or "auth0"
+    email = (await get_secret("EMAIL_PROVIDER")) or "smtp"
+    sms = (await get_secret("SMS_PROVIDER")) or ""
     secrets = _secrets_provider()
+    kms = _kms_provider()
     return {
-        "profile": _derive_cloud_profile(ai, translation, secrets),
+        "profile": _derive_cloud_profile(ai, translation, secrets, kms),
         "managed": _app_settings().managed_mode,
-        "components": {"ai": ai, "translation": translation, "secrets": secrets, "identity": identity},
+        "components": {
+            "ai": ai, "translation": translation, "secrets": secrets, "kms": kms,
+            "identity": identity, "email": email, "sms": sms,
+        },
         "maps": {"provider": "google", "locked": True, "label": "Google Maps (required)"},
         "profiles": [{"id": k, **v} for k, v in CLOUD_PROFILES.items()],
     }
@@ -314,6 +343,13 @@ async def set_cloud_profile(
     await _persist_secret(db, _PROVIDER_SELECT_KEY["ai"], p["ai"])
     await _persist_secret(db, _PROVIDER_SELECT_KEY["translation"], p["translation"])
     await _persist_secret(db, "SECRETS_PROVIDER", p["secrets"])
+    await _persist_secret(db, "KMS_PROVIDER", p["kms"])
+    # Email/SMS only when the cloud has a native option — Google has no first-party
+    # SMS, so leave the existing SMS provider (e.g. Twilio) untouched there.
+    if p.get("email"):
+        await _persist_secret(db, "EMAIL_PROVIDER", p["email"])
+    if p.get("sms"):
+        await _persist_secret(db, "SMS_PROVIDER", p["sms"])
 
     warnings: List[str] = []
     # Gov-readiness: flipping the secret store to a vault that isn't wired up yet
@@ -338,6 +374,25 @@ async def set_cloud_profile(
                 )
         except Exception:
             pass
+    elif p["secrets"] == "aws":
+        try:
+            from app.core import aws_secretsmanager
+            if not aws_secretsmanager.is_configured():
+                warnings.append(
+                    "AWS Secrets Manager isn't configured yet (set AWS_REGION + credentials) — "
+                    "secrets stay in the encrypted database until then."
+                )
+        except Exception:
+            pass
+
+    # KMS migration safety: existing PII is unwrapped by the KMS tag stored in
+    # each value, so it stays readable ONLY while the previous KMS credentials
+    # remain in place. New PII uses the new KMS immediately.
+    warnings.append(
+        f"PII encryption now uses {p['kms'].upper()} KMS for new data. Existing encrypted "
+        "records still need the previous KMS's credentials to decrypt — keep them in place, "
+        "or run “Re-encrypt All PII” to migrate everything to the new key."
+    )
 
     identity_applied = False
     if body.apply_identity:
@@ -346,6 +401,12 @@ async def set_cloud_profile(
 
     from app.services.secret_manager import clear_cache
     clear_cache()
+    # Drop the cached wrapped-DEK so the next PII write re-wraps under the new KMS.
+    try:
+        from app.core import pii_crypto
+        pii_crypto.clear_caches()
+    except Exception:
+        pass
 
     from app.core.sanitize import sanitize_for_log
     logger.info(
@@ -357,6 +418,7 @@ async def set_cloud_profile(
         "profile": pid,
         "components": {
             "ai": p["ai"], "translation": p["translation"], "secrets": p["secrets"],
+            "kms": p["kms"], "email": p.get("email", ""), "sms": p.get("sms", ""),
         },
         "identity_recommended": p["identity_recommended"],
         "identity_applied": identity_applied,

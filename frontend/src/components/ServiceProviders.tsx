@@ -305,8 +305,19 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
 }
 
 const COMPONENT_LABEL: Record<string, string> = {
-    vertex: 'Google Vertex AI', azure: 'Azure', google: 'Google', auth0: 'Auth0', entra: 'Microsoft Entra ID',
+    // AI
+    vertex: 'Google Vertex AI', bedrock: 'AWS Bedrock',
+    // shared cloud names
+    azure: 'Azure', google: 'Google', aws: 'AWS',
+    // identity
+    auth0: 'Auth0', entra: 'Microsoft Entra ID', okta: 'Okta', oidc: 'OIDC (e.g. Cognito)',
+    // email / sms
+    smtp: 'SMTP', ses: 'Amazon SES', acs: 'Azure Communication Services',
+    sns: 'Amazon SNS', twilio: 'Twilio',
 };
+
+const label = (v: string) => COMPONENT_LABEL[v] || v || '—';
+const secretsLabel = (v: string) => v === 'google' ? 'Secret Manager' : v === 'azure' ? 'Key Vault' : v === 'aws' ? 'Secrets Manager' : label(v);
 
 // Hybrid "one choice" front door: a jurisdiction is authorized under one cloud
 // boundary, so picking it sets AI + translation + secret store together. Identity
@@ -366,8 +377,9 @@ function CloudEnvironment({ onApplied }: { onApplied: () => void }) {
                     <div className="min-w-0">
                         <h3 className="font-semibold text-white tracking-tight">Cloud environment</h3>
                         <p className="text-white/50 text-xs mt-0.5 max-w-xl leading-relaxed">
-                            One choice sets your AI, translation, and secret storage to match your authorized cloud.
-                            Sign-in and Google Maps are configured separately below.
+                            One choice sets your AI, translation, secret storage, PII encryption (KMS), and
+                            email/text to match your authorized cloud. Sign-in and Google Maps are configured
+                            separately below.
                         </p>
                     </div>
                 </div>
@@ -378,7 +390,7 @@ function CloudEnvironment({ onApplied }: { onApplied: () => void }) {
                 )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4" role="radiogroup" aria-label="Cloud environment">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-4" role="radiogroup" aria-label="Cloud environment">
                 {state.profiles.map(p => {
                     const isActive = state.profile === p.id;
                     const isBusy = busy === p.id;
@@ -404,8 +416,15 @@ function CloudEnvironment({ onApplied }: { onApplied: () => void }) {
                                 {p.boundary}
                             </p>
                             <div className="flex flex-wrap gap-1.5 mt-2.5">
-                                {[`AI · ${COMPONENT_LABEL[p.ai] || p.ai}`, `Translation · ${COMPONENT_LABEL[p.translation] || p.translation}`, `Secrets · ${p.secrets === 'google' ? 'Secret Manager' : 'Key Vault'}`].map(t => (
-                                    <span key={t} className="inline-flex items-center rounded-md bg-white/[0.05] border border-white/10 px-1.5 py-0.5 text-[10px] text-white/55">{t}</span>
+                                {[
+                                    `AI · ${label(p.ai)}`,
+                                    `Translation · ${label(p.translation)}`,
+                                    `Secrets · ${secretsLabel(p.secrets)}`,
+                                    `KMS · ${label(p.kms)}`,
+                                    `Email · ${label(p.email)}`,
+                                    ...(p.sms ? [`SMS · ${label(p.sms)}`] : []),
+                                ].map(t => (
+                                    <span key={t} className="inline-flex items-center rounded-md bg-white/[0.05] border border-white/10 px-1.5 py-0.5 text-[10px] text-white/75">{t}</span>
                                 ))}
                             </div>
                         </button>
