@@ -69,13 +69,13 @@ AI_CATALOG: Dict[str, Dict[str, Any]] = {
         "default_model": "anthropic.claude-3-5-sonnet-20240620-v1:0",
         "credential_fields": [
             {"key": "AWS_REGION", "label": "AWS Region", "secret": False},
-            {"key": "BEDROCK_ACCESS_KEY_ID", "label": "Access Key ID (optional)", "secret": False},
-            {"key": "BEDROCK_SECRET_ACCESS_KEY", "label": "Secret Access Key (optional)", "secret": True},
+            {"key": "AWS_ACCESS_KEY_ID", "label": "Access Key ID (optional)", "secret": False},
+            {"key": "AWS_SECRET_ACCESS_KEY", "label": "Secret Access Key (optional)", "secret": True},
         ],
         "field_help": {
-            "AWS_REGION": "e.g. us-gov-west-1.",
-            "BEDROCK_ACCESS_KEY_ID": "Optional — omit to use the host's instance role.",
-            "BEDROCK_SECRET_ACCESS_KEY": "Optional — omit to use the host's instance role.",
+            "AWS_REGION": "e.g. us-gov-west-1. Shared across all AWS services (Bedrock, Translate, Secrets Manager, KMS, SES, SNS).",
+            "AWS_ACCESS_KEY_ID": "Optional — omit to use the host's instance role. Shared by every AWS service.",
+            "AWS_SECRET_ACCESS_KEY": "Optional — omit to use the host's instance role. Shared by every AWS service.",
         },
     },
 }
@@ -119,8 +119,9 @@ def build_ai_provider(provider: str, model: Optional[str], creds: Dict[str, str]
         return BedrockProvider(
             region=region,
             model_id=model,
-            access_key_id=creds.get("BEDROCK_ACCESS_KEY_ID"),
-            secret_access_key=creds.get("BEDROCK_SECRET_ACCESS_KEY"),
+            # Shared AWS credentials (fall back to legacy BEDROCK_* if present).
+            access_key_id=creds.get("AWS_ACCESS_KEY_ID") or creds.get("BEDROCK_ACCESS_KEY_ID"),
+            secret_access_key=creds.get("AWS_SECRET_ACCESS_KEY") or creds.get("BEDROCK_SECRET_ACCESS_KEY"),
         )
     return None
 
