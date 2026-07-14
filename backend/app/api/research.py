@@ -2354,7 +2354,7 @@ async def research_chat(
 
         credentials.refresh(Request())
 
-        endpoint = f"https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/gemini-3.1-flash-lite-preview:generateContent"
+        endpoint = f"https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent"
 
         payload = {
             "contents": [{"role": "user", "parts": [{"text": conversation}]}],

@@ -23,10 +23,10 @@ AI_CATALOG: Dict[str, Dict[str, Any]] = {
         "boundary": "Google Cloud (Assured Workloads / FedRAMP High)",
         "description": "Gemini models on Vertex AI. The default — cheapest for triage and already integrated.",
         "models": [
-            {"id": "gemini-3.1-flash-lite-preview", "label": "Gemini 3.1 Flash-Lite (fast, cheap — recommended)"},
-            {"id": "gemini-1.5-pro", "label": "Gemini 1.5 Pro (higher quality)"},
+            {"id": "gemini-3.1-flash-lite", "label": "Gemini 3.1 Flash-Lite (fast, cheap — recommended for triage)"},
+            {"id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash (near-Pro quality, 1M context)"},
         ],
-        "default_model": "gemini-3.1-flash-lite-preview",
+        "default_model": "gemini-3.1-flash-lite",
         "credential_fields": [
             {"key": "VERTEX_AI_PROJECT", "label": "GCP Project ID", "secret": False},
             {"key": "VERTEX_AI_SERVICE_ACCOUNT_KEY", "label": "Service Account JSON", "secret": True},

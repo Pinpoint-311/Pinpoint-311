@@ -9,7 +9,7 @@ from app.services.ai.base import AIProvider
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
+DEFAULT_MODEL = "gemini-3.1-flash-lite"
 
 
 class VertexAIProvider(AIProvider):

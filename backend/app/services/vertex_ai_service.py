@@ -1,5 +1,5 @@
 """
-Vertex AI Service for 311 Request Analysis using Gemini 3.1 Flash-Lite
+Vertex AI Service for 311 Request Analysis using Gemini (Flash-Lite)
 
 This service analyzes service requests using Google's Gemini model to provide:
 - Priority scoring (1-10)
@@ -207,7 +207,7 @@ async def analyze_with_gemini(
     model: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Call Gemini 3.1 Flash-Lite via Vertex AI API.
+    Call Gemini (Flash-Lite) via Vertex AI API.
     
     Args:
         project_id: Google Cloud project ID
@@ -244,7 +244,7 @@ async def analyze_with_gemini(
         
         # Build the API endpoint
         # Gemini 3 models are currently available on global endpoints
-        model_id = model or "gemini-3.1-flash-lite-preview"
+        model_id = model or "gemini-3.1-flash-lite"
         endpoint = f"https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/{model_id}:generateContent"
         
         # Build the request payload
