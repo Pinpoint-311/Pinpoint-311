@@ -312,24 +312,20 @@ export default function GovtechIntegrations() {
 
     return (
         <div className="relative">
-            {/* Aurora glow behind the header for depth */}
-            <div className="aurora-glow w-72 h-40 -top-10 -left-6" aria-hidden="true" />
-
-            <div className="relative mb-5">
-                <div className="inline-flex items-center gap-1.5 rounded-full bg-primary-500/15 border border-primary-400/25 px-2.5 py-1 mb-3">
-                    <Landmark className="w-3 h-3 text-primary-300" aria-hidden="true" />
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-primary-200">Platform connectors</span>
+            <div className="mb-4">
+                <h2 className="text-lg font-semibold text-white mb-1 flex items-center gap-2">
+                    <Landmark className="w-5 h-5 text-primary-300" aria-hidden="true" />
+                    Connect Your Other Town Systems
                     {connectedCount > 0 && (
-                        <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-emerald-500/20 border border-emerald-400/30 px-1.5 text-[10px] font-semibold text-emerald-200">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 border border-emerald-400/30 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">
                             <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400" aria-hidden="true" />
                             {connectedCount} connected
                         </span>
                     )}
-                </div>
-                <h2 className="text-2xl font-bold text-gradient tracking-tight">Connect Your Other Town Systems</h2>
-                <p className="text-white/50 text-sm mt-1.5 max-w-2xl leading-relaxed">
+                </h2>
+                <p className="text-white/60 text-sm max-w-2xl leading-relaxed">
                     Full two-way connectors for the platforms your town already runs. Reports, photos, comments,
-                    and status updates flow between them automatically — <span className="text-white/70">no double entry</span>.
+                    and status updates flow between them automatically — no double entry.
                 </p>
             </div>
 
@@ -359,7 +355,7 @@ export default function GovtechIntegrations() {
                 </div>
             )}
 
-            <div className="relative grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            <div className="relative space-y-2.5">
                 {visibleCatalog.map((platform, idx) => {
                     const existing = configFor(platform.platform);
                     const mode = MODE_LABELS[platform.integration_mode] || MODE_LABELS.partner_api;
@@ -374,12 +370,13 @@ export default function GovtechIntegrations() {
                             key={platform.platform}
                             initial={{ opacity: 0, y: 14 }}
                             animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: idx * 0.05, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-                            className={`premium-card p-5 ${needsAttention ? 'ring-1 ring-amber-500/40' : ''}`}
+                            transition={{ delay: Math.min(idx, 8) * 0.03, duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                            className={`relative rounded-xl border p-4 transition-colors ${needsAttention
+                                ? 'border-amber-500/40 bg-amber-500/[0.04]'
+                                : existing?.enabled
+                                    ? 'border-primary-400/30 bg-primary-500/[0.06]'
+                                    : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.05]'}`}
                         >
-                            {isWorking && (
-                                <div className="absolute -inset-px rounded-[20px] bg-gradient-to-br from-primary-500/10 via-transparent to-primary-500/5 pointer-events-none" aria-hidden="true" />
-                            )}
                             <button
                                 type="button"
                                 onClick={() => toggleCard(platform.platform)}
@@ -400,8 +397,8 @@ export default function GovtechIntegrations() {
                                         </div>
                                     </div>
                                     <div className="min-w-0">
-                                        <h3 className="font-semibold text-white tracking-tight truncate">{platform.name}</h3>
-                                        <p className="text-white/65 text-xs truncate">{platform.category}</p>
+                                        <h3 className="font-semibold text-white tracking-tight">{platform.name}</h3>
+                                        <p className="text-white/60 text-xs truncate">{platform.category}</p>
                                     </div>
                                 </div>
                                 <div className="shrink-0 flex items-center gap-2">
@@ -426,11 +423,9 @@ export default function GovtechIntegrations() {
                                 </div>
                             </button>
 
-                            {/* Collapsed preview: mode label so the card is still scannable */}
+                            {/* Collapsed preview: quiet mode label so the row stays calm */}
                             {!isOpen && (
-                                <span className={`relative inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border mt-3 ${mode.className}`}>
-                                    {mode.label}
-                                </span>
+                                <p className="relative text-[11px] text-white/60 mt-1.5 ml-[3.75rem]">{mode.label}</p>
                             )}
 
                             <div id={`conn-body-${platform.platform}`} className={isOpen ? 'block' : 'hidden'}>
@@ -438,7 +433,7 @@ export default function GovtechIntegrations() {
                                 {mode.label}
                             </span>
 
-                            <p className="relative text-white/50 text-xs mt-2 leading-relaxed">{platform.plain_summary || platform.description}</p>
+                            <p className="relative text-white/60 text-xs mt-2 leading-relaxed">{platform.plain_summary || platform.description}</p>
 
                             {/* Capability chips — what actually flows with this connector */}
                             <div className="relative flex flex-wrap gap-1.5 mt-3">
