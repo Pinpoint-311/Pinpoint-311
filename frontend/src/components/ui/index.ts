@@ -6,3 +6,4 @@ export { Card } from './Card';
 export { Modal } from './Modal';
 export { Badge, StatusBadge } from './Badge';
 export { AccordionSection, AccordionGroup } from './Accordion';
+export { CollapsibleSection } from './CollapsibleSection';

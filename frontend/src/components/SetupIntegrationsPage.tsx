@@ -8,7 +8,7 @@ import {
     ListChecks, HardDrive, MapPin
 } from 'lucide-react';
 
-import { Card, Button, Input, Select, Badge } from './ui';
+import { Card, Button, Input, Select, Badge, CollapsibleSection } from './ui';
 import { SystemSecret } from '../types';
 import { api } from '../services/api';
 import GovtechIntegrations from './GovtechIntegrations';
@@ -296,11 +296,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
 
             {/* Required Integrations */}
-            <div>
-                <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                    <Shield className="w-5 h-5 text-red-400" />
-                    Required Integrations
-                </h2>
+            <CollapsibleSection title="Required Integrations" icon={Shield} subtitle="Sign-in, database, and maps" defaultOpen={true}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Auth0 SSO */}
                     <Card className="h-full">
@@ -480,16 +476,10 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         </div>
                     </motion.div>
                 </div>
-            </div>
+            </CollapsibleSection>
 
-
-
-            {/* Optional Integrations - Premium Design */}
-            <div>
-                <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                    <Cloud className="w-5 h-5 text-blue-400" />
-                    Optional Integrations
-                </h2>
+            {/* Optional Integrations */}
+            <CollapsibleSection title="Optional Integrations" icon={Cloud} subtitle="SMS, email, cloud services, monitoring, and backups" defaultOpen={false}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* SMS Notifications - Premium Card */}
                     <motion.div
@@ -1310,7 +1300,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         </div>
                     </motion.div>
                 </div>
-            </div>
+            </CollapsibleSection>
 
             {saveMessage && (
                 <div className="rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-sm text-white/80">

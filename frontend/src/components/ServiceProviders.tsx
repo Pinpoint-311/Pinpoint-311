@@ -6,7 +6,7 @@ import {
     Cloud, MapPin, Lock, Info,
 } from 'lucide-react';
 
-import { Select } from './ui';
+import { Select, CollapsibleSection } from './ui';
 import SecretField from './SecretField';
 import { api, ProviderCatalog, ProviderInfo, CloudProfileState } from '../services/api';
 
@@ -487,36 +487,32 @@ export default function ServiceProviders() {
     const failedCount = loaded.filter(c => statuses[c.key]?.verified === false).length;
 
     return (
-        <div className="relative">
-            <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-                <div>
-                    <h2 className="text-lg font-semibold text-white mb-1 flex items-center gap-2">
-                        <Sparkles className="w-5 h-5 text-primary-300" aria-hidden="true" />
-                        Service Providers
-                    </h2>
-                    <p className="text-white/60 text-sm max-w-2xl leading-relaxed">
-                        Choose which cloud powers each capability. Every option is pre-built — pick a provider, paste your key, and test.
-                        Google &amp; Auth0 are the defaults, so you can leave these untouched and everything just works.
-                    </p>
+        <CollapsibleSection
+            title="Service Providers"
+            icon={Sparkles}
+            subtitle="AI, translation, sign-in & cloud environment — defaults work out of the box"
+            trailing={
+                <button
+                    onClick={() => setRecheckToken(t => t + 1)}
+                    className="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium text-white/80 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                >
+                    <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" /> Recheck
+                </button>
+            }
+        >
+            <p className="text-white/60 text-sm max-w-2xl leading-relaxed mb-1">
+                Choose which cloud powers each capability. Every option is pre-built — pick a provider, paste your key, and test.
+                Google &amp; Auth0 are the defaults, so you can leave these untouched and everything just works.
+            </p>
+            {loaded.length > 0 && (
+                <div className="text-[11px] text-white/55 flex flex-wrap items-center gap-x-3 gap-y-0.5 mb-4">
+                    <span>{onDefaultCount === loaded.length
+                        ? 'All on recommended defaults'
+                        : `${loaded.length - onDefaultCount} customized · ${onDefaultCount} on defaults`}</span>
+                    {verifiedCount > 0 && <span className="text-emerald-300/80 inline-flex items-center gap-1"><CheckCircle className="w-3 h-3" />{verifiedCount} verified</span>}
+                    {failedCount > 0 && <span className="text-amber-300/90 inline-flex items-center gap-1"><AlertCircle className="w-3 h-3" />{failedCount} need attention</span>}
                 </div>
-                <div className="flex flex-col items-start sm:items-end gap-1.5">
-                    <button
-                        onClick={() => setRecheckToken(t => t + 1)}
-                        className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium text-white/80 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
-                    >
-                        <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" /> Recheck all connections
-                    </button>
-                    {loaded.length > 0 && (
-                        <div className="text-[11px] text-white/50 flex flex-wrap items-center gap-x-3 gap-y-0.5 sm:justify-end">
-                            <span>{onDefaultCount === loaded.length
-                                ? 'All on recommended defaults'
-                                : `${loaded.length - onDefaultCount} customized · ${onDefaultCount} on defaults`}</span>
-                            {verifiedCount > 0 && <span className="text-emerald-300/80 inline-flex items-center gap-1"><CheckCircle className="w-3 h-3" />{verifiedCount} verified</span>}
-                            {failedCount > 0 && <span className="text-amber-300/90 inline-flex items-center gap-1"><AlertCircle className="w-3 h-3" />{failedCount} need attention</span>}
-                        </div>
-                    )}
-                </div>
-            </div>
+            )}
 
             <CloudEnvironment onApplied={() => setReloadToken(t => t + 1)} />
 
@@ -526,6 +522,6 @@ export default function ServiceProviders() {
                         recheckToken={recheckToken} reloadToken={reloadToken} onStatus={onStatus} />
                 ))}
             </div>
-        </div>
+        </CollapsibleSection>
     );
 }
