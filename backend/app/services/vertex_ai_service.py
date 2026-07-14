@@ -198,6 +198,27 @@ Provide your analysis in the following JSON format ONLY:
     return prompt
 
 
+def _gemini_fallback(err: str, reachable: bool) -> Dict[str, Any]:
+    """Safe analysis shape returned when the AI call fails. `reachable` is True
+    when the API responded (auth + model OK) but produced no usable JSON, so a
+    connection test can still pass; False for network/auth/HTTP failures."""
+    return {
+        "priority_score": 5.0,
+        "priority_justification": f"AI analysis failed: {err[:100]}",
+        "qualitative_analysis": "AI analysis could not be completed due to a service error. Manual review recommended.",
+        "quantitative_metrics": {
+            "estimated_severity": "unknown",
+            "estimated_affected_area": "unknown",
+            "is_likely_duplicate": False,
+            "recurrence_risk": "unknown",
+        },
+        "safety_flags": [],
+        "recommended_response_time": "48h",
+        "_error": err,
+        "_reachable": reachable,
+    }
+
+
 async def analyze_with_gemini(
     project_id: str,
     location: str,
@@ -314,42 +335,31 @@ async def analyze_with_gemini(
                 
                 result = await response.json()
         
-        # Extract the text response from all parts
-        if 'candidates' in result and result['candidates']:
-            parts = result['candidates'][0].get('content', {}).get('parts', [])
+        # A 200 here means Vertex is reachable and the auth + model are valid.
+        # Parse the model's JSON defensively: if the answer text is empty or
+        # unparseable (e.g. a trivial connection-test prompt where the token
+        # budget went to "thinking"), still report the call as REACHABLE so
+        # connectivity checks don't false-negative on a working configuration.
+        try:
+            candidates = result.get('candidates') or []
             text_response = ""
-            
-            for part in parts:
-                if 'text' in part:
-                    text_response += part['text']
-            
-            # Parse JSON from response (handle markdown code blocks)
+            if candidates:
+                for part in candidates[0].get('content', {}).get('parts', []):
+                    # Skip "thought" parts — only the answer text carries the JSON.
+                    if 'text' in part and not part.get('thought'):
+                        text_response += part['text']
             json_match = re.search(r'```json\s*(.*?)\s*```', text_response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                json_str = text_response.strip()
-            
+            json_str = json_match.group(1) if json_match else text_response.strip()
+            if not json_str:
+                raise ValueError("model returned no text output")
             return json.loads(json_str)
-        else:
-            raise Exception("No response candidates from Vertex AI")
-            
+        except Exception as parse_err:
+            logger.warning(f"[Vertex] reachable but response not parseable: {parse_err}")
+            return _gemini_fallback(f"Model reachable but returned no parseable JSON: {parse_err}", reachable=True)
+
     except Exception as e:
-        # Return error information for debugging
-        return {
-            "priority_score": 5.0,
-            "priority_justification": f"AI analysis failed: {str(e)[:100]}",
-            "qualitative_analysis": "AI analysis could not be completed due to a service error. Manual review recommended.",
-            "quantitative_metrics": {
-                "estimated_severity": "unknown",
-                "estimated_affected_area": "unknown",
-                "is_likely_duplicate": False,
-                "recurrence_risk": "unknown"
-            },
-            "safety_flags": [],
-            "recommended_response_time": "48h",
-            "_error": str(e)
-        }
+        # Network / auth / HTTP error — genuinely not reachable.
+        return _gemini_fallback(str(e), reachable=False)
 
 
 async def get_historical_context(db, address: str, service_code: str, lat: Optional[float] = None, long: Optional[float] = None, exclude_id: Optional[int] = None, description: str = "") -> Dict[str, Any]:
