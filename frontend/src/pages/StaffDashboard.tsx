@@ -1967,7 +1967,22 @@ export default function StaffDashboard() {
                                                 const qualitativeText = ai?.qualitative_analysis ?? selectedRequest.vertex_ai_summary ?? null;
                                                 const hasError = ai?._error;
 
-                                                if (!ai && !qualitativeText) return null;
+                                                // Computed (non-AI) triage facts — populated for every request
+                                                // regardless of whether AI ran.
+                                                const ctx = ai?.context ?? null;
+                                                const aiRan = !!(qualitativeText || priorityScore != null);
+                                                const contextChips: string[] = [];
+                                                if (ctx) {
+                                                    if (ctx.nearby_similar) contextChips.push(`${ctx.nearby_similar} similar nearby`);
+                                                    if (ctx.recurrence_count) contextChips.push(`${ctx.recurrence_count} prior at this address`);
+                                                    if (ctx.nearby_outages) contextChips.push(`${ctx.nearby_outages} nearby outages`);
+                                                    if (ctx.is_school_zone) contextChips.push('School zone');
+                                                    if (Array.isArray(ctx.critical_infrastructure) && ctx.critical_infrastructure.length) contextChips.push(`Near ${ctx.critical_infrastructure.slice(0, 2).join(', ')}`);
+                                                    if (ctx.weather_at_report) contextChips.push(`Weather: ${ctx.weather_at_report}`);
+                                                }
+                                                const similarCount = ctx?.similar_reports?.length ?? ai?.similar_reports?.length ?? 0;
+
+                                                if (!qualitativeText && priorityScore == null && contextChips.length === 0 && !similarCount) return null;
 
                                                 return (
                                                     <div
@@ -1988,12 +2003,26 @@ export default function StaffDashboard() {
                                                                         <Brain className="w-5 h-5 text-primary-400" />
                                                                     </div>
                                                                     <div className="text-left">
-                                                                        <span className="text-sm font-semibold text-white">AI Analysis</span>
-                                                                        <p className="text-[10px] text-white/40">Gemini 3.1 Flash-Lite</p>
+                                                                        <span className="text-sm font-semibold text-white">{aiRan ? 'AI Analysis' : 'Triage Context'}</span>
+                                                                        <p className="text-[10px] text-white/40">{aiRan ? 'AI-assisted summary' : 'Computed from town records'}</p>
                                                                     </div>
                                                                 </div>
                                                                 <ChevronDown className={`w-5 h-5 text-white/40 transition-transform ${isAIExpanded ? 'rotate-180' : ''}`} />
                                                             </button>
+
+                                                            {/* Computed triage facts — shown whether or not AI ran */}
+                                                            {contextChips.length > 0 && (
+                                                                <div className="flex flex-wrap gap-1.5 mb-3">
+                                                                    {contextChips.map((c, i) => (
+                                                                        <span key={i} className="inline-flex items-center rounded-md bg-white/[0.05] border border-white/10 px-2 py-0.5 text-[11px] text-white/70">{c}</span>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                            {!aiRan && !hasError && (
+                                                                <p className="text-xs text-white/50 mb-3">
+                                                                    AI summary is off or not configured — these facts are computed directly from your town's records.
+                                                                </p>
+                                                            )}
 
                                                             {/* Translation block for non-English submissions */}
                                                             {ai?.translation && ai.translation.detected_language && ai.translation.detected_language !== 'English' && ai.translation.english_translation && (

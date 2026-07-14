@@ -136,34 +136,42 @@ def analyze_request(self, request_id: int):
         from datetime import datetime
         
         async with SessionLocal() as db:
-            # Check if AI analysis is enabled
             settings_result = await db.execute(select(SystemSettings).limit(1))
             settings = settings_result.scalar_one_or_none()
-            if not settings or not settings.modules.get('ai_analysis', False):
-                msg = f"[AI Analysis] Skipped - AI analysis not enabled. modules={settings.modules if settings else 'No settings'}"
-                logger.info(msg)
-                return {"status": "skipped", "reason": "AI analysis not enabled"}
-            
-            logger.info(f"[AI Analysis] AI module is enabled, proceeding...")
-            
-            # Select the configured AI provider (Vertex/Gemini is the default).
-            # None means AI is not configured for this instance → skip, as before.
-            from app.services.ai import get_ai_provider
-            ai_provider = await get_ai_provider(db)
-            if ai_provider is None:
-                msg = "[AI Analysis] Skipped - no AI provider configured"
-                logger.warning(msg)
-                return {"status": "skipped", "reason": "AI provider not configured"}
 
-            logger.info(f"[AI Analysis] Using provider={ai_provider.provider} model={ai_provider.model}")
-
-            # Get the request
+            # Fetch the request first — enrichment below runs for it regardless of
+            # whether AI is available.
             result = await db.execute(
                 select(ServiceRequest).where(ServiceRequest.id == request_id)
             )
             request = result.scalar_one_or_none()
             if not request:
                 return {"error": "Request not found"}
+
+            # AI powers ONLY the qualitative summary + suggested priority. The
+            # non-AI enrichment (nearby history, weather, proximity, similar
+            # reports) always runs, so those facts populate even when AI is off or
+            # not configured. This is what every intake path — resident portal,
+            # manual/call-taker, email, and webhook — shares.
+            ai_module_on = bool(settings and settings.modules.get('ai_analysis', False))
+            ai_provider = None
+            if ai_module_on:
+                from app.services.ai import get_ai_provider
+                ai_provider = await get_ai_provider(db)
+            logger.info(f"[Analysis] request {request_id}: ai_module_on={ai_module_on} "
+                        f"provider={getattr(ai_provider, 'provider', None)}")
+
+            # Phone/email/manual intake often carries an address but no map pin.
+            # Geocode so spatial + weather enrichment can run for it too. Skipped
+            # cleanly when there's no address to work with.
+            if (request.lat is None or request.long is None) and request.address:
+                try:
+                    _key = await get_secret(db, "GOOGLE_MAPS_API_KEY")
+                    _geo = await get_geocoding_service(_key if _key else None).geocode(request.address)
+                    if _geo:
+                        request.lat, request.long = _geo.lat, _geo.lng
+                except Exception:
+                    logger.debug("[Analysis] geocode fallback failed", exc_info=True)
             
             # Build request data with PII stripped
             request_data = {
@@ -183,75 +191,86 @@ def analyze_request(self, request_id: int):
             analysis_time = datetime.now(ZoneInfo("US/Eastern"))
             request_data["analysis_time"] = analysis_time.strftime("%Y-%m-%d %H:%M:%S %Z")
 
-            # Get historical & spatial context
-            historical_context = await get_historical_context(
-                db, request.address, request.service_code, request.lat, request.long, exclude_id=request.id, description=request.description or ""
-            )
-            spatial_context = await get_spatial_context(
-                db, request.lat, request.long, request.service_code
-            )
-            
-            # Fetch real-time weather for triage location
-            request_data["current_weather"] = await get_weather_for_location(request.lat, request.long)
-
-            # Build the analysis prompt
-            prompt = build_analysis_prompt(
-                request_data,
-                historical_context=historical_context,
-                spatial_context=spatial_context
-            )
-            
-            # Get images for multimodal analysis
-            image_data = request.media_urls[:3] if request.media_urls else None
-            
-            # Call the selected AI provider
-            logger.info(f"[AI Analysis] Calling {ai_provider.provider} for request {request_id}...")
-
-            analysis_result = await ai_provider.complete_json(prompt, image_data)
-            
-            logger.info(f"[AI Analysis] Got result: {analysis_result}")
-            
-            # Track API usage for cost estimation
+            # ---- Enrichment: ALWAYS runs. Each step guards its own inputs and
+            # never fails the task, so a request with partial data (e.g. no
+            # coordinates) still yields whatever facts are computable. ----
+            historical_context, spatial_context, weather = {}, {}, None
             try:
-                from app.services.api_usage import track_api_usage
-                # Estimate token counts (rough estimation based on prompt/response)
-                tokens_in = len(prompt) // 4  # Rough estimate: ~4 chars per token
-                tokens_out = len(str(analysis_result)) // 4
-                await track_api_usage(
-                    db=db,
-                    service_name="vertex_ai",
-                    operation="analyze_request",
-                    tokens_input=tokens_in,
-                    tokens_output=tokens_out,
-                    request_id=request.service_request_id
-                )
-            except Exception as e:
-                logger.warning(f"[AI Analysis] Failed to track usage: {e}")
-            
-            # Check for errors in result
-            if "_error" in analysis_result:
-                logger.error(f"[AI Analysis] Error from Vertex AI: {analysis_result['_error']}")
-            
-            # Add similar_reports from historical context to the stored result
-            # These are already filtered by geo (500m) + category + description similarity (>25%)
+                historical_context = await get_historical_context(
+                    db, request.address, request.service_code, request.lat, request.long,
+                    exclude_id=request.id, description=request.description or "",
+                ) or {}
+            except Exception:
+                logger.warning("[Analysis] historical context failed", exc_info=True)
+            try:
+                spatial_context = await get_spatial_context(
+                    db, request.lat, request.long, request.service_code,
+                ) or {}
+            except Exception:
+                logger.warning("[Analysis] spatial context failed", exc_info=True)
+            try:
+                weather = await get_weather_for_location(request.lat, request.long)
+            except Exception:
+                logger.debug("[Analysis] weather lookup failed", exc_info=True)
+            request_data["current_weather"] = weather or "Unknown"
+
+            # The non-AI, computed facts the triage panel shows regardless of AI.
+            analysis = dict(request.ai_analysis) if isinstance(request.ai_analysis, dict) else {}
+            analysis["context"] = {
+                "similar_reports": historical_context.get("similar_reports", []),
+                "nearby_similar": historical_context.get("nearby_similar", 0),
+                "recurrence_count": historical_context.get("recurrence_count", 0),
+                "past_resolution_quality": historical_context.get("past_resolution_quality"),
+                "weather_at_report": weather,
+                "critical_infrastructure": spatial_context.get("critical_infrastructure", []),
+                "is_school_zone": spatial_context.get("is_school_zone", False),
+                "nearby_outages": spatial_context.get("nearby_outages", 0),
+                "vulnerable_pop_impact": spatial_context.get("vulnerable_pop_impact"),
+                "computed_at": analysis_time.isoformat(),
+            }
             if historical_context.get("similar_reports"):
-                analysis_result["similar_reports"] = historical_context["similar_reports"]
-            
-            # Store the analysis (but NOT the priority - staff must explicitly accept)
-            request.ai_analysis = analysis_result
-            # NOTE: We no longer auto-set request.priority or request.vertex_ai_priority_score
-            # The AI suggestion is stored in ai_analysis['priority_score'] 
-            # Staff must click "Accept AI Score" or manually set priority
-            # Legal hold (flagged) is admin-only — AI never auto-triggers it
-            # Safety and content flags are stored in ai_analysis JSON for staff reference only
-            
-            # Store summary and timestamp for display (but NOT the priority score)
-            request.vertex_ai_summary = analysis_result.get("qualitative_analysis", "")
-            request.vertex_ai_analyzed_at = datetime.utcnow()
-            
+                analysis["similar_reports"] = historical_context["similar_reports"]
+
+            # ---- AI summary + suggested priority: only when AI is available. ----
+            ai_ran = False
+            if ai_module_on and ai_provider and (request.description or request.media_urls):
+                try:
+                    prompt = build_analysis_prompt(
+                        request_data, historical_context=historical_context, spatial_context=spatial_context,
+                    )
+                    image_data = request.media_urls[:3] if request.media_urls else None
+                    logger.info(f"[Analysis] Calling {ai_provider.provider} for request {request_id}...")
+                    ai_result = await ai_provider.complete_json(prompt, image_data)
+                    if isinstance(ai_result, dict):
+                        if "_error" in ai_result:
+                            logger.error(f"[Analysis] AI error: {ai_result.get('_error')}")
+                            analysis["_error"] = ai_result["_error"]
+                        else:
+                            analysis.update(ai_result)
+                            ai_ran = True
+                            request.vertex_ai_summary = ai_result.get("qualitative_analysis", "")
+                            request.vertex_ai_analyzed_at = datetime.utcnow()
+                    # Keep the computed similar_reports even if the AI result omitted them.
+                    if historical_context.get("similar_reports"):
+                        analysis["similar_reports"] = historical_context["similar_reports"]
+                    try:
+                        from app.services.api_usage import track_api_usage
+                        await track_api_usage(
+                            db=db, service_name=ai_provider.provider, operation="analyze_request",
+                            tokens_input=len(prompt) // 4, tokens_output=len(str(ai_result)) // 4,
+                            request_id=request.service_request_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[Analysis] usage tracking failed: {e}")
+                except Exception:
+                    logger.warning("[Analysis] AI summary failed", exc_info=True)
+
+            # Priority is never auto-applied — staff must accept the AI suggestion,
+            # which is stored in ai_analysis['priority_score'] for reference.
+            request.ai_analysis = analysis
             await db.commit()
-            logger.info(f"[AI Analysis] Saved analysis for request {request_id}")
-            return {"status": "success", "analysis": analysis_result}
+            logger.info(f"[Analysis] Saved request {request_id} (ai_ran={ai_ran})")
+            return {"status": "success", "ai_ran": ai_ran}
     
     try:
         result = run_async(_analyze())
