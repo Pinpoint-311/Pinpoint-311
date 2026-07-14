@@ -7,7 +7,7 @@ import {
     ArrowUpRight, ArrowDownLeft, MessageSquare, Image as ImageIcon, MapPin, ClipboardCheck,
 } from 'lucide-react';
 
-import { Button, Modal } from './ui';
+import { Button, Modal, CollapsibleSection } from './ui';
 import SecretField from './SecretField';
 import {
     api, IntegrationPlatform, IntegrationConfig, IntegrationSyncLog, IntegrationTestResult,
@@ -311,23 +311,23 @@ export default function GovtechIntegrations() {
     // ---------- UI ----------
 
     return (
-        <div className="relative">
-            <div className="mb-4">
-                <h2 className="text-lg font-semibold text-white mb-1 flex items-center gap-2">
-                    <Landmark className="w-5 h-5 text-primary-300" aria-hidden="true" />
-                    Connect Your Other Town Systems
-                    {connectedCount > 0 && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 border border-emerald-400/30 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">
-                            <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400" aria-hidden="true" />
-                            {connectedCount} connected
-                        </span>
-                    )}
-                </h2>
-                <p className="text-white/60 text-sm max-w-2xl leading-relaxed">
-                    Full two-way connectors for the platforms your town already runs. Reports, photos, comments,
-                    and status updates flow between them automatically — no double entry.
-                </p>
-            </div>
+        <>
+        <CollapsibleSection
+            title="Connect Your Other Town Systems"
+            icon={Landmark}
+            subtitle={`${visibleCatalog.length || catalog.length} platforms available — Accela, Tyler, CivicPlus, Cityworks, and more`}
+            defaultOpen={connectedCount > 0}
+            badge={connectedCount > 0 ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 border border-emerald-400/30 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">
+                    <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400" aria-hidden="true" />
+                    {connectedCount} connected
+                </span>
+            ) : undefined}
+        >
+            <p className="text-white/60 text-sm max-w-2xl leading-relaxed mb-4">
+                Full two-way connectors for the platforms your town already runs. Reports, photos, comments,
+                and status updates flow between them automatically — no double entry.
+            </p>
 
             {error && (
                 <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
@@ -536,9 +536,10 @@ export default function GovtechIntegrations() {
                     );
                 })}
             </div>
+        </CollapsibleSection>
 
-            {/* ---------- Setup wizard ---------- */}
-            {wizard && (
+        {/* ---------- Setup wizard ---------- */}
+        {wizard && (
                 <Modal
                     isOpen={true}
                     onClose={closeWizard}
@@ -800,6 +801,6 @@ export default function GovtechIntegrations() {
                     )}
                 </Modal>
             )}
-        </div>
+        </>
     );
 }
