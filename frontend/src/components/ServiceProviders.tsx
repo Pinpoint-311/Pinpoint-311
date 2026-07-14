@@ -490,6 +490,8 @@ export default function ServiceProviders() {
         <CollapsibleSection
             title="Service Providers"
             icon={Sparkles}
+            accent="primary"
+            defaultOpen={true}
             subtitle="AI, translation, sign-in & cloud environment — defaults work out of the box"
             trailing={
                 <button

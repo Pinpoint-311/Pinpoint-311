@@ -316,7 +316,7 @@ export default function GovtechIntegrations() {
             title="Connect Your Other Town Systems"
             icon={Landmark}
             subtitle={`${visibleCatalog.length || catalog.length} platforms available — Accela, Tyler, CivicPlus, Cityworks, and more`}
-            defaultOpen={connectedCount > 0}
+            defaultOpen={true}
             badge={connectedCount > 0 ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 border border-emerald-400/30 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">
                     <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400" aria-hidden="true" />
