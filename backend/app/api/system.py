@@ -201,8 +201,13 @@ async def test_provider(
             if not provider:
                 return {"ok": False, "detail": "No AI provider is configured. Enter the required fields and save first."}
             result = await provider.complete_json('Reply with {"priority_score": 5}. This is a connection test.')
-            ok = isinstance(result, dict) and "_error" not in result
-            return {"ok": ok, "detail": f"{provider.provider}/{provider.model} responded" if ok else f"Call failed: {result.get('_error', 'unknown')[:200]}"}
+            # A connection test verifies reachability + auth, not that the model
+            # emits parseable JSON. Providers flag `_reachable` when the API
+            # responded (200) even if a trivial prompt yielded no usable output.
+            reachable = isinstance(result, dict) and ("_error" not in result or bool(result.get("_reachable")))
+            if reachable:
+                return {"ok": True, "detail": f"{provider.provider}/{provider.model} reachable and authenticated"}
+            return {"ok": False, "detail": f"Call failed: {result.get('_error', 'unknown')[:200]}"}
         if capability == "translation":
             from app.services.translation_providers import get_translation_provider
             provider = await get_translation_provider()
