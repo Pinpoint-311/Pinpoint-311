@@ -296,7 +296,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
 
             {/* Required Integrations */}
-            <CollapsibleSection title="Required Integrations" icon={Shield} subtitle="Sign-in, database, and maps" defaultOpen={true}>
+            <CollapsibleSection title="Required Integrations" icon={Shield} accent="primary" subtitle="Sign-in, database, and maps" defaultOpen={true}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Auth0 SSO */}
                     <Card className="h-full">
