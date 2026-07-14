@@ -182,7 +182,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
             onClose={onClose}
             title="Log a request"
             size="lg"
-            panelClassName="bg-gradient-to-b from-slate-900 to-slate-950 border border-white/10 shadow-2xl shadow-black/60"
+            panelClassName="bg-slate-900 bg-gradient-to-b from-slate-900 to-slate-950 border border-white/10 shadow-2xl shadow-black/60"
             headerClassName="bg-slate-900/95 backdrop-blur-xl"
         >
             <div className="space-y-5" onKeyDown={onKeyDown}>

@@ -488,19 +488,15 @@ export default function ServiceProviders() {
 
     return (
         <div className="relative">
-            {/* Aurora glow behind the header for depth */}
-            <div className="aurora-glow w-72 h-40 -top-10 -left-6" aria-hidden="true" />
-
-            <div className="relative mb-5 flex flex-wrap items-end justify-between gap-3">
+            <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
                 <div>
-                    <div className="inline-flex items-center gap-1.5 rounded-full bg-primary-500/15 border border-primary-400/25 px-2.5 py-1 mb-3">
-                        <Sparkles className="w-3 h-3 text-primary-300" aria-hidden="true" />
-                        <span className="text-[11px] font-semibold uppercase tracking-wider text-primary-200">Configure once</span>
-                    </div>
-                    <h2 className="text-2xl font-bold text-gradient tracking-tight">Service Providers</h2>
-                    <p className="text-white/50 text-sm mt-1.5 max-w-2xl leading-relaxed">
+                    <h2 className="text-lg font-semibold text-white mb-1 flex items-center gap-2">
+                        <Sparkles className="w-5 h-5 text-primary-300" aria-hidden="true" />
+                        Service Providers
+                    </h2>
+                    <p className="text-white/60 text-sm max-w-2xl leading-relaxed">
                         Choose which cloud powers each capability. Every option is pre-built — pick a provider, paste your key, and test.
-                        <span className="text-white/70"> Google &amp; Auth0 are the defaults</span>, so you can leave these untouched and everything just works.
+                        Google &amp; Auth0 are the defaults, so you can leave these untouched and everything just works.
                     </p>
                 </div>
                 <div className="flex flex-col items-start sm:items-end gap-1.5">
