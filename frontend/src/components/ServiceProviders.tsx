@@ -319,6 +319,16 @@ const COMPONENT_LABEL: Record<string, string> = {
 const label = (v: string) => COMPONENT_LABEL[v] || v || '—';
 const secretsLabel = (v: string) => v === 'google' ? 'Secret Manager' : v === 'azure' ? 'Key Vault' : v === 'aws' ? 'Secrets Manager' : label(v);
 
+// Per-cloud visual identity — a monogram tile + accent so each option reads at a
+// glance without pulling in third-party brand logos (which carry trademark rules).
+const CLOUD_VISUAL: Record<string, { glyph: string; tile: string; ring: string; glow: string }> = {
+    google: { glyph: 'G', tile: 'from-sky-400/30 to-blue-600/20 border-sky-300/40 text-sky-100', ring: 'border-sky-300/50', glow: 'shadow-sky-900/40' },
+    azure:  { glyph: 'A', tile: 'from-cyan-400/30 to-indigo-600/20 border-cyan-300/40 text-cyan-100', ring: 'border-cyan-300/50', glow: 'shadow-cyan-900/40' },
+    aws:    { glyph: 'A', tile: 'from-amber-400/30 to-orange-600/20 border-amber-300/40 text-amber-100', ring: 'border-amber-300/50', glow: 'shadow-amber-900/40' },
+    mixed:  { glyph: '⋯', tile: 'from-white/15 to-white/5 border-white/20 text-white/80', ring: 'border-white/25', glow: 'shadow-black/40' },
+};
+const cloudVisual = (id: string) => CLOUD_VISUAL[id] || CLOUD_VISUAL.mixed;
+
 // Hybrid "one choice" front door: a jurisdiction is authorized under one cloud
 // boundary, so picking it sets AI + translation + secret store together. Identity
 // stays separate (only recommended). Google Maps is fixed.
@@ -394,6 +404,15 @@ function CloudEnvironment({ onApplied }: { onApplied: () => void }) {
                 {state.profiles.map(p => {
                     const isActive = state.profile === p.id;
                     const isBusy = busy === p.id;
+                    const vis = cloudVisual(p.id);
+                    const caps = [
+                        { k: 'AI', v: label(p.ai) },
+                        { k: 'Translation', v: label(p.translation) },
+                        { k: 'Secrets', v: secretsLabel(p.secrets) },
+                        { k: 'KMS', v: label(p.kms) },
+                        { k: 'Email', v: label(p.email) },
+                        ...(p.sms ? [{ k: 'Text', v: label(p.sms) }] : []),
+                    ];
                     return (
                         <button
                             key={p.id}
@@ -402,29 +421,29 @@ function CloudEnvironment({ onApplied }: { onApplied: () => void }) {
                             aria-checked={isActive}
                             disabled={state.managed || busy !== null}
                             onClick={() => apply(p.id)}
-                            className={`relative text-left rounded-2xl p-4 border transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 disabled:cursor-not-allowed ${isActive
-                                ? 'bg-gradient-to-br from-primary-500/25 to-primary-700/15 border-primary-400/50 shadow-lg shadow-primary-900/30'
+                            className={`group relative text-left rounded-2xl p-4 border transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 disabled:cursor-not-allowed ${isActive
+                                ? `bg-gradient-to-br from-primary-500/20 to-primary-800/10 ${vis.ring} shadow-lg ${vis.glow}`
                                 : 'bg-white/[0.03] border-white/10 hover:bg-white/[0.06] hover:border-white/20 disabled:opacity-60'}`}
                         >
-                            <div className="flex items-center justify-between gap-2">
-                                <span className={`font-semibold ${isActive ? 'text-white' : 'text-white/80'}`}>{p.label}</span>
-                                {isBusy ? <Loader2 className="w-4 h-4 animate-spin text-primary-200" />
+                            {isActive && <div className={`absolute -inset-px rounded-2xl border ${vis.ring} opacity-60 pointer-events-none`} aria-hidden="true" />}
+                            <div className="flex items-center gap-3">
+                                <div className={`relative shrink-0 w-9 h-9 rounded-xl bg-gradient-to-br border flex items-center justify-center font-bold text-sm ${vis.tile} ${isActive ? 'shadow-md ' + vis.glow : 'opacity-90 group-hover:opacity-100'}`}>
+                                    {vis.glyph}
+                                </div>
+                                <span className={`font-semibold tracking-tight flex-1 min-w-0 truncate ${isActive ? 'text-white' : 'text-white/80'}`}>{p.label}</span>
+                                {isBusy ? <Loader2 className="w-4 h-4 animate-spin text-primary-200 shrink-0" />
                                     : isActive && <span className="shrink-0 w-5 h-5 rounded-full bg-primary-400 flex items-center justify-center"><Check className="w-3 h-3 text-primary-950" strokeWidth={3} /></span>}
                             </div>
-                            <p className="text-[11px] text-white/65 mt-1 flex items-start gap-1.5 leading-relaxed">
+                            <p className="text-[11px] text-white/60 mt-2.5 flex items-start gap-1.5 leading-relaxed">
                                 <ShieldCheck className="w-3 h-3 text-primary-300/70 shrink-0 mt-0.5" aria-hidden="true" />
                                 {p.boundary}
                             </p>
-                            <div className="flex flex-wrap gap-1.5 mt-2.5">
-                                {[
-                                    `AI · ${label(p.ai)}`,
-                                    `Translation · ${label(p.translation)}`,
-                                    `Secrets · ${secretsLabel(p.secrets)}`,
-                                    `KMS · ${label(p.kms)}`,
-                                    `Email · ${label(p.email)}`,
-                                    ...(p.sms ? [`SMS · ${label(p.sms)}`] : []),
-                                ].map(t => (
-                                    <span key={t} className="inline-flex items-center rounded-md bg-white/[0.05] border border-white/10 px-1.5 py-0.5 text-[10px] text-white/75">{t}</span>
+                            <div className="mt-3 pt-3 border-t border-white/[0.06] grid grid-cols-2 gap-x-3 gap-y-1.5">
+                                {caps.map(c => (
+                                    <div key={c.k} className="flex flex-col min-w-0">
+                                        <span className="text-[9px] uppercase tracking-wider text-white/35">{c.k}</span>
+                                        <span className="text-[11px] text-white/75 truncate leading-tight">{c.v}</span>
+                                    </div>
                                 ))}
                             </div>
                         </button>
