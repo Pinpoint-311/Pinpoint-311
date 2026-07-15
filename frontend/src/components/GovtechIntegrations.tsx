@@ -491,21 +491,19 @@ export default function GovtechIntegrations() {
                                         <Button size="sm" variant="ghost" className="text-xs" onClick={() => toggleLogs(existing)} rightIcon={logsOpen === platform.platform ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}>
                                             Activity
                                         </Button>
-                                        <label className="flex items-center gap-1.5 ml-auto text-[11px] text-white/50 cursor-pointer select-none">
+                                        <label className="flex items-center gap-2 ml-auto text-[11px] text-white/60 cursor-pointer select-none">
                                             {existing.enabled ? 'On' : 'Off'}
                                             <button
                                                 onClick={() => handleToggle(existing)}
                                                 disabled={busy !== null}
-                                                className={`relative inline-flex items-center rounded-full transition-colors duration-300 shrink-0 ${existing.enabled ? 'bg-primary-500 shadow-lg shadow-primary-900/40' : 'bg-slate-600'}`}
-                                                style={{ width: 40, height: 22, padding: 0 }}
                                                 role="switch"
                                                 aria-checked={existing.enabled}
                                                 aria-label={`Turn ${platform.name} connection ${existing.enabled ? 'off' : 'on'}`}
+                                                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-300 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${existing.enabled ? 'bg-primary-500' : 'bg-white/20'}`}
                                             >
                                                 <span
-                                                    className={`inline-block rounded-full bg-white shadow-md transition-transform duration-300 ${existing.enabled ? 'translate-x-[22px]' : 'translate-x-1'}`}
-                                                    style={{ width: 14, height: 14 }}
                                                     aria-hidden="true"
+                                                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-300 ${existing.enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`}
                                                 />
                                             </button>
                                         </label>
