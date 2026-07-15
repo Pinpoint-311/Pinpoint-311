@@ -125,24 +125,15 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             className="premium-card p-5"
         >
             {/* Header */}
-            <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3.5 min-w-0">
+            <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
                     <div className="relative shrink-0">
                         <div className="absolute -inset-1 rounded-2xl bg-gradient-to-br from-primary-400/40 to-primary-600/20 blur-md" aria-hidden="true" />
                         <div className="relative w-11 h-11 rounded-2xl bg-gradient-to-br from-primary-500/30 to-primary-700/20 border border-primary-400/30 flex items-center justify-center shadow-lg shadow-primary-900/40">
                             <Icon className="w-5 h-5 text-primary-200" />
                         </div>
                     </div>
-                    <div className="min-w-0">
-                        <h3 className="font-semibold text-white tracking-tight">{title}</h3>
-                        <div className="flex items-center gap-1.5 mt-1">
-                            <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400" aria-hidden="true" />
-                            <p className="text-white/55 text-xs">
-                                Active: <span className="text-white/80 font-medium">{currentName}</span>
-                                {cap === 'ai' && catalog.current_model ? <span className="text-white/65"> · {catalog.current_model}</span> : ''}
-                            </p>
-                        </div>
-                    </div>
+                    <h3 className="font-semibold text-white tracking-tight leading-snug min-w-0">{title}</h3>
                 </div>
                 <button
                     onClick={() => setOpen(v => !v)}
@@ -155,6 +146,16 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                         <ChevronDown className="w-3.5 h-3.5" />
                     </motion.span>
                 </button>
+            </div>
+
+            {/* Active provider — full-width pill so long names/models never wrap into a column */}
+            <div className="mt-3 flex items-center gap-2 rounded-xl bg-white/[0.04] border border-white/10 px-3 py-2">
+                <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400 shrink-0" aria-hidden="true" />
+                <p className="text-white/60 text-xs min-w-0 truncate">
+                    <span className="text-white/40">Active</span>{' '}
+                    <span className="text-white/85 font-medium">{currentName}</span>
+                    {cap === 'ai' && catalog.current_model ? <span className="text-white/55"> · {catalog.current_model}</span> : ''}
+                </p>
             </div>
 
             <p className="text-white/50 text-xs mt-3 leading-relaxed">{blurb}</p>
