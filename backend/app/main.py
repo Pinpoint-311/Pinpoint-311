@@ -60,7 +60,16 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         
         # Content Security Policy
         response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
-        
+
+        # Force HTTPS for a year on this host and its subdomains (HSTS). Sent on
+        # every response; browsers only honor it over TLS, so it's harmless on
+        # plain HTTP. Both demo hosts serve over HTTPS behind the proxy.
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+        # Restrict powerful browser features to only what the app uses
+        # (geolocation for the map picker); deny the rest.
+        response.headers["Permissions-Policy"] = "geolocation=(self), camera=(), microphone=(), payment=(), usb=()"
+
         # Prevent caching of sensitive data
         if "/api/" in request_path:
             response.headers["Cache-Control"] = "no-store, max-age=0"
