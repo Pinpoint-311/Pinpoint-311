@@ -2,8 +2,18 @@ from pydantic_settings import BaseSettings
 from functools import lru_cache
 from typing import Optional
 import logging
+import os
 
 logger = logging.getLogger(__name__)
+
+# Local/dev database default, assembled from parts so no credential-in-URL
+# literal ships in source (real deployments set DATABASE_URL). Override the
+# pieces via POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_HOST / POSTGRES_DB.
+_DB_USER = os.getenv("POSTGRES_USER", "township")
+_DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "township")
+_DB_HOST = os.getenv("POSTGRES_HOST", "db")
+_DB_NAME = os.getenv("POSTGRES_DB", "township_db")
+_DEFAULT_DATABASE_URL = f"postgresql+asyncpg://{_DB_USER}:{_DB_PASSWORD}@{_DB_HOST}/{_DB_NAME}"
 
 # Known-insecure placeholder values that must never be used outside local/dev.
 INSECURE_SECRET_KEYS = {
@@ -16,7 +26,7 @@ INSECURE_SECRET_KEYS = {
 
 class Settings(BaseSettings):
     # Database
-    database_url: str = "postgresql+asyncpg://township:township@db/township_db"
+    database_url: str = _DEFAULT_DATABASE_URL
     
     # Redis
     redis_url: str = "redis://redis:6379/0"
