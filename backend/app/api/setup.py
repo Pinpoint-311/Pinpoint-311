@@ -124,7 +124,12 @@ async def configure_gcp(
     """
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
-    
+
+    # GCP project / service account / KMS keys are platform-managed in hosted
+    # mode (A1) — this path writes them directly, so gate the whole endpoint.
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Google Cloud configuration")
+
     try:
         # Validate the service account JSON
         try:

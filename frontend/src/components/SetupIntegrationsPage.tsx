@@ -42,6 +42,16 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [expandedGuide, setExpandedGuide] = useState<string | null>(null);
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
+    // Managed (state-hosted) mode: infrastructure cards are locked because the
+    // state's orchestrator owns those keys (Google Cloud, Backups, domain).
+    const [managedMode, setManagedMode] = useState(false);
+    useEffect(() => {
+        fetch('/api/system/config')
+            .then(r => (r.ok ? r.json() : null))
+            .then(cfg => setManagedMode(!!cfg?.managed_mode))
+            .catch(() => setManagedMode(false));
+    }, []);
+
 
 
     const isConfigured = (key: string) => secrets.find(s => s.key_name === key)?.is_configured;
@@ -90,14 +100,16 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const smsConfigured = !!(localSmsProvider && localSmsProvider !== 'none');
     const backupConfigured = isConfigured('BACKUP_S3_BUCKET') && isConfigured('BACKUP_S3_ACCESS_KEY') && isConfigured('BACKUP_S3_SECRET_KEY') && isConfigured('BACKUP_ENCRYPTION_KEY');
 
-    // Setup progress calculation
+    // Setup progress calculation. In managed mode the platform-managed steps
+    // (Google Cloud, DB Backups) are excluded — the state handles them, so
+    // counting them would leave progress permanently "incomplete".
     const setupSteps = [
         { label: 'Auth0 SSO', done: !!auth0Configured, required: true },
         { label: 'Email (SMTP)', done: !!smtpConfigured, required: false },
-        { label: 'Google Cloud', done: !!gcpConfigured, required: false },
+        ...(managedMode ? [] : [{ label: 'Google Cloud', done: !!gcpConfigured, required: false }]),
         { label: 'Google Maps', done: !!mapsConfigured, required: false },
         { label: 'SMS Alerts', done: smsConfigured, required: false },
-        { label: 'DB Backups', done: !!backupConfigured, required: false },
+        ...(managedMode ? [] : [{ label: 'DB Backups', done: !!backupConfigured, required: false }]),
     ];
     const completedCount = setupSteps.filter(s => s.done).length;
 
@@ -813,7 +825,27 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         </div>
                     </motion.div>
 
-                    {/* Google Cloud - Premium Card */}
+                    {/* Google Cloud - Premium Card (locked in managed mode: the state owns these keys) */}
+                    {managedMode ? (
+                        <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6">
+                            <div className="flex items-center gap-4 mb-2">
+                                <div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-white/10">
+                                    <Cloud className="w-7 h-7 text-white/50" />
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-lg text-white/70">Google Cloud</h3>
+                                    <p className="text-white/40 text-sm">AI, encryption &amp; translation infrastructure</p>
+                                </div>
+                                <span className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-white/10 text-white/60 border border-white/15">
+                                    <Shield className="w-3.5 h-3.5" />
+                                    Managed by your state
+                                </span>
+                            </div>
+                            <p className="text-white/50 text-sm">
+                                Cloud project, KMS encryption keys, and secrets storage are provisioned and maintained by your state hosting program. Nothing to configure here.
+                            </p>
+                        </div>
+                    ) : (
                     <motion.div
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
@@ -1073,6 +1105,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                             )}
                         </div>
                     </motion.div>
+                    )}
 
 
                     {/* Sentry Error Tracking - Premium Card */}
@@ -1147,7 +1180,27 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         </div>
                     </motion.div>
 
-                    {/* Database Backups - Premium Card */}
+                    {/* Database Backups - Premium Card (locked in managed mode: the state owns backups) */}
+                    {managedMode ? (
+                        <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6">
+                            <div className="flex items-center gap-4 mb-2">
+                                <div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-white/10">
+                                    <HardDrive className="w-7 h-7 text-white/50" />
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-lg text-white/70">Database Backups</h3>
+                                    <p className="text-white/40 text-sm">Encrypted off-site backups</p>
+                                </div>
+                                <span className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-white/10 text-white/60 border border-white/15">
+                                    <Shield className="w-3.5 h-3.5" />
+                                    Managed by your state
+                                </span>
+                            </div>
+                            <p className="text-white/50 text-sm">
+                                Automated encrypted backups run under your state hosting program's disaster-recovery plan. Nothing to configure here.
+                            </p>
+                        </div>
+                    ) : (
                     <motion.div
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
@@ -1299,6 +1352,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                             )}
                         </div>
                     </motion.div>
+                    )}
                 </div>
             </CollapsibleSection>
 

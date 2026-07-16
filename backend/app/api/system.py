@@ -45,6 +45,19 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
     return settings
 
 
+@router.get("/config")
+async def get_deployment_config():
+    """Deployment-mode flags (public). The setup UI uses managed_mode to show
+    'Managed by your state' placeholders instead of the Google Cloud / Backups
+    / domain cards (A1)."""
+    from app.core.config import get_settings as get_app_settings
+    app_settings = get_app_settings()
+    return {
+        "managed_mode": app_settings.managed_mode,
+        "app_version": app_settings.app_version,
+    }
+
+
 @router.get("/identity/catalog")
 async def get_identity_catalog(_: User = Depends(get_current_admin)):
     """Identity provider catalog for the admin UI (Auth0 / Entra / Okta / OIDC),
@@ -109,7 +122,9 @@ async def _persist_secret(db: AsyncSession, key_name: str, value: str):
     """Write a secret to the configured store (Secret Manager / Key Vault when
     available) and always keep an encrypted DB copy — same path as /secrets."""
     from app.core.encryption import encrypt
+    from app.core.managed import reject_platform_key_writes
     from app.services.secret_manager import set_secret, clear_cache
+    reject_platform_key_writes(key_name)
     bootstrap_keys = {"GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT"}
     if value and key_name not in bootstrap_keys:
         try:
@@ -529,8 +544,11 @@ async def create_or_update_secret(
 ):
     """Create or update a secret (admin only) - values are encrypted at rest and stored in Secret Manager"""
     from app.core.encryption import encrypt
+    from app.core.managed import reject_platform_key_writes
     from app.services.secret_manager import set_secret, clear_cache
-    
+
+    reject_platform_key_writes(secret_data.key_name)
+
     # Bootstrap keys that must stay in database (needed to access Secret Manager)
     bootstrap_keys = {"GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT"}
     
@@ -1664,7 +1682,8 @@ def _reject_if_managed():
 @router.post("/update")
 async def update_system(_: User = Depends(get_current_admin)):
     """Pull updates from GitHub (admin only). Code changes reload automatically."""
-    _reject_if_managed()
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Upgrading")  # hosted upgrades come only from the orchestrator (A2)
     try:
         # Get the project root
         project_root = os.environ.get("PROJECT_ROOT", "/project")
@@ -1994,7 +2013,8 @@ async def switch_version(
 ):
     """
     Production-grade version deployment with automatic rollback.
-    
+    Disabled in managed mode — rollouts come only from the orchestrator (A2).
+
     This endpoint performs a full deployment cycle:
     1. Save rollback point (current git HEAD)
     2. Create database backup (pg_dump)
@@ -2004,10 +2024,11 @@ async def switch_version(
     6. Health check the new deployment
     7. Automatic rollback on any failure
     """
-    _reject_if_managed()
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Upgrading")
     import httpx
     from datetime import datetime
-    
+
     project_root = os.environ.get("PROJECT_ROOT", "/project")
     deployment_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     backup_dir = "/project/backups"
@@ -2447,9 +2468,11 @@ async def configure_domain(
     _: User = Depends(get_current_admin)
 ):
     """Configure custom domain with automatic HTTPS via Caddy"""
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Domain/DNS configuration")  # platform-managed in hosted mode (A1)
     import re
     import httpx
-    
+
     # Validate domain format
     domain = domain.strip().lower()
     domain_regex = r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'
@@ -2778,8 +2801,10 @@ async def create_backup_endpoint(
     _: User = Depends(get_current_admin)
 ):
     """Trigger a manual database backup"""
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Backup management")  # state-run DR in hosted mode (A1)
     from app.services.backup_service import create_backup
-    
+
     result = await create_backup()
     if result["status"] == "error":
         raise HTTPException(status_code=500, detail="Backup failed")
@@ -2793,6 +2818,8 @@ async def cleanup_backups_endpoint(
     _: User = Depends(get_current_admin)
 ):
     """Clean up old backups based on retention policy"""
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Backup management")
     from app.services.backup_service import cleanup_old_backups
     return await cleanup_old_backups(retention_days)
 
@@ -2803,8 +2830,10 @@ async def delete_backup_endpoint(
     _: User = Depends(get_current_admin)
 ):
     """Delete a specific backup"""
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Backup management")
     from app.services.backup_service import delete_backup
-    
+
     result = await delete_backup(backup_name)
     if result["status"] == "error":
         raise HTTPException(status_code=500, detail="Delete failed")
@@ -2824,6 +2853,8 @@ async def restore_backup_endpoint(
     WARNING: This will overwrite the current database!
     You must pass confirm=true to proceed.
     """
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Backup restore")
     if not confirm:
         raise HTTPException(
             status_code=400, 
@@ -3016,7 +3047,12 @@ async def execute_runbook(
     - clear-cache: Clear Redis cache
     - vacuum: Run PostgreSQL vacuum analyze
     - restore: Restore from backup (requires backup_name parameter)
+
+    Disabled in managed mode — infrastructure operations come only from the
+    orchestrator (A2).
     """
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Infrastructure runbook execution")
     from datetime import datetime
     
     result = {
