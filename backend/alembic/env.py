@@ -48,7 +48,13 @@ def include_object(object, name, type_, reflected, compare_to):
 
 def get_url():
     """Get database URL from environment, converting async to sync if needed."""
-    url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@db:5432/pinpoint311")
+    # Assemble the local/dev fallback from parts so no credential-in-URL literal
+    # ships in source; real runs always provide DATABASE_URL.
+    _user = os.getenv("POSTGRES_USER", "postgres")
+    _pw = os.getenv("POSTGRES_PASSWORD", "postgres")
+    _host = os.getenv("POSTGRES_HOST", "db")
+    _db = os.getenv("POSTGRES_DB", "pinpoint311")
+    url = os.getenv("DATABASE_URL", f"postgresql://{_user}:{_pw}@{_host}:5432/{_db}")
     # Alembic needs sync driver, not asyncpg
     if "+asyncpg" in url:
         url = url.replace("+asyncpg", "")

@@ -40,3 +40,7 @@ uploads/
 *.pem
 *.key
 service-account.json
+
+# GitLab Secret Detection / Gitleaks scan artifacts
+gl-secret-detection-report.json
+gl-*-report.json
