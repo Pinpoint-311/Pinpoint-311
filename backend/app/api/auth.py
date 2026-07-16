@@ -61,7 +61,7 @@ def _verify_bootstrap_password(supplied: str) -> None:
             status_code=403,
             detail="Bootstrap is disabled: set a strong INITIAL_ADMIN_PASSWORD in the environment to enable first-run admin access.",
         )
-    if not supplied or not secrets.compare_digest(supplied, expected):
+    if not supplied or not secrets.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8")):
         raise HTTPException(status_code=401, detail="Invalid bootstrap password.")
 
 
