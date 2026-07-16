@@ -508,6 +508,62 @@ async def logout(
     return {"logout_url": logout_url}
 
 
+# ============ Onboarding link redemption (managed hosting, plan A4) ============
+
+_ONBOARDING_JTI_PREFIX = "ONBOARDING_JTI_"
+
+
+@router.post("/onboarding/redeem")
+async def redeem_onboarding_token(
+    token: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Exchange a one-time onboarding link (minted by the provisioning API)
+    for a normal short-lived admin session.
+
+    The link token carries purpose="onboarding" so it is useless against the
+    API directly (get_current_user rejects it); redeeming burns its jti, so
+    the link works exactly once.
+    """
+    from app.core.auth import decode_token
+    from app.models import SystemSecret
+
+    payload = decode_token(token)  # 401 on bad signature / expiry
+    if payload.get("purpose") != "onboarding" or not payload.get("jti"):
+        raise HTTPException(status_code=401, detail="Not an onboarding token")
+
+    jti_key = f"{_ONBOARDING_JTI_PREFIX}{payload['jti']}"
+    result = await db.execute(select(SystemSecret).where(SystemSecret.key_name == jti_key))
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=401, detail="Onboarding link already used")
+
+    result = await db.execute(select(User).where(User.username == payload.get("sub")))
+    user = result.scalar_one_or_none()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="Onboarding account unavailable")
+
+    # Burn the jti (single use), then issue a normal session token.
+    db.add(SystemSecret(key_name=jti_key, key_value=None, is_configured=True,
+                        description="Redeemed onboarding link"))
+    await db.commit()
+
+    session_token = create_access_token(data={"sub": user.username})
+    await AuditService.log_event(
+        db,
+        event_type="onboarding_redeemed",
+        success=True,
+        username=user.username,
+        user_id=user.id,
+        details={"jti": payload["jti"]},
+    )
+    return {
+        "access_token": session_token,
+        "token_type": "bearer",
+        "username": user.username,
+        "role": user.role,
+    }
+
+
 @router.get("/status")
 async def auth_status(db: AsyncSession = Depends(get_db)):
     """

@@ -348,17 +348,30 @@ async def health_check(
 
 
 @router.get("/quick")
-async def quick_health_check():
+async def quick_health_check(db: AsyncSession = Depends(get_db)):
     """
     Quick health check for monitoring (no auth required).
 
-    Just checks if the API is responding.
+    Carries the build/migration stamp (ORCHESTRATOR_PLAN.md A3) so the
+    orchestrator can gate canary rollouts on version + DB-revision
+    compatibility. Fields are null when the deployment doesn't set them.
     """
     from app.core.config import get_settings
+
     settings = get_settings()
+    db_revision = None
+    try:
+        result = await db.execute(text("SELECT version_num FROM alembic_version"))
+        db_revision = result.scalar_one_or_none()
+    except Exception:
+        pass  # no alembic_version table (fresh or non-migrated DB)
+
     return {
         "status": "ok",
         "version": settings.app_version,
+        "git_sha": settings.git_sha,
+        "db_revision": db_revision,
+        "min_db_revision": settings.min_db_revision,
         "timestamp": __import__("datetime").datetime.now().isoformat()
     }
 

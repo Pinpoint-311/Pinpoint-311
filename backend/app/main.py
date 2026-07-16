@@ -21,7 +21,7 @@ if SENTRY_DSN:
         send_default_pii=False,  # Don't send personally identifiable info
     )
 
-from app.api import auth, users, departments, services, system, open311, gis, map_layers, comments, research, health, audit, setup, api_usage, data_export, integrations
+from app.api import auth, users, departments, services, system, open311, gis, map_layers, comments, research, health, audit, setup, api_usage, data_export, integrations, provisioning, telemetry
 from app.db.init_db import seed_database
 
 # Rate limiting setup
@@ -126,6 +126,38 @@ class DemoModeMiddleware(BaseHTTPMiddleware):
         )
 
 
+class ManagedModeMiddleware(BaseHTTPMiddleware):
+    """Managed-hosting hooks that run on every request (ORCHESTRATOR_PLAN.md).
+
+    - Counts responses by status class for the PII-free telemetry endpoint (A5).
+    - Honors the panel-set suspended state (A7): everything except health and
+      the provisioning surface answers 503 until the state resumes the town.
+    """
+
+    SUSPEND_EXEMPT_PREFIXES = ("/api/health", "/api/provisioning")
+
+    async def dispatch(self, request: Request, call_next):
+        from app.core.managed import get_lifecycle_state
+
+        path = request.url.path
+        if (
+            get_lifecycle_state() == "suspended"
+            and path.startswith("/api")
+            and not path.startswith(self.SUSPEND_EXEMPT_PREFIXES)
+        ):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "This instance has been suspended by your state. Contact your state program administrator."},
+            )
+
+        response = await call_next(request)
+        if path.startswith("/api"):
+            from app.api.telemetry import record_request
+            record_request(response.status_code)
+        return response
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle manager"""
@@ -205,7 +237,14 @@ async def lifespan(app: FastAPI):
 
     # Startup: Initialize database with default data
     await seed_database()
-    
+
+    # Load the panel-set lifecycle state (managed hosting suspend/resume)
+    from app.core.managed import load_lifecycle_state
+    async with SessionLocal() as _lifecycle_db:
+        _state = await load_lifecycle_state(_lifecycle_db)
+    if _state == "suspended":
+        logger.warning("[Managed] Instance is SUSPENDED — API serves 503 until the state resumes it")
+
     # Start background uptime monitoring task
     uptime_task = asyncio.create_task(uptime_monitor())
     logger.info("[Uptime Monitor] Started background health monitoring (every 5 minutes)")
@@ -279,6 +318,9 @@ app.add_middleware(SecurityHeadersMiddleware)
 # Demo mode middleware — block admin mutations
 app.add_middleware(DemoModeMiddleware)
 
+# Managed hosting: suspend gate + telemetry request counters
+app.add_middleware(ManagedModeMiddleware)
+
 # CORS middleware - use environment-based origins for production security
 # In production, set CORS_ORIGINS environment variable (comma-separated)
 import os
@@ -315,6 +357,8 @@ app.include_router(research.router, prefix="/api/research", tags=["Research Suit
 app.include_router(health.router, prefix="/api/health", tags=["Health Check"])
 app.include_router(audit.router, prefix="/api/audit", tags=["Audit Logs"])
 app.include_router(setup.router, prefix="/api/setup", tags=["Setup"])
+app.include_router(provisioning.router, prefix="/api/provisioning", tags=["Provisioning (orchestrator)"])
+app.include_router(telemetry.router, prefix="/api/telemetry", tags=["Telemetry (orchestrator)"])
 app.include_router(api_usage.router, prefix="/api/system/api-usage", tags=["API Usage"])
 
 app.include_router(data_export.router, prefix="/api", tags=["Data Export"])

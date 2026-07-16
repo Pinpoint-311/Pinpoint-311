@@ -56,11 +56,20 @@ class Settings(BaseSettings):
     # Demo mode - single shared demo environment
     demo_mode: bool = False
 
-    # Managed (state-hosted) mode: when true, this instance is run by an
-    # orchestrator/control plane. Platform-owned settings (infra, backups,
-    # domain) and the in-app self-update are locked; the panel manages them.
-    # Off = fully self-contained single-tenant behavior (unchanged default).
+    # Managed (state-hosted) mode — orchestrator-driven deployment. Every
+    # managed-mode hook is additive and a no-op when this flag is off
+    # (docs/ORCHESTRATOR_PLAN.md Part A).
     managed_mode: bool = False
+    # Shared secret for the orchestrator's provisioning/telemetry API (A4/A5).
+    # The endpoints are inert unless this is set.
+    provisioning_token: Optional[str] = None
+
+    # Build/version stamp exposed on health for rollout gating (A3). Set via
+    # image build args / env by the orchestrator.
+    app_version: Optional[str] = None
+    git_sha: Optional[str] = None
+    # Oldest Alembic revision this build can run against (expand/contract rule).
+    min_db_revision: Optional[str] = None
 
     class Config:
         env_file = ".env"
