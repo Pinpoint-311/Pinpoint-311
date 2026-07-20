@@ -11,15 +11,8 @@ from app.integrations.base import BaseConnector
 from app.integrations.connectors.accela import AccelaConnector
 from app.integrations.connectors.open311 import Open311Connector
 from app.integrations.connectors.seeclickfix import SeeClickFixConnector
-from app.integrations.connectors.vendors import (
-    CityworksConnector,
-    EdmundsConnector,
-    FastTrackGovConnector,
-    GovPilotConnector,
-    PolimorphicConnector,
-    SDLConnector,
-    TylerConnector,
-)
+from app.integrations.connectors.generic_rest import GenericRestConnector
+from app.integrations.connectors.vendors import TylerConnector
 
 # integration_mode:
 #   public_api  — vendor publishes an open, documented API; works out of the box with credentials
@@ -86,102 +79,47 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         ],
         "setup_notes": "Any SeeClickFix account works for read access; issue creation needs an account (or CivicPlus-issued token) with reporting rights in your place.",
     },
-    "sdl": {
-        "name": "SDL (Spatial Data Logic)",
-        "vendor": "Spatial Data Logic",
-        "category": "Municipal operations & code enforcement",
-        "integration_mode": "partner_api",
-        "docs_url": "https://www.spatialdatalogic.com",
-        "description": "Prebuilt two-way connector for SDL's customer REST API: requests, status, comments, photo attachments, and asset sync. Ships with sensible endpoint defaults that are configurable to your tenant — run the connection check to confirm your endpoints.",
+    "generic_rest": {
+        "name": "Other REST System (Generic Connector)",
+        "vendor": "Any vendor REST API — you provide the details",
+        "category": "Configurable connector for systems not listed above",
+        "integration_mode": "generic",
+        "docs_url": "https://github.com/Pinpoint-311/Pinpoint-311/blob/main/docs/INTEGRATIONS.md",
+        "description": (
+            "One configurable connector for any vendor that exposes a JSON REST API but isn't "
+            "purpose-built above — for example Trimble Cityworks, SDL (Spatial Data Logic), "
+            "Edmunds GovTech / MCSJ, GovPilot, FastTrackGov, or Polimorphic. You supply the base "
+            "URL, auth style, and (if the vendor differs from the common defaults) the endpoint "
+            "paths and field names from your vendor's API docs. "
+            "Note: this is a generic client, not certified against any specific vendor's API — "
+            "always run the connection check and a test report before relying on it in production."
+        ),
         "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "work_orders", "test"],
         "credential_fields": [
-            {"key": "api_key", "label": "SDL API Key", "secret": True},
+            {"key": "api_key", "label": "API Key / Token", "secret": True},
+            {"key": "username", "label": "Username (only for Basic auth)", "secret": False},
+            {"key": "password", "label": "Password (only for Basic auth)", "secret": True},
         ],
         "config_fields": [
-            {"key": "base_url", "label": "API Base URL", "placeholder": "https://api.spatialdatalogic.com/v1/yourtown", "required": True},
+            {"key": "base_url", "label": "API Base URL", "placeholder": "https://api.yourvendor.com/v1", "required": True},
+            {"key": "auth_style", "label": "Auth style — bearer, api_key_header, basic, or query", "placeholder": "bearer", "required": False},
+            {"key": "auth_header", "label": "Header name (only for api_key_header, e.g. X-API-Key)", "placeholder": "X-API-Key", "required": False},
+            {"key": "create_path", "label": "Create-request path", "placeholder": "/requests", "required": False},
+            {"key": "get_path", "label": "Get-by-id path", "placeholder": "/requests/{id}", "required": False},
+            {"key": "list_path", "label": "List / poll-updates path", "placeholder": "/requests", "required": False},
+            {"key": "status_path", "label": "Status-update path", "placeholder": "/requests/{id}/status", "required": False},
+            {"key": "id_field", "label": "Response field holding the record id", "placeholder": "id", "required": False},
+            {"key": "status_field", "label": "Response field holding status", "placeholder": "status", "required": False},
+            {"key": "updated_field", "label": "Response field holding the updated timestamp", "placeholder": "updated_at", "required": False},
         ],
-        "setup_notes": "SDL issues the API endpoint and key per municipality — request 'REST API access for third-party intake' from SDL support. Endpoint paths and field names are configurable if your tenant differs from the defaults.",
-    },
-    "edmunds": {
-        "name": "Edmunds GovTech",
-        "vendor": "Edmunds GovTech (MCSJ)",
-        "category": "Municipal ERP & work orders",
-        "integration_mode": "partner_api",
-        "docs_url": "https://edmundsgovtech.com",
-        "description": "Prebuilt two-way connector for MCSJ work orders via the Edmunds web-service interface: requests, status, comments, attachments, and asset sync. Endpoint paths are configurable to your tenant — run the connection check to confirm.",
-        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "work_orders", "test"],
-        "credential_fields": [
-            {"key": "username", "label": "Service Username", "secret": False},
-            {"key": "password", "label": "Service Password", "secret": True},
-        ],
-        "config_fields": [
-            {"key": "base_url", "label": "API Base URL", "placeholder": "https://mcsj.yourtown.gov/api", "required": True},
-        ],
-        "setup_notes": "Ask Edmunds support to enable the MCSJ API/web-service module for your license and provision a service account. Field mappings are configurable per tenant.",
-    },
-    "govpilot": {
-        "name": "GovPilot",
-        "vendor": "GovPilot",
-        "category": "Government management & GIS",
-        "integration_mode": "partner_api",
-        "docs_url": "https://www.govpilot.com",
-        "description": "Prebuilt two-way connector for GovPilot's report-a-concern and records modules: requests, status, comments, attachments, and GIS asset sync. Endpoint paths are configurable to your account — run the connection check to confirm.",
-        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "work_orders", "test"],
-        "credential_fields": [
-            {"key": "api_key", "label": "GovPilot API Key", "secret": True},
-        ],
-        "config_fields": [
-            {"key": "base_url", "label": "API Base URL", "placeholder": "https://api.govpilot.com/v1", "required": True},
-        ],
-        "setup_notes": "GovPilot issues API keys through your customer success manager. Grant the key access to the modules you want Pinpoint to write to.",
-    },
-    "fasttrackgov": {
-        "name": "FastTrackGov",
-        "vendor": "Harris (MS Govern)",
-        "category": "Licensing, permitting & code enforcement",
-        "integration_mode": "partner_api",
-        "docs_url": "https://www.fasttrackgov.com",
-        "description": "Prebuilt two-way connector for FastTrackGov cases through the customer API gateway: requests, status, comments, attachments, and asset sync. Endpoint paths are configurable to your gateway — run the connection check to confirm.",
-        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "work_orders", "test"],
-        "credential_fields": [
-            {"key": "api_key", "label": "Subscription Key", "secret": True},
-        ],
-        "config_fields": [
-            {"key": "base_url", "label": "API Base URL", "placeholder": "https://gateway.fasttrackgov.com/yourtown", "required": True},
-        ],
-        "setup_notes": "Request an API subscription key from your FastTrackGov/MS Govern representative. The connector's endpoint paths are configurable to match your gateway.",
-    },
-    "polimorphic": {
-        "name": "Polimorphic",
-        "vendor": "Polimorphic",
-        "category": "AI front desk & constituent CRM",
-        "integration_mode": "partner_api",
-        "docs_url": "https://www.polimorphic.com",
-        "description": "Bidirectional: Polimorphic's AI phone/chat intake posts new requests and comments to Pinpoint's inbound webhook, while Pinpoint pushes requests, status changes, and comment threads to your workspace endpoint.",
-        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "test"],
-        "credential_fields": [
-            {"key": "api_key", "label": "Workspace API Token", "secret": True},
-        ],
-        "config_fields": [
-            {"key": "base_url", "label": "Workspace API URL", "placeholder": "https://api.polimorphic.com/workspaces/yourtown", "required": True},
-        ],
-        "setup_notes": "Give Polimorphic your Pinpoint inbound webhook URL (shown after connecting) so their AI intake can create requests here, and paste their workspace endpoint + token for outbound sync.",
-    },
-    "cityworks": {
-        "name": "Trimble Cityworks",
-        "vendor": "Trimble (Cityworks AMS / PLL)",
-        "category": "Public works — work order & asset management",
-        "integration_mode": "partner_api",
-        "docs_url": "https://www.cityworks.com",
-        "description": "Prebuilt work-order connector for Trimble Cityworks: resident reports become Cityworks work orders, and the full work-order lifecycle — crew assignment, scheduled/due dates, status, and closeout resolution — syncs back onto the request. Ships with Cityworks field defaults that are configurable to your instance; run the connection check to confirm your endpoints.",
-        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "work_orders", "test"],
-        "credential_fields": [
-            {"key": "api_key", "label": "Cityworks API Token", "secret": True},
-        ],
-        "config_fields": [
-            {"key": "base_url", "label": "Cityworks API Base URL", "placeholder": "https://cityworks.yourtown.gov/api", "required": True},
-        ],
-        "setup_notes": "Request a Cityworks REST API token from your Cityworks administrator. The connector maps Cityworks work-order fields (WorkOrderId, AssignedTo, Status, ScheduledDate) by default; these are configurable if your instance differs.",
+        "setup_notes": (
+            "Get your API base URL, key, auth style, and endpoint/field details from your vendor's "
+            "API documentation or support team. Defaults follow a common REST convention (Bearer "
+            "auth, /requests paths, id/status/updated_at fields); override only what your vendor "
+            "differs on. For a work-order system (e.g. Cityworks), map your work-order fields "
+            "(WorkOrderId, AssignedTo, Status, ScheduledDate) via id_field/status_field/field_map. "
+            "This connector is not vendor-certified — verify with the connection check first."
+        ),
     },
     "open311": {
         "name": "Generic Open311",
@@ -280,101 +218,32 @@ CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
         },
         "recommended_sync_direction": "bidirectional",
     },
-    "sdl": {
-        "plain_summary": "Reports submitted here become SDL work items with photos attached, and SDL status changes and comments show up here.",
+    "generic_rest": {
+        "plain_summary": "A do-it-yourself connector for a vendor system that isn't listed above (Cityworks, SDL, Edmunds/MCSJ, GovPilot, FastTrackGov, Polimorphic, and others). You paste in the web address and key your vendor gives you, plus a few field names from their API guide if they differ from the common defaults.",
         "what_you_need": [
-            "A web address (URL) and API key from SDL — one email to SDL support gets both",
+            "Your vendor's API base URL and an API key (or a username + password) — from their API docs or support team",
+            "The auth style they use: most are 'bearer'; some use an API-key header or a basic login",
+            "Optional: endpoint paths and response field names, if your vendor differs from the common REST defaults",
         ],
         "vendor_ask": {
-            "to_hint": "SDL support, or your SDL account manager",
-            "subject": "API access for our 311 system (Pinpoint 311)",
-            "body": "Hello,\n\nWe use SDL and are connecting our resident request system (Pinpoint 311) so resident reports flow into SDL automatically and status updates flow back.\n\nCould you please enable REST API access for third-party intake on our account and send us:\n1. Our API base URL\n2. An API key\n3. Any notes on the endpoints for creating requests, updating status, comments, and attachments\n\nIf you can receive updates from us by webhook instead, our address is: {{WEBHOOK_URL}}\n\nThank you!",
+            "to_hint": "Your vendor's API support or account team",
+            "subject": "REST API access for our 311 system (Pinpoint 311)",
+            "body": "Hello,\n\nWe'd like to connect our resident request system (Pinpoint 311) to your platform via your REST API so resident reports flow in automatically and status updates flow back.\n\nCould you please send us:\n1. Our API base URL\n2. An API key/token (or service account), and the auth style you use (Bearer token, API-key header, or Basic username/password)\n3. The endpoints for creating a request, reading a request by id, listing/polling updates, and updating status — plus any field-name notes if they differ from the usual id/status/updated_at\n4. If you can send us updates by webhook instead of us polling, our inbound address is: {{WEBHOOK_URL}}\n\nThank you!",
         },
         "field_help": {
-            "api_key": "The key SDL support sends you — a long string of letters and numbers.",
-            "base_url": "Paste the web address exactly as SDL sends it, e.g. https://api.spatialdatalogic.com/v1/yourtown.",
-        },
-        "recommended_sync_direction": "bidirectional",
-    },
-    "edmunds": {
-        "plain_summary": "Reports submitted here become MCSJ work orders, and work order status changes show up here.",
-        "what_you_need": [
-            "A service username and password from Edmunds, plus your MCSJ web address — one email to Edmunds support gets all three",
-        ],
-        "vendor_ask": {
-            "to_hint": "Edmunds GovTech support, or your Edmunds account manager",
-            "subject": "MCSJ API access for our 311 system (Pinpoint 311)",
-            "body": "Hello,\n\nWe use MCSJ and are connecting our resident request system (Pinpoint 311) so resident reports create work orders automatically and status updates flow back.\n\nCould you please:\n1. Enable the MCSJ API / web-service module for our license\n2. Create a service account (username + password) for the connection\n3. Send us our API base URL and any notes on the work order endpoints\n\nThank you!",
-        },
-        "field_help": {
-            "username": "The service account name Edmunds creates for this connection.",
-            "password": "That account's password.",
-            "base_url": "Paste the web address exactly as Edmunds sends it, e.g. https://mcsj.yourtown.gov/api.",
-        },
-        "recommended_sync_direction": "bidirectional",
-    },
-    "govpilot": {
-        "plain_summary": "Reports submitted here appear in GovPilot, and GovPilot status changes show up here. GovPilot GIS assets can appear on the Pinpoint map.",
-        "what_you_need": [
-            "An API key and web address from GovPilot — one email to your GovPilot customer success manager gets both",
-        ],
-        "vendor_ask": {
-            "to_hint": "Your GovPilot customer success manager",
-            "subject": "API access for our 311 system (Pinpoint 311)",
-            "body": "Hello,\n\nWe use GovPilot and are connecting our resident request system (Pinpoint 311) so resident reports flow into GovPilot automatically and status updates flow back.\n\nCould you please send us:\n1. An API key with access to the report-a-concern / records modules\n2. Our API base URL\n3. Any notes on the endpoints for creating requests, status, comments, and attachments\n\nIf you can receive updates from us by webhook instead, our address is: {{WEBHOOK_URL}}\n\nThank you!",
-        },
-        "field_help": {
-            "api_key": "The key GovPilot sends you — a long string of letters and numbers.",
-            "base_url": "Paste the web address exactly as GovPilot sends it, e.g. https://api.govpilot.com/v1.",
-        },
-        "recommended_sync_direction": "bidirectional",
-    },
-    "fasttrackgov": {
-        "plain_summary": "Reports submitted here become FastTrackGov cases, and case status changes show up here.",
-        "what_you_need": [
-            "A subscription key and gateway address from your FastTrackGov / MS Govern representative",
-        ],
-        "vendor_ask": {
-            "to_hint": "Your FastTrackGov / MS Govern representative",
-            "subject": "API access for our 311 system (Pinpoint 311)",
-            "body": "Hello,\n\nWe use FastTrackGov and are connecting our resident request system (Pinpoint 311) so resident reports create cases automatically and status updates flow back.\n\nCould you please send us:\n1. An API subscription key\n2. Our API gateway base URL\n3. Any notes on the endpoints for creating cases, status, comments, and attachments\n\nThank you!",
-        },
-        "field_help": {
-            "api_key": "The subscription key your representative sends — a long string of letters and numbers.",
-            "base_url": "Paste the web address exactly as your representative sends it.",
-        },
-        "recommended_sync_direction": "bidirectional",
-    },
-    "polimorphic": {
-        "plain_summary": "Requests taken by Polimorphic's AI phone/chat assistant appear here automatically, and updates made here flow back to Polimorphic.",
-        "what_you_need": [
-            "A workspace API token and address from Polimorphic",
-            "You'll send Polimorphic a special web address from this page (shown after you connect) so their assistant can file requests here",
-        ],
-        "vendor_ask": {
-            "to_hint": "Your Polimorphic customer success contact",
-            "subject": "Connecting Polimorphic to our 311 system (Pinpoint 311)",
-            "body": "Hello,\n\nWe want requests taken by our Polimorphic assistant to appear in our resident request system (Pinpoint 311) automatically, and updates to flow back.\n\n1. Please point your outbound webhook for new requests and updates at: {{WEBHOOK_URL}}\n2. Please send us our workspace API URL and an API token so we can push our requests and status changes to Polimorphic\n\nThank you!",
-        },
-        "field_help": {
-            "api_key": "The token Polimorphic sends you — a long string of letters and numbers.",
-            "base_url": "Paste the workspace address exactly as Polimorphic sends it.",
-        },
-        "recommended_sync_direction": "bidirectional",
-    },
-    "cityworks": {
-        "plain_summary": "Reports here become Cityworks work orders. When your crews assign, schedule, and complete the work order in Cityworks, that progress shows up right on the request here.",
-        "what_you_need": [
-            "A Cityworks API token and your Cityworks web address — your Cityworks administrator can provide both",
-        ],
-        "vendor_ask": {
-            "to_hint": "Your Cityworks administrator or Trimble support",
-            "subject": "API access for our 311 system (Pinpoint 311)",
-            "body": "Hello,\n\nWe use Cityworks and are connecting our resident request system (Pinpoint 311) so resident reports become Cityworks work orders automatically and the work-order status flows back.\n\nCould you please send us:\n1. Our Cityworks REST API base URL\n2. An API token with permission to create and read work orders\n3. Any notes if our work-order field names differ from the Cityworks defaults\n\nThank you!",
-        },
-        "field_help": {
-            "api_key": "The Cityworks API token from your administrator.",
-            "base_url": "Paste your Cityworks web address exactly, e.g. https://cityworks.yourtown.gov/api.",
+            "api_key": "The key or token your vendor issues. Treat it like a password. (Leave blank if using Basic username/password.)",
+            "username": "Only needed if your vendor uses Basic authentication.",
+            "password": "Only needed if your vendor uses Basic authentication.",
+            "base_url": "The web address of the vendor's API, e.g. https://api.yourvendor.com/v1.",
+            "auth_style": "How the key is sent. Most vendors use 'bearer'. Others use 'api_key_header' (with a header name), 'basic' (username + password), or 'query'.",
+            "auth_header": "Only for api_key_header — the exact header name the vendor expects, e.g. X-API-Key or Ocp-Apim-Subscription-Key.",
+            "create_path": "Where new requests are sent (POST). Leave blank for the default /requests.",
+            "get_path": "Where a single request is read by id. Leave blank for /requests/{id}.",
+            "list_path": "Where updated requests are polled. Leave blank for /requests.",
+            "status_path": "Where status updates are sent. Leave blank for /requests/{id}/status.",
+            "id_field": "The field in the vendor's response holding the record id. Default 'id'.",
+            "status_field": "The field holding the record's status. Default 'status'.",
+            "updated_field": "The field holding the last-updated timestamp. Default 'updated_at'.",
         },
         "recommended_sync_direction": "bidirectional",
     },
@@ -407,12 +276,7 @@ _CONNECTOR_CLASSES = {
     "accela": AccelaConnector,
     "tyler": TylerConnector,
     "civicplus": SeeClickFixConnector,
-    "sdl": SDLConnector,
-    "edmunds": EdmundsConnector,
-    "govpilot": GovPilotConnector,
-    "fasttrackgov": FastTrackGovConnector,
-    "polimorphic": PolimorphicConnector,
-    "cityworks": CityworksConnector,
+    "generic_rest": GenericRestConnector,
     "open311": Open311Connector,
 }
 
