@@ -741,14 +741,23 @@ async def update_retention_policy(
 ):
     """Update retention policy configuration (admin only)"""
     from app.services.retention_service import get_retention_policy
-    
+
     result = await db.execute(select(SystemSettings).limit(1))
     settings = result.scalar_one_or_none()
-    
+
     if not settings:
         settings = SystemSettings()
         db.add(settings)
-    
+
+    # If the state has pushed a managed retention/legal-hold policy, the town
+    # can't override it here — it's controlled from the hosting control plane.
+    managed = getattr(settings, "managed_policy", None) or {}
+    if any(k in managed for k in ("retention_days", "retention_mode", "pii_anonymization", "legal_hold")):
+        raise HTTPException(
+            403,
+            "Data-retention policy is managed by your state and can't be changed here.",
+        )
+
     if state_code:
         # Validate state code
         policy = get_retention_policy(state_code)
