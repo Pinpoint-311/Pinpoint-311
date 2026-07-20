@@ -268,3 +268,74 @@ async def exchange_break_glass(
         "expires_in": int(ttl.total_seconds()),
         "actor_type": "state_ops",
     }
+
+
+class ManagedSettingsRequest(BaseModel):
+    settings: dict = Field(default_factory=dict)
+
+
+# Keys the panel pushes that this app can actually enforce today. Others are
+# retained in managed_policy for display/lock but have no runtime effect here.
+_ENFORCED_KEYS = {"legal_hold", "retention_days", "pii_anonymization", "retention_mode"}
+
+
+@router.post("/managed-settings")
+async def set_managed_settings(
+    body: ManagedSettingsRequest,
+    db: AsyncSession = Depends(get_db),
+    actor: str = Depends(require_provisioning_token),
+):
+    """Apply state-set managed policy pushed by the orchestrator (A-plan).
+
+    Maps the policy onto the settings this app enforces — instance-wide legal
+    hold (suspends ALL retention purging) and data-retention window/mode — and
+    records the full policy in ``managed_policy`` so those fields become
+    state-controlled (the town can no longer override them).
+    """
+    incoming = body.settings or {}
+
+    result = await db.execute(select(SystemSettings).limit(1))
+    settings = result.scalar_one_or_none()
+    if not settings:
+        settings = SystemSettings()
+        db.add(settings)
+
+    applied = {}
+
+    if "legal_hold" in incoming:
+        settings.legal_hold = bool(incoming["legal_hold"])
+        applied["legal_hold"] = settings.legal_hold
+
+    if incoming.get("retention_days") is not None:
+        try:
+            settings.retention_days_override = int(incoming["retention_days"])
+            applied["retention_days_override"] = settings.retention_days_override
+        except (TypeError, ValueError):
+            pass
+
+    # PII anonymization on/off maps to the retention archive mode; an explicit
+    # retention_mode wins if provided.
+    if "pii_anonymization" in incoming:
+        settings.retention_mode = "anonymize" if incoming["pii_anonymization"] else "delete"
+        applied["retention_mode"] = settings.retention_mode
+    if incoming.get("retention_mode") in ("anonymize", "delete"):
+        settings.retention_mode = incoming["retention_mode"]
+        applied["retention_mode"] = settings.retention_mode
+
+    # Record the full pushed policy — presence of a key marks it state-controlled.
+    settings.managed_policy = dict(incoming)
+
+    await db.commit()
+
+    try:
+        await AuditService.log_event(
+            db,
+            event_type="provisioning_managed_settings",
+            success=True,
+            username=actor,
+            details={"applied": applied, "keys": sorted(incoming.keys())},
+        )
+    except Exception:
+        pass
+
+    return {"status": "ok", "applied": applied, "enforced_keys": sorted(_ENFORCED_KEYS & set(incoming))}

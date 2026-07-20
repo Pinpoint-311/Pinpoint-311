@@ -790,6 +790,10 @@ def enforce_retention_policy():
                 override_days = None
                 archive_mode = "anonymize"
             else:
+                # Instance-wide legal hold: freeze ALL purging until it is lifted.
+                if getattr(settings, "legal_hold", False):
+                    logger.info("[Retention] Legal hold is active — purge suspended, nothing archived")
+                    return {"status": "skipped_legal_hold", "archived": 0}
                 state_code = settings.retention_state_code or "NJ"
                 override_days = settings.retention_days_override
                 archive_mode = settings.retention_mode or "anonymize"

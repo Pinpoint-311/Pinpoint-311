@@ -488,7 +488,15 @@ class SystemSettings(Base):
     retention_state_code = Column(String(2), default="NJ")  # State for retention rules
     retention_days_override = Column(Integer)  # Custom override (null = use state default)
     retention_mode = Column(String(20), default="anonymize")  # "anonymize" or "delete"
-    
+
+    # Instance-wide legal / litigation hold. When true, ALL retention purging is
+    # suspended (nothing is deleted or anonymized) until it is lifted. Either the
+    # town or the state can place it; the state sets it via the provisioning API.
+    legal_hold = Column(Boolean, default=False, server_default='false', nullable=False)
+    # State-pushed managed policy (retention, legal hold, PII mode, …). When a key
+    # is present here it is state-controlled and the town cannot override it.
+    managed_policy = Column(JSON, default={})
+
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
