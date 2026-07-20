@@ -297,7 +297,7 @@ async def _log(db, integration_id: int, operation: str, status: str, detail: str
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
 def push_request_to_integrations(self, request_id: int):
     """Push a newly created request to all enabled push integrations."""
-    from app.integrations import build_connector
+    from app.integrations import build_connector_for
 
     async def _push():
         async with SessionLocal() as db:
@@ -329,9 +329,7 @@ def push_request_to_integrations(self, request_id: int):
                     continue
 
                 try:
-                    connector = build_connector(
-                        integration.platform, integration.config or {}, integration.credentials
-                    )
+                    connector = await build_connector_for(integration)
                     if "push" not in connector.capabilities:
                         continue
                     record = await connector.push_request(
@@ -363,7 +361,7 @@ def push_request_to_integrations(self, request_id: int):
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
 def push_status_to_integrations(self, request_id: int, notes: str = None):
     """Propagate a local status change to all platforms the request is linked to."""
-    from app.integrations import build_connector
+    from app.integrations import build_connector_for
 
     async def _push_status():
         async with SessionLocal() as db:
@@ -384,9 +382,7 @@ def push_status_to_integrations(self, request_id: int, notes: str = None):
 
             for link, integration in links:
                 try:
-                    connector = build_connector(
-                        integration.platform, integration.config or {}, integration.credentials
-                    )
+                    connector = await build_connector_for(integration)
                     if "push_status" not in connector.capabilities:
                         continue
                     await connector.push_status(link.external_id, sr.status, notes)
@@ -410,7 +406,7 @@ def push_status_to_integrations(self, request_id: int, notes: str = None):
 @celery_app.task
 def pull_integration_updates():
     """Beat task: poll pull-enabled platforms and mirror external status changes."""
-    from app.integrations import build_connector
+    from app.integrations import build_connector_for
 
     async def _pull():
         async with SessionLocal() as db:
@@ -423,9 +419,7 @@ def pull_integration_updates():
 
             for integration in integrations:
                 try:
-                    connector = build_connector(
-                        integration.platform, integration.config or {}, integration.credentials
-                    )
+                    connector = await build_connector_for(integration)
                     if "pull" not in connector.capabilities:
                         continue
                     records = await connector.pull_updates(since=integration.last_sync_at)
@@ -512,7 +506,7 @@ def refresh_request_from_integrations(self, request_id: int):
     platform it's linked to (uses the connector's fetch_record). Lets staff hit
     "Refresh work order" and see current assignment/schedule/status without
     waiting for the scheduled pull. Returns a small summary dict."""
-    from app.integrations import build_connector
+    from app.integrations import build_connector_for
 
     async def _refresh():
         applied = 0
@@ -536,9 +530,7 @@ def refresh_request_from_integrations(self, request_id: int):
                 if not integration:
                     continue
                 try:
-                    connector = build_connector(
-                        integration.platform, integration.config or {}, integration.credentials
-                    )
+                    connector = await build_connector_for(integration)
                     record = await connector.fetch_record(link.external_id)
                     if not record:
                         continue
@@ -574,7 +566,7 @@ def refresh_request_from_integrations(self, request_id: int):
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
 def push_comment_to_integrations(self, comment_id: int):
     """Post an external-visibility comment to every platform its request is linked to."""
-    from app.integrations import build_connector
+    from app.integrations import build_connector_for
 
     async def _push_comment():
         async with SessionLocal() as db:
@@ -595,9 +587,7 @@ def push_comment_to_integrations(self, comment_id: int):
 
             for link, integration in links:
                 try:
-                    connector = build_connector(
-                        integration.platform, integration.config or {}, integration.credentials
-                    )
+                    connector = await build_connector_for(integration)
                     if "comments" not in connector.capabilities:
                         continue
                     external_comment_id = await connector.push_comment(
@@ -627,7 +617,7 @@ def push_comment_to_integrations(self, comment_id: int):
 @celery_app.task
 def pull_integration_comments():
     """Beat task: import new external comments on linked, active requests."""
-    from app.integrations import build_connector
+    from app.integrations import build_connector_for
 
     async def _pull_comments():
         async with SessionLocal() as db:
@@ -640,9 +630,7 @@ def pull_integration_comments():
 
             for integration in integrations:
                 try:
-                    connector = build_connector(
-                        integration.platform, integration.config or {}, integration.credentials
-                    )
+                    connector = await build_connector_for(integration)
                     if "comments" not in connector.capabilities:
                         continue
 
@@ -704,7 +692,7 @@ def sync_integration_assets():
     Synced assets become a point layer usable for asset-linked request intake
     (residents pick the exact hydrant/streetlight/sign the report is about).
     Enabled per integration via config.sync_assets = true."""
-    from app.integrations import build_connector
+    from app.integrations import build_connector_for
 
     async def _sync_assets():
         async with SessionLocal() as db:
@@ -717,7 +705,7 @@ def sync_integration_assets():
                 if not _flag(config, "sync_assets"):
                     continue
                 try:
-                    connector = build_connector(integration.platform, config, integration.credentials)
+                    connector = await build_connector_for(integration)
                     if "assets" not in connector.capabilities:
                         continue
                     features = await connector.pull_assets()
