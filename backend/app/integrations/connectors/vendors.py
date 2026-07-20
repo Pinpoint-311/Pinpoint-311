@@ -7,34 +7,8 @@ vocabulary) so an admin typically only needs to paste the base URL + key their
 vendor rep provides.
 """
 
-import os
-
 from app.integrations.connectors.generic_rest import GenericRestConnector
 from app.integrations.connectors.open311 import Open311Connector
-
-
-class SandboxConnector(GenericRestConnector):
-    """Practice connector pointed at Pinpoint's own built-in sandbox vendor
-    (app/api/integration_sandbox.py). Lets anyone verify the full sync
-    pipeline — push, photos, comments, status pull, assets, import — without
-    credentials for any real platform."""
-    platform = "sandbox"
-    # The practice sandbox is the Pinpoint backend itself (in-cluster host),
-    # so it is the one connector allowed past the SSRF guard.
-    allow_internal_hosts = True
-
-    def __init__(self, config, credentials):
-        default_url = os.environ.get(
-            "SANDBOX_VENDOR_URL",
-            # docker-compose service address, reachable from backend and worker
-            "http://backend:8000/api/integrations/sandbox-vendor",
-        )
-        # SECURITY: because this connector bypasses the SSRF guard, the
-        # base_url must NOT be user-configurable — a custom value could point
-        # the guard-exempt client at internal services or cloud metadata.
-        # The sandbox always talks to the operator-pinned address.
-        config = {**{k: v for k, v in (config or {}).items() if v}, "base_url": default_url}
-        super().__init__(config, credentials)
 
 
 class TylerConnector(Open311Connector):

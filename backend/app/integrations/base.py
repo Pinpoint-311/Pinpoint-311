@@ -315,8 +315,9 @@ class BaseConnector:
 
     # ---- HTTP helpers ----------------------------------------------------
 
-    # Connectors that legitimately talk to an in-cluster host (only the
-    # built-in practice sandbox) set this True to opt out of the SSRF guard.
+    # Reserved escape hatch: a connector that must legitimately reach an
+    # in-cluster host can set this True to opt out of the SSRF guard. No
+    # shipped connector does — every real vendor endpoint is public.
     allow_internal_hosts = False
 
     def _client(self, **kwargs) -> httpx.AsyncClient:

@@ -14,7 +14,6 @@ import {
 } from '../services/api';
 
 const MODE_LABELS: Record<string, { label: string; className: string }> = {
-    sandbox: { label: 'No account needed — try it now', className: 'bg-violet-500/20 text-violet-300 border-violet-500/30' },
     public_api: { label: 'Works with your account login', className: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
     open311: { label: 'Works with a standard address + key', className: 'bg-sky-500/20 text-sky-300 border-sky-500/30' },
     partner_api: { label: 'Vendor sends you the details', className: 'bg-amber-500/20 text-amber-300 border-amber-500/30' },
@@ -466,9 +465,7 @@ export default function GovtechIntegrations() {
                                         className="shimmer-sweep inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-900/40 transition-all hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
                                         onClick={() => openWizard(platform, 'intro')}
                                     >
-                                        {platform.platform === 'sandbox'
-                                            ? <><Sparkles className="w-4 h-4" /> Try it — 2 minutes</>
-                                            : <><Plug className="w-4 h-4" /> Set up — about 10 minutes</>}
+                                        <Plug className="w-4 h-4" /> Set up — about 10 minutes
                                     </button>
                                 ) : (
                                     <>

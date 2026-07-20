@@ -89,8 +89,9 @@ data. The app keeps running stand-alone; a set of flag-gated hooks
 ## Where things stand
 
 - **Built today:** resident intake, staff dashboard + manual (call-taker)
-  intake, AI triage, translation, govtech integrations with a practice
-  sandbox, pluggable providers (AI / translation / identity / KMS / secrets),
+  intake, AI triage, translation, govtech integrations (Accela, Tyler,
+  CivicPlus, Cityworks, Open311, and more), pluggable providers
+  (AI / translation / identity / KMS / secrets),
   envelope-encrypted PII, HMAC-keyed tamper-evident audit log, point-and-click
   setup for non-technical staff.
 - **Planned:** the orchestrator layer and the `MANAGED_MODE` hosted-mode hooks
