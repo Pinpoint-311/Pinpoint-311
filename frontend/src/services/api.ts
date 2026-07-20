@@ -69,6 +69,7 @@ export interface IntegrationConfig {
     sync_direction: 'push' | 'pull' | 'bidirectional';
     config: Record<string, unknown>;
     configured_credentials: string[];
+    credentials_vaulted: boolean;
     webhook_path: string;
     last_sync_at: string | null;
     last_sync_status: string | null;

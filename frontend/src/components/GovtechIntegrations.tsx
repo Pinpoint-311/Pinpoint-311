@@ -5,6 +5,7 @@ import {
     Plug, Trash2, Copy, Check, Mail, ClipboardList, Loader2, ArrowLeft,
     ChevronDown, ChevronUp, PartyPopper, Sparkles, Search,
     ArrowUpRight, ArrowDownLeft, MessageSquare, Image as ImageIcon, MapPin, ClipboardCheck,
+    ShieldCheck,
 } from 'lucide-react';
 
 import { Button, Modal, CollapsibleSection } from './ui';
@@ -448,6 +449,13 @@ export default function GovtechIntegrations() {
                                     {existing.last_sync_status === 'error'
                                         ? 'The last update check hit a problem — press "Check connection" for a plain-language explanation.'
                                         : `Last checked ${new Date(existing.last_sync_at).toLocaleString()} — all good.`}
+                                </p>
+                            )}
+
+                            {existing?.credentials_vaulted && (
+                                <p className="relative text-[11px] mt-2 flex items-center gap-1.5 text-emerald-300/80">
+                                    <ShieldCheck className="w-3 h-3 shrink-0" aria-hidden="true" />
+                                    Credentials stored in your Secret Manager — not in this app's database.
                                 </p>
                             )}
 

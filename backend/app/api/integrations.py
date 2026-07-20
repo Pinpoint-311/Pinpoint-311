@@ -17,7 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_admin, get_current_staff
 from app.db.session import get_db
-from app.integrations import PLATFORM_CATALOG, build_connector
+from app.integrations import (
+    PLATFORM_CATALOG, build_connector_for, store_credentials,
+)
 from app.models import (
     IntegrationConfig,
     IntegrationLink,
@@ -92,6 +94,13 @@ def _serialize(integration: IntegrationConfig) -> Dict[str, Any]:
         "config": integration.config or {},
         # Never return secret values — only which keys are set
         "configured_credentials": sorted((integration.credentials or {}).keys()),
+        # True when the stored credentials are Secret Manager references (the raw
+        # secret lives only in the vault, not this database) — lets the UI show a
+        # "stored in your Secret Manager" trust signal for government deployments.
+        "credentials_vaulted": any(
+            isinstance(v, str) and v.startswith("@secret:")
+            for v in (integration.credentials or {}).values()
+        ),
         "webhook_path": f"/api/integrations/webhook/{integration.platform}/{integration.webhook_token}",
         "last_sync_at": integration.last_sync_at.isoformat() if integration.last_sync_at else None,
         "last_sync_status": integration.last_sync_status,
@@ -128,42 +137,6 @@ async def list_integrations(
     return [_serialize(i) for i in integrations]
 
 
-async def _mirror_credentials_to_secret_manager(platform: str, credentials: dict) -> None:
-    """Best-effort push of a govtech integration's credentials into the configured
-    Secret Manager (Google Secret Manager / Azure Key Vault), same store used for
-    service-provider keys. The encrypted DB copy on IntegrationConfig remains the
-    canonical read path and fallback, so a Secret Manager outage never blocks a
-    save — this just ensures the secret of record also lives in the vault.
-
-    Keys are namespaced by platform (one integration per platform is enforced),
-    e.g. Accela's api_key becomes INTEGRATION_ACCELA_API_KEY.
-    """
-    if not credentials:
-        return
-    try:
-        from app.services.secret_manager import set_secret, clear_cache
-        from app.core.sanitize import sanitize_for_log
-        prefix = f"INTEGRATION_{platform.upper()}_"
-        wrote = False
-        for key, value in credentials.items():
-            if not value:
-                continue
-            sm_key = f"{prefix}{str(key).upper()}"
-            try:
-                if await set_secret(sm_key, value):
-                    wrote = True
-            except Exception as e:
-                logger.warning(
-                    f"[Integrations] Secret Manager mirror failed for "
-                    f"{sanitize_for_log(sm_key)}: {sanitize_for_log(str(e))}"
-                )
-        if wrote:
-            clear_cache()
-    except Exception as e:  # never let vault issues break a save
-        from app.core.sanitize import sanitize_for_log
-        logger.warning(f"[Integrations] Secret Manager mirror skipped: {sanitize_for_log(str(e))}")
-
-
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_integration(
     data: IntegrationCreate,
@@ -187,12 +160,14 @@ async def create_integration(
         config=data.config,
         webhook_token=pysecrets.token_urlsafe(32),
     )
+    # Secret Manager of record: write raw values to the configured vault and
+    # store only @secret: references on the row. Falls back to encrypted-in-DB
+    # when no external vault is configured (see integrations/credentials.py).
     creds = {k: v for k, v in (data.credentials or {}).items() if v}
-    integration.credentials = creds
+    integration.credentials = await store_credentials(data.platform, creds)
     db.add(integration)
     await db.commit()
     await db.refresh(integration)
-    await _mirror_credentials_to_secret_manager(integration.platform, creds)
     from app.core.sanitize import sanitize_for_log
     logger.info(f"[Integrations] {sanitize_for_log(current_user.username)} created integration {sanitize_for_log(data.platform)}")
     return _serialize(integration)
@@ -215,20 +190,21 @@ async def update_integration(
         integration.sync_direction = data.sync_direction
     if data.config is not None:
         integration.config = {**(integration.config or {}), **data.config}
-    changed_creds = {}
     if data.credentials:
-        merged = integration.credentials
-        for key, value in data.credentials.items():
-            if value:  # blank means "keep existing"
-                merged[key] = value
-                changed_creds[key] = value
-        integration.credentials = merged
+        # Only the fields the admin actually filled in are (re)written to the
+        # vault; blanks mean "keep existing" and untouched fields keep their
+        # stored @secret: reference. store_credentials returns references for
+        # what it wrote to the vault, raw values only as an encrypted-DB fallback.
+        changed = {k: v for k, v in data.credentials.items() if v}
+        if changed:
+            stored = await store_credentials(integration.platform, changed)
+            merged = dict(integration.credentials or {})
+            merged.update(stored)
+            integration.credentials = merged
 
     integration.updated_at = datetime.utcnow()
     await db.commit()
     await db.refresh(integration)
-    if changed_creds:
-        await _mirror_credentials_to_secret_manager(integration.platform, changed_creds)
     from app.core.sanitize import sanitize_for_log
     logger.info(f"[Integrations] {sanitize_for_log(current_user.username)} updated integration {sanitize_for_log(integration.platform)}")
     return _serialize(integration)
@@ -294,9 +270,7 @@ async def test_integration(
 ):
     integration = await _get_integration(db, integration_id)
     try:
-        connector = build_connector(
-            integration.platform, integration.config or {}, integration.credentials
-        )
+        connector = await build_connector_for(integration)
         result = await connector.test_connection()
         log_status, detail = "success", result.get("detail", "OK")
     except Exception as e:

@@ -422,3 +422,17 @@ def build_connector(platform: str, config: Dict[str, Any], credentials: Dict[str
     if not cls:
         raise ValueError(f"Unknown integration platform: {platform}")
     return cls(config, credentials)
+
+
+async def build_connector_for(integration: Any) -> BaseConnector:
+    """Build a connector for an IntegrationConfig row, resolving any Secret
+    Manager credential references (``@secret:NAME``) to live values first.
+
+    This is the single read path for constructing connectors from stored
+    config: it keeps the raw secret out of the application database (the row
+    holds only references when an external vault is configured) while giving the
+    connector the real values it needs to call the vendor.
+    """
+    from app.integrations.credentials import resolve_credentials
+    creds = await resolve_credentials(integration.credentials or {})
+    return build_connector(integration.platform, integration.config or {}, creds)
