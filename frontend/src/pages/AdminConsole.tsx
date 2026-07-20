@@ -89,6 +89,14 @@ import AuditLogViewer from '../components/AuditLogViewer';
 import VersionSwitcher from '../components/VersionSwitcher';
 import CostTracker from '../components/CostTracker';
 
+// Human-friendly retention period from a day count (reflects any override):
+// 365 -> "1 year", 2190 -> "6 years", 2555 -> "7 years", 900 -> "2.5 years".
+function formatYears(days: number): string {
+    const years = days / 365;
+    const rounded = Number.isInteger(years) ? years : Math.round(years * 10) / 10;
+    return `${rounded} ${rounded === 1 ? 'year' : 'years'}`;
+}
+
 // Icon library for service categories
 const ICON_LIBRARY: { name: string; icon: LucideIcon }[] = [
     { name: 'AlertCircle', icon: AlertCircle },
@@ -515,6 +523,7 @@ export default function AdminConsole() {
         retention_days: number;
         retention_years: number;
         source: string;
+        public_records_law: string;
     }>>([]);
     const [retentionPolicy, setRetentionPolicy] = useState<{
         state_code: string;
@@ -646,6 +655,8 @@ export default function AdminConsole() {
                         setRetentionPolicy(policy);
                         setSelectedStateCode(policy.state_code);
                         setSelectedMode(policy.mode);
+                        // Reflect the saved override in the input (was always blank before)
+                        setOverrideDays(policy.override_days ? String(policy.override_days) : '');
                         // Filter for deleted requests only
                         const deleted = allRequests.filter((r: { deleted_at?: string | null }) => r.deleted_at != null);
                         setDeletedRequests(deleted);
@@ -2415,8 +2426,8 @@ export default function AdminConsole() {
                                 {/* Current Policy Status */}
                                 {retentionPolicy && (
                                     <AccordionSection
-                                        title={`Current Policy: ${retentionPolicy.policy.name}`}
-                                        subtitle={`${retentionPolicy.policy.retention_years} years retention • ${retentionPolicy.mode === 'anonymize' ? 'Anonymize mode' : 'Delete mode'}`}
+                                        title={`Current Policy: ${retentionPolicy.policy.public_records_law}`}
+                                        subtitle={`${retentionPolicy.policy.name} • ${formatYears(retentionPolicy.effective_days)} retention${retentionPolicy.override_days ? ' (custom override)' : ''} • ${retentionPolicy.mode === 'anonymize' ? 'Anonymize mode' : 'Delete mode'}`}
                                         icon={Shield}
                                         iconClassName="text-green-400"
                                         badge={<Badge variant="success">Active</Badge>}
@@ -2424,14 +2435,19 @@ export default function AdminConsole() {
                                     >
                                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                                             <div className="bg-white/5 rounded-lg p-4">
-                                                <div className="text-white/60 text-sm">Active State</div>
-                                                <div className="text-2xl font-bold text-white">{retentionPolicy.policy.name}</div>
-                                                <div className="text-white/40 text-sm">{retentionPolicy.state_code}</div>
+                                                <div className="text-white/60 text-sm">Public Records Law</div>
+                                                <div className="text-2xl font-bold text-white">{retentionPolicy.policy.public_records_law}</div>
+                                                <div className="text-white/40 text-sm">{retentionPolicy.policy.name} ({retentionPolicy.state_code})</div>
                                             </div>
                                             <div className="bg-white/5 rounded-lg p-4">
                                                 <div className="text-white/60 text-sm">Retention Period</div>
-                                                <div className="text-2xl font-bold text-amber-400">{retentionPolicy.policy.retention_years} Years</div>
-                                                <div className="text-white/40 text-sm">{retentionPolicy.effective_days.toLocaleString()} days</div>
+                                                <div className="text-2xl font-bold text-amber-400">{formatYears(retentionPolicy.effective_days)}</div>
+                                                <div className="text-white/40 text-sm">
+                                                    {retentionPolicy.effective_days.toLocaleString()} days
+                                                    {retentionPolicy.override_days
+                                                        ? ` • custom (state minimum ${retentionPolicy.policy.retention_years} yrs)`
+                                                        : ' • state default'}
+                                                </div>
                                             </div>
                                             <div className="bg-white/5 rounded-lg p-4">
                                                 <div className="text-white/60 text-sm">Mode</div>
@@ -2748,22 +2764,30 @@ export default function AdminConsole() {
                                         </div>
                                     </div>
 
-                                    {/* Selected State Preview */}
-                                    {selectedStateCode && retentionStates.find(s => s.code === selectedStateCode) && (
-                                        <div className="mt-4 p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg">
-                                            <div className="flex items-start gap-3">
-                                                <Clock className="w-5 h-5 text-amber-400 mt-0.5" />
-                                                <div>
-                                                    <p className="text-amber-400 font-medium">
-                                                        {retentionStates.find(s => s.code === selectedStateCode)?.name}: {retentionStates.find(s => s.code === selectedStateCode)?.retention_years} year retention
-                                                    </p>
-                                                    <p className="text-white/60 text-sm mt-1">
-                                                        Source: {retentionStates.find(s => s.code === selectedStateCode)?.source}
-                                                    </p>
+                                    {/* Selected State Preview — updates live as state/override change */}
+                                    {selectedStateCode && retentionStates.find(s => s.code === selectedStateCode) && (() => {
+                                        const st = retentionStates.find(s => s.code === selectedStateCode)!;
+                                        const override = overrideDays ? parseInt(overrideDays) : 0;
+                                        const effectiveDays = override && override >= 365 ? override : st.retention_days;
+                                        return (
+                                            <div className="mt-4 p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                                                <div className="flex items-start gap-3">
+                                                    <Clock className="w-5 h-5 text-amber-400 mt-0.5" />
+                                                    <div>
+                                                        <p className="text-amber-400 font-medium">
+                                                            {st.name}: {formatYears(effectiveDays)} retention
+                                                            {override >= 365 && override !== st.retention_days
+                                                                ? ` (custom override; state minimum ${st.retention_years} yrs)`
+                                                                : ''}
+                                                        </p>
+                                                        <p className="text-white/60 text-sm mt-1">
+                                                            Governing law: {st.public_records_law} • Source: {st.source}
+                                                        </p>
+                                                    </div>
                                                 </div>
                                             </div>
-                                        </div>
-                                    )}
+                                        );
+                                    })()}
 
                                     <div className="flex gap-4 mt-6">
                                         <Button
@@ -2774,7 +2798,9 @@ export default function AdminConsole() {
                                                     await api.updateRetentionPolicy({
                                                         state_code: selectedStateCode,
                                                         mode: selectedMode,
-                                                        override_days: overrideDays ? parseInt(overrideDays) : undefined
+                                                        // 0 explicitly clears the override back to the state default;
+                                                        // omitting it would leave a previously-set override stuck.
+                                                        override_days: overrideDays ? parseInt(overrideDays) : 0
                                                     });
                                                     await loadTabData();
                                                     setSaveMessage('Retention policy updated successfully');

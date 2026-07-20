@@ -757,9 +757,14 @@ async def update_retention_policy(
         settings.retention_state_code = state_code.upper()
     
     if override_days is not None:
-        if override_days < 365:
+        # 0 is the explicit "clear the override, revert to the state default"
+        # signal — without this, an override once set could never be removed.
+        if override_days == 0:
+            settings.retention_days_override = None
+        elif override_days < 365:
             raise HTTPException(400, "Override must be at least 365 days (1 year)")
-        settings.retention_days_override = override_days
+        else:
+            settings.retention_days_override = override_days
     
     if mode:
         if mode not in ["anonymize", "delete"]:
