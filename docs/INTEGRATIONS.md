@@ -91,16 +91,10 @@ GeoReport v2 endpoint.
 
 ## Verifying without vendor access
 
-You don't need any vendor account to prove the pipeline works:
+You don't need a paid production tenant to prove the pipeline works — several
+vendors offer free developer/test environments that exercise the exact same
+push/pull/comment/photo/asset code paths as production:
 
-- **Practice Sandbox (built in)** — the first card in the admin UI is a
-  pretend town system that runs inside Pinpoint itself
-  (`/api/integrations/sandbox-vendor`). Connect it (no credentials), submit a
-  test report, and within ~2 minutes a simulated work crew acknowledges it,
-  comments on it, and completes it — all mirrored back through the exact same
-  push/pull/comment/photo/asset code paths the real connectors use. Practice
-  data is in-memory and disappears on restart. Override its address with the
-  `SANDBOX_VENDOR_URL` env var outside docker-compose.
 - **Accela** — free developer account at
   [developer.accela.com](https://developer.accela.com): register an app,
   then use the Test API Token utility and sandbox agency to exercise the real
@@ -113,8 +107,9 @@ You don't need any vendor account to prove the pipeline works:
   the [Open311 wiki](https://wiki.open311.org/GeoReport_v2/Servers/)) that
   allow read access without a key — enough to verify pull.
 - **SDL, Edmunds, GovPilot, FastTrackGov, Polimorphic** — no public sandboxes
-  exist; verification requires the customer endpoint each vendor issues. Use
-  the Practice Sandbox to validate the pipeline in the meantime.
+  exist; verification requires the customer endpoint each vendor issues. Point
+  the connector at a mock/staging endpoint (or the vendor's test tenant) to
+  validate the pipeline until production access is provisioned.
 
 ## Setting up a connection
 

@@ -17,7 +17,6 @@ from app.integrations.connectors.vendors import (
     FastTrackGovConnector,
     GovPilotConnector,
     PolimorphicConnector,
-    SandboxConnector,
     SDLConnector,
     TylerConnector,
 )
@@ -27,23 +26,6 @@ from app.integrations.connectors.vendors import (
 #   open311     — standard Open311 GeoReport v2 endpoint (base URL from the jurisdiction)
 #   partner_api — vendor issues API endpoint/credentials per customer via support/implementation
 PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
-    "sandbox": {
-        "name": "Practice Sandbox",
-        "vendor": "Built into Pinpoint — no account needed",
-        "category": "Try the whole sync flow safely",
-        "integration_mode": "sandbox",
-        "docs_url": "https://github.com/Pinpoint-311/Pinpoint-311/blob/main/docs/INTEGRATIONS.md",
-        "description": "A pretend town system built into Pinpoint. Connect it to watch reports, photos, comments, status changes, and assets flow both ways — then disconnect when you're done.",
-        "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "work_orders", "test"],
-        "credential_fields": [],
-        "config_fields": [
-            # NOTE: no base_url field — the sandbox address is pinned server-side
-            # because this connector is exempt from the SSRF guard.
-            {"key": "import_new_records", "label": "Import records that start in the sandbox (true/false)", "placeholder": "true", "required": False},
-            {"key": "sync_assets", "label": "Copy practice assets to the map (true/false)", "placeholder": "true", "required": False},
-        ],
-        "setup_notes": "No vendor, no credentials — the sandbox is part of this Pinpoint installation. Practice data is temporary and disappears when the server restarts.",
-    },
     "accela": {
         "name": "Accela",
         "vendor": "Accela, Inc.",
@@ -233,19 +215,6 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
 # recommended_sync_direction   preselected in the setup wizard
 # ---------------------------------------------------------------------------
 CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
-    "sandbox": {
-        "plain_summary": "A safe, pretend town system for practice. Reports you submit flow into it, a pretend work crew updates them after a minute or two, and those updates flow back — exactly how a real connection behaves.",
-        "what_you_need": [
-            "Nothing! The sandbox is built into Pinpoint. Just click through — there are no codes or passwords.",
-            "Tip: after connecting, submit a test report from the resident portal, wait ~2 minutes, then press 'Check for updates' and watch the status change on its own.",
-        ],
-        "vendor_ask": None,
-        "field_help": {
-            "import_new_records": "Type true to watch a record that started in the sandbox appear here as a new request.",
-            "sync_assets": "Type true to put five practice hydrants and streetlights on your map.",
-        },
-        "recommended_sync_direction": "bidirectional",
-    },
     "accela": {
         "plain_summary": "Reports submitted here automatically become Accela records, photos included. Status changes and comments flow both ways, so staff can work in either system.",
         "what_you_need": [
@@ -435,7 +404,6 @@ for _key, _guide in CLERK_GUIDES.items():
 
 
 _CONNECTOR_CLASSES = {
-    "sandbox": SandboxConnector,
     "accela": AccelaConnector,
     "tyler": TylerConnector,
     "civicplus": SeeClickFixConnector,
