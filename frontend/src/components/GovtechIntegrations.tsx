@@ -18,6 +18,7 @@ const MODE_LABELS: Record<string, { label: string; className: string }> = {
     public_api: { label: 'Works with your account login', className: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
     open311: { label: 'Works with a standard address + key', className: 'bg-sky-500/20 text-sky-300 border-sky-500/30' },
     partner_api: { label: 'Vendor sends you the details', className: 'bg-amber-500/20 text-amber-300 border-amber-500/30' },
+    generic: { label: 'Configure it yourself — not vendor-certified', className: 'bg-white/10 text-white/70 border-white/20' },
 };
 
 // Capability chips make each connector's real breadth visible at a glance —
@@ -315,7 +316,7 @@ export default function GovtechIntegrations() {
         <CollapsibleSection
             title="Connect Your Other Town Systems"
             icon={Landmark}
-            subtitle={`${visibleCatalog.length || catalog.length} platforms available — Accela, Tyler, CivicPlus, Cityworks, and more`}
+            subtitle={`${visibleCatalog.length || catalog.length} platforms available — Accela, Tyler, CivicPlus, Open311, or a generic connector for anything else`}
             defaultOpen={true}
             badge={connectedCount > 0 ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 border border-emerald-400/30 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">

@@ -66,28 +66,29 @@ in the admin UI. Sync failures never block the core request lifecycle.
 | **Accela** | Accela Civic Platform | Public API (Construct API v4, OAuth2) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Tyler Technologies** | Tyler 311 / MyCivic / EnerGov | Open311 GeoReport v2 | ✅ | — | ✅ | — | — | — |
 | **CivicPlus (SeeClickFix)** | CivicPlus | Public API (SeeClickFix API v2) | ✅ | — | ✅ | ✅ | — | — |
-| **SDL** | Spatial Data Logic | Vendor-issued REST API | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Edmunds GovTech** | Edmunds (MCSJ) | Vendor-issued REST API | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **GovPilot** | GovPilot | Vendor-issued REST API | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **FastTrackGov** | Harris / MS Govern | Vendor-issued REST API | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Polimorphic** | Polimorphic | Bidirectional webhooks + workspace API | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Generic Open311** | any GeoReport v2 endpoint | Open standard | ✅ | — | ✅ | — | — | — |
+| **Other REST System** | any vendor with a JSON REST API | Generic, self-configured (⚠ not vendor-certified) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 Dashes reflect hard limits of the vendor's public interface: the Open311 spec
 has no third-party status-update, comment, or attachment endpoints, and
 SeeClickFix's public API exposes comments but not document upload or asset
 inventories. Everything the vendor's interface allows is wired.
 
-**A note on "vendor-issued REST API" platforms.** SDL, Edmunds, GovPilot,
-FastTrackGov, and Polimorphic do not publish one universal public API — they
-provision REST endpoints and credentials per customer through their support or
-implementation teams. Pinpoint's connectors for these platforms bake in each
-vendor's conventional auth style and expose the endpoint paths, field names,
-and status vocabulary as configuration, so once the vendor hands you a base URL
-and key the connection works without code changes. Accela and SeeClickFix have
-fully public, documented APIs and work out of the box with account credentials;
-Tyler (and anything else speaking Open311) works against the jurisdiction's
-GeoReport v2 endpoint.
+**Purpose-built vs. generic.** Accela, CivicPlus/SeeClickFix, and Tyler (Open311)
+are implemented against each platform's actual, documented API and work out of
+the box with account credentials or the jurisdiction's GeoReport v2 endpoint.
+
+Everything else — Trimble Cityworks, SDL (Spatial Data Logic), Edmunds
+GovTech/MCSJ, GovPilot, FastTrackGov, Polimorphic, and any other vendor that
+exposes a JSON REST API — is served by **one** connector, **Other REST System
+(Generic Connector)**. It speaks plain JSON-over-HTTPS and takes the base URL,
+auth style, endpoint paths, and field names as configuration. This is
+deliberately honest: it is a configurable generic client, **not certified
+against any specific vendor's API**. Once the vendor hands you a base URL and
+key you configure it from their API docs and confirm it with the built-in
+connection check before relying on it in production. If your vendor differs from
+the common REST defaults (paths, field names, status words), override just those
+in the connector's settings.
 
 ## Verifying without vendor access
 
@@ -106,10 +107,11 @@ push/pull/comment/photo/asset code paths as production:
 - **Open311/Tyler** — many cities run public GeoReport v2 endpoints (list at
   the [Open311 wiki](https://wiki.open311.org/GeoReport_v2/Servers/)) that
   allow read access without a key — enough to verify pull.
-- **SDL, Edmunds, GovPilot, FastTrackGov, Polimorphic** — no public sandboxes
-  exist; verification requires the customer endpoint each vendor issues. Point
-  the connector at a mock/staging endpoint (or the vendor's test tenant) to
-  validate the pipeline until production access is provisioned.
+- **Other REST System (Cityworks, SDL, Edmunds, GovPilot, FastTrackGov,
+  Polimorphic, …)** — served by the single generic connector, which is not
+  certified against any specific vendor. Point it at a mock/staging endpoint (or
+  the vendor's test tenant) to validate the pipeline, and always run the
+  connection check, before relying on it in production.
 
 ## Setting up a connection
 
@@ -180,7 +182,8 @@ what the UI exposes (set them via `PUT /api/integrations/{id}`):
   the generated map layer. The layer id is stored back in `asset_layer_id`.
 - `status_map_out` / `status_map_in` — override status vocabulary mapping,
   e.g. `{"in_progress": "Under Review"}`.
-- Generic REST connectors (SDL, Edmunds, GovPilot, FastTrackGov, Polimorphic):
+- Other REST System (the generic connector — Cityworks, SDL, Edmunds, GovPilot,
+  FastTrackGov, Polimorphic, etc.):
   `create_path`, `get_path`, `list_path`, `status_path`, `auth_style`
   (`bearer` | `api_key_header` | `basic` | `query`), `auth_header`,
   `id_field`, `status_field`, `updated_field`, `list_items_field`,
