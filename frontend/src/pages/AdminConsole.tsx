@@ -1687,12 +1687,12 @@ export default function AdminConsole() {
                                                 <div className="md:hidden space-y-3">
                                                     <div className="flex items-center justify-between">
                                                         <div className="flex items-center gap-3">
-                                                            <div className={`relative w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm shadow-lg ${u.role === 'admin'
-                                                                ? 'bg-gradient-to-br from-amber-400 to-orange-500 text-white'
-                                                                : 'bg-gradient-to-br from-primary-400 to-primary-600 text-white'
+                                                            <div className={`relative w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm ring-1 ring-white/10 shadow-xl ${u.role === 'admin'
+                                                                ? 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-orange-900/50'
+                                                                : 'bg-gradient-to-br from-primary-400 to-primary-600 text-white shadow-primary-900/60'
                                                                 }`}>
                                                                 {u.full_name ? u.full_name.charAt(0).toUpperCase() : u.username.charAt(0).toUpperCase()}
-                                                                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-slate-900" />
+                                                                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-slate-900 shadow-md shadow-emerald-900/70" />
                                                             </div>
                                                             <div>
                                                                 <p className="font-semibold text-white text-sm">{u.full_name || u.username}</p>
@@ -1742,13 +1742,13 @@ export default function AdminConsole() {
                                                 <div className="hidden md:grid grid-cols-12 gap-4 items-center">
                                                     {/* User Info */}
                                                     <div className="col-span-4 flex items-center gap-4">
-                                                        <div className={`relative w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg shadow-lg ${u.role === 'admin'
-                                                            ? 'bg-gradient-to-br from-amber-400 to-orange-500 text-white'
-                                                            : 'bg-gradient-to-br from-primary-400 to-primary-600 text-white'
+                                                        <div className={`relative w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg ring-1 ring-white/10 shadow-xl ${u.role === 'admin'
+                                                            ? 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-orange-900/50'
+                                                            : 'bg-gradient-to-br from-primary-400 to-primary-600 text-white shadow-primary-900/60'
                                                             }`}>
                                                             {u.full_name ? u.full_name.charAt(0).toUpperCase() : u.username.charAt(0).toUpperCase()}
                                                             {/* Online indicator */}
-                                                            <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-slate-900" />
+                                                            <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-slate-900 shadow-md shadow-emerald-900/70" />
                                                         </div>
                                                         <div>
                                                             <p className="font-semibold text-white group-hover:text-primary-300 transition-colors">{u.full_name || u.username}</p>

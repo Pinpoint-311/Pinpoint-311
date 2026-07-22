@@ -159,7 +159,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             className="premium-card p-5"
         >
             {/* Header */}
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center justify-between gap-5">
                 <div className="flex items-center gap-3 min-w-0">
                     <div className="relative shrink-0">
                         <div className="absolute -inset-1 rounded-2xl bg-gradient-to-br from-primary-400/40 to-primary-600/20 blur-md" aria-hidden="true" />
@@ -167,7 +167,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                             <Icon className="w-5 h-5 text-primary-200" />
                         </div>
                     </div>
-                    <h3 className="font-semibold text-white tracking-tight leading-snug min-w-0">{title}</h3>
+                    <h3 className="font-semibold text-white tracking-tight leading-snug min-w-0 pr-1">{title}</h3>
                 </div>
                 <button
                     onClick={() => setOpen(v => !v)}
