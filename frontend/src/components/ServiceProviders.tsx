@@ -345,7 +345,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                 <button
                                     onClick={handleSave}
                                     disabled={busy !== null}
-                                    className="shimmer-sweep inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-900/40 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                                    className="shimmer-sweep inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-primary-400 to-primary-600 hover:from-primary-300 hover:to-primary-500 border border-primary-300/40 shadow-lg shadow-primary-900/60 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
                                 >
                                     {busy === 'save'
                                         ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</>
@@ -354,7 +354,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                 <button
                                     onClick={handleTest}
                                     disabled={busy !== null}
-                                    className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-sm font-medium text-white/75 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                                    className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-sm font-medium text-white/90 hover:text-white bg-white/10 hover:bg-white/[0.16] border border-white/25 hover:border-white/35 shadow-sm transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
                                 >
                                     {busy === 'test' ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Testing…</> : 'Test connection'}
                                 </button>

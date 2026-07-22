@@ -1,5 +1,5 @@
-import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { lazy, Suspense, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { SettingsProvider } from './context/SettingsContext';
 import { AccessibilityProvider } from './context/AccessibilityContext';
@@ -101,6 +101,16 @@ function RouteFallback() {
     );
 }
 
+// Reset scroll to the top on every navigation (new route or admin tab via hash),
+// so a page never opens already scrolled down from the previous one.
+function ScrollToTop() {
+    const { pathname, hash } = useLocation();
+    useEffect(() => {
+        window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    }, [pathname, hash]);
+    return null;
+}
+
 function AppRoutes() {
     return (
         <Suspense fallback={<RouteFallback />}>
@@ -153,6 +163,7 @@ export default function App() {
     return (
         <ErrorBoundary>
             <BrowserRouter>
+                <ScrollToTop />
                 <AccessibilityProvider>
                     <SettingsProvider>
                         <TranslationProvider>

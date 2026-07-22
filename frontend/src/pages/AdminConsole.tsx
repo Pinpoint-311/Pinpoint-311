@@ -2032,7 +2032,7 @@ export default function AdminConsole() {
                                     </div>
                                 </div>
 
-                                <div className="divide-y divide-white/[0.06]">
+                                <div className="divide-y divide-white/10 [&>*]:bg-white/[0.015]">
                                 {!mapsApiKey ? (
                                     <div className="px-5 sm:px-6 py-5">
                                         <div className="p-4 rounded-xl bg-gradient-to-br from-yellow-500/10 to-yellow-600/5 border border-yellow-500/20">
