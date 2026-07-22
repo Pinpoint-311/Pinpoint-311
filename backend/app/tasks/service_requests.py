@@ -265,6 +265,19 @@ def analyze_request(self, request_id: int):
                 except Exception:
                     logger.warning("[Analysis] AI summary failed", exc_info=True)
 
+            # Fold the AI photo/text assessment into the moderation flag (image
+            # moderation lives here — it needs the vision model). Graceful no-op
+            # when AI didn't run; the deterministic text scan already ran at
+            # intake, so we only ever raise the flag, never clear it.
+            try:
+                from app.services.content_moderation import flags_from_ai_assessment
+                ai_mod = flags_from_ai_assessment(analysis)
+                if ai_mod.flagged and not request.flagged:
+                    request.flagged = True
+                    request.flag_reason = (request.flag_reason or ai_mod.reason())[:255]
+            except Exception:
+                logger.warning("[Moderation] AI assessment fold-in failed", exc_info=True)
+
             # Priority is never auto-applied — staff must accept the AI suggestion,
             # which is stored in ai_analysis['priority_score'] for reference.
             request.ai_analysis = analysis
