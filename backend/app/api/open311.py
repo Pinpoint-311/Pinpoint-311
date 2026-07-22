@@ -185,27 +185,26 @@ async def add_public_comment(
     if not sr:
         raise HTTPException(status_code=404, detail="Request not found")
     
-    # Moderate the public comment. Severe (explicit/abusive) content is withheld
-    # from the public feed (kept internal for staff review) rather than shown;
-    # milder profanity posts but flags the request. Never hard-rejected.
-    visibility = "external"
-    try:
-        from app.services.content_moderation import scan_text
-        mod = scan_text(content)
-        if mod.flagged:
-            sr.flagged = True
-            sr.flag_reason = (mod.reason() + " (public comment)")[:255]
-            if mod.should_withhold:
-                visibility = "internal"
-    except Exception:
-        logger.warning("[Moderation] public comment scan failed", exc_info=True)
+    # Moderate the public comment. Explicit/abusive content is rejected (400);
+    # mild profanity posts but flags the request for staff. Never silently drops.
+    from app.services.content_moderation import scan_text
+    mod = scan_text(content)
+    if mod.should_block:
+        raise HTTPException(
+            status_code=400,
+            detail="Your comment contains explicit or abusive language and can't be posted. "
+                   "Please rephrase without offensive content.",
+        )
+    if mod.flagged:
+        sr.flagged = True
+        sr.flag_reason = (mod.reason() + " (public comment)")[:255]
 
     # Create external comment (anonymous - "Resident")
     comment = RequestComment(
         service_request_id=sr.id,
         username="Resident",
         content=content,
-        visibility=visibility
+        visibility="external"
     )
     db.add(comment)
     await db.commit()
@@ -594,7 +593,19 @@ async def create_request(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid service code: {request_data.service_code}"
         )
-    
+
+    # Content moderation: reject explicit/abusive descriptions before the report
+    # is created. Mild profanity is allowed through (flagged later for staff) so
+    # legitimate angry reports still go through.
+    from app.services.content_moderation import scan_text
+    if scan_text(request_data.description or "").should_block:
+        logger.info("[CREATE REQUEST] blocked: explicit/abusive description")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Your report contains explicit or abusive language and can't be submitted. "
+                   "Please describe the issue without offensive content and try again.",
+        )
+
     # Auto-assignment based on service routing config
     assigned_department_id, assigned_to = await _resolve_assignment(db, service)
 
