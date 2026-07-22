@@ -1180,3 +1180,46 @@ def anchor_audit_chain(self):
     except Exception as e:
         logger.error(f"[AUDIT ANCHOR] task failed: {e}")
         return {"status": "error", "error": str(e)}
+
+
+@celery_app.task(name="app.tasks.service_requests.refresh_ai_models")
+def refresh_ai_models():
+    """Daily: live-discover each configured AI provider's current models into the
+    shared cache, so the model picker stays current even when no admin is in the
+    UI. Logs a warning when the configured model is no longer offered (the exact
+    situation where a retired preview id would otherwise fail silently)."""
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    async def _refresh():
+        from app.services.ai.registry import AI_CATALOG, AI_PROVIDER_KEY
+        from app.services.ai import model_discovery as md
+        from app.services.secret_manager import get_secret as _get
+        results = {}
+        async with SessionLocal() as db:
+            current_provider = (await _get(AI_PROVIDER_KEY)) or "vertex"
+            for provider in AI_CATALOG.keys():
+                creds = await md.provider_creds(provider)
+                # Skip providers with no credentials configured — nothing to list.
+                if not creds:
+                    continue
+                try:
+                    entry = await md.refresh_provider(db, provider)
+                except Exception as e:  # never let one provider break the sweep
+                    _log.info(f"[AI models] refresh failed for {provider}: {e}")
+                    continue
+                results[provider] = entry.get("source")
+                if provider == current_provider and entry.get("current_model") \
+                        and not entry.get("current_model_available"):
+                    _log.warning(
+                        f"[AI models] configured model '{entry.get('current_model')}' for "
+                        f"provider '{provider}' is no longer offered — an admin should pick a "
+                        f"current model in Setup → AI Provider."
+                    )
+        return {"status": "ok", "refreshed": results}
+
+    try:
+        return run_async(_refresh())
+    except Exception as e:
+        logger.error(f"[AI models] refresh task failed: {e}")
+        return {"status": "error", "error": str(e)}

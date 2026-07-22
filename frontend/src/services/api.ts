@@ -105,6 +105,7 @@ export interface ProviderFieldSpec {
 export interface ProviderModelSpec {
     id: string;
     label: string;
+    discovered?: boolean;  // newly found live, not in the curated list
 }
 
 export interface ProviderInfo {
@@ -116,14 +117,26 @@ export interface ProviderInfo {
     default_model?: string;
     credential_fields: ProviderFieldSpec[];
     field_help?: Record<string, string>;
+    models_source?: 'live' | 'curated';
+    models_fetched_at?: number | null;  // epoch seconds
 }
 
 export interface ProviderCatalog {
     current_provider: string;
     default_provider?: string;
     current_model?: string | null;
+    current_model_available?: boolean;
     configured?: Record<string, boolean>;
     providers: ProviderInfo[];
+}
+
+export interface AIModelRefreshResult {
+    provider: string;
+    models: ProviderModelSpec[];
+    source: 'live' | 'curated';
+    fetched_at?: number | null;
+    current_model?: string | null;
+    current_model_available?: boolean;
 }
 
 export interface ProviderSave {
@@ -545,6 +558,14 @@ class ApiClient {
     // Service providers (AI / translation / identity)
     async getProviderCatalog(capability: 'ai' | 'translation' | 'identity'): Promise<ProviderCatalog> {
         return this.request<ProviderCatalog>(`/system/${capability}/catalog`);
+    }
+
+    // Live-refresh an AI provider's model list from the provider itself.
+    async refreshAIModels(provider: string): Promise<AIModelRefreshResult> {
+        return this.request<AIModelRefreshResult>(`/system/ai/models/refresh`, {
+            method: 'POST',
+            body: JSON.stringify({ provider }),
+        });
     }
 
     async saveProvider(capability: string, data: ProviderSave): Promise<{ ok: boolean; provider: string }> {
