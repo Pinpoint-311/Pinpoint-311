@@ -5,7 +5,8 @@ import {
     Key, Shield, Cloud, MessageSquare, Mail, CheckCircle,
     AlertCircle, ChevronDown, ChevronUp, Copy, Check,
     ExternalLink, AlertTriangle, Database, BookOpen,
-    ListChecks, HardDrive, MapPin
+    ListChecks, HardDrive, MapPin,
+    Sparkles, Languages, Lock, Image as ImageIcon, Landmark,
 } from 'lucide-react';
 
 import { Card, Button, Input, Select, Badge, CollapsibleSection } from './ui';
@@ -41,6 +42,20 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const userModifiedSms = useRef(false);
     const [expandedGuide, setExpandedGuide] = useState<string | null>(null);
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
+
+    // Setup Instructions chooser: the guide shows ONLY the steps for the cloud
+    // and optional features the admin actually wants to set up.
+    const [setupCloud, setSetupCloud] = useState<'google' | 'azure' | 'aws'>('google');
+    const [wantedFeatures, setWantedFeatures] = useState<Set<string>>(
+        new Set(['ai', 'secrets', 'email'])
+    );
+    const toggleFeature = (f: string) =>
+        setWantedFeatures(prev => {
+            const next = new Set(prev);
+            next.has(f) ? next.delete(f) : next.add(f);
+            return next;
+        });
+    const wants = (f: string) => wantedFeatures.has(f);
 
     // Managed (state-hosted) mode: infrastructure cards are locked because the
     // state's orchestrator owns those keys (Google Cloud, Backups, domain).
@@ -124,6 +139,38 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         </div>
     );
 
+    // Static tone classes (kept literal so Tailwind doesn't purge them).
+    const TONES: Record<string, { box: string; icon: string }> = {
+        orange: { box: 'border-orange-500/20 bg-orange-500/5', icon: 'text-orange-400' },
+        violet: { box: 'border-violet-500/20 bg-violet-500/5', icon: 'text-violet-400' },
+        blue: { box: 'border-blue-500/20 bg-blue-500/5', icon: 'text-blue-400' },
+        emerald: { box: 'border-emerald-500/20 bg-emerald-500/5', icon: 'text-emerald-400' },
+        amber: { box: 'border-amber-500/20 bg-amber-500/5', icon: 'text-amber-400' },
+        sky: { box: 'border-sky-500/20 bg-sky-500/5', icon: 'text-sky-400' },
+        rose: { box: 'border-rose-500/20 bg-rose-500/5', icon: 'text-rose-400' },
+        cyan: { box: 'border-cyan-500/20 bg-cyan-500/5', icon: 'text-cyan-400' },
+    };
+    // A single guide block; renders nothing unless `show` is true.
+    const Guide = ({ show = true, tone, icon: Icon, title, done, children }: {
+        show?: boolean; tone: string; icon: React.ElementType; title: string;
+        done?: boolean; children: React.ReactNode;
+    }) => {
+        if (!show) return null;
+        const t = TONES[tone] || TONES.blue;
+        return (
+            <div className={`rounded-xl border p-4 ${t.box}`}>
+                <div className="flex items-center gap-2 mb-3">
+                    <Icon className={`w-4 h-4 ${t.icon}`} />
+                    <h4 className="font-semibold text-white text-sm">{title}</h4>
+                    {done && <Badge variant="success">Done</Badge>}
+                </div>
+                <div className="space-y-2.5">{children}</div>
+            </div>
+        );
+    };
+
+    const cloudLabel = { google: 'Google Cloud', azure: 'Microsoft Azure', aws: 'AWS' }[setupCloud];
+
     return (
         <div className="space-y-6">
             {/* Header */}
@@ -188,7 +235,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         <BookOpen className="w-5 h-5 text-indigo-400" />
                         <div className="text-left">
                             <h3 className="font-semibold text-white">Setup Instructions</h3>
-                            <p className="text-white/50 text-xs">Step-by-step guides for each integration</p>
+                            <p className="text-white/50 text-xs">Pick your cloud &amp; features — see only the steps you need</p>
                         </div>
                     </div>
                     {expandedGuide === 'master' ? <ChevronUp className="w-5 h-5 text-white/50" /> : <ChevronDown className="w-5 h-5 text-white/50" />}
@@ -202,103 +249,148 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                             exit={{ height: 0, opacity: 0 }}
                             className="overflow-hidden"
                         >
-                            <div className="mt-4 space-y-4">
-                                {/* Auth0 Instructions */}
-                                <div className="rounded-xl border border-orange-500/20 bg-orange-500/5 p-4">
-                                    <div className="flex items-center gap-2 mb-3">
-                                        <Key className="w-4 h-4 text-orange-400" />
-                                        <h4 className="font-semibold text-white text-sm">Auth0 SSO Setup</h4>
-                                        {auth0Configured && <Badge variant="success">Done</Badge>}
-                                    </div>
-                                    <div className="space-y-2.5">
-                                        <InstructionStep num={1}>Go to <a href="https://auth0.com" target="_blank" rel="noopener noreferrer" className="text-orange-300 underline underline-offset-2">auth0.com</a> and create a free account (or use your organization's existing tenant).</InstructionStep>
-                                        <InstructionStep num={2}>In the Auth0 Dashboard, go to <strong className="text-white/90">Applications → Create Application</strong>. Choose <strong className="text-white/90">Regular Web Application</strong>.</InstructionStep>
-                                        <InstructionStep num={3}>Under the app's <strong className="text-white/90">Organizations</strong> tab, ensure <strong className="text-orange-300">"Require users to belong to an organization"</strong> is disabled.</InstructionStep>
-                                        <InstructionStep num={4}>In the app's <strong className="text-white/90">Settings</strong> tab, copy the <strong className="text-white/90">Domain</strong>, <strong className="text-white/90">Client ID</strong>, and <strong className="text-white/90">Client Secret</strong> into the fields below.</InstructionStep>
-                                        <InstructionStep num={4}>
-                                            Set the <strong className="text-white/90">Allowed Callback URL</strong> to: <code className="bg-black/30 px-1.5 py-0.5 rounded text-orange-300 text-xs break-all">{window.location.origin}/api/auth/callback</code>
-                                            <button onClick={() => copyToClipboard(`${window.location.origin}/api/auth/callback`, 'callback')} className="ml-1 inline-flex text-white/40 hover:text-white/70 transition-colors">
-                                                {copyFeedback === 'callback' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                            <div className="mt-4 space-y-5">
+                                {/* ── Chooser: only show the steps you need ── */}
+                                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                                    <p className="text-sm font-semibold text-white mb-0.5">Tell us what you're setting up</p>
+                                    <p className="text-white/50 text-xs mb-3">The guide below shows only the steps for your cloud and the features you pick. Sign-in, database, and maps are always shown.</p>
+
+                                    <label className="text-[11px] uppercase tracking-wider text-white/50 font-semibold">Your cloud</label>
+                                    <div className="flex flex-wrap gap-2 mt-1.5 mb-4">
+                                        {(['google', 'azure', 'aws'] as const).map(c => (
+                                            <button key={c} type="button" onClick={() => setSetupCloud(c)}
+                                                className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${setupCloud === c ? 'bg-primary-500/20 border-primary-400/50 text-white' : 'bg-white/5 border-white/10 text-white/60 hover:text-white'}`}>
+                                                {{ google: 'Google Cloud', azure: 'Microsoft Azure', aws: 'AWS' }[c]}
                                             </button>
-                                        </InstructionStep>
-                                        <InstructionStep num={5}>Under <strong className="text-white/90">Security → Multi-factor Auth</strong>, enable MFA for staff login protection.</InstructionStep>
-                                        <InstructionStep num={6}><em className="text-white/50">Optional:</em> Under <strong className="text-white/90">Authentication → Social</strong>, add Google and Microsoft connections for social login.</InstructionStep>
+                                        ))}
+                                    </div>
+
+                                    <label className="text-[11px] uppercase tracking-wider text-white/50 font-semibold">Features you want</label>
+                                    <div className="flex flex-wrap gap-2 mt-1.5">
+                                        {([
+                                            ['ai', 'AI triage'], ['translation', 'Translation'],
+                                            ['moderation', 'Content moderation'], ['email', 'Email'],
+                                            ['sms', 'Text / SMS'], ['secrets', 'Secret storage + PII encryption'],
+                                            ['govtech', 'Town-system connector'], ['backups', 'Database backups'],
+                                        ] as const).map(([f, label]) => (
+                                            <button key={f} type="button" onClick={() => toggleFeature(f)}
+                                                className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${wants(f) ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-100' : 'bg-white/5 border-white/10 text-white/60 hover:text-white'}`}>
+                                                {wants(f) ? '✓ ' : ''}{label}
+                                            </button>
+                                        ))}
                                     </div>
                                 </div>
 
-                                {/* SMTP Instructions */}
-                                <div className="rounded-xl border border-violet-500/20 bg-violet-500/5 p-4">
-                                    <div className="flex items-center gap-2 mb-3">
-                                        <Mail className="w-4 h-4 text-violet-400" />
-                                        <h4 className="font-semibold text-white text-sm">Email (SMTP) Setup</h4>
-                                        {smtpConfigured && <Badge variant="success">Done</Badge>}
-                                    </div>
-                                    <div className="space-y-2.5">
-                                        <InstructionStep num={1}>Choose an SMTP provider. Common options for government: <strong className="text-white/90">SendGrid</strong>, <strong className="text-white/90">Gmail</strong> (via App Passwords), or your organization's <strong className="text-white/90">existing SMTP relay</strong>.</InstructionStep>
-                                        <InstructionStep num={2}>
-                                            <strong className="text-white/90">Gmail:</strong> Enable 2FA on your Google Account, then go to <em>Security → App Passwords</em> and generate one. Use <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">smtp.gmail.com</code> port <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">587</code>.
-                                        </InstructionStep>
-                                        <InstructionStep num={3}>
-                                            <strong className="text-white/90">SendGrid:</strong> Create a free account at <a href="https://sendgrid.com" target="_blank" rel="noopener noreferrer" className="text-violet-300 underline underline-offset-2">sendgrid.com</a>. Generate an API key under <em>Settings → API Keys</em>. Use <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">smtp.sendgrid.net</code> port <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">587</code>, username <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">apikey</code>, password = your API key.
-                                        </InstructionStep>
-                                        <InstructionStep num={4}>Enter the host, port, from address, username, and password in the Email (SMTP) card below and click <strong className="text-white/90">Save SMTP Settings</strong>.</InstructionStep>
-                                    </div>
-                                </div>
+                                {/* ── 1. Staff sign-in (always required) ── */}
+                                <Guide tone="orange" icon={Key} title="Staff sign-in (required)" done={auth0Configured}>
+                                    <InstructionStep num={1}>Default is <strong className="text-white/90">Auth0</strong>: go to <a href="https://auth0.com" target="_blank" rel="noopener noreferrer" className="text-orange-300 underline underline-offset-2">auth0.com</a>, create a tenant (or use your org's), and add a <strong className="text-white/90">Regular Web Application</strong>.</InstructionStep>
+                                    <InstructionStep num={2}>Set the <strong className="text-white/90">Allowed Callback URL</strong> to <code className="bg-black/30 px-1.5 py-0.5 rounded text-orange-300 text-xs break-all">{window.location.origin}/api/auth/callback</code>
+                                        <button onClick={() => copyToClipboard(`${window.location.origin}/api/auth/callback`, 'callback')} className="ml-1 inline-flex text-white/40 hover:text-white/70 transition-colors">
+                                            {copyFeedback === 'callback' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                                        </button>
+                                    </InstructionStep>
+                                    <InstructionStep num={3}>Copy the <strong className="text-white/90">Domain</strong>, <strong className="text-white/90">Client ID</strong>, and <strong className="text-white/90">Client Secret</strong> into the Sign-in card below, and enable <strong className="text-white/90">MFA</strong> under Security.</InstructionStep>
+                                    <InstructionStep num={4}><em className="text-white/50">Prefer your own IdP?</em> In <strong className="text-white/90">Service Providers → Staff Sign-In</strong> you can switch to <strong className="text-white/90">Microsoft Entra ID</strong>, <strong className="text-white/90">Okta</strong>, or generic <strong className="text-white/90">OIDC</strong> — the recommended one for {cloudLabel} is highlighted there.</InstructionStep>
+                                </Guide>
 
-                                {/* GCP Instructions */}
-                                <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
-                                    <div className="flex items-center gap-2 mb-3">
-                                        <Cloud className="w-4 h-4 text-blue-400" />
-                                        <h4 className="font-semibold text-white text-sm">Google Cloud Setup</h4>
-                                        {gcpConfigured && <Badge variant="success">Done</Badge>}
-                                    </div>
-                                    <div className="space-y-2.5">
-                                        <InstructionStep num={1}>Go to <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">console.cloud.google.com</a> and create a new project (or select an existing one). Note the <strong className="text-white/90">Project ID</strong>.</InstructionStep>
-                                        <InstructionStep num={2}>Go to <strong className="text-white/90">APIs & Services → Library</strong> and enable: <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud KMS API</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud Translation API</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Vertex AI API</code>, and <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Secret Manager API</code>.</InstructionStep>
-                                        <InstructionStep num={3}>
-                                            <strong className="text-white/90">Create a KMS Key Ring and Key:</strong> Go to <strong className="text-white/90">Security → Key Management</strong>. Click <strong className="text-white/90">Create Key Ring</strong>, name it <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pinpoint311-keyring</code>, select a location (e.g. <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">us-central1</code>). Then create a key inside the ring named <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pii-encryption-key</code>, purpose: <strong className="text-white/90">Symmetric encrypt/decrypt</strong>. (Use these exact names to match the platform defaults, or enter your own below.)
-                                        </InstructionStep>
-                                        <InstructionStep num={4}>
-                                            <strong className="text-white/90">Create a Service Account:</strong> Go to <strong className="text-white/90">IAM & Admin → Service Accounts → Create</strong>. Grant it the roles: <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud KMS CryptoKey Encrypter/Decrypter</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud Translation API User</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Vertex AI User</code>, and <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Secret Manager Admin</code>.
-                                        </InstructionStep>
-                                        <InstructionStep num={5}>On the Service Account page, go to <strong className="text-white/90">Keys → Add Key → Create new key → JSON</strong>. Download the key file and keep it secure.</InstructionStep>
-                                        <InstructionStep num={6}>Enter your <strong className="text-white/90">Project ID</strong>, <strong className="text-white/90">KMS Location</strong>, <strong className="text-white/90">Key Ring</strong>, and <strong className="text-white/90">Key ID</strong> in the Google Cloud card below and click <strong className="text-white/90">Save GCP Settings</strong>.</InstructionStep>
-                                    </div>
-                                </div>
+                                {/* ── 2. Cloud foundation (only if a cloud-backed feature is wanted) ── */}
+                                <Guide show={wants('ai') || wants('translation') || wants('secrets') || wants('moderation')}
+                                    tone="blue" icon={Cloud} title={`Set up ${cloudLabel} (foundation)`}>
+                                    {setupCloud === 'google' && <>
+                                        <InstructionStep num={1}>At <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">console.cloud.google.com</a> create/select a project and note the <strong className="text-white/90">Project ID</strong>.</InstructionStep>
+                                        <InstructionStep num={2}>Under <strong className="text-white/90">APIs & Services → Library</strong> enable only what you picked: {wants('ai') && <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Vertex AI</code>}{wants('translation') && <> <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud Translation</code></>}{wants('secrets') && <> <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud KMS</code> <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Secret Manager</code></>}{wants('moderation') && <> <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Vision</code> <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Natural Language</code></>}.</InstructionStep>
+                                        <InstructionStep num={3}>Create a <strong className="text-white/90">Service Account</strong> (IAM &amp; Admin → Service Accounts), grant the matching roles, then <strong className="text-white/90">Keys → Add Key → JSON</strong> and download it. You'll paste this JSON into the provider cards below.</InstructionStep>
+                                    </>}
+                                    {setupCloud === 'azure' && <>
+                                        <InstructionStep num={1}>In the <a href="https://portal.azure.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">Azure Portal</a> create (or choose) a <strong className="text-white/90">Resource Group</strong> in a US-Gov region if required for compliance.</InstructionStep>
+                                        <InstructionStep num={2}>You'll create one resource per feature below (Azure OpenAI, Translator, Key Vault, Content Safety). Each provides an <strong className="text-white/90">Endpoint</strong> + <strong className="text-white/90">Key</strong> you paste into the provider cards.</InstructionStep>
+                                    </>}
+                                    {setupCloud === 'aws' && <>
+                                        <InstructionStep num={1}>In the <a href="https://console.aws.amazon.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">AWS Console</a> pick your <strong className="text-white/90">Region</strong> (e.g. <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">us-gov-west-1</code>). One region is shared by every AWS service here.</InstructionStep>
+                                        <InstructionStep num={2}>Create an <strong className="text-white/90">IAM user or role</strong> with permission for what you picked{wants('ai') && ' (Bedrock)'}{wants('translation') && ', Translate'}{wants('secrets') && ', Secrets Manager, KMS'}{wants('moderation') && ', Rekognition, Comprehend'}. Generate an <strong className="text-white/90">access key</strong> (or use the instance role).</InstructionStep>
+                                    </>}
+                                </Guide>
 
-                                {/* SMS Instructions */}
-                                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
-                                    <div className="flex items-center gap-2 mb-3">
-                                        <MessageSquare className="w-4 h-4 text-emerald-400" />
-                                        <h4 className="font-semibold text-white text-sm">SMS Notifications Setup</h4>
-                                        {smsConfigured && <Badge variant="success">Done</Badge>}
-                                    </div>
-                                    <div className="space-y-2.5">
-                                        <InstructionStep num={1}><strong className="text-white/90">Twilio (recommended):</strong> Create an account at <a href="https://www.twilio.com" target="_blank" rel="noopener noreferrer" className="text-emerald-300 underline underline-offset-2">twilio.com</a>. Note your <strong className="text-white/90">Account SID</strong> and <strong className="text-white/90">Auth Token</strong> from the Console Dashboard.</InstructionStep>
-                                        <InstructionStep num={2}>Purchase a phone number under <strong className="text-white/90">Phone Numbers → Manage → Buy a number</strong>.</InstructionStep>
-                                        <InstructionStep num={3}>Select "Twilio" in the SMS Notifications card below, enter your credentials, and save.</InstructionStep>
-                                        <InstructionStep num={4}><strong className="text-white/90">Custom HTTP API:</strong> Alternatively, select "Custom HTTP API" and provide your endpoint URL. The platform sends a POST with <code className="bg-black/30 px-1 rounded text-emerald-300 text-xs">{`{ "to": "+1...", "message": "..." }`}</code>.</InstructionStep>
-                                    </div>
-                                </div>
+                                {/* ── AI ── */}
+                                <Guide show={wants('ai')} tone="sky" icon={Sparkles} title="AI triage">
+                                    {setupCloud === 'google' && <>
+                                        <InstructionStep num={1}>With Vertex AI enabled above, open <strong className="text-white/90">Service Providers → AI Provider</strong>, pick <strong className="text-white/90">Google Vertex AI</strong>, and paste your Project ID + service-account JSON.</InstructionStep>
+                                        <InstructionStep num={2}>Choose a model. Press <strong className="text-white/90">Refresh from provider</strong> to pull the current Gemini models live — no need to track model names by hand.</InstructionStep>
+                                    </>}
+                                    {setupCloud === 'azure' && <>
+                                        <InstructionStep num={1}>Create an <strong className="text-white/90">Azure OpenAI</strong> resource, then <strong className="text-white/90">Deploy</strong> a vision-capable model (e.g. <code className="bg-black/30 px-1 rounded text-sky-300 text-xs">gpt-4o</code>). Note the deployment name.</InstructionStep>
+                                        <InstructionStep num={2}>In <strong className="text-white/90">Service Providers → AI Provider</strong> pick <strong className="text-white/90">Azure</strong> and paste the <strong className="text-white/90">Endpoint</strong>, <strong className="text-white/90">API key</strong>, and <strong className="text-white/90">Deployment name</strong>. "Refresh from provider" lists your live deployments.</InstructionStep>
+                                    </>}
+                                    {setupCloud === 'aws' && <>
+                                        <InstructionStep num={1}>In <strong className="text-white/90">Bedrock → Model access</strong>, enable the models you want (e.g. a Claude model). Vision-capable models also cover image moderation.</InstructionStep>
+                                        <InstructionStep num={2}>In <strong className="text-white/90">Service Providers → AI Provider</strong> pick <strong className="text-white/90">AWS Bedrock</strong> and enter your region; credentials come from your AWS setup above.</InstructionStep>
+                                    </>}
+                                    <InstructionStep num={3}><em className="text-white/50">Optional:</em> AI is skippable — if it's off or unreachable, requests still submit and the triage panel shows the computed context (history, nearby, weather); only the AI summary is skipped.</InstructionStep>
+                                </Guide>
 
-                                {/* Database Backup Instructions */}
-                                <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
-                                    <div className="flex items-center gap-2 mb-3">
-                                        <HardDrive className="w-4 h-4 text-amber-400" />
-                                        <h4 className="font-semibold text-white text-sm">Database Backup Setup</h4>
-                                        {backupConfigured && <Badge variant="success">Done</Badge>}
-                                    </div>
-                                    <div className="space-y-2.5">
-                                        <InstructionStep num={1}>You need an <strong className="text-white/90">S3-compatible object storage</strong> bucket. This can be <strong className="text-white/90">AWS S3</strong>, <strong className="text-white/90">Oracle Object Storage</strong>, <strong className="text-white/90">MinIO</strong>, or any S3-compatible provider.</InstructionStep>
-                                        <InstructionStep num={2}><strong className="text-white/90">AWS S3:</strong> Create a bucket in the <a href="https://s3.console.aws.amazon.com" target="_blank" rel="noopener noreferrer" className="text-amber-300 underline underline-offset-2">AWS Console</a>. Create an IAM user with <code className="bg-black/30 px-1 rounded text-amber-300 text-xs">s3:PutObject</code>, <code className="bg-black/30 px-1 rounded text-amber-300 text-xs">s3:GetObject</code>, <code className="bg-black/30 px-1 rounded text-amber-300 text-xs">s3:ListBucket</code>, and <code className="bg-black/30 px-1 rounded text-amber-300 text-xs">s3:DeleteObject</code> permissions. Generate an access key.</InstructionStep>
-                                        <InstructionStep num={3}><strong className="text-white/90">Oracle Object Storage:</strong> Create a bucket in your OCI tenancy. Generate a <em>Customer Secret Key</em> under your user settings — this provides S3-compatible access key and secret key. The endpoint is <code className="bg-black/30 px-1 rounded text-amber-300 text-xs">{`https://<namespace>.compat.objectstorage.<region>.oraclecloud.com`}</code>.</InstructionStep>
-                                        <InstructionStep num={4}>Choose a strong <strong className="text-white/90">encryption passphrase</strong> for AES-256 backup encryption. Store this passphrase securely — without it, backups cannot be restored.</InstructionStep>
-                                        <InstructionStep num={5}>Enter your S3 bucket name, access key, secret key, encryption key, and optionally the endpoint/region in the <strong className="text-white/90">Database Backups</strong> card below.</InstructionStep>
-                                    </div>
+                                {/* ── Translation ── */}
+                                <Guide show={wants('translation')} tone="cyan" icon={Languages} title="Translation">
+                                    {setupCloud === 'google' && <InstructionStep num={1}>Cloud Translation is enabled in the foundation step. In <strong className="text-white/90">Service Providers → Translation</strong> pick <strong className="text-white/90">Google</strong> — it uses the same service account.</InstructionStep>}
+                                    {setupCloud === 'azure' && <InstructionStep num={1}>Create a <strong className="text-white/90">Translator</strong> resource, copy its <strong className="text-white/90">Key</strong> + <strong className="text-white/90">Region</strong>, and enter them under <strong className="text-white/90">Service Providers → Translation → Azure</strong>.</InstructionStep>}
+                                    {setupCloud === 'aws' && <InstructionStep num={1}>Amazon Translate needs no extra resource. In <strong className="text-white/90">Service Providers → Translation</strong> pick <strong className="text-white/90">AWS</strong>; it uses your region + credentials.</InstructionStep>}
+                                </Guide>
+
+                                {/* ── Secrets + PII encryption ── */}
+                                <Guide show={wants('secrets')} tone="violet" icon={Lock} title="Secret storage + PII encryption (recommended)">
+                                    {setupCloud === 'google' && <>
+                                        <InstructionStep num={1}>In <strong className="text-white/90">Security → Key Management</strong> create a key ring <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">pinpoint311-keyring</code> and a symmetric key <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">pii-encryption-key</code> (or your own names).</InstructionStep>
+                                        <InstructionStep num={2}>Grant the service account <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">Cloud KMS CryptoKey Encrypter/Decrypter</code> and <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">Secret Manager Admin</code>, then fill the Google Cloud card below.</InstructionStep>
+                                    </>}
+                                    {setupCloud === 'azure' && <InstructionStep num={1}>Create an <strong className="text-white/90">Azure Key Vault</strong>. Pinpoint stores integration secrets and wraps the PII encryption key there — set <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">SECRETS_PROVIDER=azure</code> and the vault URL/credentials.</InstructionStep>}
+                                    {setupCloud === 'aws' && <InstructionStep num={1}>Create a <strong className="text-white/90">KMS key</strong> and enable <strong className="text-white/90">Secrets Manager</strong>. Set <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">SECRETS_PROVIDER=aws</code>; the same AWS credentials cover both.</InstructionStep>}
+                                    <InstructionStep num={2}>Once a vault is configured, integration credentials are stored <strong className="text-white/90">there</strong> (the app keeps only a reference), not in the app database. The connector card shows a "stored in your Secret Manager" badge.</InstructionStep>
+                                </Guide>
+
+                                {/* ── Email ── */}
+                                <Guide show={wants('email')} tone="violet" icon={Mail} title="Email notifications" done={smtpConfigured}>
+                                    <InstructionStep num={1}><strong className="text-white/90">Any cloud — SMTP:</strong> use SendGrid, Gmail App Passwords, or your org relay. Host <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">smtp.sendgrid.net</code> / <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">587</code>, then fill the Email card below.</InstructionStep>
+                                    {setupCloud === 'azure' && <InstructionStep num={2}><strong className="text-white/90">Or native Azure:</strong> create an <strong className="text-white/90">Azure Communication Services</strong> resource, connect an email domain, and use its connection string (provider "acs").</InstructionStep>}
+                                    {setupCloud === 'aws' && <InstructionStep num={2}><strong className="text-white/90">Or native AWS:</strong> verify a sender/domain in <strong className="text-white/90">Amazon SES</strong> and use SES (provider "ses") with your region + credentials.</InstructionStep>}
+                                </Guide>
+
+                                {/* ── SMS ── */}
+                                <Guide show={wants('sms')} tone="emerald" icon={MessageSquare} title="Text / SMS notifications" done={smsConfigured}>
+                                    <InstructionStep num={1}><strong className="text-white/90">Any cloud — Twilio:</strong> create an account at <a href="https://www.twilio.com" target="_blank" rel="noopener noreferrer" className="text-emerald-300 underline underline-offset-2">twilio.com</a>, buy a number, and enter the SID/token/number in the SMS card.</InstructionStep>
+                                    {setupCloud === 'azure' && <InstructionStep num={2}><strong className="text-white/90">Or native Azure:</strong> use <strong className="text-white/90">Azure Communication Services</strong> SMS (provider "acs") with a provisioned number.</InstructionStep>}
+                                    {setupCloud === 'aws' && <InstructionStep num={2}><strong className="text-white/90">Or native AWS:</strong> use <strong className="text-white/90">Amazon SNS</strong> (provider "sns"); it uses your region + credentials.</InstructionStep>}
+                                </Guide>
+
+                                {/* ── Content moderation ── */}
+                                <Guide show={wants('moderation')} tone="rose" icon={ImageIcon} title="Content moderation">
+                                    <InstructionStep num={1}><strong className="text-white/90">Built in, no setup:</strong> resident text is always screened — explicit/abusive descriptions and comments are blocked at submission; mild profanity posts but is flagged for staff.</InstructionStep>
+                                    {setupCloud === 'google' && <InstructionStep num={2}><strong className="text-white/90">Cloud layer (optional):</strong> enable the <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">Vision</code> + <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">Natural Language</code> APIs. No extra keys — it uses your service account for image (SafeSearch) + text moderation.</InstructionStep>}
+                                    {setupCloud === 'azure' && <InstructionStep num={2}><strong className="text-white/90">Cloud layer (optional):</strong> create an <strong className="text-white/90">Azure AI Content Safety</strong> resource and set <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">AZURE_CONTENT_SAFETY_ENDPOINT</code> + <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">AZURE_CONTENT_SAFETY_KEY</code> for text + image screening.</InstructionStep>}
+                                    {setupCloud === 'aws' && <InstructionStep num={2}><strong className="text-white/90">Cloud layer (optional):</strong> allow <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">rekognition:DetectModerationLabels</code> (image) + <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">comprehend:DetectToxicContent</code> (text) on your AWS credentials.</InstructionStep>}
+                                    <InstructionStep num={3}>Set <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">MODERATION_PROVIDER</code> to your cloud, or leave it to follow your AI cloud automatically. If the cloud layer is off, text still uses the built-in scan and images use the AI vision assessment.</InstructionStep>
+                                </Guide>
+
+                                {/* ── Maps (always) ── */}
+                                <Guide tone="blue" icon={MapPin} title="Maps (required)" done={mapsConfigured}>
+                                    <InstructionStep num={1}>In Google Cloud enable the <strong className="text-white/90">Maps JavaScript API</strong>, create an <strong className="text-white/90">API key</strong>, and restrict it to your domain.</InstructionStep>
+                                    <InstructionStep num={2}>Paste it into the <strong className="text-white/90">Google Maps</strong> card below. Maps is used for the resident map and staff geolocation regardless of your chosen cloud.</InstructionStep>
+                                </Guide>
+
+                                {/* ── GovTech connector ── */}
+                                <Guide show={wants('govtech')} tone="amber" icon={Landmark} title="Connect a town system">
+                                    <InstructionStep num={1}>Scroll to <strong className="text-white/90">Connect Your Other Town Systems</strong> below. Purpose-built connectors exist for <strong className="text-white/90">Accela</strong>, <strong className="text-white/90">Tyler</strong>, <strong className="text-white/90">CivicPlus/SeeClickFix</strong>, and any <strong className="text-white/90">Open311</strong> endpoint.</InstructionStep>
+                                    <InstructionStep num={2}>For anything else (Cityworks, SDL, Edmunds, GovPilot, FastTrackGov, Polimorphic…) use <strong className="text-white/90">Other REST System</strong> and enter the base URL + key from your vendor's API docs.</InstructionStep>
+                                    <InstructionStep num={3}>Each connector has a guided wizard and a <strong className="text-white/90">Check connection</strong> button — always run it (and a test report) before going live.</InstructionStep>
+                                </Guide>
+
+                                {/* ── Database backups ── */}
+                                <Guide show={wants('backups')} tone="amber" icon={HardDrive} title="Database backups" done={backupConfigured}>
+                                    <InstructionStep num={1}>Provision an <strong className="text-white/90">S3-compatible</strong> bucket (AWS S3, Oracle Object Storage, MinIO, …) with put/get/list/delete permissions and an access key.</InstructionStep>
+                                    <InstructionStep num={2}>Choose a strong <strong className="text-white/90">AES-256 passphrase</strong> and store it safely — backups can't be restored without it.</InstructionStep>
+                                    <InstructionStep num={3}>Enter the bucket, keys, encryption passphrase, and optional endpoint/region in the <strong className="text-white/90">Database Backups</strong> card below.</InstructionStep>
                                     <div className="mt-3 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2">
-                                        <p className="text-amber-200/80 text-xs"><strong>⚠ Privacy note:</strong> Backups contain a full database snapshot including resident PII. Old backups are deleted per the retention policy, but PII anonymization only applies to the live database — not to previously created backup files.</p>
+                                        <p className="text-amber-200/80 text-xs"><strong>⚠ Privacy note:</strong> Backups contain a full snapshot including resident PII. Retention deletes old backups, but PII anonymization only applies to the live database — not to existing backup files.</p>
                                     </div>
-                                </div>
+                                </Guide>
                             </div>
                         </motion.div>
                     )}
