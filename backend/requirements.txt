@@ -26,3 +26,6 @@ cryptography==49.0.0
 slowapi==0.1.9
 boto3==1.34.25
 sentry-sdk[fastapi]==2.54.0
+
+# Content moderation for public inputs (profanity/explicit text detection)
+better-profanity==0.7.0

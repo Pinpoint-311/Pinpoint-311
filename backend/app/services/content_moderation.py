@@ -1,57 +1,60 @@
 """Content moderation for public inputs (resident descriptions & comments).
 
-Deterministic and always-on: a wordlist scanner that needs no network and no
-AI, so moderation works even when every optional provider is down. It does NOT
-hard-block submissions — a 311 report full of angry (even profane) language is
-still a legitimate report a town must receive. Instead it *flags* content for
-staff review and classifies severity, so:
+Text screening uses the open-source **better-profanity** library (MIT) for the
+broad profanity wordlist + obfuscation handling, rather than a hand-maintained
+list. On top of it we keep a small, explicit "severe" gate (slurs + sexual
+content) that decides what is *blocked* at submission vs merely flagged:
 
-  * "severe" (explicit sexual content, slurs) → the request/comment is flagged
-    and can be withheld from the public feed pending review;
-  * "mild" (common profanity) → flagged for staff awareness only.
+  * severe (explicit/abusive)  -> submission is BLOCKED (HTTP 400);
+  * mild profanity             -> allowed, but the request is flagged for staff.
 
-Image moderation is handled separately by the AI photo assessment
-(content_flags / blocking_severity in analyze_request) when an AI provider is
-configured; this module covers text, which must always be screened.
+This split (chosen deliberately) blocks abusive/explicit material while still
+accepting legitimate — if crude — 311 reports, which a public service must.
+
+Image moderation is handled by the AI photo assessment
+(flags_from_ai_assessment, folded in during analyze_request) when an AI
+provider is configured. Text is always screened, with or without AI.
 """
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import List
 
-# Severe: explicit sexual terms and hate slurs — content that should be withheld
-# from a public municipal feed pending review. Kept deliberately compact and
-# unambiguous to minimize false positives.
+logger = logging.getLogger(__name__)
+
+# Load better-profanity once. If it isn't installed we degrade to the severe
+# gate only (still blocks the worst content) rather than crashing intake.
+try:
+    from better_profanity import profanity as _bp
+    _bp.load_censor_words()
+    _BP_AVAILABLE = True
+except Exception:  # pragma: no cover - only when the dep is missing
+    _bp = None
+    _BP_AVAILABLE = False
+    logger.warning("[Moderation] better-profanity unavailable; using severe-gate only")
+
+# Compact, unambiguous "severe" set — the block gate. These are slurs and
+# sexually explicit terms that should never post to a public municipal feed.
+# Deliberately small and auditable; better-profanity handles the broad list.
 _SEVERE = {
     "cunt", "nigger", "nigga", "faggot", "fag", "chink", "spic", "kike",
-    "retard", "cocksucker", "motherfucker", "whore", "slut", "rapist",
-    "pedophile", "child porn", "cp", "porn", "pornography", "blowjob",
-    "handjob", "cumshot", "dickhead",
+    "cocksucker", "motherfucker", "whore", "rapist", "pedophile",
+    "porn", "pornography", "blowjob", "handjob", "cumshot", "childporn",
 }
-# Mild: common profanity — flag for staff awareness, don't withhold.
-_MILD = {
-    "fuck", "fucking", "fucker", "shit", "bullshit", "shitty", "ass",
-    "asshole", "bastard", "bitch", "damn", "goddamn", "crap", "piss",
-    "dick", "cock", "pussy", "prick", "bollocks", "wanker", "twat",
-}
-
-# Multi-word phrases we still want to catch (checked on the normalized string).
 _SEVERE_PHRASES = {"child porn"}
 
-# Leetspeak / obfuscation normalization so "sh1t" / "f u c k" / "a$$" still hit.
 _LEET = str.maketrans({"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s", "!": "i"})
 
 
 def _collapse(text: str, n: int) -> str:
-    # collapse runs of 3+ identical letters down to n copies
     return re.sub(r"(.)\1{2,}", r"\1" * n, text)
 
 
-def _tokens(normalized: str) -> List[str]:
-    # split on non-letters, and also a spaced-out form ("f u c k" -> "fuck")
-    words = re.findall(r"[a-z]+", normalized)
-    despaced = re.sub(r"\b(?:[a-z]\s){2,}[a-z]\b", lambda m: m.group(0).replace(" ", ""), normalized)
-    words += re.findall(r"[a-z]+", despaced)
+def _tokens(s: str) -> set:
+    words = set(re.findall(r"[a-z]+", s))
+    despaced = re.sub(r"\b(?:[a-z]\s){2,}[a-z]\b", lambda m: m.group(0).replace(" ", ""), s)
+    words |= set(re.findall(r"[a-z]+", despaced))
     return words
 
 
@@ -59,12 +62,16 @@ def _tokens(normalized: str) -> List[str]:
 class ModerationResult:
     flagged: bool = False
     severity: str = "none"            # none | mild | severe
-    categories: List[str] = field(default_factory=list)  # e.g. ["profanity", "explicit"]
-    terms: List[str] = field(default_factory=list)        # matched terms (for the staff note)
+    categories: List[str] = field(default_factory=list)
+    terms: List[str] = field(default_factory=list)
+
+    @property
+    def should_block(self) -> bool:
+        """Severe content is rejected at submission (HTTP 400)."""
+        return self.severity == "severe"
 
     @property
     def should_withhold(self) -> bool:
-        """Severe content is withheld from the public feed pending staff review."""
         return self.severity == "severe"
 
     def reason(self) -> str:
@@ -76,33 +83,29 @@ class ModerationResult:
 
 
 def scan_text(text: str) -> ModerationResult:
-    """Screen a free-text public input. Returns a ModerationResult; never raises."""
+    """Screen a free-text public input. Never raises (fails open)."""
     if not text or not text.strip():
         return ModerationResult()
     try:
         base = text.lower().translate(_LEET)
-        # Two collapse forms so stretched profanity ("fuuuuck") matches while
-        # legit double letters ("ass", "class") are preserved: 3+ runs -> 2 and 3+ -> 1.
-        words = set(_tokens(_collapse(base, 2))) | set(_tokens(_collapse(base, 1)))
+        # two collapse forms so stretched profanity matches while legit double
+        # letters ("ass", "class") survive
+        words = _tokens(_collapse(base, 2)) | _tokens(_collapse(base, 1))
         severe_hits = sorted((words & _SEVERE) | {p for p in _SEVERE_PHRASES if p in base})
-        mild_hits = sorted(words & _MILD)
         if severe_hits:
-            cats = ["explicit"]
-            if mild_hits:
-                cats.append("profanity")
-            return ModerationResult(True, "severe", cats, severe_hits + mild_hits)
-        if mild_hits:
-            return ModerationResult(True, "mild", ["profanity"], mild_hits)
+            return ModerationResult(True, "severe", ["explicit"], severe_hits)
+        if _BP_AVAILABLE and _bp is not None and _bp.contains_profanity(text):
+            return ModerationResult(True, "mild", ["profanity"], [])
         return ModerationResult()
     except Exception:
-        # Moderation must never break intake — fail open (unflagged) on error.
+        logger.warning("[Moderation] text scan error", exc_info=True)
         return ModerationResult()
 
 
 def flags_from_ai_assessment(ai_analysis: dict) -> ModerationResult:
-    """Fold the AI photo/text assessment (when an AI provider ran) into the same
-    moderation shape, so images and AI-detected text abuse flag consistently.
-    Returns an unflagged result when AI didn't run or found nothing."""
+    """Fold the AI photo/text assessment into the same moderation shape so
+    images (and AI-detected text abuse) flag consistently. Unflagged when AI
+    didn't run or found nothing."""
     if not isinstance(ai_analysis, dict):
         return ModerationResult()
     photo = ai_analysis.get("photo_assessment") or {}
