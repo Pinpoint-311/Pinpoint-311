@@ -319,8 +319,8 @@ export default function GovtechIntegrations() {
             subtitle={`${visibleCatalog.length || catalog.length} platforms available — Accela, Tyler, CivicPlus, Open311, or a generic connector for anything else`}
             defaultOpen={true}
             badge={connectedCount > 0 ? (
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 border border-emerald-400/30 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">
-                    <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400" aria-hidden="true" />
+                <span className="inline-flex items-center gap-2 rounded-full bg-emerald-500/15 border border-emerald-400/30 pl-2.5 pr-3 py-1 text-[11px] font-semibold text-emerald-200 whitespace-nowrap">
+                    <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400 shrink-0" aria-hidden="true" />
                     {connectedCount} connected
                 </span>
             ) : undefined}
@@ -471,7 +471,7 @@ export default function GovtechIntegrations() {
                             <div className="relative flex flex-wrap items-center gap-2 mt-4">
                                 {!existing ? (
                                     <button
-                                        className="shimmer-sweep inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-900/40 transition-all hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                                        className="shimmer-sweep inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold text-white bg-gradient-to-r from-primary-400 to-primary-600 hover:from-primary-300 hover:to-primary-500 border border-primary-300/40 shadow-lg shadow-primary-900/60 transition-all hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
                                         onClick={() => openWizard(platform, 'intro')}
                                     >
                                         <Plug className="w-4 h-4" /> Set up — about 10 minutes

@@ -27,8 +27,14 @@ from app.services.ai.registry import AI_CATALOG
 logger = logging.getLogger(__name__)
 
 # In-process cache: provider -> (fetched_monotonic, list[{id,label}] | None)
+# Bounded to one small entry per provider (~3-4 keys), each a short list — the
+# daily refresh replaces entries in place, so it never grows.
 _CACHE: Dict[str, tuple] = {}
 _TTL_SECONDS = 60 * 60 * 12  # 12h; the daily beat task refreshes the DB copy
+# Hard cap on how many models we keep per provider, so a pathological provider
+# response can't bloat memory or the persisted cache. Chat/gen model lists are
+# tens of entries at most; anything beyond this is noise.
+_MAX_MODELS = 60
 
 
 def _curated(provider: str) -> List[Dict[str, str]]:
@@ -190,12 +196,14 @@ async def discover_models(provider: str, creds: Dict[str, str]) -> Optional[List
     if not fn:
         return None
     try:
-        return await fn(creds or {})
+        result = await fn(creds or {})
     except Exception as e:
         from app.core.sanitize import sanitize_for_log
         logger.info("[AI models] live discovery for %s unavailable: %s",
                     provider, sanitize_for_log(str(e)))
         return None
+    # Bound the list so neither memory nor the persisted cache can balloon.
+    return result[:_MAX_MODELS] if result else result
 
 
 async def provider_creds(provider: str) -> Dict[str, str]:
