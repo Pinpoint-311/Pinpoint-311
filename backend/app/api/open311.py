@@ -185,12 +185,27 @@ async def add_public_comment(
     if not sr:
         raise HTTPException(status_code=404, detail="Request not found")
     
+    # Moderate the public comment. Severe (explicit/abusive) content is withheld
+    # from the public feed (kept internal for staff review) rather than shown;
+    # milder profanity posts but flags the request. Never hard-rejected.
+    visibility = "external"
+    try:
+        from app.services.content_moderation import scan_text
+        mod = scan_text(content)
+        if mod.flagged:
+            sr.flagged = True
+            sr.flag_reason = (mod.reason() + " (public comment)")[:255]
+            if mod.should_withhold:
+                visibility = "internal"
+    except Exception:
+        logger.warning("[Moderation] public comment scan failed", exc_info=True)
+
     # Create external comment (anonymous - "Resident")
     comment = RequestComment(
         service_request_id=sr.id,
         username="Resident",
         content=content,
-        visibility="external"
+        visibility=visibility
     )
     db.add(comment)
     await db.commit()
@@ -654,6 +669,18 @@ async def _finalize_new_request(
     `notify_resident` is False when no real resident email exists (e.g. a phone
     caller who didn't leave one) so we never email a placeholder address.
     """
+    # Always-on text moderation of the public description (works with or without
+    # AI). Never blocks intake — flags for staff review; the AI photo/text
+    # assessment folds in later (analyze_request) when a provider is configured.
+    try:
+        from app.services.content_moderation import scan_text
+        mod = scan_text(service_request.description or "")
+        if mod.flagged:
+            service_request.flagged = True
+            service_request.flag_reason = mod.reason()[:255]
+    except Exception:
+        logger.warning("[Moderation] description scan failed", exc_info=True)
+
     audit_entry = RequestAuditLog(
         service_request_id=service_request.id,
         action="submitted",
