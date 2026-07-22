@@ -1,4 +1,4 @@
-# Pinpoint 311 - Advanced Municipal Request System
+# Pinpoint 311 — Municipal Service Request Platform
 
 <p align="center">
   <img src="frontend/public/pinpoint311_logo_light.png" alt="Pinpoint 311" height="60">
@@ -10,7 +10,7 @@
   <img src="https://img.shields.io/badge/React-18-61DAFB.svg" alt="React 18">
   <img src="https://img.shields.io/badge/FastAPI-0.109-009688.svg" alt="FastAPI">
   <img src="https://img.shields.io/badge/PostgreSQL-15-336791.svg" alt="PostgreSQL 15">
-  <img src="https://img.shields.io/badge/AI-Gemini%203.1-8E24AA.svg" alt="Gemini 3.1 Flash-Lite">
+  <img src="https://img.shields.io/badge/AI-Vertex%20%7C%20Azure%20%7C%20Bedrock-8E24AA.svg" alt="Pluggable AI providers">
   <img src="https://img.shields.io/badge/Geo-PostGIS-336791.svg" alt="PostGIS">
 </p>
 
@@ -23,119 +23,66 @@
 
 ## Introduction
 
-Pinpoint 311 is a production-grade, open-source platform designed for modern municipalities. It replaces legacy, clunky government forms with a **consumer-grade user experience** that feels as polished as a ride-sharing or food-delivery app.
+Pinpoint 311 is an open-source platform for municipal service requests (311). Residents report issues without creating an account; staff triage, route, and resolve them from a shared dashboard; and administrators configure services, providers, and integrations without editing code.
 
-Beyond the UI, it features a sophisticated **AI & Geospatial Engine** that automates triage, surfaces similar nearby reports for staff awareness, and routes requests based on precise location data—saving thousands of staff hours manually sorting tickets.
-
----
-
-## 📑 Table of Contents
-
-- [Why Pinpoint?](#-why-pinpoint)
-- [Choose Your Experience](#-choose-your-experience)
-- [Core Features Overview](#-core-features-overview)
-- [Resident Portal Features](#-resident-portal-features)
-- [Staff Dashboard Features](#-staff-dashboard-features)
-- [Admin Console Features](#️-admin-console-features)
-- [Research Suite](#-research-suite-university-lab-integration)
-- [Technical Architecture](#-technical-architecture)
-- [Deployment & Setup](#-deployment--setup)
-- [Roadmap](#️-roadmap)
-- [Security & Governance](#-security--governance)
-- [License](#-license)
+The platform includes optional AI triage and photo analysis, geospatial routing and analytics (PostGIS), automatic translation, and connectors to common govtech systems. AI, translation, secret storage, PII encryption, email, and SMS are provider-pluggable across Google Cloud, Microsoft Azure, and AWS, and each is optional: if a provider is not configured, that feature is skipped and the rest of the system continues to run.
 
 ---
 
-## ⚡ Why Pinpoint?
+## Table of Contents
+
+- [Why Pinpoint?](#why-pinpoint)
+- [Roles](#roles)
+- [Core Features Overview](#core-features-overview)
+- [Resident Portal Features](#resident-portal-features)
+- [Staff Dashboard Features](#staff-dashboard-features)
+- [Admin Console Features](#admin-console-features)
+- [Research Suite](#research-suite-university-lab-integration)
+- [Technical Architecture](#technical-architecture)
+- [Deployment & Setup](#deployment--setup)
+- [Roadmap](#roadmap)
+- [Security & Governance](#security--governance)
+- [License](#license)
+
+---
+
+## Why Pinpoint?
 
 ### Feature Comparison
 
-| Feature | Legacy Forms | SeeClickFix / Commercial | **Pinpoint 311** |
+| Feature | Legacy Forms | SeeClickFix / Commercial | Pinpoint 311 |
 | :--- | :---: | :---: | :---: |
-| **Pricing** | Free (DIY) | $5-20K/year | **Free & Open Source** |
-| **Data Ownership** | ✅ You own | ❌ Vendor-hosted | **✅ Self-hosted** |
-| **Source Code** | N/A | ❌ Proprietary | **✅ MIT License** |
-| **Mobile Experience** | Non-responsive | Native apps | **Responsive Web App** |
-| **AI Triage** | ❌ Manual | ❌ Basic rules | **✅ Gemini 3.1 Flash-Lite** |
-| **Photo Analysis** | ❌ None | ❌ None | **✅ Vision AI** |
-| **Multilingual** | ❌ English | ~10 languages | **✅ 109 languages** |
-| **Resident Login** | Required | Required | **✅ No account needed** |
-| **Live Tracking** | ❌ None | ✅ Email only | **✅ SMS + Email + Magic Link** |
-| **Location Accuracy** | Text address | GPS pin | **✅ GPS + Asset Selection** |
-| **PII Protection** | ❌ None | ⚠️ Basic | **✅ Auto-Redacted + KMS** |
-| **Geofencing** | ❌ None | ⚠️ Limited | **✅ GeoJSON Boundaries** |
-| **Research Export** | ❌ None | ⚠️ Extra cost | **✅ 60+ fields, free** |
-| **Custom Branding** | DIY | ⚠️ Limited | **✅ Full white-label** |
-| **Self-Healing** | ❌ None | ❌ Managed | **✅ Auto-restart + Watchtower** |
+| Pricing | Free (DIY) | $5–20K/year | Free and open source |
+| Data ownership | You own | Vendor-hosted | Self-hosted |
+| Source code | N/A | Proprietary | MIT License |
+| Mobile experience | Non-responsive | Native apps | Responsive web app |
+| AI triage | Manual | Basic rules | Optional, pluggable (Vertex / Azure OpenAI / Bedrock) |
+| Photo analysis | None | None | Vision-model analysis (when AI configured) |
+| Multilingual | English | ~10 languages | 100+ languages |
+| Resident login | Required | Required | No account needed |
+| Live tracking | None | Email only | SMS, email, and magic link |
+| Location accuracy | Text address | GPS pin | GPS and asset selection |
+| PII protection | None | Basic | Field-level encryption + envelope KMS |
+| Geofencing | None | Limited | GeoJSON boundaries |
+| Research export | None | Extra cost | 60+ fields, included |
+| Custom branding | DIY | Limited | Full white-label |
+| Operations | None | Managed | Container auto-restart, optional auto-update |
 
-### The Bottom Line
-
-> **SeeClickFix and similar platforms charge $5,000-20,000/year**, lock you into their cloud, and own your data. Pinpoint 311 gives you **the same (or better) features for free**, with full data sovereignty and no vendor lock-in.
+Commercial 311 platforms are typically hosted by the vendor on a per-year subscription. Pinpoint 311 is self-hosted and MIT-licensed: the municipality owns the deployment and the data, and there is no per-seat or per-request cost.
 
 ---
 
-## 🎭 Choose Your Experience
+## Roles
 
-<table>
-<tr>
-<td width="25%" align="center">
+The platform presents four role-specific experiences:
 
-### 🏠 Resident
-**Report issues in 60 seconds**
-
-✅ No account needed<br>
-✅ 109 languages<br>
-✅ Track via magic link<br>
-✅ Photo uploads
-
-<a href="#-resident-portal-features">→ Features</a>
-
-</td>
-<td width="25%" align="center">
-
-### 👷 Staff
-**Manage & resolve requests**
-
-✅ AI-powered triage<br>
-✅ AI Analytics Advisor<br>
-✅ Priority scoring<br>
-✅ Department routing<br>
-✅ Internal comments
-
-<a href="#-staff-dashboard-features">→ Features</a>
-
-</td>
-<td width="25%" align="center">
-
-### ⚙️ Admin
-**Configure everything**
-
-✅ Service categories<br>
-✅ Custom branding<br>
-✅ API key management<br>
-✅ User & role control
-
-<a href="#️-admin-console-features">→ Features</a>
-
-</td>
-<td width="25%" align="center">
-
-### 🔬 Researcher
-**Analyze municipal data**
-
-✅ 60+ research fields<br>
-✅ Privacy-preserved<br>
-✅ CSV & GeoJSON export<br>
-✅ Census integration
-
-<a href="#-research-suite-university-lab-integration">→ Features</a>
-
-</td>
-</tr>
-</table>
+- Resident — report an issue without an account, in 100+ languages, and track it by magic link. See [Resident Portal Features](#resident-portal-features).
+- Staff — triage, route, comment on, and resolve requests, with optional AI triage and an analytics assistant. See [Staff Dashboard Features](#staff-dashboard-features).
+- Admin — configure services, branding, providers, integrations, users, and roles. See [Admin Console Features](#admin-console-features).
+- Researcher — export privacy-preserved municipal data for analysis. See [Research Suite](#research-suite-university-lab-integration).
 
 <details>
-<summary><b>📊 System Architecture</b> (click to expand)</summary>
+<summary><b>System Architecture</b> (click to expand)</summary>
 
 ```mermaid
 graph TB
@@ -158,15 +105,20 @@ graph TB
 
     subgraph "Infrastructure"
         CD[Caddy HTTPS]
-        WT[Watchtower Auto-Updates]
+        WT[Watchtower auto-update, optional]
     end
 
-    subgraph "External Services"
-        VA[Vertex AI - Gemini]
+    subgraph "Pluggable Providers (Google / Azure / AWS)"
+        AI[AI: Vertex / Azure OpenAI / Bedrock]
+        TR[Translation: Google / Azure / AWS]
+        SEC[Secrets + KMS: Secret Manager / Key Vault / Secrets Manager]
+        MSG[Email + SMS: SMTP / SES / ACS / Twilio / SNS]
+        MOD[Content moderation: SafeSearch / Content Safety / Rekognition]
+    end
+
+    subgraph "Fixed Integrations"
         GM[Google Maps]
-        GT[Google Translate]
-        SM[SMTP / SMS]
-        A0[Auth0 SSO]
+        IDP[Identity: Auth0 / Entra / Okta / OIDC]
     end
 
     RP --> CD
@@ -180,92 +132,95 @@ graph TB
     API --> RD
     API --> WK
 
-    WK --> SM
-    WK --> VA
+    WK --> AI
+    WK --> TR
+    WK --> MSG
 
+    API --> SEC
+    API --> MOD
     API --> GM
-    API --> GT
-    API --> A0
+    API --> IDP
 ```
 
 </details>
 
 <details>
-<summary><b>🔄 Request Lifecycle</b> (click to expand)</summary>
+<summary><b>Request Lifecycle</b> (click to expand)</summary>
 
 ```mermaid
 flowchart LR
-    A[📱 Resident Submits] --> B{Within Boundary?}
-    B -->|No| C[❌ Rejected]
-    B -->|Yes| D[✅ Created]
-    
-    D --> E[🤖 AI Analysis]
-    E --> F[📧 Confirmation Email]
-    
-    F --> G[👷 Staff Reviews]
+    A[Resident submits] --> B{Within boundary?}
+    B -->|No| C[Rejected]
+    B -->|Yes| M{Content check}
+    M -->|Explicit| C2[Blocked]
+    M -->|OK| D[Created]
+
+    D --> E[AI analysis, if enabled]
+    E --> F[Confirmation email]
+
+    F --> G[Staff reviews]
     G --> H{Action?}
-    
-    H -->|Assign| I[📋 In Progress]
-    H -->|Resolve| J[✅ Resolved]
-    H -->|Transfer| K[↗️ Third Party]
-    
+
+    H -->|Assign| I[In Progress]
+    H -->|Resolve| J[Resolved]
+    H -->|Transfer| K[Third party]
+
     I --> J
-    J --> L[📧 Closure Email]
+    J --> L[Closure email]
 ```
 
 </details>
 
 <details>
-<summary><b>🔐 Security Stack</b> (click to expand)</summary>
+<summary><b>Security Stack</b> (click to expand)</summary>
 
 ```mermaid
 graph LR
     subgraph "Identity"
-        A0[Auth0 SSO]
+        IDP[Auth0 / Entra / Okta / OIDC]
         MFA[MFA / Passkeys]
     end
 
-    subgraph "Secrets"
-        GSM[Google Secret Manager]
-        KMS[Cloud KMS - PII]
+    subgraph "Secrets and Encryption"
+        SEC[Secret Manager / Key Vault / Secrets Manager]
+        KMS[Envelope KMS for PII]
     end
 
     subgraph "Infrastructure"
-        WT[Watchtower Auto-Updates]
         CD[Caddy HTTPS]
+        AL[Hash-chained audit log]
     end
 
-    A0 --> MFA
-    GSM --> KMS
-    WT --> CD
+    IDP --> MFA
+    SEC --> KMS
+    CD --> AL
 ```
 
 </details>
 
-## 🌟 Core Features Overview
+## Core Features Overview
 
-### 🎨 User Experience First
-- **Premium Glassmorphism Design**: A modern, translucent UI that builds trust and engagement.
-- **Mobile-First Architecture**: Fully responsive web app optimized for iOS and Android browsers.
-- **109 Language Support**: Powered by Google Translate API with intelligent caching. **Complete translation coverage**: UI strings, service categories, status labels, filter buttons, priority levels, search placeholders, and user-submitted content are automatically translated. **Automatic notification translation**: All confirmation emails and SMS messages are sent in the resident's selected language—no additional configuration needed.
-- **No-Login Submission**: Removes friction for residents while maintaining security via email magic links.
+### User Experience
+- Responsive web app for desktop and mobile browsers.
+- 100+ language support via the configured translation provider, with caching. Coverage includes UI strings, service categories, status labels, filters, priority levels, and resident-submitted content. Confirmation emails and SMS are sent in the resident's selected language.
+- No-login submission for residents, with email magic-link tracking.
 
-### 🧠 Advanced Intelligence
-- **Information Redaction**: Automatically strips PII (names, phones, emails) from public request logs.
-- **Visual Analysis**: Uses **Gemini 3.1 Flash-Lite** via Google Cloud **Vertex AI** to "see" uploaded photos and categorize hazards (e.g., "pothole caused by water damage").
-- **Multilingual AI Analysis**: When residents submit requests in non-English languages, the AI automatically provides a literal English translation first before performing its analysis, ensuring staff can understand all submissions regardless of language.
-- **Priority Scoring (Human-in-the-Loop)**: AI suggests a 1-10 urgency score, but scores are **never automatically saved**. Staff must explicitly accept or override the AI suggestion, ensuring human accountability for all priority decisions.
+### Intelligence (optional)
+- PII redaction: names, phones, and emails are stripped from public request logs.
+- Photo analysis: when an AI provider is configured, a vision model categorizes uploaded photos (for example, distinguishing a pothole from water damage). Works with any configured provider (Vertex/Gemini, Azure OpenAI/GPT-4o, or Bedrock/Claude).
+- Multilingual analysis: non-English descriptions are translated to English before analysis so staff can read every submission.
+- Priority scoring (human-in-the-loop): the AI suggests a 1–10 urgency score, but it is never applied automatically. Staff explicitly accept or override it, and the decision is recorded in the audit log.
 
-### 🗺️ Geospatial Power
-- **Asset Selection**: When map layers are configured, residents can click on nearby infrastructure (e.g., streetlights, hydrants, park zones) and select the specific asset their report relates to.
-- **Boundary Enforcement**: Validates that requests are within township limits using point-in-polygon checks against uploaded GeoJSON boundaries.
-- **Marker Clustering**: Auto-groups nearby request markers on the map via Google Maps MarkerClusterer. Backend hotspot detection uses PostGIS `ST_ClusterDBSCAN` for analytics.
+### Geospatial
+- Asset selection: when map layers are configured, residents can select the specific asset (streetlight, hydrant, park zone) a report relates to.
+- Boundary enforcement: requests are validated against uploaded GeoJSON boundaries with point-in-polygon checks.
+- Clustering: request markers group on the map (Google Maps MarkerClusterer); backend hotspot detection uses PostGIS `ST_ClusterDBSCAN`.
 
 ---
 
-## 🏠 Resident Portal Features
+## Resident Portal Features
 
-The Resident Portal is the public face of the system, designed for zero friction.
+The Resident Portal is the public-facing submission and tracking interface.
 
 ### 1. Service Discovery
 - **Visual Grid**: Services are displayed with clear, consistent iconography (Lucide React) for instant recognition.
@@ -294,9 +249,9 @@ The Resident Portal is the public face of the system, designed for zero friction
 
 ---
 
-## 👷 Staff Dashboard Features
+## Staff Dashboard Features
 
-The Staff Dashboard is the command center for municipal operations, protected by secure JWT authentication.
+The Staff Dashboard is the operational interface for reviewing and resolving requests, protected by JWT authentication.
 
 ### 1. Unified Workspace
 - **Live Feed**: Auto-refreshes every 30s; identifying "NEW" requests with badging.
@@ -324,23 +279,25 @@ The Staff Dashboard is the command center for municipal operations, protected by
     - **Resolved**: Work complete.
     - **Closed**: Final state (includes optional "Completion Photo" proof).
 
-### 4. AI Insights Panel (Vertex AI Powered)
-- **Safety Flags**: Highlights potential liabilities (e.g., "Downed power line detected").
-- **Proximity Analysis**: Checks if the issue is near critical infrastructure (Schools, Hospitals, Fire Stations) via PostGIS, with a **Nominatim (OpenStreetMap)** fallback for unmapped areas.
-- **Sentiment Analysis**: Gauges the tone of the resident's description (Neutral, Frustrated, Urgent).
-- **Weather Context**: Automatically fetches real-time weather (e.g., "Heavy Rain, 45°F") to validiate hazards.
-- **Gemini Flash**: Powered by Google's latest model (`gemini-3.1-flash-lite-preview`) with "Thinking Config" for deep reasoning.
-- **Similar Request Detection**: Surfaces nearby requests within 50m and a recent time window for staff awareness. The AI does not flag requests as duplicates or delete them—all requests are preserved and any action is left entirely to staff judgment.
-- **Human-in-the-Loop Priority**: AI priority suggestions are stored in a JSON field and displayed with an **"Accept AI Priority"** button. Staff must explicitly accept the score before it becomes the official priority, creating a complete audit trail.
+### 4. Triage Panel
+The panel shows computed context regardless of whether AI is enabled; the AI summary and suggested priority appear only when an AI provider is configured.
+
+- **Safety flags**: highlights potential liabilities (for example, a downed power line) from the AI assessment.
+- **Proximity analysis**: checks whether the issue is near critical infrastructure (schools, hospitals, fire stations) via PostGIS, with a Nominatim (OpenStreetMap) fallback for unmapped areas. Computed without AI.
+- **Sentiment**: estimates the tone of the description (neutral, frustrated, urgent) when AI is on.
+- **Weather context**: fetches current weather for the location to help assess hazards. Computed without AI.
+- **Pluggable AI**: the summary and photo assessment run on the configured provider (Vertex/Gemini, Azure OpenAI, or Bedrock). The model list refreshes live from the provider. If AI is off or unreachable, requests still submit and the panel shows the computed context above.
+- **Similar request detection**: surfaces nearby requests within ~50m and a recent time window for staff awareness. Requests are never flagged as duplicates or deleted automatically; any action is left to staff.
+- **Human-in-the-loop priority**: AI priority suggestions are stored separately and shown with an "Accept AI Priority" action. Staff must accept a score before it becomes the official priority, and the change is recorded in the audit log.
 - **PostGIS Geospatial Analytics**:
     - **Hotspot Analysis**: Automatically clusters requests to identify problem areas (e.g., "Pothole Clusters" on specific roads).
     - **User Bias Detection**: Flags suspicious activity using spatial statistics (e.g., single user spamming requests in a 10m radius).
     - **Jurisdiction Verification**: Real-time point-in-polygon checks against township boundaries.
 
-### 5. AI Analytics Advisor (Conversational Intelligence)
-A full conversational AI interface powered by **Gemini 3.1 Flash-Lite** that lets staff ask questions about their data in natural language. Unlike traditional dashboards, it cross-references **all system data** with **research-grade analytics** to provide actionable insights.
+### 5. Analytics Assistant
+A conversational interface, running on the configured AI provider, that lets staff ask questions about their data in natural language. It cross-references system data with the Research Suite's aggregated metrics.
 
-- **Natural Language Queries**: Ask questions like "What's our average triage time?" or "Are there equity gaps in our response times?" and get data-driven answers with specific numbers.
+- **Natural-language queries**: ask questions such as "What's our average triage time?" or "Are there gaps in our response times by area?" and get answers with specific numbers.
 - **Research-Grade Context**: The AI has access to aggregated metrics from the Research Suite:
 
 | Data Category | Metrics Available |
@@ -358,9 +315,9 @@ A full conversational AI interface powered by **Gemini 3.1 Flash-Lite** that let
 
 ---
 
-## ⚙️ Admin Console Features
+## Admin Console Features
 
-A full CMS for managing the municipality's presence without touching code.
+Configuration for the municipality's deployment, without editing code.
 
 - **Custom Icons**: Select from a library of 100+ icons.
 - **Routing Rules**: Assign services to specific departments (e.g., "Potholes" → "DPW").
@@ -377,8 +334,9 @@ A full CMS for managing the municipality's presence without touching code.
 - **System Updates**: One-click "Pull Updates" to fetch the latest code from GitHub and rebuild containers.
 - **Custom Map Layers**: Upload **GeoJSON** files to visualize township assets (Parks, Storm Drains, Zoning Districts) directly on the staff map.
 - **Domain Configuration**: Automatic HTTPS provisioning via Caddy (Let's Encrypt) for custom domains.
-- **Key Management**: Securely store API keys for Google Maps, Vertex AI (Google Cloud Project ID + Service Account Key), and SMS Providers.
-- **Feature Modules**: Toggle major features like "AI Analysis" or "SMS Alerts" on/off globally via the Admin Console modules panel.
+- **Service providers**: select and configure the AI, translation, and identity providers from the Admin Console. One "cloud environment" choice can set AI, translation, secret storage, PII encryption, email, and SMS to the same cloud (Google, Azure, or AWS). Credentials are written to the configured secret store; when an external vault is used, the database holds only a reference, not the secret.
+- **Key management**: store API keys for Google Maps and other services in the configured secret store (Secret Manager, Key Vault, or AWS Secrets Manager), with an encrypted database fallback.
+- **Feature modules**: toggle features such as AI analysis or SMS alerts globally from the modules panel. Disabled or unconfigured providers are skipped; the rest of the system continues to run.
 - **Database Maintenance**: Tools to seed default data or flush test records.
 
 ### 3. Legal Documents & Compliance
@@ -406,18 +364,16 @@ All legal pages are editable via **Admin Console → Branding → Legal Document
 
 ---
 
-## ⚠️ Non-Emergency Disclaimer System
+## Non-Emergency Disclaimer
 
-Built-in legal protection ensuring residents understand 311 is for non-emergency municipal services only.
+Residents are informed that 311 is for non-emergency municipal services only.
 
-### One-Time Acknowledgment Modal
-- **Premium Design**: Glassmorphism modal matching portal aesthetic
-- **Checkbox Confirmation**: Users must actively acknowledge before accessing portal
-- **localStorage Persistence**: Shows once per browser, doesn't repeatedly annoy returning users
+### One-time acknowledgment modal
+- Users must acknowledge before accessing the portal.
+- Persisted in `localStorage`, so it shows once per browser.
 
-### Persistent Warning Banner
-- **Always Visible**: Amber gradient banner at top of resident portal
-- **Clear Messaging**: "**Non-Emergency Only** — For police, fire, or medical emergencies, call **911**"
+### Persistent warning banner
+- A banner at the top of the resident portal reads: "Non-Emergency Only — For police, fire, or medical emergencies, call 911."
 
 ### Legal Audit Logging
 Every acknowledgment is logged to the `disclaimer_acknowledgments` table:
@@ -434,9 +390,9 @@ This creates a complete paper trail for legal protection if any user claims they
 
 ---
 
-## 📊 Research Suite (University Lab Integration)
+## Research Suite (University Lab Integration)
 
-A privacy-preserving analytics layer designed for external university researchers studying municipal operations, infrastructure, equity, and civic engagement. Exports **60+ research fields** computed on-the-fly from **real data sources**.
+A privacy-preserving analytics layer for external researchers studying municipal operations, infrastructure, equity, and civic engagement. Exports 60+ fields computed from the underlying data.
 
 ### Access Control
 - **Researcher Role**: Dedicated user role with read-only access to sanitized data
@@ -461,14 +417,14 @@ All exports are designed to protect resident privacy while enabling meaningful r
 
 ---
 
-### 📦 Research Packs (5 Specialized Domains)
+### Research Packs (5 Specialized Domains)
 
-#### 🟣 Social Equity Pack (Sociologists)
-Real census data integration for equity research.
+#### Social Equity Pack (Sociologists)
+Census data integration for equity research.
 
 | Field | Type | Description | Source |
 |-------|------|-------------|--------|
-| `census_tract_geoid` | string | 11-digit FIPS code for Census joins | US Census Geocoder API ✅ |
+| `census_tract_geoid` | string | 11-digit FIPS code for Census joins | US Census Geocoder API |
 | `social_vulnerability_index` | float (0-1) | CDC SVI (0=lowest, 1=highest) | Derived from GEOID |
 | `housing_tenure_renter_pct` | float (0-1) | Renter percentage in zone | Derived from GEOID |
 | `income_quintile` | int (1-5) | Anonymized income quintile | Zone-based proxy |
