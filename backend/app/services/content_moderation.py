@@ -102,6 +102,48 @@ def scan_text(text: str) -> ModerationResult:
         return ModerationResult()
 
 
+_SEVERITY_RANK = {"none": 0, "mild": 1, "severe": 2}
+
+
+def _stronger(a: ModerationResult, b: ModerationResult) -> ModerationResult:
+    """Return the higher-severity of two results (merging their term lists)."""
+    if _SEVERITY_RANK[b.severity] > _SEVERITY_RANK[a.severity]:
+        hi, lo = b, a
+    else:
+        hi, lo = a, b
+    if not hi.flagged:
+        return ModerationResult()
+    return ModerationResult(True, hi.severity,
+                            sorted(set(hi.categories) | set(lo.categories)),
+                            sorted(set(hi.terms) | set(lo.terms)))
+
+
+async def screen_text(text: str) -> ModerationResult:
+    """Always-on better-profanity scan, plus the cloud text moderator layered on
+    top when configured (catches contextual toxicity/threats a wordlist misses).
+    Returns the stronger verdict; cloud failures fall back to the local scan."""
+    base = scan_text(text)
+    try:
+        from app.services import cloud_moderation
+        cloud = await cloud_moderation.moderate_text(text)
+    except Exception:
+        cloud = None
+    return _stronger(base, cloud) if cloud else base
+
+
+async def screen_images(media: list) -> ModerationResult:
+    """Cloud image moderation (when configured). Unflagged result otherwise —
+    externally-hosted images and the no-cloud case fall back to the AI vision
+    assessment applied later in analyze_request."""
+    if not media:
+        return ModerationResult()
+    try:
+        from app.services import cloud_moderation
+        return await cloud_moderation.moderate_images(media)
+    except Exception:
+        return ModerationResult()
+
+
 def flags_from_ai_assessment(ai_analysis: dict) -> ModerationResult:
     """Fold the AI photo/text assessment into the same moderation shape so
     images (and AI-detected text abuse) flag consistently. Unflagged when AI

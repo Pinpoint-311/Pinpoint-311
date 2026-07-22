@@ -187,8 +187,8 @@ async def add_public_comment(
     
     # Moderate the public comment. Explicit/abusive content is rejected (400);
     # mild profanity posts but flags the request for staff. Never silently drops.
-    from app.services.content_moderation import scan_text
-    mod = scan_text(content)
+    from app.services.content_moderation import screen_text
+    mod = await screen_text(content)
     if mod.should_block:
         raise HTTPException(
             status_code=400,
@@ -594,16 +594,25 @@ async def create_request(
             detail=f"Invalid service code: {request_data.service_code}"
         )
 
-    # Content moderation: reject explicit/abusive descriptions before the report
-    # is created. Mild profanity is allowed through (flagged later for staff) so
-    # legitimate angry reports still go through.
-    from app.services.content_moderation import scan_text
-    if scan_text(request_data.description or "").should_block:
+    # Content moderation: reject explicit/abusive text or images before the
+    # report is created. Text uses better-profanity plus the cloud text moderator
+    # when configured; images use the cloud image moderator when configured.
+    # Mild profanity is allowed through (flagged later for staff) so legitimate
+    # angry reports still go through.
+    from app.services.content_moderation import screen_text, screen_images
+    if (await screen_text(request_data.description or "")).should_block:
         logger.info("[CREATE REQUEST] blocked: explicit/abusive description")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Your report contains explicit or abusive language and can't be submitted. "
                    "Please describe the issue without offensive content and try again.",
+        )
+    if (await screen_images(request_data.media_urls or [])).should_block:
+        logger.info("[CREATE REQUEST] blocked: explicit image")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="One of your photos appears to contain explicit or graphic content and "
+                   "can't be submitted. Please remove it and try again.",
         )
 
     # Auto-assignment based on service routing config
