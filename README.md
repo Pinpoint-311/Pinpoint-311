@@ -10,7 +10,7 @@
   <img src="https://img.shields.io/badge/React-18-61DAFB.svg" alt="React 18">
   <img src="https://img.shields.io/badge/FastAPI-0.109-009688.svg" alt="FastAPI">
   <img src="https://img.shields.io/badge/PostgreSQL-15-336791.svg" alt="PostgreSQL 15">
-  <img src="https://img.shields.io/badge/AI-Vertex%20%7C%20Azure%20%7C%20Bedrock-8E24AA.svg" alt="Pluggable AI providers">
+  <img src="https://img.shields.io/badge/AI-pluggable-8E24AA.svg" alt="Pluggable AI providers">
   <img src="https://img.shields.io/badge/Geo-PostGIS-336791.svg" alt="PostGIS">
 </p>
 
@@ -27,7 +27,7 @@ Most towns can't justify a five-figure annual contract for a modern 311 system �
 
 Residents report an issue in about a minute — no account, in their own language, with a photo and a map pin. Staff triage, route, and resolve everything from one dashboard, with optional AI assistance. Admins configure the whole system from the browser. And because it's self-hosted and MIT-licensed, the town owns its data outright — no vendor lock-in, no per-request bill.
 
-Every advanced capability — AI triage, translation, encryption, notifications, content moderation — is optional and works with the cloud your town already uses. Turn on what you need; everything else stays out of the way, and the platform keeps running without it.
+Every advanced capability — AI assistance, translation, encryption, notifications, content moderation — is optional and works with the cloud your town already uses. Turn on what you need; everything else stays out of the way, and the platform keeps running without it.
 
 This is enterprise-grade civic software for the towns that got left behind.
 
@@ -44,7 +44,6 @@ This is enterprise-grade civic software for the towns that got left behind.
 - [Research Suite](#research-suite-university-lab-integration)
 - [Technical Architecture](#technical-architecture)
 - [Deployment & Setup](#deployment--setup)
-- [Roadmap](#roadmap)
 - [Security & Governance](#security--governance)
 - [License](#license)
 
@@ -60,7 +59,7 @@ Small towns deserve the same tools big cities pay a fortune for. Here's what cha
 | Your data | Locked in a vendor's cloud | Owned by the town, on your infrastructure |
 | Reporting | Type an address into a form | GPS pin, map, photos, and asset selection |
 | Language | English only | 100+ languages, including notifications |
-| Triage | Sort every ticket by hand | Optional AI triage, priority, and photo analysis |
+| Triage | Sort every ticket by hand | Rules-based routing, plus optional AI summaries, priority suggestions, and photo analysis |
 | Tracking | Email, if anything | Live status by magic link, SMS, and email |
 | Privacy | Little to none | Field-level PII encryption and redaction |
 | Research | Not available | 60+ privacy-preserved data fields, included |
@@ -95,7 +94,7 @@ Report an issue in about a minute.
 Everything in one place.
 
 - One dashboard for the queue
-- Optional AI triage & priority
+- AI summaries & priority (optional)
 - Routing & internal notes
 - Analytics assistant
 
@@ -159,7 +158,7 @@ graph TB
     end
 
     subgraph "Pluggable Providers - bring your own cloud"
-        AI[AI triage & vision]
+        AI[AI summaries & vision]
         TR[Translation]
         SEC[Secrets + PII encryption]
         MSG[Email + SMS]
@@ -266,7 +265,22 @@ graph LR
 ### 🗺️ Location-aware
 - Asset selection: when map layers are configured, residents can select the specific asset (streetlight, hydrant, park zone) a report relates to.
 - Boundary enforcement: requests are validated against uploaded GeoJSON boundaries with point-in-polygon checks.
-- Clustering: request markers group on the map (Google Maps MarkerClusterer); backend hotspot detection uses PostGIS `ST_ClusterDBSCAN`.
+- Clustering: request markers group on the map; backend hotspot detection uses PostGIS `ST_ClusterDBSCAN`.
+
+### ☁️ Runs on your terms
+- Bring your own cloud: pick one cloud environment and it configures AI, translation, secret storage, PII encryption, email, and text messaging together — or set each one independently. Provider settings live in the Admin Console; no config files to edit.
+- Secrets stay in your vault: when an external secret store is configured, credentials are written there and the database keeps only a reference — the raw key never sits in the app's database.
+- Self-updating model list: the AI model picker refreshes the available models directly from your provider, so a retired model never silently breaks triage.
+- Nothing is mandatory: every advanced provider is optional. If one is unconfigured or unreachable, that feature is skipped with a warning in the Admin Console and the rest of the platform keeps running. Core data safety (the database, PII encryption when required) fails loudly instead.
+
+### 🛡️ Safe by default
+- Content moderation on every public submission: descriptions and comments are screened as they come in — explicit or abusive content is blocked at submission, while ordinary (even frustrated) reports go through and are flagged for staff. Photo screening runs through the configured AI or cloud moderation service.
+- Tamper-evident audit log: every action is recorded in a hash-chained log, anchored daily so history can't be quietly rewritten.
+- State-aware records retention: automatic retention and legal-hold handling mapped to each state's public-records law (OPRA, FOIA, and equivalents).
+
+### 🔌 Connects to what your town already runs
+- Purpose-built connectors for permitting and 311 systems that publish an open or documented API, plus support for the Open311 standard.
+- A single configurable connector for any other vendor that exposes a REST API — you provide the endpoint and key; it is clearly labeled as generic and verified with a built-in connection check before go-live.
 
 ---
 
@@ -318,7 +332,7 @@ The Staff Dashboard is the operational interface for reviewing and resolving req
 - **Internal Comments**: Private staff-only notes for coordination.
 - **External Updates**: Public comments visible to residents via the tracker.
 - **Staff Preferences**: Each staff member can toggle their own SMS/Email notifications.
-- **Audit Log**: Immutable history of every action (status change, assignment, comment).
+- **Audit log**: Tamper-evident, hash-chained history of every action (status change, assignment, comment). The chain is anchored daily so tampering can be detected.
 
 ### 3. Request Management
 - **Smart Assignment**: Auto-route to specific departments or keep in a general queue.
@@ -332,13 +346,13 @@ The Staff Dashboard is the operational interface for reviewing and resolving req
     - **Closed**: Final state (includes optional "Completion Photo" proof).
 
 ### 4. Triage Panel
-The panel shows computed context regardless of whether AI is enabled; the AI summary and suggested priority appear only when an AI provider is configured.
+This panel is decision *support*, not automation. Routing and assignment are handled by the rules you configure (see Advanced Routing and Smart Assignment), not by AI. Most of the panel — history, proximity, weather, similar reports — is pulled deterministically from your own data and works whether or not AI is enabled. When AI is enabled, it synthesizes that same data into a plain-language summary and a suggested priority; it does not route, assign, close, or decide anything on its own, and its suggestions only take effect when a staff member accepts them.
 
 - **Safety flags**: highlights potential liabilities (for example, a downed power line) from the AI assessment.
 - **Proximity analysis**: checks whether the issue is near critical infrastructure (schools, hospitals, fire stations) via PostGIS, with a Nominatim (OpenStreetMap) fallback for unmapped areas. Computed without AI.
 - **Sentiment**: estimates the tone of the description (neutral, frustrated, urgent) when AI is on.
 - **Weather context**: fetches current weather for the location to help assess hazards. Computed without AI.
-- **Pluggable AI**: the summary and photo assessment run on the configured provider (Vertex/Gemini, Azure OpenAI, or Bedrock). The model list refreshes live from the provider. If AI is off or unreachable, requests still submit and the panel shows the computed context above.
+- **Pluggable AI**: the summary and photo assessment run on whichever AI provider you configure. The model list refreshes live from the provider, and if a model is retired the picker flags it. If AI is off or unreachable, requests still submit and the panel shows the computed context above.
 - **Similar request detection**: surfaces nearby requests within ~50m and a recent time window for staff awareness. Requests are never flagged as duplicates or deleted automatically; any action is left to staff.
 - **Human-in-the-loop priority**: AI priority suggestions are stored separately and shown with an "Accept AI Priority" action. Staff must accept a score before it becomes the official priority, and the change is recorded in the audit log.
 - **PostGIS Geospatial Analytics**:
@@ -444,7 +458,13 @@ This creates a complete paper trail for legal protection if any user claims they
 
 ## Research Suite (University Lab Integration)
 
-A privacy-preserving analytics layer for external researchers studying municipal operations, infrastructure, equity, and civic engagement. Exports 60+ fields computed from the underlying data.
+A privacy-preserving analytics layer that serves two audiences at once.
+
+**For the town's own staff and leadership**, it turns day-to-day requests into a planning tool — the goal is to move from reactive repair (fixing what breaks after residents report it) toward proactive maintenance. Hotspot clustering surfaces the streets and assets that generate repeat reports, so a department can schedule work before the next failure; trends by category, season, and area inform budgets and staffing; and asset-linked history shows which infrastructure is nearing the end of its life.
+
+**For external researchers** (university labs, policy groups), it exports 60+ privacy-preserved fields for study of municipal operations, infrastructure, equity, and civic engagement.
+
+The same sanitized dataset backs both, and it also feeds the Staff Dashboard's analytics assistant. Exports 60+ fields computed from the underlying data.
 
 ### Access Control
 - **Researcher Role**: Dedicated user role with read-only access to sanitized data
@@ -491,12 +511,12 @@ Real historical weather data and infrastructure lifecycle analysis.
 
 | Field | Type | Description | Source |
 |-------|------|-------------|--------|
-| `weather_precip_24h_mm` | float | Precipitation 24h before report | Open-Meteo Archive API ✅ |
-| `weather_temp_max_c` | float | Max temperature on report day | Open-Meteo Archive API ✅ |
-| `weather_temp_min_c` | float | Min temperature on report day | Open-Meteo Archive API ✅ |
-| `weather_code` | int | WMO weather code (61=rain, 71=snow) | Open-Meteo Archive API ✅ |
+| `weather_precip_24h_mm` | float | Precipitation 24h before report | Open-Meteo Archive API |
+| `weather_temp_max_c` | float | Max temperature on report day | Open-Meteo Archive API |
+| `weather_temp_min_c` | float | Min temperature on report day | Open-Meteo Archive API |
+| `weather_code` | int | WMO weather code (61=rain, 71=snow) | Open-Meteo Archive API |
 | `nearby_asset_age_years` | float | Age of matched infrastructure | Asset properties |
-| `matched_asset_attributes` | JSON | Full asset properties (pressure_psi, acres, bulb type) | GeoJSON layer ✅ |
+| `matched_asset_attributes` | JSON | Full asset properties (pressure_psi, acres, bulb type) | GeoJSON layer |
 | `season` | string | winter/spring/summer/fall | Calculated |
 
 **Suggested Analyses**: Freeze-thaw pothole correlation, asset survival analysis, precipitation-drainage linkage
@@ -508,10 +528,10 @@ NLP-derived indicators of civic trust and satisfaction.
 
 | Field | Type | Description | Source |
 |-------|------|-------------|--------|
-| `sentiment_score` | float (-1 to +1) | NLP sentiment (-1=angry, +1=grateful) | Word-based NLP ✅ |
-| `is_repeat_report` | boolean | Text indicates prior report of same issue | Regex detection ✅ |
-| `prior_report_mentioned` | boolean | References ticket/case number | Regex detection ✅ |
-| `frustration_expressed` | boolean | Trust erosion indicators present | Regex detection ✅ |
+| `sentiment_score` | float (-1 to +1) | NLP sentiment (-1=angry, +1=grateful) | Word-based NLP |
+| `is_repeat_report` | boolean | Text indicates prior report of same issue | Regex detection |
+| `prior_report_mentioned` | boolean | References ticket/case number | Regex detection |
+| `frustration_expressed` | boolean | Trust erosion indicators present | Regex detection |
 
 **Suggested Analyses**: Sentiment vs income quintile, repeat report resolution rates, trust erosion over time
 
@@ -522,14 +542,14 @@ Quantified measures of administrative efficiency and government responsiveness.
 
 | Field | Type | Description | Source |
 |-------|------|-------------|--------|
-| `time_to_triage_hours` | float | Hours from submission to first "In Progress" | Audit logs ✅ |
-| `reassignment_count` | int | Times request bounced between departments | Audit logs ✅ |
-| `off_hours_submission` | boolean | Submitted before 6am or after 10pm | Timestamp ✅ |
-| `escalation_occurred` | boolean | Priority manually increased by staff | Audit logs ✅ |
-| `total_hours_to_resolve` | float | Total clock hours to closure | Calculated ✅ |
-| `business_hours_to_resolve` | float | Business hours only (Mon-Fri 8am-5pm) | Calculated ✅ |
-| `days_to_first_update` | float | Days until first staff action | Calculated ✅ |
-| `status_change_count` | int | Number of status changes | Audit logs ✅ |
+| `time_to_triage_hours` | float | Hours from submission to first "In Progress" | Audit logs |
+| `reassignment_count` | int | Times request bounced between departments | Audit logs |
+| `off_hours_submission` | boolean | Submitted before 6am or after 10pm | Timestamp |
+| `escalation_occurred` | boolean | Priority manually increased by staff | Audit logs |
+| `total_hours_to_resolve` | float | Total clock hours to closure | Calculated |
+| `business_hours_to_resolve` | float | Business hours only (Mon-Fri 8am-5pm) | Calculated |
+| `days_to_first_update` | float | Days until first staff action | Calculated |
+| `status_change_count` | int | Number of status changes | Audit logs |
 
 **Suggested Analyses**: Triage time vs resolution outcome, department routing efficiency, off-hours urgent patterns
 
@@ -540,13 +560,13 @@ Training data for AI systems and human-AI alignment studies.
 
 | Field | Type | Description | Source |
 |-------|------|-------------|--------|
-| `ai_flagged` | boolean | AI flagged for staff review | Vertex AI ✅ |
-| `ai_flag_reason` | string | Reason for flag (safety, urgent) | Vertex AI ✅ |
-| `ai_priority_score` | float (1-10) | AI-generated priority | Vertex AI ✅ |
-| `ai_classification` | string | AI-assigned category | Vertex AI ✅ |
-| `ai_summary_sanitized` | string | AI summary (PII redacted) | Vertex AI ✅ |
-| `ai_analyzed` | boolean | Whether AI processed this request | System ✅ |
-| `ai_vs_manual_priority_diff` | float | manual_priority - ai_priority | Calculated ✅ |
+| `ai_flagged` | boolean | AI flagged for staff review | AI provider |
+| `ai_flag_reason` | string | Reason for flag (safety, urgent) | AI provider |
+| `ai_priority_score` | float (1-10) | AI-generated priority | AI provider |
+| `ai_classification` | string | AI-assigned category | AI provider |
+| `ai_summary_sanitized` | string | AI summary (PII redacted) | AI provider |
+| `ai_analyzed` | boolean | Whether AI processed this request | System |
+| `ai_vs_manual_priority_diff` | float | manual_priority - ai_priority | Calculated |
 
 **Suggested Analyses**: AI-human priority alignment, flagging accuracy, classification accuracy studies
 
@@ -561,7 +581,7 @@ All research fields are computed on-the-fly using real APIs:
 | **Open-Meteo Archive API** | weather_* fields | Free historical weather data |
 | **NLP Analysis** | sentiment_score, trust indicators | Word-based sentiment analysis |
 | **Audit Logs** | bureaucratic friction fields | Real system data |
-| **Vertex AI** | ai_* fields | If AI analysis is enabled |
+| **AI provider** | ai_* fields | If AI analysis is enabled |
 
 ### API Endpoints
 | Endpoint | Description |
@@ -575,12 +595,12 @@ All research fields are computed on-the-fly using real APIs:
 
 ---
 
-## 🚀 Technical Architecture
+## Technical Architecture
 
 ### Communication Engine
 - **Branding Engine**: Automatically injects township logo, colors, and font settings into every email.
-- **Rich SMS**: Sends text alerts with status emojis (✅, 🚧), request details (category, address), and magic links for instant tracking.
-- **Provider Agnostic**: Built-in support for **Twilio**, plus a generic HTTP adapter for any other SMS gateway.
+- **Text alerts**: sends status updates with request details (category, address) and a magic link for tracking.
+- **Provider-agnostic**: works with common text-messaging services or a generic HTTP gateway; configured in the browser.
 - **Completion Proof**: "Review & Close" workflow attaches the final resolution photo to the closing email sent to the resident.
 
 ### Standards Compliance
@@ -631,13 +651,13 @@ All research fields are computed on-the-fly using real APIs:
 | **Database** | PostgreSQL 15 + PostGIS | Relational data with advanced spatial queries |
 | **Migrations** | Alembic | Version-controlled database schema changes |
 | **Caching** | Redis | High-speed caching for public request feeds (60s TTL) |
-| **AI** | Vertex AI (Gemini 3.1 Flash-Lite) | Multimodal model for image/text analysis |
+| **AI** | Pluggable provider (configured in the browser) | Multimodal model for image and text analysis; optional |
 | **Queue** | Celery + Redis | Background processing for emails and reports |
 | **Reverse Proxy** | Caddy | Automatic HTTPS and SSL termination |
 
 ### 💾 Resource Footprint
 
-The entire Pinpoint 311 stack uses **less memory than a single Chrome tab**:
+The whole stack is light. Measured at idle on a small VM:
 
 | Service | CPU | Memory |
 |---------|-----|--------|
@@ -649,9 +669,9 @@ The entire Pinpoint 311 stack uses **less memory than a single Chrome tab**:
 | Redis | <1% | 4 MB |
 | **TOTAL** | **~6%** | **~160 MB** |
 
-> **For comparison**: A single Gmail tab uses 200-400 MB. The entire production 311 system with AI, maps, authentication, and real-time monitoring uses less than half of that.
+These are idle-baseline figures; actual usage varies with traffic and which optional providers are enabled. AI, translation, and moderation run in the provider's cloud, so they add little to the local footprint.
 
-**Deployment costs:** Runs on a free-tier cloud VM (1 vCPU, 1GB RAM) or ~$5-10/month on any cloud provider. Suitable for typical municipal workloads without additional scaling.
+**Deployment cost:** runs comfortably on a small cloud VM (roughly 1 vCPU, 1 GB RAM), which is inexpensive on most providers. Larger towns may want more headroom.
 
 ### 🗄️ Database Migrations (Alembic)
 
@@ -678,74 +698,54 @@ alembic current
 
 ### 🔒 Security Standards
 
-#### Enterprise Security Stack
-Pinpoint 311 implements a production-grade security stack with managed cloud services:
+#### Security Layers
+Each layer works with the provider your town chooses; where nothing external is configured, the platform falls back to encrypted database storage.
 
-| Component | Purpose | Provider |
-|-----------|---------|----------|
-| **Auth0** | SSO with MFA & Passkeys | Managed Identity |
-| **Google Secret Manager** | API keys & credentials | Google Cloud |
-| **Google Cloud KMS** | Resident PII encryption | Google Cloud |
-| **Watchtower** | Container auto-updates | Self-hosted |
+| Layer | Purpose | Options |
+|-------|---------|---------|
+| **Identity** | Staff SSO with MFA and passkeys | Auth0 by default; Microsoft Entra ID, Okta, or generic OIDC |
+| **Secret storage** | API keys and connection credentials | Your cloud's secret store, with an encrypted database fallback |
+| **PII encryption** | Resident PII at rest | Envelope encryption with your cloud's key service, or a local key |
+| **Auto-update** | Optional container updates | Self-hosted, off by default |
 
-#### Zero-Password Authentication
-Staff login via **Auth0** with enterprise-grade security:
-- **Multi-Factor Authentication**: TOTP, passkeys, and biometric support
-- **Social Login**: Google, Microsoft, and other identity providers
-- **Passwordless Option**: WebAuthn/passkeys for phishing resistance
-- **No passwords stored**: Authentication fully delegated to Auth0
+#### Staff authentication
+Staff sign in through your identity provider (Auth0 by default). Passwords are never stored by Pinpoint — authentication is delegated to the provider, which supports MFA, passkeys/WebAuthn, and social login.
 
-#### Secrets Management
-Two-tier security for credentials:
+#### Secrets and PII
+Two tiers of protection:
 
-| Secret Type | Storage | Encryption |
+| Secret type | Storage | Encryption |
 |-------------|---------|------------|
-| API Keys (SMTP, SMS, Maps) | Google Secret Manager | Google-managed HSMs |
-| Resident PII (email, phone, name) | PostgreSQL | Google Cloud KMS (AES-256) |
-| Local Development | Encrypted Database | Fernet (AES-128-CBC) |
+| API keys and integration credentials | External secret store when configured; the database keeps only a reference | Provider-managed keys |
+| Resident PII (email, phone, name) | Encrypted in the database | Envelope encryption; the data key is wrapped by your cloud's key service |
+| Local development / no external vault | Encrypted database | Fernet (AES-128-CBC) |
 
+When an external secret store is configured, integration and provider credentials are written there and the application database holds only a reference — the raw secret does not live in the app database. A small set of bootstrap keys needed to *reach* the secret store remain in the encrypted local table.
 
-#### GCP Service Account Authentication
-Pinpoint 311 uses **encrypted service account keys** for Google Cloud access:
-
-```
-┌─────────────┐    Fernet Encrypted    ┌──────────────────┐    Direct Auth    ┌─────────────┐
-│   Backend   │ ─────────────────────▶ │ PostgreSQL DB    │ ────────────────▶ │ GCP APIs    │
-│   (FastAPI) │                        │ (system_secrets) │                   │ SM, KMS, AI │
-└─────────────┘                        └──────────────────┘                   └─────────────┘
-```
-
-**How it works:**
-1. Upload service account JSON during initial setup
-2. Key is encrypted with Fernet (AES-128-CBC) using `SECRET_KEY`
-3. Stored securely in the `system_secrets` database table
-4. Decrypted at runtime when accessing GCP services
-
-**Bootstrap Keys:**
-Two keys must remain in the local database (not migrated to Secret Manager):
-- `GCP_SERVICE_ACCOUNT_JSON`: The encrypted service account key
-- `GOOGLE_CLOUD_PROJECT`: The GCP project ID
-
-These "bootstrap keys" are needed to *access* Secret Manager itself, so they must be stored locally.
-
+#### Cloud authentication
+Cloud provider access uses credentials you enter during setup, encrypted at rest with `SECRET_KEY` in the `system_secrets` table and decrypted only at call time.
+4. Decrypted at runtime when calling the configured cloud services
 
 #### API & Infrastructure Security
 - **Rate Limiting**: 500 requests/minute per IP (slowapi)
 - **Security Headers**: X-Frame-Options, CSP, nosniff, XSS protection
 - **RBAC**: Staff, Researcher, Admin roles with JWT authentication
-- **Input Validation**: Pydantic schemas, SQLAlchemy ORM (SQL injection proof)
-- **Audit Logging**: Immutable trail of all request lifecycle events
+- **Input Validation**: Pydantic schemas and parameterized queries via the SQLAlchemy ORM
+- **Audit Logging**: Tamper-evident, hash-chained trail of request lifecycle events
 
 For full security details, see [COMPLIANCE.md](./COMPLIANCE.md).
 
-#### Vertex AI Security
-| Feature | Protection |
-|---------|------------|
-| Data Residency | Stays within configured GCP region |
-| Encryption | TLS 1.3+ in transit, AES-256 at rest |
-| No Data Training | Customer data NOT used for training |
-| Certifications | SOC 1/2/3, ISO 27001, FedRAMP, HIPAA |
-| Human-in-the-Loop | AI suggestions require staff approval |
+#### AI Provider Security
+Data-residency, encryption, retention, and certification guarantees for AI depend on the provider you configure, not on Pinpoint. What Pinpoint controls:
+
+| Feature | What Pinpoint does |
+|---------|--------------------|
+| Data sent to the model | Only the request text and up to three photos; resident PII is redacted from the analysis output |
+| Transport | Requests go directly to your configured provider over TLS |
+| Human-in-the-loop | AI suggestions (priority, category) require explicit staff approval before they take effect |
+| Optional | AI can be turned off entirely; the platform runs without it |
+
+Verify your chosen provider's data-handling terms (region, retention, whether inputs are used for training) against your jurisdiction's requirements.
 
 ### 📋 Document Retention Engine
 
@@ -759,23 +759,26 @@ Records can be placed on **legal hold** via the `flagged` field to prevent autom
 - **Per-request holds**: Staff can flag individual requests from the detail view
 - **Audit trail**: All flag/unflag actions are logged with timestamp and user
 
-#### Compliance Features
-| Requirement | Implementation |
-|-------------|----------------|
-| **OPRA (NJ) / FOIA** | Export any request's full audit trail on demand |
-| **CJIS** | PII encryption at rest (AES-256) and in transit (TLS 1.3) |
-| **NIST 800-53** | Immutable audit logs with tamper detection |
-| **GDPR/CCPA** | PII anonymization option for closed records |
-| **Records Officer** | Designated admin role for retention policy management |
+#### Features that support compliance work
+
+These features are designed to *support* the requirements below. They are not a certification, an audit, or a guarantee of compliance — meeting any given standard is the deploying jurisdiction's responsibility, and depends on how the system is configured and operated.
+
+| Requirement | Supporting feature |
+|-------------|--------------------|
+| **Public records (OPRA / FOIA and equivalents)** | Export any request's full audit trail on demand; per-state retention schedules |
+| **PII protection** | Field-level PII encryption at rest and TLS in transit |
+| **Audit integrity** | Tamper-evident, hash-chained audit logs with a daily anchor |
+| **Data minimization** | Optional PII anonymization for closed records; configurable retention |
+| **Records administration** | Designated admin role for retention-policy management |
 
 
-### ♿ Accessibility (WCAG 2.1 AA)
+### ♿ Accessibility
 
-Keyboard navigation, 4.5:1 contrast ratio, and aria-labels on interactive elements. See [COMPLIANCE.md](./COMPLIANCE.md) for details.
+Built toward **WCAG 2.1 Level AA**: keyboard navigation, a 4.5:1 contrast target, and aria-labels on interactive elements. This describes the design target, not an independent accessibility audit or certification. See [COMPLIANCE.md](./COMPLIANCE.md) for details.
 
 ---
 
-## 📦 Deployment & Setup
+## Deployment & Setup
 
 ### CI/CD Pipeline
 
@@ -797,9 +800,9 @@ The system automatically recovers from common failures without developer interve
 
 | Layer | Protection | Config Required |
 |-------|------------|-----------------|
-| **Docker Healthchecks** | Backend, Worker, Frontend auto-restart if unresponsive | None ✅ |
-| **Container Restart** | Containers restart after crash (`unless-stopped`) | None ✅ |
-| **Watchtower** | Auto-pulls security updates at 3am daily | None ✅ |
+| **Docker healthchecks** | Backend, Worker, Frontend auto-restart if unresponsive | None |
+| **Container restart** | Containers restart after a crash (`unless-stopped`) | None |
+| **Watchtower** | Optional: pulls updated images on a schedule | None |
 | **SSH Auto-Restart** | Force restart via SSH when uptime check fails | Optional* |
 
 *To enable SSH auto-restart, add `PROD_HOST` and `PROD_SSH_KEY` secrets to your GitHub repository.
@@ -846,7 +849,7 @@ docker compose up --build -d
 
 ### Prerequisites
 - Docker & Docker Compose
-- A Google Cloud Project (for Maps & Vertex AI)
+- A Google Maps API key — Maps is the one required external service. AI, translation, secret storage, notifications, and moderation are all optional and configured later in the browser.
 
 ### Quick Start (Using Prebuilt Images)
 ```bash
@@ -907,8 +910,8 @@ In Admin Console → Setup & Integration:
 2. System encrypts and stores credentials securely
 3. Bootstrap access is automatically disabled
 
-#### Step 5: (Optional) Enable Google Secret Manager
-For enterprise-grade secret storage, configure GCP in the Setup & Integration page. Secrets will be migrated from the database to Google Secret Manager.
+#### Step 5: (Optional) Move secrets into an external vault
+For stronger secret storage, configure your cloud's secret store in the Setup & Integration page. Credentials are then written to the vault and the database keeps only a reference.
 
 #### Step 6: (Optional) Enable 45° Map Tilt & Rotation
 For an immersive bird's eye map experience with 3D buildings, configure a **Google Maps Map ID**:
@@ -928,15 +931,15 @@ For an immersive bird's eye map experience with 3D buildings, configure a **Goog
 |--------|-----------------|-------------------|
 | DB Password | `.env` file | `.env` file |
 | JWT Secret Key | `.env` file | `.env` file |
-| Auth0 Credentials | Database (Fernet encrypted) | Google Secret Manager |
-| API Keys | Database (Fernet encrypted) | Google Secret Manager |
+| Identity provider credentials | Database (Fernet encrypted) | External secret store |
+| Integration & provider keys | Database (Fernet encrypted) | External secret store (reference only in DB) |
 
 > [!NOTE]
 > Bootstrap access is automatically disabled once Auth0 is configured. All future logins use SSO.
 
 ---
 
-## 🛡️ Security & Governance
+## Security & Governance
 
 Pinpoint 311 is designed for municipal government use, handling sensitive resident data. We take security, privacy, and supply-chain integrity seriously.
 
@@ -963,13 +966,13 @@ To maintain the integrity required for government software:
 | **Review Process** | All PRs undergo mandatory security review before merging |
 | **Dependencies** | All dependencies pinned to specific versions to prevent supply-chain attacks |
 
-### ✅ Supported Versions
+### Supported Versions
 
 | Version | Supported | Notes |
 | :--- | :---: | :--- |
-| **Latest Stable** | ✅ | Current production release |
-| **Main Branch** | ⚠️ | Development builds (unstable) |
-| **< 1.0.0** | ❌ | Legacy versions |
+| **Latest Stable** | | Current production release |
+| **Main branch** | Development only | Unstable builds |
+| **< 1.0.0** | Unsupported | Legacy versions |
 
 ### 🛑 Out of Scope
 
@@ -981,21 +984,21 @@ The following are generally considered out of scope for security reports:
 
 ---
 
-## 🔄 Sustainability & Continuity
+## Sustainability & Continuity
 
 **Can this system stand on its own if Pinpoint 311 disappears tomorrow?**
 
-**Yes.** Every deployment is 100% self-hosted on YOUR infrastructure.
+Yes. Every deployment is self-hosted on your own infrastructure.
 
-| Aspect | Status |
-|--------|--------|
-| **Code Ownership** | ✅ Full source code on your server |
-| **Data Ownership** | ✅ PostgreSQL database you control |
-| **License** | ✅ MIT - fork, modify, redistribute freely |
-| **Dependencies** | ✅ All open-source with public documentation |
-| **Phone-Home** | ✅ None - no calls to Pinpoint 311 servers |
-| **Self-Healing** | ✅ Auto-restart, health checks |
-| **Watchtower** | ✅ Optional auto-updates (see below) |
+| Aspect | Details |
+|--------|---------|
+| **Code ownership** | Full source code runs on your server |
+| **Data ownership** | The PostgreSQL database is yours to control |
+| **License** | MIT — fork, modify, and redistribute freely |
+| **Dependencies** | Open-source, with public documentation |
+| **Phone-home** | The application makes no calls back to Pinpoint 311 servers |
+| **Recovery** | Container auto-restart and health checks |
+| **Updates** | Optional automatic image updates (see below) |
 
 **Watchtower (Optional):**
 Watchtower automatically updates your Docker containers with security patches. It runs at 3am daily.
@@ -1020,13 +1023,13 @@ docker compose ps watchtower
 
 ---
 
-## 📄 License
+## License
 
 Pinpoint 311 is open-source software licensed under the [MIT License](LICENSE).
 
 ---
 
-## 🤝 Fiscal Sponsorship
+## Fiscal Sponsorship
 
 Pinpoint 311 is fiscally sponsored by **[The Hack Foundation](https://hackclub.com/fiscal-sponsorship/)** (d.b.a. Hack Club), a 501(c)(3) public charity (EIN: 81-2908499). Hack Club provides fiscal sponsorship infrastructure, allowing Pinpoint 311 to receive tax-deductible donations on our behalf while we focus on building civic technology.
 
