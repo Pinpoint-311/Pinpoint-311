@@ -23,16 +23,20 @@
 
 ## Introduction
 
-Pinpoint 311 is an open-source platform for municipal service requests (311). Residents report issues without creating an account; staff triage, route, and resolve them from a shared dashboard; and administrators configure services, providers, and integrations without editing code.
+Most towns can't justify a five-figure annual contract for a modern 311 system — so they're stuck with paper forms, a clunky web form, or nothing at all. Pinpoint 311 is the alternative: complete, self-hosted 311 software that a small or mid-size municipality can actually run, own, and afford.
 
-The platform includes optional AI triage and photo analysis, geospatial routing and analytics (PostGIS), automatic translation, and connectors to common govtech systems. AI, translation, secret storage, PII encryption, email, and SMS are provider-pluggable across Google Cloud, Microsoft Azure, and AWS, and each is optional: if a provider is not configured, that feature is skipped and the rest of the system continues to run.
+Residents report an issue in about a minute — no account, in their own language, with a photo and a map pin. Staff triage, route, and resolve everything from one dashboard, with optional AI assistance. Admins configure the whole system from the browser. And because it's self-hosted and MIT-licensed, the town owns its data outright — no vendor lock-in, no per-request bill.
+
+Every advanced capability — AI triage, translation, encryption, notifications, content moderation — is optional and works with the cloud your town already uses. Turn on what you need; everything else stays out of the way, and the platform keeps running without it.
+
+This is enterprise-grade civic software for the towns that got left behind.
 
 ---
 
 ## Table of Contents
 
 - [Why Pinpoint?](#why-pinpoint)
-- [Roles](#roles)
+- [Who It's For](#who-its-for)
 - [Core Features Overview](#core-features-overview)
 - [Resident Portal Features](#resident-portal-features)
 - [Staff Dashboard Features](#staff-dashboard-features)
@@ -48,38 +52,84 @@ The platform includes optional AI triage and photo analysis, geospatial routing 
 
 ## Why Pinpoint?
 
-### Feature Comparison
+Small towns deserve the same tools big cities pay a fortune for. Here's what changes when you switch from a paper form or a basic web form to Pinpoint 311:
 
-| Feature | Legacy Forms | SeeClickFix / Commercial | Pinpoint 311 |
-| :--- | :---: | :---: | :---: |
-| Pricing | Free (DIY) | $5–20K/year | Free and open source |
-| Data ownership | You own | Vendor-hosted | Self-hosted |
-| Source code | N/A | Proprietary | MIT License |
-| Mobile experience | Non-responsive | Native apps | Responsive web app |
-| AI triage | Manual | Basic rules | Optional, pluggable (Vertex / Azure OpenAI / Bedrock) |
-| Photo analysis | None | None | Vision-model analysis (when AI configured) |
-| Multilingual | English | ~10 languages | 100+ languages |
-| Resident login | Required | Required | No account needed |
-| Live tracking | None | Email only | SMS, email, and magic link |
-| Location accuracy | Text address | GPS pin | GPS and asset selection |
-| PII protection | None | Basic | Field-level encryption + envelope KMS |
-| Geofencing | None | Limited | GeoJSON boundaries |
-| Research export | None | Extra cost | 60+ fields, included |
-| Custom branding | DIY | Limited | Full white-label |
-| Operations | None | Managed | Container auto-restart, optional auto-update |
+| | The old way | With Pinpoint 311 |
+| :--- | :--- | :--- |
+| Cost | Free but limited, or a yearly hosted contract | Free and open source, self-hosted |
+| Your data | Locked in a vendor's cloud | Owned by the town, on your infrastructure |
+| Reporting | Type an address into a form | GPS pin, map, photos, and asset selection |
+| Language | English only | 100+ languages, including notifications |
+| Triage | Sort every ticket by hand | Optional AI triage, priority, and photo analysis |
+| Tracking | Email, if anything | Live status by magic link, SMS, and email |
+| Privacy | Little to none | Field-level PII encryption and redaction |
+| Research | Not available | 60+ privacy-preserved data fields, included |
+| Branding | Generic | Full white-label — your name, colors, and logo |
 
-Commercial 311 platforms are typically hosted by the vendor on a per-year subscription. Pinpoint 311 is self-hosted and MIT-licensed: the municipality owns the deployment and the data, and there is no per-seat or per-request cost.
+The town owns the deployment and the data outright: no per-seat pricing, no per-request billing, and no vendor lock-in.
 
 ---
 
-## Roles
+## Who It's For
 
-The platform presents four role-specific experiences:
+One platform, four purpose-built experiences.
 
-- Resident — report an issue without an account, in 100+ languages, and track it by magic link. See [Resident Portal Features](#resident-portal-features).
-- Staff — triage, route, comment on, and resolve requests, with optional AI triage and an analytics assistant. See [Staff Dashboard Features](#staff-dashboard-features).
-- Admin — configure services, branding, providers, integrations, users, and roles. See [Admin Console Features](#admin-console-features).
-- Researcher — export privacy-preserved municipal data for analysis. See [Research Suite](#research-suite-university-lab-integration).
+<table>
+<tr>
+<td width="25%" valign="top">
+
+### 🏠 For Residents
+Report an issue in about a minute.
+
+- No account, ever
+- 100+ languages
+- Photo + map pin
+- Track by magic link
+
+<a href="#resident-portal-features">Resident features →</a>
+
+</td>
+<td width="25%" valign="top">
+
+### 🧰 For Staff
+Everything in one place.
+
+- One dashboard for the queue
+- Optional AI triage & priority
+- Routing & internal notes
+- Analytics assistant
+
+<a href="#staff-dashboard-features">Staff features →</a>
+
+</td>
+<td width="25%" valign="top">
+
+### ⚙️ For Admins
+Run it from the browser.
+
+- Services & routing rules
+- Full white-label branding
+- Providers & integrations
+- Users, roles & backups
+
+<a href="#admin-console-features">Admin features →</a>
+
+</td>
+<td width="25%" valign="top">
+
+### 🔬 For Researchers
+Study your town's data.
+
+- 60+ analysis fields
+- Privacy-preserved
+- CSV & GeoJSON export
+- Census integration
+
+<a href="#research-suite-university-lab-integration">Research suite →</a>
+
+</td>
+</tr>
+</table>
 
 <details>
 <summary><b>System Architecture</b> (click to expand)</summary>
@@ -108,17 +158,18 @@ graph TB
         WT[Watchtower auto-update, optional]
     end
 
-    subgraph "Pluggable Providers (Google / Azure / AWS)"
-        AI[AI: Vertex / Azure OpenAI / Bedrock]
-        TR[Translation: Google / Azure / AWS]
-        SEC[Secrets + KMS: Secret Manager / Key Vault / Secrets Manager]
-        MSG[Email + SMS: SMTP / SES / ACS / Twilio / SNS]
-        MOD[Content moderation: SafeSearch / Content Safety / Rekognition]
+    subgraph "Pluggable Providers - bring your own cloud"
+        AI[AI triage & vision]
+        TR[Translation]
+        SEC[Secrets + PII encryption]
+        MSG[Email + SMS]
+        MOD[Content moderation]
     end
 
-    subgraph "Fixed Integrations"
-        GM[Google Maps]
-        IDP[Identity: Auth0 / Entra / Okta / OIDC]
+    subgraph "Integrations"
+        GM[Maps]
+        IDP[Staff sign-in / SSO]
+        GT[Town-system connectors]
     end
 
     RP --> CD
@@ -140,6 +191,7 @@ graph TB
     API --> MOD
     API --> GM
     API --> IDP
+    WK --> GT
 ```
 
 </details>
@@ -200,18 +252,18 @@ graph LR
 
 ## Core Features Overview
 
-### User Experience
+### 🎨 Built for people, not paperwork
 - Responsive web app for desktop and mobile browsers.
 - 100+ language support via the configured translation provider, with caching. Coverage includes UI strings, service categories, status labels, filters, priority levels, and resident-submitted content. Confirmation emails and SMS are sent in the resident's selected language.
 - No-login submission for residents, with email magic-link tracking.
 
-### Intelligence (optional)
+### 🤖 Optional intelligence
 - PII redaction: names, phones, and emails are stripped from public request logs.
-- Photo analysis: when an AI provider is configured, a vision model categorizes uploaded photos (for example, distinguishing a pothole from water damage). Works with any configured provider (Vertex/Gemini, Azure OpenAI/GPT-4o, or Bedrock/Claude).
+- Photo analysis: when AI is enabled, a vision model categorizes uploaded photos (for example, distinguishing a pothole from water damage). The AI provider is your choice and configured in the browser.
 - Multilingual analysis: non-English descriptions are translated to English before analysis so staff can read every submission.
 - Priority scoring (human-in-the-loop): the AI suggests a 1–10 urgency score, but it is never applied automatically. Staff explicitly accept or override it, and the decision is recorded in the audit log.
 
-### Geospatial
+### 🗺️ Location-aware
 - Asset selection: when map layers are configured, residents can select the specific asset (streetlight, hydrant, park zone) a report relates to.
 - Boundary enforcement: requests are validated against uploaded GeoJSON boundaries with point-in-polygon checks.
 - Clustering: request markers group on the map (Google Maps MarkerClusterer); backend hotspot detection uses PostGIS `ST_ClusterDBSCAN`.
