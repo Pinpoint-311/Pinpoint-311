@@ -496,6 +496,9 @@ class SystemSettings(Base):
     # State-pushed managed policy (retention, legal hold, PII mode, …). When a key
     # is present here it is state-controlled and the town cannot override it.
     managed_policy = Column(JSON, default={})
+    # Live AI model discovery cache: {provider: {models, source, fetched_at}}.
+    # Refreshed on demand (admin "Refresh models") and by a daily Celery task.
+    ai_models_cache = Column(JSON, default={})
 
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

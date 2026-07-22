@@ -75,5 +75,12 @@ celery_app.conf.update(
             "schedule": 60 * 60 * 24 * 7,  # Every 7 days
             "options": {"queue": "default"}
         },
+        # Refresh the live AI model lists so the picker stays current and can
+        # flag a retired/deprecated model without anyone opening the admin UI.
+        "daily-ai-model-refresh": {
+            "task": "app.tasks.service_requests.refresh_ai_models",
+            "schedule": 60 * 60 * 24,  # Every 24 hours
+            "options": {"queue": "default"}
+        },
     }
 )

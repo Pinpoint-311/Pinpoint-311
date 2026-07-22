@@ -162,6 +162,9 @@ async def _run_schema_migrations():
     migrations = [
         # Service category ordering (added 2026-03-14)
         "ALTER TABLE service_definitions ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0",
+        # Live AI model-list cache (added 2026-07-22): discovered models per
+        # provider so the model picker self-updates and can flag a retired model.
+        "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS ai_models_cache JSON DEFAULT '{}'",
         # GovTech integrations: comment/document sync tracking (added 2026-07-01)
         "ALTER TABLE request_comments ADD COLUMN IF NOT EXISTS external_ref VARCHAR(200)",
         "CREATE INDEX IF NOT EXISTS ix_request_comments_external_ref ON request_comments (external_ref)",

@@ -78,11 +78,20 @@ async def get_translation_catalog(_: User = Depends(get_current_admin)):
 
 
 @router.get("/ai/catalog")
-async def get_ai_catalog(_: User = Depends(get_current_admin)):
+async def get_ai_catalog(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
     """AI provider catalog for the admin UI: available boundaries (Vertex /
     Azure Government / Bedrock), their models, and the fields each needs, plus
-    which provider is currently selected and which are configured."""
+    which provider is currently selected and which are configured.
+
+    Model lists are served from the live-discovery cache when available (a
+    provider's actual current models, refreshed on demand and daily) and fall
+    back to the curated catalog. No live network call happens here — the load
+    stays fast; refreshing is explicit (POST /ai/models/refresh) or scheduled."""
     from app.services.ai.registry import AI_CATALOG, catalog_for_api, AI_PROVIDER_KEY, AI_MODEL_KEY
+    from app.services.ai import model_discovery as md
     from app.services.secret_manager import get_secret
 
     current_provider = (await get_secret(AI_PROVIDER_KEY)) or "vertex"
@@ -100,13 +109,52 @@ async def get_ai_catalog(_: User = Depends(get_current_admin)):
                     break
         configured[key] = present
 
+    # Overlay the discovered model lists (per-provider) onto the curated catalog.
+    cache = await md.load_db_cache(db)
+    providers = catalog_for_api()
+    for p in providers:
+        entry = cache.get(p["provider"])
+        if entry and entry.get("models"):
+            p["models"] = entry["models"]
+            p["models_source"] = entry.get("source", "live")
+            p["models_fetched_at"] = entry.get("fetched_at")
+        else:
+            p["models_source"] = "curated"
+            p["models_fetched_at"] = None
+
+    resolved_model = current_model or AI_CATALOG.get(current_provider, {}).get("default_model")
+    current_models = next((p["models"] for p in providers if p["provider"] == current_provider), [])
     return {
         "current_provider": current_provider,
         "default_provider": "vertex",
-        "current_model": current_model or AI_CATALOG.get(current_provider, {}).get("default_model"),
+        "current_model": resolved_model,
+        "current_model_available": md.model_is_available(current_models, current_model),
         "configured": configured,
-        "providers": catalog_for_api(),
+        "providers": providers,
     }
+
+
+class AIModelRefreshRequest(BaseModel):
+    provider: str
+
+
+@router.post("/ai/models/refresh")
+@_cost_limiter.limit("6/minute")  # live provider API call
+async def refresh_ai_models(
+    request: Request,
+    body: AIModelRefreshRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Live-discover a provider's current models and update the shared cache.
+    Returns the merged list plus whether the configured model is still offered."""
+    from app.services.ai.registry import AI_CATALOG
+    provider = (body.provider or "").strip().lower()
+    if provider not in AI_CATALOG:
+        raise HTTPException(status_code=400, detail=f"Unknown AI provider: {provider}")
+    from app.services.ai import model_discovery as md
+    result = await md.refresh_provider(db, provider)
+    return {"provider": provider, **result}
 
 
 # ---- Unified provider save + test (AI / translation / identity) ----
@@ -185,7 +233,18 @@ async def save_provider(
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unexpected settings for {provider_id}: {', '.join(sorted(unknown))}")
     if capability == "ai" and body.model:
+        # Validate against curated ∪ live-discovered models. A model the provider
+        # actually offers (from the discovery cache) is accepted even if it isn't
+        # in the curated list — that's the whole point of live discovery. Only
+        # reject when we can positively prove the id is offered nowhere.
         allowed_models = {m["id"] for m in catalog[provider_id].get("models", [])}
+        try:
+            from app.services.ai import model_discovery as md
+            cache = await md.load_db_cache(db)
+            entry = cache.get(provider_id) or {}
+            allowed_models |= {m["id"] for m in entry.get("models", []) if m.get("id")}
+        except Exception:
+            pass
         if allowed_models and body.model not in allowed_models:
             raise HTTPException(status_code=400, detail=f"Unknown model for {provider_id}: {body.model}")
     await _persist_secret(db, _PROVIDER_SELECT_KEY[capability], provider_id)

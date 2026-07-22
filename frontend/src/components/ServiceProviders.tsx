@@ -8,7 +8,19 @@ import {
 
 import { Select, CollapsibleSection } from './ui';
 import SecretField from './SecretField';
-import { api, ProviderCatalog, ProviderInfo, CloudProfileState } from '../services/api';
+import { api, ProviderCatalog, ProviderInfo, ProviderModelSpec, CloudProfileState } from '../services/api';
+
+// Relative "updated Xh ago" from an epoch-seconds timestamp.
+function agoLabel(epochSeconds?: number | null): string {
+    if (!epochSeconds) return '';
+    const secs = Math.max(0, Math.floor(Date.now() / 1000 - epochSeconds));
+    if (secs < 90) return 'just now';
+    const mins = Math.round(secs / 60);
+    if (mins < 90) return `${mins}m ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 36) return `${hrs}h ago`;
+    return `${Math.round(hrs / 24)}d ago`;
+}
 
 type Capability = 'ai' | 'translation' | 'identity';
 
@@ -32,6 +44,11 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const [busy, setBusy] = useState<'save' | 'test' | null>(null);
     const [result, setResult] = useState<{ ok: boolean; detail: string } | null>(null);
     const [error, setError] = useState<string | null>(null);
+    // Live model discovery (AI only)
+    const [refreshingModels, setRefreshingModels] = useState(false);
+    const [liveModels, setLiveModels] = useState<ProviderModelSpec[] | null>(null);
+    const [modelsMeta, setModelsMeta] = useState<{ source?: string; fetched_at?: number | null } | null>(null);
+    const [staleOverride, setStaleOverride] = useState<boolean | null>(null);
 
     const load = useCallback(async () => {
         try {
@@ -114,6 +131,23 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             onStatus(cap, { verified: false });
         } finally {
             setBusy(null);
+        }
+    };
+
+    const handleRefreshModels = async () => {
+        setRefreshingModels(true);
+        try {
+            const r = await api.refreshAIModels(selected);
+            setLiveModels(r.models);
+            setModelsMeta({ source: r.source, fetched_at: r.fetched_at });
+            // Staleness only meaningful for the currently-active provider.
+            if (catalog && selected === catalog.current_provider) {
+                setStaleOverride(r.current_model_available === false);
+            }
+        } catch {
+            // keep the existing list on failure — discovery is best-effort
+        } finally {
+            setRefreshingModels(false);
         }
     };
 
@@ -242,18 +276,49 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                 </div>
                             )}
 
-                            {/* AI model dropdown */}
-                            {cap === 'ai' && active?.models && active.models.length > 0 && (
-                                <div>
-                                    <label className="text-[11px] uppercase tracking-wider text-white/60 mb-2 block font-semibold">Model</label>
-                                    <Select
-                                        options={active.models.map(m => ({ value: m.id, label: m.label }))}
-                                        value={model || active.default_model || active.models[0].id}
-                                        onChange={(e) => setModel(e.target.value)}
-                                        aria-label="AI model"
-                                    />
-                                </div>
-                            )}
+                            {/* AI model dropdown — with live discovery */}
+                            {cap === 'ai' && active && (() => {
+                                const models = liveModels ?? active.models ?? [];
+                                const source = modelsMeta?.source ?? active.models_source;
+                                const fetchedAt = modelsMeta?.fetched_at ?? active.models_fetched_at;
+                                const isStale = staleOverride !== null
+                                    ? staleOverride
+                                    : (selected === catalog.current_provider && catalog.current_model_available === false);
+                                if (models.length === 0) return null;
+                                return (
+                                    <div>
+                                        <div className="flex items-center justify-between gap-2 mb-2">
+                                            <label className="text-[11px] uppercase tracking-wider text-white/60 font-semibold">Model</label>
+                                            <button
+                                                type="button"
+                                                onClick={handleRefreshModels}
+                                                disabled={refreshingModels}
+                                                className="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-white transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 rounded"
+                                            >
+                                                <RefreshCw className={`w-3 h-3 ${refreshingModels ? 'animate-spin' : ''}`} aria-hidden="true" />
+                                                {refreshingModels ? 'Checking…' : 'Refresh from provider'}
+                                            </button>
+                                        </div>
+                                        <Select
+                                            options={models.map(m => ({ value: m.id, label: m.discovered ? `${m.label} · new` : m.label }))}
+                                            value={model || active.default_model || models[0].id}
+                                            onChange={(e) => setModel(e.target.value)}
+                                            aria-label="AI model"
+                                        />
+                                        <p className="text-[10px] text-white/40 mt-1.5">
+                                            {source === 'live'
+                                                ? `Live from ${active.name}${fetchedAt ? ` · updated ${agoLabel(fetchedAt)}` : ''}`
+                                                : 'Built-in list — press “Refresh from provider” to pull the current models'}
+                                        </p>
+                                        {isStale && (
+                                            <div className="mt-2 rounded-lg bg-amber-500/10 border border-amber-400/30 px-3 py-2 text-[11px] text-amber-200 flex items-start gap-2">
+                                                <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+                                                The model you’re using ({catalog.current_model}) is no longer offered by {active.name}. Pick a current one above and save.
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })()}
 
                             {/* Credential/config fields */}
                             {active && active.credential_fields.length > 0 && (
