@@ -340,7 +340,7 @@ The Staff Dashboard is the operational interface for reviewing and resolving req
 ### 3. Request Management
 - **Smart Assignment**: Auto-route to specific departments or keep in a general queue.
 - **Completion Types**: Close requests as **Resolved** (with photo proof), **No Action Needed** (invalid), or **Transferred** (third-party).
-- **Priority Override**: Manually escalate issues that AI might have missed.
+- **Priority Override**: Staff set or change a request's priority at any time; nothing sets it automatically.
 - **Asset History**: When viewing a request attached to a physical asset (e.g., Hydrant #404), automatically shows all past history for that specific asset.
 - **Status Workflow**:
     - **Open**: New request.
@@ -357,7 +357,7 @@ This panel is decision *support*, not automation. Routing and assignment are han
 - **Weather context**: fetches current weather for the location to help assess hazards. Computed without AI.
 - **Pluggable AI**: the summary and photo assessment run on whichever AI provider you configure. The model list refreshes live from the provider, and if a model is retired the picker flags it. If AI is off or unreachable, requests still submit and the panel shows the computed context above.
 - **Similar request detection**: surfaces nearby requests within ~50m and a recent time window for staff awareness. Requests are never flagged as duplicates or deleted automatically; any action is left to staff.
-- **Human-in-the-loop priority**: AI priority suggestions are stored separately and shown with an "Accept AI Priority" action. Staff must accept a score before it becomes the official priority, and the change is recorded in the audit log.
+- **Human-in-the-loop priority**: the AI produces a priority score, but it is **never written to the request's priority**. It is kept as a suggestion in the analysis data and shown with an "Accept AI Priority" action; the request's priority only changes when a staff member accepts it, and that acceptance is recorded in the audit log.
 - **PostGIS Geospatial Analytics**:
     - **Hotspot Analysis**: Automatically clusters requests to identify problem areas (e.g., "Pothole Clusters" on specific roads).
     - **User Bias Detection**: Flags suspicious activity using spatial statistics (e.g., single user spamming requests in a 10m radius).
@@ -382,6 +382,13 @@ A conversational interface, running on the configured AI provider, that lets sta
 - **Privacy-First**: Never exposes resident PII—all data is aggregated and sanitized before reaching the AI.
 - **Clear Conversation**: One-click reset to start fresh analysis sessions.
 
+### 6. Manual Intake (Call-Takers & Walk-Ins)
+Not every resident submits online. Staff can log a request on someone's behalf — a phone call, a walk-in, or a forwarded email — from the dashboard.
+
+- **Same pipeline**: manually-logged requests run through the exact same routing, notifications, and triage as resident submissions, so nothing is second-class.
+- **No fake data**: optional fields left blank (for example, a caller who didn't leave an email) simply skip the steps that need them — a placeholder address is never invented, and no confirmation is sent to an address that doesn't exist.
+- **Channel captured**: the intake channel (phone, walk-in, email) is recorded for reporting.
+
 ---
 
 ## Admin Console Features
@@ -403,8 +410,8 @@ Configuration for the municipality's deployment, without editing code.
 - **System Updates**: One-click "Pull Updates" to fetch the latest code from GitHub and rebuild containers.
 - **Custom Map Layers**: Upload **GeoJSON** files to visualize township assets (Parks, Storm Drains, Zoning Districts) directly on the staff map.
 - **Domain Configuration**: Automatic HTTPS provisioning via Caddy (Let's Encrypt) for custom domains.
-- **Service providers**: select and configure the AI, translation, and identity providers from the Admin Console. One "cloud environment" choice can set AI, translation, secret storage, PII encryption, email, and SMS to the same cloud (Google, Azure, or AWS). Credentials are written to the configured secret store; when an external vault is used, the database holds only a reference, not the secret.
-- **Key management**: store API keys for Google Maps and other services in the configured secret store (Secret Manager, Key Vault, or AWS Secrets Manager), with an encrypted database fallback.
+- **Service providers**: select and configure the AI, translation, and identity providers from the Admin Console. One "cloud environment" choice can point AI, translation, secret storage, PII encryption, email, and SMS at the same cloud, or you can set each independently. Credentials are written to the configured secret store; when an external vault is used, the database holds only a reference, not the secret.
+- **Key management**: store the Google Maps key and other service keys in the configured secret store, with an encrypted database fallback.
 - **Feature modules**: toggle features such as AI analysis or SMS alerts globally from the modules panel. Disabled or unconfigured providers are skipped; the rest of the system continues to run.
 - **Database Maintenance**: Tools to seed default data or flush test records.
 
@@ -423,9 +430,9 @@ Fully customizable legal pages with sensible defaults based on municipal 311 bes
   - Response time expectations
   - Liability limitations
   
-- **Accessibility Statement**: Customizable Markdown covering ADA/WCAG compliance. Default includes:
-  - WCAG 2.1 Level AA commitment
-  - Section 508 compliance
+- **Accessibility Statement**: Customizable Markdown for the town's accessibility commitments. Default includes:
+  - A WCAG 2.1 Level AA goal
+  - A Section 508 reference
   - Alternative submission methods (phone, email, in-person)
   - Contact information for accessibility concerns
 
@@ -643,7 +650,7 @@ All research fields are computed on-the-fly using real APIs:
 - **Staff audit log entries** in public views show "Staff" instead of individual usernames
 - **Legal hold** (`flagged` field) can only be toggled by admin-role users
 - **Global rate limit**: 500 requests/minute per IP across all endpoints (via SlowAPI)
-- **Authentication**: Staff endpoints require a valid Auth0 JWT bearer token
+- **Authentication**: Staff endpoints require a valid JWT bearer token from the configured identity provider
 
 ### Tech Stack
 | Component | Technology | Description |
@@ -944,21 +951,19 @@ For an immersive bird's eye map experience with 3D buildings, configure a **Goog
 
 ## Centralized Hosting (Managed Mode)
 
-The same gap that leaves one town behind leaves a whole state's worth of small towns behind. Pinpoint 311 runs as a single self-hosted instance for one municipality — or a state, county, or agency can host many towns at once from one control plane, so a town that could never stand up its own server still gets a full 311 system.
+**Self-hosting is the default, and it is complete on its own.** A single town runs its own instance, owns its data, and needs nothing else in this section. Everything above describes that standalone deployment.
 
-**Every town stays fully isolated.** One instance equals one jurisdiction, each with its own database, storage, encryption key, and secrets. There are no shared tables and no cross-town data — one town's resident data never mixes with another's.
+Centralized hosting is a **separate, optional** feature for a different situation: a state, county, or agency that wants to stand up and run instances for *many* towns at once — including towns that could never manage their own server. It changes nothing about how a self-hosted deployment works, and no self-hosted town depends on it. The orchestrator that drives it lives in its own repository, **[Pinpoint-311/centralizedhosting](https://github.com/Pinpoint-311/centralizedhosting)**; this repository only contains the optional, flag-gated hooks that let an instance *be* driven by one.
 
-**A separate control plane provisions and monitors the fleet.** Instead of logging into dozens of servers by hand, the operator uses an orchestrator that:
-- provisions a new town instance and injects only platform-managed settings (infrastructure, backups, domain);
-- rolls out new versions safely — each instance reports a version and database-revision stamp on its health endpoint, so upgrades can be gated on compatibility;
-- suspends and resumes instances as part of the town lifecycle;
-- and aggregates health, uptime, and cost metadata across every town.
+When used, the model is:
+
+**Every town stays fully isolated.** One instance equals one jurisdiction, each with its own database, storage, encryption key, and secrets — the same isolation a self-hosted town has. There are no shared tables and no cross-town data; one town's resident data never mixes with another's.
+
+**A separate control plane provisions and monitors the fleet.** Instead of logging into many servers by hand, the operator uses the orchestrator to provision new town instances and inject only platform-managed settings (infrastructure, backups, domain); roll out new versions safely, gated on the version and database-revision stamp each instance reports on its health endpoint; suspend and resume instances; and aggregate health, uptime, and cost metadata across the fleet.
 
 **The control plane never touches resident data.** Its job is infrastructure, platform secrets, version rollout, and aggregate metadata — nothing more. Everything a town's staff and residents do stays inside that town's own instance.
 
-**Managed mode is opt-in and additive.** With `MANAGED_MODE` off (the default), the app behaves exactly as a standalone single-tenant deployment. With it on, a set of flag-gated hooks let the control plane own infrastructure settings while the town keeps control of its own services and content; platform-owned settings appear as "Managed by your state" and are locked in the Admin Console.
-
-This repository provides the app-side hooks — the provisioning and telemetry APIs (guarded by a provisioning token), platform-managed settings, health/version stamping for safe rollouts, and suspend/resume lifecycle controls. The orchestrator control plane itself is maintained separately.
+**It is opt-in and a no-op when off.** With `MANAGED_MODE` off (the default), the app behaves exactly as the standalone single-tenant deployment described throughout this README. With it on, flag-gated hooks let the control plane own infrastructure settings while the town keeps control of its own services and content; platform-owned settings appear as "Managed by your state" and are locked in the Admin Console. The app-side hooks (provisioning and telemetry APIs behind a token, managed settings, health/version stamping, and lifecycle controls) live here; the orchestrator itself is maintained in its own repository.
 
 ---
 
