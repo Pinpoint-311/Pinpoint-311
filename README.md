@@ -44,6 +44,7 @@ This is enterprise-grade civic software for the towns that got left behind.
 - [Research Suite](#research-suite-university-lab-integration)
 - [Technical Architecture](#technical-architecture)
 - [Deployment & Setup](#deployment--setup)
+- [Centralized Hosting](#centralized-hosting-managed-mode)
 - [Security & Governance](#security--governance)
 - [License](#license)
 
@@ -278,9 +279,11 @@ graph LR
 - Tamper-evident audit log: every action is recorded in a hash-chained log, anchored daily so history can't be quietly rewritten.
 - State-aware records retention: automatic retention and legal-hold handling mapped to each state's public-records law (OPRA, FOIA, and equivalents).
 
-### 🔌 Connects to what your town already runs
+### 🔌 Connects to what your town already runs (in active development)
+Two-way connectors let requests, status, comments, and photos flow between Pinpoint and the systems a town already uses. This is an area under active development — coverage and vendor certification are expanding.
 - Purpose-built connectors for permitting and 311 systems that publish an open or documented API, plus support for the Open311 standard.
-- A single configurable connector for any other vendor that exposes a REST API — you provide the endpoint and key; it is clearly labeled as generic and verified with a built-in connection check before go-live.
+- A single configurable connector for any other vendor that exposes a REST API — you provide the endpoint and key. It is clearly labeled as generic (not certified against a specific vendor) and is verified with a built-in connection check and a test report before go-live.
+- Building or hardening a connector for your vendor is ongoing work; if you run a system not yet covered, the generic connector is the starting point.
 
 ---
 
@@ -936,6 +939,26 @@ For an immersive bird's eye map experience with 3D buildings, configure a **Goog
 
 > [!NOTE]
 > Bootstrap access is automatically disabled once Auth0 is configured. All future logins use SSO.
+
+---
+
+## Centralized Hosting (Managed Mode)
+
+The same gap that leaves one town behind leaves a whole state's worth of small towns behind. Pinpoint 311 runs as a single self-hosted instance for one municipality — or a state, county, or agency can host many towns at once from one control plane, so a town that could never stand up its own server still gets a full 311 system.
+
+**Every town stays fully isolated.** One instance equals one jurisdiction, each with its own database, storage, encryption key, and secrets. There are no shared tables and no cross-town data — one town's resident data never mixes with another's.
+
+**A separate control plane provisions and monitors the fleet.** Instead of logging into dozens of servers by hand, the operator uses an orchestrator that:
+- provisions a new town instance and injects only platform-managed settings (infrastructure, backups, domain);
+- rolls out new versions safely — each instance reports a version and database-revision stamp on its health endpoint, so upgrades can be gated on compatibility;
+- suspends and resumes instances as part of the town lifecycle;
+- and aggregates health, uptime, and cost metadata across every town.
+
+**The control plane never touches resident data.** Its job is infrastructure, platform secrets, version rollout, and aggregate metadata — nothing more. Everything a town's staff and residents do stays inside that town's own instance.
+
+**Managed mode is opt-in and additive.** With `MANAGED_MODE` off (the default), the app behaves exactly as a standalone single-tenant deployment. With it on, a set of flag-gated hooks let the control plane own infrastructure settings while the town keeps control of its own services and content; platform-owned settings appear as "Managed by your state" and are locked in the Admin Console.
+
+This repository provides the app-side hooks — the provisioning and telemetry APIs (guarded by a provisioning token), platform-managed settings, health/version stamping for safe rollouts, and suspend/resume lifecycle controls. The orchestrator control plane itself is maintained separately.
 
 ---
 
