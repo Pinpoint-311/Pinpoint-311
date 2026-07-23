@@ -36,7 +36,7 @@ A small VM is plenty for a typical town. Give it more headroom for higher volume
 
 ## Optional Cloud Services (pay-as-you-go)
 
-Every item below is optional. If you don't enable it, it costs nothing. AI, translation, secret storage, encryption, and moderation are provider-pluggable (Google, Azure, or AWS) — the examples show one common provider's pricing; others are broadly comparable. Maps is the one fixed dependency (Google Maps).
+Every item below is optional. If you don't enable it, it costs nothing. AI, translation, secret storage, encryption, and moderation are provider-pluggable (Google, Azure, or AWS). Translation, secret storage, KMS, email, and SMS cost about the same across the three clouds, so those are shown as shared ranges. **AI is the exception** — its cost depends mostly on which *model* you pick (each cloud offers both cheap and expensive ones), so it gets its own breakdown below. Maps is the one fixed dependency (Google Maps).
 
 ### Maps (required)
 Modern Google Maps pricing uses per-API monthly free quotas.
@@ -50,14 +50,14 @@ Modern Google Maps pricing uses per-API monthly free quotas.
 Most towns stay within the free quotas. A town with a few hundred requests a month typically pays **$0**.
 
 ### AI triage & photo analysis (optional)
-Example: a small, fast multimodal model.
+Cost is driven by the **model tier**, not the cloud — all three clouds offer both a cheap, fast model and a larger, pricier one. For 311 triage the light tier is plenty.
 
-| Item | Approx. rate | Typical monthly |
-|------|--------------|-----------------|
-| Input (text/image) | ~$0.25 / 1M tokens | ~$1–15 depending on volume |
-| Output | ~$1.50 / 1M tokens | |
+| Model tier | Approx. input / output per 1M tokens | Typical monthly (a few hundred requests) |
+|------------|--------------------------------------|------------------------------------------|
+| **Light / fast** (recommended for triage) | ~$0.15–0.25 / ~$0.60–1.50 | **~$1–5** |
+| **Larger / higher quality** | ~$2.50–3 / ~$10–15 | ~$10–40 |
 
-Analyzing a few hundred requests a month is on the order of **$1–5**. The live model list means you can switch to a cheaper or newer model at any time.
+Picking a light model keeps AI at the low end. The model picker refreshes live from your provider, so you can switch to a cheaper or newer model at any time — and if none is configured, AI is simply skipped at no cost.
 
 ### Translation (optional)
 | Tier | Cost |
