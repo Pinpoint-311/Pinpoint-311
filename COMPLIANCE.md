@@ -179,19 +179,22 @@ The backend ships with a pytest suite that exercises the security- and correctne
 
 The suite is designed to run without external cloud credentials — provider-dependent tests skip when a library or backend is absent rather than failing, so the core suite stays green in any environment.
 
-### CI/CD Security Scanning
+### CI/CD Security Scanning (GitLab Ultimate)
 
-| Workflow | Trigger | Purpose |
-|----------|---------|---------|
-| Build & Publish | Push to main | Multi-arch Docker builds + container image scan |
-| CodeQL | Push/PR + weekly | Static application security testing (SAST) |
-| Security Scan | Push to main + weekly | Dynamic scanning (DAST) + repository/dependency vulnerability scan |
-| Secret scanning | Push/PR | Detects credentials committed to the repository (Gitleaks) |
-| Accessibility | Push to main | Automated accessibility checks |
-| Uptime Monitor | Every 15 min | Health checks + auto-issue on failure |
-| Dependabot | Weekly | Dependency update PRs |
+Security scanning runs through the GitLab Ultimate application-security suite. Each scanner runs on merge requests and on the default branch, and findings flow into the project's Security Dashboard and Vulnerability Report where they are triaged and tracked to resolution.
 
-Optional error tracking via Sentry (`SENTRY_DSN`), with PII sending disabled by default.
+| Scanner | Type | Purpose |
+|---------|------|---------|
+| Advanced SAST | Static | Cross-file, taint-aware static analysis of application code |
+| IaC Scanning | Static | Misconfiguration checks on Docker/Compose and infrastructure definitions |
+| Secret Detection | Static | Detects credentials committed to the repository history |
+| Dependency Scanning | Composition | Known-vulnerability checks on dependencies, with a CycloneDX SBOM |
+| Container Scanning | Composition | Vulnerability scan of the built container images |
+| DAST | Dynamic | Runtime scan of the running application |
+| API Fuzzing | Dynamic | Fault-injection against the API surface |
+| Coverage-guided Fuzzing | Dynamic | Coverage-driven fuzzing of targeted code paths |
+
+Merge requests surface newly introduced vulnerabilities inline, so regressions are caught before they merge. Application health and uptime are monitored separately, and optional error tracking is available via Sentry (`SENTRY_DSN`), with PII sending disabled by default.
 
 ### External Vulnerability Scanning (CISA)
 

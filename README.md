@@ -16,8 +16,6 @@
 
 <p align="center">
   <a href="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/build-publish.yml"><img src="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/build-publish.yml/badge.svg" alt="Build Status"></a>
-  <a href="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/codeql.yml"><img src="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
-  <a href="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/security-scan.yml"><img src="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/security-scan.yml/badge.svg" alt="Security Scan"></a>
   <a href="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/accessibility.yml"><img src="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/accessibility.yml/badge.svg" alt="Accessibility"></a>
 </p>
 
@@ -795,17 +793,28 @@ Built toward **WCAG 2.1 Level AA**: keyboard navigation, a 4.5:1 contrast target
 
 ### CI/CD Pipeline
 
-Pinpoint 311 uses GitHub Actions for automated builds and security scanning:
+Security scanning runs through the **GitLab Ultimate** application-security suite; builds and operational checks run as pipeline jobs. Findings flow into the GitLab Security Dashboard and are surfaced inline on merge requests.
+
+**Security scanning (GitLab Ultimate)**
+
+| Scanner | Type | Purpose |
+|---------|------|---------|
+| **Advanced SAST** | Static | Cross-file, taint-aware analysis of application code |
+| **IaC Scanning** | Static | Misconfiguration checks on Docker/Compose definitions |
+| **Secret Detection** | Static | Catches credentials committed to history |
+| **Dependency Scanning** | Composition | Vulnerable-dependency checks + CycloneDX SBOM |
+| **Container Scanning** | Composition | Vulnerability scan of built images |
+| **DAST** | Dynamic | Runtime scan of the running application |
+| **API / Coverage Fuzzing** | Dynamic | Fault injection against the API and targeted code paths |
+
+**Build & operations**
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| **Build & Publish** | Push to main | Multi-arch Docker images to GHCR |
-| **CodeQL** | Push/PR + weekly | Static security analysis (Python/JS) |
-| **Security Scan** | Push to main + weekly (Sundays) | OWASP ZAP + Trivy vulnerability scanning |
+| **Build & Publish** | Push to main | Multi-arch Docker images |
 | **Accessibility** | Push to main | Pa11y accessibility audits |
 | **Uptime Monitor** | Every 15 min | Health checks with auto-restart |
 | **Load Test** | Manual dispatch | K6 performance benchmarking |
-| **Dependabot** | Weekly | Automatic dependency updates |
 
 ### Self-Healing Infrastructure
 
