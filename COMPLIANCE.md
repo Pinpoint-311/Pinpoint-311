@@ -158,38 +158,54 @@ Nothing is routed, assigned, closed, or prioritized automatically on the basis o
 
 ---
 
-## 3. Known Gaps
+## 3. Testing & Security Automation
 
-| Area | Current state | Notes |
-|------|---------------|-------|
-| MFA | Implemented (identity provider) | TOTP, passkeys, biometrics |
-| Rate limiting | Implemented (slowapi) | 500/min global + tighter per-endpoint |
-| PII encryption at rest | Implemented | Envelope KMS, with local Fernet fallback |
-| Secrets management | Implemented | External store of record; encrypted DB fallback |
-| AI human-in-the-loop | Implemented | AI priority requires explicit acceptance |
-| Public-input moderation | Implemented (text) | Explicit/abusive text blocked; image screening via cloud/AI |
-| PII in free-text comments | Partial | Explicit content is blocked, but automated detection of PII a resident types into a comment is not yet implemented |
-| Security scanning | Implemented (CI) | SAST, dependency scanning, DAST, container scanning |
-| Provider certifications | Provider-dependent | Certifications belong to the cloud provider, not to Pinpoint |
+Verification happens on three fronts: an automated test suite that runs on every change, a set of CI/CD security scanners, and external vulnerability scanning of the public deployments.
 
----
+### Automated Test Suite
 
-## 4. Security Automation (CI/CD)
+The backend ships with a pytest suite that exercises the security- and correctness-sensitive paths directly, so the behaviors this document describes are checked in code, not just asserted in prose. Coverage includes:
+
+| Area | What the tests check |
+|------|----------------------|
+| Credential handling | Secrets are written as references, resolved back at build time, and unresolvable references are omitted rather than leaked |
+| PII encryption / KMS | Envelope wrap/unwrap round-trips, cross-provider portability, and fail-loud behavior under `REQUIRE_KMS` |
+| Provider dispatch | AI, translation, secret, KMS, email, SMS, and moderation providers route to the right backend and degrade cleanly when unconfigured |
+| Content moderation | Explicit/abusive terms are blocked at submission, ordinary profanity is flagged but allowed through, and moderation fails open on provider error |
+| Live model discovery | Provider model lists merge with the curated catalog, availability checks, and cache staleness handling |
+| Health classification | The database is treated as critical (loud failure) while optional providers surface as warnings |
+| Data retention | Retention-policy application and override/clear semantics |
+| Connectors | The generic connector round-trips through the standard save/build/verify path |
+
+The suite is designed to run without external cloud credentials — provider-dependent tests skip when a library or backend is absent rather than failing, so the core suite stays green in any environment.
+
+### CI/CD Security Scanning
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| Build & Publish | Push to main | Multi-arch Docker builds + container scan |
-| CodeQL | Push/PR + weekly | Static analysis (SAST) |
-| Security Scan | Push to main + weekly | DAST + repository vulnerability scan |
+| Build & Publish | Push to main | Multi-arch Docker builds + container image scan |
+| CodeQL | Push/PR + weekly | Static application security testing (SAST) |
+| Security Scan | Push to main + weekly | Dynamic scanning (DAST) + repository/dependency vulnerability scan |
+| Secret scanning | Push/PR | Detects credentials committed to the repository (Gitleaks) |
 | Accessibility | Push to main | Automated accessibility checks |
 | Uptime Monitor | Every 15 min | Health checks + auto-issue on failure |
 | Dependabot | Weekly | Dependency update PRs |
 
 Optional error tracking via Sentry (`SENTRY_DSN`), with PII sending disabled by default.
 
+### External Vulnerability Scanning (CISA)
+
+The public reference deployments are enrolled in CISA's free **Cyber Hygiene** vulnerability scanning service (available at no cost to state, local, tribal, and territorial governments and to public-sector-adjacent projects). CISA scans the internet-facing hosts on a recurring basis and reports findings back for remediation.
+
+To be clear about what this is and is not:
+- It **is** ongoing, independent external scanning of the live public endpoints by a neutral third party, with findings tracked to resolution.
+- It is **not** a certification, endorsement, or approval — CISA does not certify software, and enrollment says nothing about any individual jurisdiction's own deployment. Each town's instance is scanned only if that town enrolls it.
+
+A jurisdiction running its own instance can enroll its deployment in the same free program directly with CISA.
+
 ---
 
-## 5. Accessibility
+## 4. Accessibility
 
 Built **toward WCAG 2.1 Level AA**. This describes the design target, not an independent audit or certification.
 
@@ -204,7 +220,7 @@ Not yet done: independent screen-reader testing and a third-party audit.
 
 ---
 
-## 6. Centralized Hosting (isolation notes)
+## 5. Centralized Hosting (isolation notes)
 
 Self-hosting is the default; centralized hosting is a separate, optional deployment model (see the README and the `centralizedhosting` repository). When used:
 - Each town is a fully isolated instance — its own database, storage, key, and secrets. There are no shared tables and no cross-town data.
@@ -213,7 +229,7 @@ Self-hosting is the default; centralized hosting is a separate, optional deploym
 
 ---
 
-## 7. Setup & Configuration
+## 6. Setup & Configuration
 
 All integrations are configured through **Admin Console → Setup & Integration** with step-by-step guidance filtered to the cloud and features you choose. No CLI tools are required.
 
@@ -231,7 +247,7 @@ All integrations are configured through **Admin Console → Setup & Integration*
 
 ---
 
-## 8. Contact & Resources
+## 7. Contact & Resources
 
 - **Repository**: [GitHub](https://github.com/Pinpoint-311/Pinpoint-311)
 - **API documentation**: `/api/docs` (Swagger UI)
