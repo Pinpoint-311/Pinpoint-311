@@ -667,21 +667,24 @@ All research fields are computed on-the-fly using real APIs:
 
 ### 💾 Resource Footprint
 
-The whole stack is light. Measured at idle on a small VM:
+The whole stack is light. Approximate idle memory per container (estimates, not a guarantee — real usage depends on traffic and which providers are loaded):
 
-| Service | CPU | Memory |
-|---------|-----|--------|
-| PostgreSQL (db) | ~4% | 18 MB |
-| Backend (FastAPI) | <1% | 23 MB |
-| Worker (Celery) | <1% | 94 MB |
-| Frontend (Nginx) | <1% | 3 MB |
-| Caddy (HTTPS) | ~1% | 14 MB |
-| Redis | <1% | 4 MB |
-| **TOTAL** | **~6%** | **~160 MB** |
+| Service | Approx. idle memory |
+|---------|--------------------|
+| PostgreSQL (db) | ~20 MB |
+| Backend (FastAPI) | ~30 MB |
+| Worker (Celery) | ~110 MB |
+| Frontend (Nginx) | ~5 MB |
+| Caddy (HTTPS) | ~15 MB |
+| Redis | ~5 MB |
+| **Total (idle)** | **~185 MB** |
 
-These are idle-baseline figures; actual usage varies with traffic and which optional providers are enabled. AI, translation, and moderation run in the provider's cloud, so they add little to the local footprint.
+What moves these numbers:
+- **Content moderation** adds a small always-on text scanner (a wordlist library) to the worker — a few MB.
+- **Cloud providers** run in the provider's cloud, so AI, translation, and cloud moderation add little locally. The exception is the AWS SDK: when an AWS provider is enabled, importing it adds roughly 30–60 MB to whichever process uses it.
+- **Traffic** raises CPU and memory above these idle baselines.
 
-**Deployment cost:** runs comfortably on a small cloud VM (roughly 1 vCPU, 1 GB RAM), which is inexpensive on most providers. Larger towns may want more headroom.
+**Deployment cost:** runs comfortably on a small cloud VM (roughly 1 vCPU, 1–2 GB RAM), which is inexpensive on most providers. Give it more headroom for higher volume or if you enable the AWS SDK-based providers.
 
 ### 🗄️ Database Migrations (Alembic)
 

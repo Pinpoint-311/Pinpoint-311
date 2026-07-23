@@ -1,358 +1,242 @@
 # Government Compliance & Security Posture
 
-The Pinpoint 311 platform is designed for on-premises deployment within municipal jurisdictions, prioritizing data sovereignty, administrative accountability, and regulatory compliance.
+Pinpoint 311 is designed for self-hosted deployment within a municipal jurisdiction, prioritizing data ownership, administrative accountability, and support for public-records and privacy obligations.
+
+> **Read this first.** This document describes features that are *designed to support* the requirements a jurisdiction may be subject to. It is not a certification, an audit result, or a guarantee of compliance with any standard. Whether a given deployment meets a given requirement (CJIS, NIST 800-53, state public-records law, WCAG, and so on) depends on how it is configured and operated, and remains the responsibility of the deploying jurisdiction. Where cloud providers are referenced, any certifications (SOC 2, ISO 27001, FedRAMP, etc.) belong to that provider and apply to their service, not to Pinpoint.
 
 ---
 
 ## 1. Government-Ready Core Features
 
-### Data Sovereignty
-- **On-Premises Deployment**: Containerized via Docker for deployment behind municipal firewalls
-- **Configurable PII Handling**:
-  - **Cloud Mode**: PII encrypted via Google Cloud KMS (data transits to GCP for encryption, stored encrypted locally)
-  - **Local Mode**: PII encrypted via Fernet locally (no cloud dependency, `SECRET_KEY` based)
-- **No Third-Party Analytics**: No external tracking or analytics services
+### Data Ownership
+- **Self-hosted deployment**: containerized with Docker for deployment on the town's own infrastructure or private cloud.
+- **PII encryption, two modes**:
+  - **Cloud KMS mode**: PII is protected with envelope encryption — a local data key encrypts the field, and that data key is wrapped by your cloud's key service (Google Cloud KMS, Azure Key Vault, or AWS KMS). Ciphertext is stored locally; only the data-key wrap/unwrap involves the cloud.
+  - **Local mode**: PII is encrypted locally with Fernet (`SECRET_KEY`-derived), with no cloud dependency.
+  - **Fail-loud option**: setting `REQUIRE_KMS` makes the platform refuse to store PII if the key service is unavailable, rather than silently falling back.
+- **No third-party analytics**: no external tracking or analytics services; the application does not phone home.
 
 ### Audit Logging
-- **Comprehensive Trail**: Every lifecycle event recorded in `request_audit_logs` table
-- **Actions Tracked**: Submission, assignment, status changes, comments, edits
-- **Immutable Ledger**: Write-only audit design for legal discovery and institutional memory
+- **Comprehensive trail**: every lifecycle event is recorded in the `request_audit_logs` table (submission, assignment, status changes, comments, edits).
+- **Tamper-evident, not immutable**: entries are hash-chained, and the chain head is anchored on a schedule. The data lives in a normal database table — the chaining lets tampering be *detected*, it does not make the records physically immutable.
 
 ### Role-Based Access Control (RBAC)
 
-| Role | Access Level |
+| Role | Access level |
 |------|--------------|
-| **Resident** | Public submission, track own requests (ID required), no PII visibility |
-| **Staff** | Department-scoped or global request management, internal comments |
-| **Researcher** | Read-only access to sanitized data exports and analytics dashboards |
-| **Admin** | System-wide control: users, departments, branding, API keys |
+| **Resident** | Public submission; track own requests by ID; no PII visibility |
+| **Staff** | Department-scoped or global request management; internal comments |
+| **Researcher** | Read-only access to sanitized data exports and analytics |
+| **Admin** | System-wide control: users, departments, branding, providers, keys |
 
-### Open311 Compliance
-- **GeoReport v2**: Standard-compliant JSON API for interoperability
-- **Service Discovery**: JSON endpoint at `/api/open311/v2/services.json`
-- **Third-Party Integration**: Compatible with Open311 reporter apps
+### Open311
+- **GeoReport v2**: standards-based JSON API for interoperability.
+- **Service discovery**: JSON endpoint at `/api/open311/v2/services.json`.
 
 ---
 
 ## 2. Security Posture
 
-### Enterprise Security Stack
+### Security Layers (provider-pluggable)
 
-Pinpoint 311 implements a production-grade, managed security stack:
+Each layer works with the provider the town chooses. Where nothing external is configured, the platform falls back to encrypted database storage.
 
-| Component | Purpose | Provider |
-|-----------|---------|----------|
-| **Auth0** | SSO with MFA & Passkeys | Managed Identity |
-| **Google Secret Manager** | API keys & credentials | Google Cloud |
-| **Google Cloud KMS** | Resident PII encryption | Google Cloud |
-| **Watchtower** | Container auto-updates | Self-hosted |
+| Layer | Purpose | Options |
+|-------|---------|---------|
+| **Identity** | Staff SSO with MFA and passkeys | Auth0 by default; Microsoft Entra ID, Okta, or generic OIDC |
+| **Secret storage** | API keys and connection credentials | Your cloud's secret store, with an encrypted database fallback |
+| **PII encryption** | Resident PII at rest | Envelope encryption with your cloud's key service, or a local key |
+| **Content moderation** | Screening public inputs | Built-in text scan, plus your cloud's moderation service (optional) |
+| **Auto-update** | Optional container image updates | Self-hosted, off by default |
 
-### Zero-Password Authentication (Auth0)
+### Staff Authentication
 
-Staff login via **Auth0** eliminates password-related vulnerabilities:
+Staff sign in through the configured identity provider (Auth0 by default). Passwords are never stored by Pinpoint — authentication is delegated to the provider.
 
 | Feature | Implementation |
 |---------|----------------|
-| Authentication | Auth0 OIDC with JWT tokens |
-| Multi-Factor | TOTP, passkeys, biometric support |
-| Session Management | JWT tokens with 8-hour expiration |
-| Passwordless | WebAuthn/passkeys for phishing resistance |
-| Social Login | Google, Microsoft identity providers |
-| Password Storage | **None** - fully delegated to Auth0 |
+| Authentication | OIDC with JWT bearer tokens |
+| Multi-factor | Provider-supported TOTP, passkeys, biometrics |
+| Session | JWT with an 8-hour expiration |
+| Passwordless | Provider-supported WebAuthn / passkeys |
+| Password storage | None — delegated to the identity provider |
 
-### Secrets Management (Google Secret Manager)
+### Secrets Management (system of record)
 
-API credentials stored in Google Secret Manager with HSM-backed encryption:
-
-| Property | Value |
-|----------|-------|
-| Storage | Google Cloud Secret Manager |
-| Encryption | Google-managed HSMs (AES-256-GCM) |
-| Access Control | IAM + VPC controls |
-| Audit Logging | Full access logs in Cloud Audit |
-| Free Tier | 6 active secret versions (bundled secrets) |
-
-**Protected Secrets (6 Bundles):**
-- `secret-auth0`: SSO credentials
-- `secret-smtp`: Email configuration
-- `secret-sms`: SMS provider keys
-- `secret-google`: Maps, Vertex AI credentials
-- `secret-backup`: S3/backup configuration
-- `secret-config`: Township-specific settings
-
-### PII Encryption (Google Cloud KMS)
-
-Resident personal information encrypted with Google Cloud KMS:
+When an external secret store is configured, integration and provider credentials are written **there**, and the application database keeps only a reference — the raw secret does not live in the app database. When no external store is configured, credentials are held in an encrypted database table (Fernet) as a fallback.
 
 | Property | Value |
 |----------|-------|
-| Algorithm | AES-256-GCM (HSM-backed) |
-| Key Management | Google-managed, automatic rotation |
-| Protected Fields | Email, phone, name, address |
-| Audit Trail | Cloud Audit Logs for all encrypt/decrypt |
-| Compliance | SOC 2, ISO 27001, FedRAMP eligible |
+| Store | Your cloud's secret store (Secret Manager / Key Vault / AWS Secrets Manager), or encrypted DB fallback |
+| In the app database | A reference to the secret, not the secret itself (when an external store is used) |
+| Bootstrap keys | A minimal set of keys needed to *reach* the store remain in the encrypted local table |
 
-### Container Auto-Updates (Watchtower)
-
-Automatic security patching via Watchtower:
+### PII Encryption (envelope)
 
 | Property | Value |
 |----------|-------|
-| Schedule | Daily at 3am (configurable) |
-| Restart | Rolling restarts for zero downtime |
-| Containers | PostgreSQL, Redis, Caddy, Backend |
-| Cleanup | Old images automatically removed |
+| Scheme | AES-256-GCM data key per value, wrapped by the configured cloud key service |
+| Portability | A value stays decryptable under whichever key service wrapped it (tagged wrap), so switching clouds does not orphan existing data |
+| Protected fields | Email, phone, name, address |
+| Local fallback | Fernet (AES-128-CBC + HMAC-SHA256) derived from `SECRET_KEY` |
+| Provider guarantees | HSM backing, rotation, and certifications are the cloud provider's, not Pinpoint's — verify them against your requirements |
+
+### Content Moderation (public inputs)
+
+Resident-submitted text is screened as it is received:
+- **Always-on text scan** using an open-source profanity library plus a small explicit/abusive term gate. Explicit or abusive descriptions and public comments are **blocked at submission** (HTTP 400); ordinary profanity is allowed through and flagged for staff, so a legitimate but angry report is not rejected.
+- **Optional cloud layer**: when a moderation provider is configured, text is additionally screened by the cloud's moderation service (which can catch contextual toxicity a wordlist cannot), and images are screened for explicit content.
+- **Graceful**: if no cloud provider is configured, text still uses the built-in scan and images fall back to the AI vision assessment. Moderation never blocks intake on its own error (fails open on failure).
+
+### Resilience and Optional Providers
+
+Every advanced provider is optional. If one is unconfigured or unreachable, that feature is skipped and a warning is surfaced in the Admin Console (`/health/`), while the rest of the platform continues to run. Core data safety is the exception: the database is treated as critical (its failure is loud), and PII encryption fails loudly when `REQUIRE_KMS` is set rather than storing plaintext.
 
 ### Safe Version Deployment (Admin Console)
 
-The Version Switcher in the Admin Console implements a production-grade, fault-tolerant deployment mechanism:
+The Version Switcher performs a backup-first, health-checked deployment with automatic rollback:
 
-| Step | Action | Rollback Protection |
-|------|--------|---------------------|
-| 1 | **Database Backup** | `pg_dump` creates timestamped backup |
-| 2 | **Git Checkout** | Stashes local changes, checks out version |
-| 3 | **Database Migrations** | Forward-only Alembic migrations (non-destructive) |
-| 4 | **Container Rebuild** | Docker builds new backend/frontend images |
-| 5 | **Health Check** | 30-second timeout verification |
-| 6 | **Audit Log** | Records deployment or failure with details |
+| Step | Action |
+|------|--------|
+| 1 | Timestamped database backup (`pg_dump`) |
+| 2 | Checkout the target version (local changes stashed) |
+| 3 | Forward-only Alembic migrations (non-destructive) |
+| 4 | Rebuild backend/frontend images |
+| 5 | Health-check verification with timeout |
+| 6 | Audit-log the outcome |
 
-**Automatic Rollback**: If any step fails, the system:
-- Reverts to the original git commit
-- Restarts containers with original code
-- Logs the failure with rollback details
-
-**Security Controls**:
-- **Admin-only**: Requires admin authentication
-- **Audit Trail**: All deployments logged with timestamp, version, and outcome
-- **Backup Retention**: Database backups preserved for disaster recovery
-- **Health Verification**: Ensures system is responsive before completion
-
-### Legacy Encryption (Local Development)
-
-For environments without GCP, Fernet encryption provides fallback:
-
-| Property | Value |
-|----------|-------|
-| Algorithm | Fernet (AES-128-CBC with HMAC-SHA256) |
-| Key Derivation | PBKDF2 from `SECRET_KEY` environment variable |
-| Key Size | 256-bit derived key |
-| Implementation | `cryptography` library (PyCA) |
-| Location | `backend/app/core/encryption.py` |
+If any step fails, the system reverts to the original commit, restarts with the original code, and logs the rollback. In managed (state-hosted) mode this self-update is locked — the control plane owns rollouts.
 
 ### Rate Limiting
-
-API endpoints are protected against abuse:
 
 | Limit | Value |
 |-------|-------|
 | Default | 500 requests/minute per IP |
+| Sensitive endpoints | Tighter per-endpoint limits (e.g. 10/min submit, 5/min public comment) |
 | Implementation | slowapi middleware |
-| Response on Exceeded | HTTP 429 with Retry-After header |
+| Response on exceeded | HTTP 429 with `Retry-After` |
 
 ### Security Headers
 
-All API responses include government-grade security headers:
-
 | Header | Value | Purpose |
 |--------|-------|---------|
+| Strict-Transport-Security | max-age=31536000; includeSubDomains | Enforce HTTPS |
 | X-Frame-Options | DENY | Prevent clickjacking |
 | X-Content-Type-Options | nosniff | Prevent MIME sniffing |
-| X-XSS-Protection | 1; mode=block | Legacy XSS protection |
 | Referrer-Policy | strict-origin-when-cross-origin | Control referrer leakage |
 | Content-Security-Policy | frame-ancestors 'none' | Prevent framing |
+| Permissions-Policy | geolocation=(self), camera=(), microphone=(), payment=(), usb=() | Restrict browser features |
 | Cache-Control | no-store (API routes) | Prevent caching sensitive data |
 
-### Infrastructure Security
-
-| Layer | Protection |
-|-------|------------|
-| Transport | Automatic HTTPS via Caddy (Let's Encrypt) |
-| API Secrets | Environment isolation, never in version control |
-| Database | PostgreSQL in private Docker network |
-| CORS | Configurable Cross-Origin Resource Sharing |
-
 ### Input Validation
-- Pydantic schema validation on all API inputs
-- SQL injection protection via SQLAlchemy ORM
-- XSS prevention through React's built-in escaping
+- Pydantic schema validation on all API inputs.
+- Parameterized queries via the SQLAlchemy ORM (no string-built SQL).
+- Output escaping through React's built-in rendering.
 
-### Vertex AI Security
+### AI Provider Security
 
-AI analysis is powered by **Google Cloud Vertex AI** with enterprise-grade security:
+AI analysis runs on whichever provider the town configures. Data-residency, retention, training, and certification guarantees depend on that provider — verify them against your jurisdiction's requirements. What Pinpoint controls:
 
-| Feature | Protection |
-|---------|------------|
-| **Data Residency** | Processing stays within configured GCP region (no cross-border transfers) |
-| **Encryption** | TLS 1.3+ in transit, AES-256 at rest |
-| **No Training on Customer Data** | Your data is NEVER used to train Google's models |
-| **Audit Logging** | All API calls logged in Cloud Audit Logs |
-| **Certifications** | SOC 1/2/3, ISO 27001, FedRAMP, HIPAA eligible |
-| **Access Control** | Service Account with minimal IAM permissions |
+| Aspect | What Pinpoint does |
+|--------|--------------------|
+| Data sent | Only request text and up to three photos; PII is redacted from the analysis output |
+| Transport | Requests go directly to your configured provider over TLS |
+| Human-in-the-loop | AI priority/category suggestions require explicit staff acceptance |
+| Optional | AI can be disabled entirely; the platform runs without it |
 
 #### Human-in-the-Loop Priority Scoring
 
-AI priority suggestions follow a **strict human accountability model**:
-
 | Stage | Behavior |
 |-------|----------|
-| **AI Analysis** | Gemini generates priority score (1-10) stored in `ai_analysis` JSON field |
-| **Display** | Staff sees "AI Suggested: X.X" with prominent Accept button |
-| **Acceptance** | Staff must explicitly click "Accept AI Priority" to confirm |
-| **Audit Trail** | Acceptance creates audit log entry: `action=priority_accepted` |
-| **Override** | Staff can set manual priority at any time, superseding AI suggestion |
+| **AI analysis** | The model produces a priority score (1–10), stored only in the `ai_analysis` JSON field |
+| **Not applied** | The score is **never written to the request's priority** |
+| **Acceptance** | The priority changes only when staff click "Accept AI Priority" |
+| **Audit** | Acceptance is recorded in the audit log |
+| **Override** | Staff can set priority manually at any time |
 
-**Key Liability Protections:**
-- AI scores are **suggestions only** and never automatically become official priority
-- Complete audit trail of who accepted which AI suggestion and when
-- Manual override capability ensures human judgment prevails
-- No automatic actions taken based solely on AI assessment
+Nothing is routed, assigned, closed, or prioritized automatically on the basis of an AI assessment. Routing and assignment are handled by the rules an administrator configures, not by AI.
 
 ---
 
-## 3. Known Gaps & Vulnerabilities
+## 3. Known Gaps
 
-| Area | Current State | Risk | Remediation |
-|------|---------------|------|-------------|
-| **MFA** | ✅ **Implemented** (Auth0) | Resolved | TOTP, passkeys, biometric via Auth0 |
-| **Rate Limiting** | ✅ **Implemented** (slowapi 500/min) | Resolved | N/A |
-| **Encryption at Rest** | ✅ **Implemented** (GCP KMS + Fernet fallback) | Resolved | N/A |
-| **PII Encryption** | ✅ **Implemented** (Google Cloud KMS) | Resolved | HSM-backed AES-256-GCM |
-| **Secrets Management** | ✅ **Implemented** (Google Secret Manager) | Resolved | Bundled secrets with audit logging |
-| **AI Human-in-the-Loop** | ✅ **Implemented** | Resolved | AI priority requires explicit staff acceptance |
-| **Vertex AI Security** | ✅ **Enterprise-grade** (GCP Vertex AI) | Resolved | SOC/FedRAMP compliant, no data training |
-| **Container Updates** | ✅ **Implemented** (Watchtower) | Resolved | Automatic security patches at 3am daily |
-| **Security Scanning** | ✅ **Implemented** (CodeQL, Trivy, ZAP) | Resolved | Automated on every push + weekly |
-| **Dependency Updates** | ✅ **Implemented** (Dependabot) | Resolved | Weekly auto-PRs for vulnerable deps |
-| **Uptime Monitoring** | ✅ **Implemented** (GitHub Actions) | Resolved | 15-min health checks with alerting |
-| **Error Tracking** | ✅ **Implemented** (Sentry SDK) | Resolved | Set SENTRY_DSN to enable |
-| **Compliance Docs** | ✅ **Implemented** | Resolved | SSP and PIA in /docs folder |
-| Audit Retention | ✅ **Implemented** | Resolved | Configurable archival policy in Admin Console |
-| PII in Comments | Text input only | Moderate | Add AI/regex PII scanning for public fields |
-
+| Area | Current state | Notes |
+|------|---------------|-------|
+| MFA | Implemented (identity provider) | TOTP, passkeys, biometrics |
+| Rate limiting | Implemented (slowapi) | 500/min global + tighter per-endpoint |
+| PII encryption at rest | Implemented | Envelope KMS, with local Fernet fallback |
+| Secrets management | Implemented | External store of record; encrypted DB fallback |
+| AI human-in-the-loop | Implemented | AI priority requires explicit acceptance |
+| Public-input moderation | Implemented (text) | Explicit/abusive text blocked; image screening via cloud/AI |
+| PII in free-text comments | Partial | Explicit content is blocked, but automated detection of PII a resident types into a comment is not yet implemented |
+| Security scanning | Implemented (CI) | SAST, dependency scanning, DAST, container scanning |
+| Provider certifications | Provider-dependent | Certifications belong to the cloud provider, not to Pinpoint |
 
 ---
 
 ## 4. Security Automation (CI/CD)
 
-### GitHub Actions Workflows
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| Build & Publish | Push to main | Multi-arch Docker builds + container scan |
+| CodeQL | Push/PR + weekly | Static analysis (SAST) |
+| Security Scan | Push to main + weekly | DAST + repository vulnerability scan |
+| Accessibility | Push to main | Automated accessibility checks |
+| Uptime Monitor | Every 15 min | Health checks + auto-issue on failure |
+| Dependabot | Weekly | Dependency update PRs |
 
-| Workflow | File | Trigger | Purpose |
-|----------|------|---------|---------|
-| **Build & Publish** | `build-publish.yml` | Push to main | Multi-arch Docker builds + Trivy scan |
-| **CodeQL** | `codeql.yml` | Push/PR + weekly | Static security analysis (SAST) |
-| **Security Scan** | `security-scan.yml` | Push to main + weekly (Sundays) | OWASP ZAP (DAST) + Trivy repo scan |
-| **Accessibility** | `accessibility.yml` | Push to main | Pa11y accessibility audits |
-| **Uptime Monitor** | `uptime-monitor.yml` | Every 15 min | Health checks + auto-issue on failure |
-| **Load Test** | `load-test.yml` | Manual dispatch | K6 performance benchmarking |
-
-### Dependency Management (Dependabot)
-
-Configured in `.github/dependabot.yml`:
-- **pip** (backend): Weekly security updates
-- **npm** (frontend): Weekly security updates  
-- **Docker**: Base image updates
-- **GitHub Actions**: Workflow action updates
-
-### Container Scanning (Trivy)
-
-Every Docker image build includes Trivy vulnerability scanning:
-- Scans for CRITICAL and HIGH CVEs
-- Results uploaded to GitHub Security tab
-- Blocks deployment of vulnerable images
-
-### Dynamic Security Testing (OWASP ZAP)
-
-Weekly penetration testing via OWASP ZAP:
-- Baseline scan against production endpoints
-- Automated issue creation for findings
-- HTML report saved as workflow artifact
-
-### Error Tracking (Sentry)
-
-Optional Sentry SDK integration:
-```bash
-# Add to production environment
-SENTRY_DSN=https://xxx@xxx.ingest.sentry.io/xxx
-```
-- 10% trace sampling for performance monitoring
-- PII not sent (disabled by default)
-- Environment-aware reporting
-
-### Compliance Documentation
-
-| Document | Path | Purpose |
-|----------|------|---------|
-| System Security Plan | `docs/SECURITY_PLAN.md` | NIST 800-53 control mapping |
-| Privacy Impact Assessment | `docs/PRIVACY_ASSESSMENT.md` | Data collection and protection |
+Optional error tracking via Sentry (`SENTRY_DSN`), with PII sending disabled by default.
 
 ---
 
-## 5. Remediation Roadmap
+## 5. Accessibility
 
-### Remaining Items
+Built **toward WCAG 2.1 Level AA**. This describes the design target, not an independent audit or certification.
 
-| Priority | Item | Effort |
-|----------|------|--------|
-| Medium | PII Scanning in Comments | Regex + optional Vertex AI detection |
+| Guideline | Status |
+|-----------|--------|
+| 4.1.2 Name, Role, Value | aria-labels on interactive elements |
+| 1.4.3 Contrast | 4.5:1 contrast target |
+| 2.1.1 Keyboard | Full keyboard navigation |
+| 2.4.4 Link Purpose | Descriptive link text |
 
----
-
-## Compliance Checklist
-
-### Municipal IT Requirements
-- [ ] Passed security assessment
-- [ ] Data retention policy documented
-- [ ] Incident response plan established
-- [ ] Staff training completed
-
-### Technical Verification
-- [x] HTTPS enforced in production
-- [x] Audit logging enabled
-- [x] Password hashing verified (bcrypt)
-- [x] Role separation implemented
-- [x] Penetration testing completed (OWASP ZAP automated)
-- [x] Backup/restore procedure tested
-- [x] Security scanning implemented (CodeQL, Trivy, Dependabot)
+Not yet done: independent screen-reader testing and a third-party audit.
 
 ---
 
-## 6. Accessibility (WCAG 2.1 AA)
+## 6. Centralized Hosting (isolation notes)
 
-| Standard | Status |
-|----------|--------|
-| 4.1.2 Name, Role, Value | ✅ All interactive elements have aria-labels |
-| 1.4.3 Contrast | ✅ Minimum 4.5:1 ratio |
-| 2.1.1 Keyboard | ✅ Full keyboard navigation |
-| 2.4.4 Link Purpose | ✅ Descriptive link text |
-
-**Pending:** Screen reader testing, axe-core audit
+Self-hosting is the default; centralized hosting is a separate, optional deployment model (see the README and the `centralizedhosting` repository). When used:
+- Each town is a fully isolated instance — its own database, storage, key, and secrets. There are no shared tables and no cross-town data.
+- The control plane handles infrastructure, platform secrets, version rollout, and aggregate metadata only. It never accesses resident data.
+- Managed mode is opt-in (`MANAGED_MODE`); with it off, behavior is identical to a standalone deployment.
 
 ---
 
 ## 7. Setup & Configuration
 
-All platform integrations are configured through the **Admin Console → Setup & Integration** tab using step-by-step instructions. No CLI tools or scripts are required.
+All integrations are configured through **Admin Console → Setup & Integration** with step-by-step guidance filtered to the cloud and features you choose. No CLI tools are required.
 
-| Integration | Configuration Method |
-|-------------|---------------------|
-| Google Cloud (KMS, Translation, Vertex AI) | Manual setup via [GCP Console](https://console.cloud.google.com), credentials entered in Admin Console |
-| Auth0 SSO | Manual setup via [Auth0 Dashboard](https://auth0.com), credentials entered in Admin Console |
-| Email (SMTP) | SMTP credentials entered directly in Admin Console |
-| SMS Notifications | Twilio or custom HTTP API credentials entered in Admin Console |
+| Integration | Configuration |
+|-------------|---------------|
+| Cloud providers (AI, translation, secrets, KMS, email, SMS, moderation) | Credentials entered in the Admin Console; one "cloud environment" choice can set them together |
+| Identity (SSO) | Provider credentials entered in the Admin Console |
+| Maps | A Google Maps API key (the one fixed external dependency) |
+| Town-system connectors | Endpoint + key entered per connector; verified with a built-in connection check |
 
 ### Prerequisites
-- Auth0 account (free tier available)
-- GCP project with billing enabled (for AI, encryption, and translation features)
+- An identity provider account for staff SSO (a free tier is available with the default).
+- A Google Maps API key.
+- A cloud account only if you enable AI, translation, encryption, or cloud moderation — all optional.
 
 ---
 
 ## 8. Contact & Resources
 
 - **Repository**: [GitHub](https://github.com/Pinpoint-311/Pinpoint-311)
-- **API Documentation**: `/api/docs` (Swagger UI)
-- **Security Issues**: Report privately via GitHub Security Advisories
+- **API documentation**: `/api/docs` (Swagger UI)
+- **Security issues**: report privately via GitHub Security Advisories
 
 ---
 
-*Document Version: 1.3 | Last Updated: March 2026*
-
+*Document version: 2.0 | Last updated: July 2026*
