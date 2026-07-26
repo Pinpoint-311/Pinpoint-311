@@ -10,6 +10,8 @@ import {
     CheckCircle,
     Clock,
     FileText,
+    Braces,
+    TrendingUp,
     Map,
     Sparkles,
     LogOut,
@@ -1055,21 +1057,47 @@ export default function StaffDashboard() {
                                         <span className="sm:hidden">Research</span>
                                     </button>
                                     <div className="relative group">
-                                        <button className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 sm:py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all text-xs sm:text-sm font-medium w-full">
+                                        <button className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 sm:py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all text-xs sm:text-sm font-medium w-full shadow-lg shadow-purple-900/30">
                                             <Download className="w-4 h-4" />
                                             <span>Export</span>
-                                            <ChevronDown className="w-3 h-3" />
+                                            <ChevronDown className="w-3 h-3 transition-transform duration-200 group-hover:rotate-180" />
                                         </button>
-                                        <div className="absolute right-0 sm:right-0 mt-2 w-52 bg-gray-900 border border-white/20 rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-                                            <div className="p-1.5">
-                                                <p className="px-3 py-1.5 text-xs font-semibold text-white/40 uppercase">Requests</p>
-                                                <button onClick={() => handleExportRequests('csv')} className="w-full text-left px-3 py-2 text-sm text-white/80 hover:bg-white/10 rounded-md">📄 CSV</button>
-                                                <button onClick={() => handleExportRequests('json')} className="w-full text-left px-3 py-2 text-sm text-white/80 hover:bg-white/10 rounded-md">📋 JSON</button>
-                                                <button onClick={() => handleExportRequests('geojson')} className="w-full text-left px-3 py-2 text-sm text-white/80 hover:bg-white/10 rounded-md">🗺️ GeoJSON</button>
-                                                <div className="border-t border-white/10 my-1" />
-                                                <p className="px-3 py-1.5 text-xs font-semibold text-white/40 uppercase">Statistics</p>
-                                                <button onClick={() => handleExportStatistics('csv')} className="w-full text-left px-3 py-2 text-sm text-white/80 hover:bg-white/10 rounded-md">📊 CSV</button>
-                                                <button onClick={() => handleExportStatistics('json')} className="w-full text-left px-3 py-2 text-sm text-white/80 hover:bg-white/10 rounded-md">📈 JSON</button>
+                                        <div className="absolute right-0 mt-2 w-64 origin-top-right rounded-2xl border border-white/10 bg-slate-900/95 backdrop-blur-xl shadow-2xl shadow-black/50 ring-1 ring-white/5 opacity-0 invisible translate-y-1 group-hover:opacity-100 group-hover:visible group-hover:translate-y-0 transition-all duration-200 z-50 overflow-hidden">
+                                            <div className="p-2">
+                                                <p className="px-2.5 pt-1.5 pb-1 text-[10px] font-semibold text-white/40 uppercase tracking-wider">Requests</p>
+                                                {[
+                                                    { fmt: 'csv', Icon: FileText, label: 'CSV', hint: 'Spreadsheet-ready', ext: '.csv', fn: () => handleExportRequests('csv') },
+                                                    { fmt: 'json', Icon: Braces, label: 'JSON', hint: 'Structured records', ext: '.json', fn: () => handleExportRequests('json') },
+                                                    { fmt: 'geojson', Icon: Map, label: 'GeoJSON', hint: 'Mapping / GIS', ext: '.geojson', fn: () => handleExportRequests('geojson') },
+                                                ].map(({ fmt, Icon, label, hint, ext, fn }) => (
+                                                    <button key={fmt} onClick={fn} className="group/item w-full flex items-center gap-3 px-2.5 py-2 rounded-xl text-left hover:bg-white/[0.07] transition-colors">
+                                                        <span className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-primary-300 group-hover/item:bg-primary-500/15 group-hover/item:border-primary-400/30 transition-colors">
+                                                            <Icon className="w-4 h-4" />
+                                                        </span>
+                                                        <span className="flex-1 min-w-0">
+                                                            <span className="block text-sm font-medium text-white/90">{label}</span>
+                                                            <span className="block text-[11px] text-white/40">{hint}</span>
+                                                        </span>
+                                                        <span className="text-[10px] font-mono text-white/30">{ext}</span>
+                                                    </button>
+                                                ))}
+                                                <div className="border-t border-white/10 my-1.5" />
+                                                <p className="px-2.5 pt-1.5 pb-1 text-[10px] font-semibold text-white/40 uppercase tracking-wider">Statistics</p>
+                                                {[
+                                                    { fmt: 'csv', Icon: BarChart3, label: 'CSV', hint: 'Summary tables', ext: '.csv', fn: () => handleExportStatistics('csv') },
+                                                    { fmt: 'json', Icon: TrendingUp, label: 'JSON', hint: 'Structured metrics', ext: '.json', fn: () => handleExportStatistics('json') },
+                                                ].map(({ fmt, Icon, label, hint, ext, fn }) => (
+                                                    <button key={fmt} onClick={fn} className="group/item w-full flex items-center gap-3 px-2.5 py-2 rounded-xl text-left hover:bg-white/[0.07] transition-colors">
+                                                        <span className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-primary-300 group-hover/item:bg-primary-500/15 group-hover/item:border-primary-400/30 transition-colors">
+                                                            <Icon className="w-4 h-4" />
+                                                        </span>
+                                                        <span className="flex-1 min-w-0">
+                                                            <span className="block text-sm font-medium text-white/90">{label}</span>
+                                                            <span className="block text-[11px] text-white/40">{hint}</span>
+                                                        </span>
+                                                        <span className="text-[10px] font-mono text-white/30">{ext}</span>
+                                                    </button>
+                                                ))}
                                             </div>
                                         </div>
                                     </div>
@@ -1155,7 +1183,7 @@ export default function StaffDashboard() {
                                 <div className="bg-gradient-to-br from-red-500/20 to-red-500/5 border border-red-500/30 rounded-xl p-3 sm:p-5">
                                     <div className="text-[10px] sm:text-xs font-medium text-red-200 uppercase tracking-wider">High Priority Aging</div>
                                     <div className="text-2xl sm:text-3xl font-bold text-white mt-1 sm:mt-2">{advancedStats?.aging_high_priority_count || 0}</div>
-                                    <div className="text-[10px] sm:text-xs text-white/60 mt-1">P1-P3 open &gt; 7 days</div>
+                                    <div className="text-[10px] sm:text-xs text-white/60 mt-1">High priority (8-10) unresolved &gt; 7 days</div>
                                 </div>
                                 <div className="bg-gradient-to-br from-blue-500/20 to-blue-500/5 border border-blue-500/30 rounded-xl p-3 sm:p-5">
                                     <div className="text-[10px] sm:text-xs font-medium text-blue-200 uppercase tracking-wider">Peak Activity</div>

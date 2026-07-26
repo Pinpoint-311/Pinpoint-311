@@ -1506,15 +1506,32 @@ async def get_advanced_statistics(
     except Exception as e:
         logger.warning(f"Repeat locations query failed: {e}")
     
-    # Aging high-priority count (P1-P3 open > 7 days)
-    aging_hp_query = select(func.count(ServiceRequest.id)).where(
-        ServiceRequest.deleted_at.is_(None),
-        ServiceRequest.status == "open",
-        ServiceRequest.priority.in_([1, 2, 3]),
-        ServiceRequest.requested_datetime < now - timedelta(days=7)
+    # High-priority aging: requests still unresolved (open or in progress) for
+    # more than 7 days whose *effective* priority is high (>= 8 on the 1-10 scale
+    # the rest of the app uses). Effective priority mirrors the UI: the
+    # human-approved manual_priority_score if set, else the AI suggestion in
+    # ai_analysis, else the neutral default of 5. The legacy `priority` column is
+    # unused (always its default), so it must not be used here.
+    aging_candidates = await db.execute(
+        select(ServiceRequest.manual_priority_score, ServiceRequest.ai_analysis).where(
+            ServiceRequest.deleted_at.is_(None),
+            ServiceRequest.status.in_(["open", "in_progress"]),
+            ServiceRequest.requested_datetime < now - timedelta(days=7),
+        )
     )
-    aging_hp_result = await db.execute(aging_hp_query)
-    aging_high_priority_count = aging_hp_result.scalar() or 0
+    aging_high_priority_count = 0
+    for manual_score, ai in aging_candidates.all():
+        if manual_score is not None:
+            effective = manual_score
+        elif isinstance(ai, dict) and ai.get("priority_score") is not None:
+            effective = ai.get("priority_score")
+        else:
+            effective = 5
+        try:
+            if float(effective) >= 8:
+                aging_high_priority_count += 1
+        except (TypeError, ValueError):
+            pass
     
     # ========== Trends ==========
     
@@ -1523,7 +1540,9 @@ async def get_advanced_statistics(
     for i in range(7, -1, -1):
         week_start = now - timedelta(weeks=i+1)
         week_end = now - timedelta(weeks=i)
-        week_label = f"W{8-i}"
+        # Label each point with the week's start date (e.g. "Jul 21") rather than
+        # a generic "W1"..."W8", so the axis and tooltip show real dates.
+        week_label = f"{week_start.strftime('%b')} {week_start.day}"
         
         week_stats = {"period": week_label, "open": 0, "in_progress": 0, "closed": 0, "total": 0}
         for status in ["open", "in_progress", "closed"]:
