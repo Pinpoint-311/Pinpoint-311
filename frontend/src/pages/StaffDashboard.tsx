@@ -58,7 +58,6 @@ import { usePageNavigation } from '../hooks/usePageNavigation';
 import NotificationSettings from '../components/NotificationSettings';
 import ManualIntake from '../components/ManualIntake';
 import ActivityFeed from '../components/ActivityFeed';
-import SystemStatusPill from '../components/SystemStatusPill';
 import PrintWorkOrder from '../components/PrintWorkOrder';
 
 type View = 'dashboard' | 'active' | 'in_progress' | 'resolved' | 'statistics';
@@ -807,8 +806,6 @@ export default function StaffDashboard() {
                                 </div>
                             </button>
                             <div className="flex items-center gap-2">
-                                {/* Plain-language system status for non-technical staff */}
-                                <SystemStatusPill />
                                 {/* Activity Feed Bell */}
                                 <button
                                     onClick={() => setShowActivityFeed(true)}
