@@ -1692,7 +1692,7 @@ export default function AdminConsole() {
                                                     <div className="flex items-center justify-between">
                                                         <div className="flex items-center gap-3">
                                                             <div className={`relative w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm ring-1 ring-white/10 shadow-xl ${u.role === 'admin'
-                                                                ? 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-orange-900/50'
+                                                                ? 'bg-gradient-to-br from-amber-300 to-orange-500 text-amber-950 drop-shadow-sm shadow-orange-900/50'
                                                                 : 'bg-gradient-to-br from-primary-400 to-primary-600 text-white shadow-primary-900/60'
                                                                 }`}>
                                                                 {u.full_name ? u.full_name.charAt(0).toUpperCase() : u.username.charAt(0).toUpperCase()}
@@ -2059,6 +2059,7 @@ export default function AdminConsole() {
                                                     <Globe className="w-5 h-5 text-blue-400" />
                                                 </div>
                                                 <div className="min-w-0">
+                                                    <p className="text-[10px] font-semibold uppercase tracking-wider text-blue-300/70 mb-0.5">Jurisdiction</p>
                                                     <h3 className="text-sm font-semibold text-white">Municipality Boundary</h3>
                                                     <p className="text-xs text-white/50 mt-0.5">Search for your municipality to auto-fetch its boundary polygon</p>
                                                 </div>
@@ -2258,14 +2259,17 @@ export default function AdminConsole() {
                                             </label>
                                         </div>
 
-                                        {/* Custom Map Layers */}
-                                        <div className="px-5 sm:px-6 py-5">
+                                        {/* Custom Map Layers — a distinct function (infrastructure asset
+                                            layers) from the jurisdiction boundary above, so it reads as
+                                            its own panel with a clear separator and tonal shift. */}
+                                        <div className="px-5 sm:px-6 pt-7 pb-6 mt-2 border-t-2 border-white/10 bg-white/[0.02]">
                                             <div className="flex items-center justify-between gap-4 mb-5">
                                                 <div className="flex items-center gap-4">
                                                     <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-violet-500/20 to-violet-600/10 border border-violet-500/20 flex items-center justify-center shrink-0">
                                                         <Layers className="w-5 h-5 text-violet-400" />
                                                     </div>
                                                     <div className="min-w-0">
+                                                        <p className="text-[10px] font-semibold uppercase tracking-wider text-violet-300/70 mb-0.5">Portal Map</p>
                                                         <h3 className="text-sm font-semibold text-white">Custom Map Layers</h3>
                                                         <p className="text-xs text-white/50 mt-0.5">Infrastructure assets displayed on the portal map</p>
                                                     </div>
@@ -2784,9 +2788,10 @@ export default function AdminConsole() {
                                                                 ? ` (custom override; state minimum ${st.retention_years} yrs)`
                                                                 : ''}
                                                         </p>
-                                                        <p className="text-white/60 text-sm mt-1">
-                                                            Governing law: {st.public_records_law} • Source: {st.source}
+                                                        <p className="text-white/70 text-sm mt-1">
+                                                            Governing law: <span className="font-semibold text-amber-200">{st.public_records_law}</span>
                                                         </p>
+                                                        <p className="text-white/45 text-xs mt-0.5">Source: {st.source}</p>
                                                     </div>
                                                 </div>
                                             </div>
@@ -2815,8 +2820,9 @@ export default function AdminConsole() {
                                                     setIsSavingRetention(false);
                                                 }
                                             }}
+                                            variant="secondary"
                                             disabled={!selectedStateCode || isSavingRetention}
-                                            className="bg-gradient-to-r from-amber-400 to-orange-500 text-black"
+                                            className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white font-semibold border-amber-400/40 shadow-lg shadow-orange-900/30"
                                         >
                                             {isSavingRetention ? 'Saving...' : 'Confirm & Apply Policy'}
                                         </Button>
@@ -2855,7 +2861,11 @@ export default function AdminConsole() {
                                                 }
                                             }}
                                         >
-                                            Export for {retentionPolicy?.policy?.public_records_law?.split("(")[0]?.trim() || 'FOIA'}
+                                            Export for {(
+                                                (selectedStateCode && retentionStates.find(s => s.code === selectedStateCode)?.public_records_law)
+                                                || retentionPolicy?.policy?.public_records_law
+                                                || 'FOIA'
+                                            ).split("(")[0].trim()}
                                         </Button>
                                     </div>
                                 </AccordionSection>

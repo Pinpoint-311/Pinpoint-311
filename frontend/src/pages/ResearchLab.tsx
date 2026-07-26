@@ -159,7 +159,7 @@ const CORE_FIELDS = [
     { name: 'photo_count', type: 'int', description: 'Number of photos attached' },
     { name: 'status', type: 'string', description: 'Current status (open, in_progress, closed)' },
     { name: 'closed_substatus', type: 'string', description: 'Resolution type (resolved, no_action, etc.)' },
-    { name: 'priority', type: 'int (1-10)', description: 'Priority level (1=highest)' },
+    { name: 'priority', type: 'int (1-10)', description: 'Priority level (10=highest)' },
     { name: 'resolution_outcome', type: 'string', description: 'Standardized resolution category' },
     { name: 'address_anonymized', type: 'string', description: 'Generalized address (street only)' },
     { name: 'latitude', type: 'float', description: 'Latitude (fuzzed in privacy mode)' },
