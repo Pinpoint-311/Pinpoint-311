@@ -82,6 +82,11 @@ async def create_comment(
         from app.tasks.integrations import push_comment_to_integrations
         push_comment_to_integrations.delay(comment.id)
 
+    # Notify assigned staff / department of the comment (internal or external),
+    # respecting each user's notification preferences. The commenter is skipped.
+    from app.tasks.service_requests import notify_staff_of_activity
+    notify_staff_of_activity.delay(request_id, "comments", actor=current_user.username)
+
     return comment
 
 
