@@ -6,7 +6,8 @@ import {
 } from 'lucide-react';
 
 import { Modal } from './ui';
-import { api } from '../services/api';
+import { api, MapLayer } from '../services/api';
+import GoogleMapsLocationPicker from './GoogleMapsLocationPicker';
 import { ServiceDefinition, ServiceRequest } from '../types';
 
 type Source = 'phone' | 'email' | 'walk_in';
@@ -91,7 +92,18 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
     const [description, setDescription] = useState('');
     const [phone, setPhone] = useState('');
     const [address, setAddress] = useState('');
+    const [lat, setLat] = useState<number | null>(null);
+    const [lng, setLng] = useState<number | null>(null);
+    const [matchedAsset, setMatchedAsset] = useState<Record<string, any> | null>(null);
     const [showContact, setShowContact] = useState(false);
+
+    // Map configuration — the same picker residents use, so a call taker can
+    // drop a pin or search an address and the request is geolocated identically.
+    const [mapsApiKey, setMapsApiKey] = useState<string | null>(null);
+    const [townshipBoundary, setTownshipBoundary] = useState<object | null>(null);
+    const [mapLayers, setMapLayers] = useState<MapLayer[]>([]);
+    // Bumped on reset so the map picker remounts clean between back-to-back logs.
+    const [mapKey, setMapKey] = useState(0);
     const [firstName, setFirstName] = useState('');
     const [lastName, setLastName] = useState('');
     const [email, setEmail] = useState('');
@@ -115,6 +127,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
         if (!keepSource) setSource('phone');
         setServiceCode(''); setCatQuery(''); setCatOpen(false);
         setDescription(''); setPhone(''); setAddress('');
+        setLat(null); setLng(null); setMatchedAsset(null); setMapKey(k => k + 1);
         setShowContact(false); setFirstName(''); setLastName(''); setEmail('');
         setError(null);
     };
@@ -129,6 +142,18 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
         }
     }, [isOpen]);
 
+    // Load the map key, boundary and asset layers the first time the dialog is
+    // opened, mirroring the resident portal. All optional: if the key is absent
+    // the form falls back to a plain address text field.
+    useEffect(() => {
+        if (!isOpen || mapsApiKey) return;
+        api.getMapsConfig().then((config) => {
+            if (config.google_maps_api_key) setMapsApiKey(config.google_maps_api_key);
+            if (config.township_boundary) setTownshipBoundary(config.township_boundary);
+        }).catch(() => { });
+        api.getMapLayers().then(setMapLayers).catch(() => { });
+    }, [isOpen, mapsApiKey]);
+
     const canSubmit = !!serviceCode && description.trim().length >= 3 && saving === null;
 
     const submit = async (mode: 'close' | 'another') => {
@@ -141,6 +166,9 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                 service_code: serviceCode,
                 description: description.trim(),
                 address: address.trim() || undefined,
+                lat: lat ?? undefined,
+                long: lng ?? undefined,
+                matched_asset: matchedAsset,
                 first_name: firstName.trim() || undefined,
                 last_name: lastName.trim() || undefined,
                 email: email.trim() || undefined,
@@ -293,27 +321,46 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                     <p className="text-white/40 text-xs mt-1.5">AI triage sets a suggested priority automatically once you log it.</p>
                 </div>
 
-                {/* Callback + address */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                        <span className={labelCls}>
-                            {copy.phoneLabel}
-                            <span className="normal-case tracking-normal text-white/40 font-normal ml-1">(optional)</span>
-                        </span>
-                        <div className="relative">
-                            <PhoneIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/35" aria-hidden="true" />
-                            <input value={phone} onChange={e => setPhone(e.target.value)} inputMode="tel"
-                                placeholder={copy.phonePlaceholder} className={`${inputCls} pl-9`} />
-                        </div>
+                {/* Callback number */}
+                <div>
+                    <span className={labelCls}>
+                        {copy.phoneLabel}
+                        <span className="normal-case tracking-normal text-white/40 font-normal ml-1">(optional)</span>
+                    </span>
+                    <div className="relative">
+                        <PhoneIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/35" aria-hidden="true" />
+                        <input value={phone} onChange={e => setPhone(e.target.value)} inputMode="tel"
+                            placeholder={copy.phonePlaceholder} className={`${inputCls} pl-9`} />
                     </div>
-                    <div>
-                        <span className={labelCls}>Location <span className="normal-case tracking-normal text-white/40 font-normal ml-1">(optional)</span></span>
+                </div>
+
+                {/* Location — the same picker residents use: search an address or
+                    drop a pin on the map, geolocated identically to an online report. */}
+                <div>
+                    <span className={labelCls}>Location <span className="normal-case tracking-normal text-white/40 font-normal ml-1">(optional)</span></span>
+                    {mapsApiKey ? (
+                        <GoogleMapsLocationPicker
+                            key={mapKey}
+                            apiKey={mapsApiKey}
+                            townshipBoundary={townshipBoundary}
+                            customLayers={mapLayers.filter(layer => {
+                                if ((layer as any).visible_on_map === false) return false;
+                                const codes = layer.service_codes || [];
+                                if (codes.length === 0) return true;
+                                return selected ? codes.includes(selected.service_code) : false;
+                            })}
+                            value={{ address, lat, lng }}
+                            onChange={(loc) => { setAddress(loc.address); setLat(loc.lat); setLng(loc.lng); }}
+                            onAssetSelect={(asset) => setMatchedAsset(asset)}
+                            placeholder="Search for an address or click on the map…"
+                        />
+                    ) : (
                         <div className="relative">
                             <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/35" aria-hidden="true" />
                             <input value={address} onChange={e => setAddress(e.target.value)}
                                 placeholder="123 Main St, or nearest intersection" className={`${inputCls} pl-9`} />
                         </div>
-                    </div>
+                    )}
                 </div>
 
                 {/* Optional caller contact */}
