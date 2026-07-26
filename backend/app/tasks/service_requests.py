@@ -627,10 +627,21 @@ def send_department_notification(request_id: int, department_email: str):
             department = dept_result.scalar_one_or_none()
             
             notified_staff = []
-            
-            if department:
-                # Query staff in this department with their notification preferences
-                from app.models import User, user_departments
+
+            # Recipient default: the specifically-assigned person. Only when no
+            # one is assigned do we notify the whole routed department.
+            from app.models import User, user_departments
+            staff_members = []
+            if request.assigned_to:
+                assignee_result = await db.execute(
+                    select(User)
+                    .where(User.username == request.assigned_to)
+                    .where(User.is_active == True)
+                )
+                assignee = assignee_result.scalar_one_or_none()
+                if assignee:
+                    staff_members = [assignee]
+            elif department:
                 staff_result = await db.execute(
                     select(User)
                     .join(user_departments)
@@ -639,19 +650,7 @@ def send_department_notification(request_id: int, department_email: str):
                 )
                 staff_members = list(staff_result.scalars().all())
 
-                # Guarantee the specifically-assigned person is in the recipient
-                # set even if they aren't a member of the routed department, so
-                # "route to a specific staff member" actually reaches that person.
-                if request.assigned_to and not any(s.username == request.assigned_to for s in staff_members):
-                    assignee_result = await db.execute(
-                        select(User)
-                        .where(User.username == request.assigned_to)
-                        .where(User.is_active == True)
-                    )
-                    assignee = assignee_result.scalar_one_or_none()
-                    if assignee:
-                        staff_members.append(assignee)
-
+            if staff_members:
                 from app.services.notification_rules import should_notify_staff
                 for staff in staff_members:
                     prefs = staff.notification_preferences or {}
@@ -787,17 +786,9 @@ def notify_staff_of_activity(request_id: int, event: str, actor: str = None):
             if not request:
                 return {"error": "Request not found"}
 
-            # Recipient set: routed department staff + the assigned user (deduped).
+            # Recipient default: the specifically-assigned person. Only when no
+            # one is assigned do we fall back to the whole routed department.
             recipients = {}
-            if request.assigned_department_id:
-                staff_result = await db.execute(
-                    select(User)
-                    .join(user_departments)
-                    .where(user_departments.c.department_id == request.assigned_department_id)
-                    .where(User.is_active == True)
-                )
-                for s in staff_result.scalars().all():
-                    recipients[s.id] = s
             if request.assigned_to:
                 assignee_result = await db.execute(
                     select(User)
@@ -807,6 +798,15 @@ def notify_staff_of_activity(request_id: int, event: str, actor: str = None):
                 assignee = assignee_result.scalar_one_or_none()
                 if assignee:
                     recipients[assignee.id] = assignee
+            elif request.assigned_department_id:
+                staff_result = await db.execute(
+                    select(User)
+                    .join(user_departments)
+                    .where(user_departments.c.department_id == request.assigned_department_id)
+                    .where(User.is_active == True)
+                )
+                for s in staff_result.scalars().all():
+                    recipients[s.id] = s
 
             staff_link = f"{portal_url}/staff#request/{request.service_request_id}"
             status_text = getattr(request.status, 'value', request.status) or ''

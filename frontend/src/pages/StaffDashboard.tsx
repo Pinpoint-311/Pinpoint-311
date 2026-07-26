@@ -173,7 +173,8 @@ export default function StaffDashboard() {
     // Filter states
     const [filterDepartment, setFilterDepartment] = useState<number | null>(null);
     const [filterService, setFilterService] = useState<string | null>(null);
-    const [filterAssignment, setFilterAssignment] = useState<'all' | 'me' | 'department'>('all');
+    // Default to the signed-in user's own assigned requests ("My Requests").
+    const [filterAssignment, setFilterAssignment] = useState<'all' | 'me' | 'department'>('me');
     const [showFilters, setShowFilters] = useState(false);
     const [sortOrder, setSortOrder] = useState<'newest' | 'oldest' | 'priority_high' | 'priority_low' | 'alpha'>('newest');
 

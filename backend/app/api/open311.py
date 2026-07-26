@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request, Body
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from datetime import datetime
@@ -749,7 +749,26 @@ async def list_requests(
     # Filter out deleted unless admin requests them
     if not include_deleted or current_user.role != "admin":
         query = query.where(ServiceRequest.deleted_at.is_(None))
-    
+
+    # Department scoping: a non-admin staffer sees only requests routed to a
+    # department they belong to, or assigned to them by name — plus unrouted
+    # requests (no department yet), which still need someone to triage. Admins
+    # see everything.
+    if current_user.role != "admin":
+        from app.models import user_departments
+        dept_rows = await db.execute(
+            select(user_departments.c.department_id)
+            .where(user_departments.c.user_id == current_user.id)
+        )
+        my_dept_ids = [row[0] for row in dept_rows.all()]
+        scope = [
+            ServiceRequest.assigned_to == current_user.username,
+            ServiceRequest.assigned_department_id.is_(None),
+        ]
+        if my_dept_ids:
+            scope.append(ServiceRequest.assigned_department_id.in_(my_dept_ids))
+        query = query.where(or_(*scope))
+
     if status_filter:
         query = query.where(ServiceRequest.status == status_filter)
     
