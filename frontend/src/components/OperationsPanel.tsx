@@ -597,12 +597,17 @@ export default function OperationsPanel() {
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -10 }}
                     >
-                        <Card className={`${lastAction.status === 'success' ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
-                            <div className="flex items-center gap-3">
-                                {lastAction.status === 'success' ? <CheckCircle className="w-5 h-5 text-green-400" /> : <XCircle className="w-5 h-5 text-red-400" />}
-                                <div className="flex-1">
+                        <Card className={`${lastAction.status === 'success' ? 'bg-green-500/10 border-green-500/30' : lastAction.status === 'partial' ? 'bg-amber-500/10 border-amber-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+                            <div className="flex items-start gap-3">
+                                {lastAction.status === 'success' ? <CheckCircle className="w-5 h-5 text-green-400 mt-0.5" /> : <XCircle className="w-5 h-5 text-red-400 mt-0.5" />}
+                                <div className="flex-1 min-w-0">
                                     <span className="font-medium text-white">{lastAction.action}: {lastAction.status}</span>
                                     <span className="text-gray-300 text-sm ml-2">at {new Date(lastAction.timestamp).toLocaleTimeString()}</span>
+                                    {(() => {
+                                        const d = (lastAction.details || {}) as Record<string, any>;
+                                        const reason = d.error || (d.failed ? Object.entries(d.failed).map(([s, e]) => `${s}: ${e}`).join(' · ') : null);
+                                        return reason ? <p className="text-red-200/80 text-xs mt-1 break-words">{reason}</p> : null;
+                                    })()}
                                 </div>
                                 <Button size="sm" variant="ghost" onClick={() => setLastAction(null)}>Dismiss</Button>
                             </div>
