@@ -67,7 +67,6 @@ import {
     Twitter,
     Linkedin,
     type LucideIcon,
-    DollarSign,
     FlaskConical,
     LockKeyhole,
     Search,
@@ -87,7 +86,6 @@ import OperationsPanel from '../components/OperationsPanel';
 import SetupIntegrationsPage from '../components/SetupIntegrationsPage';
 import AuditLogViewer from '../components/AuditLogViewer';
 import VersionSwitcher from '../components/VersionSwitcher';
-import CostTracker from '../components/CostTracker';
 
 // Human-friendly retention period from a day count (reflects any override):
 // 365 -> "1 year", 2190 -> "6 years", 2555 -> "7 years", 900 -> "2.5 years".
@@ -130,7 +128,7 @@ const ICON_LIBRARY: { name: string; icon: LucideIcon }[] = [
     { name: 'Users', icon: Users },
 ];
 
-type Tab = 'branding' | 'users' | 'departments' | 'services' | 'integration' | 'system' | 'health' | 'compliance' | 'costs';
+type Tab = 'branding' | 'users' | 'departments' | 'services' | 'integration' | 'system' | 'health' | 'compliance';
 
 // Sidebar accordion components
 interface SidebarGroupProps {
@@ -389,7 +387,6 @@ export default function AdminConsole() {
             system: 'System Settings',
             health: 'System Health',
             compliance: 'Compliance',
-            costs: 'API Costs'
         };
         updateTitle(tabTitles[currentTab]);
         scrollToTop('instant');
@@ -1097,8 +1094,8 @@ export default function AdminConsole() {
                         <SidebarGroup
                             title="System & Compliance"
                             icon={Settings}
-                            isActive={currentTab === 'system' || currentTab === 'health' || currentTab === 'compliance' || currentTab === 'costs'}
-                            defaultOpen={currentTab === 'system' || currentTab === 'health' || currentTab === 'compliance' || currentTab === 'costs'}
+                            isActive={currentTab === 'system' || currentTab === 'health' || currentTab === 'compliance'}
+                            defaultOpen={currentTab === 'system' || currentTab === 'health' || currentTab === 'compliance'}
                         >
                             <SidebarItem
                                 icon={Settings}
@@ -1111,12 +1108,6 @@ export default function AdminConsole() {
                                 label="System Health"
                                 isActive={currentTab === 'health'}
                                 onClick={() => { setCurrentTab('health'); setSidebarOpen(false); }}
-                            />
-                            <SidebarItem
-                                icon={DollarSign}
-                                label="API Costs"
-                                isActive={currentTab === 'costs'}
-                                onClick={() => { setCurrentTab('costs'); setSidebarOpen(false); }}
                             />
                             <SidebarItem
                                 icon={Shield}
@@ -1317,25 +1308,6 @@ export default function AdminConsole() {
                                                     )}
                                                 </div>
                                             </div>
-                                            <div>
-                                                <label className="block text-sm font-medium text-white/70 mb-2">
-                                                    Primary Color
-                                                </label>
-                                                <div className="flex items-center gap-3">
-                                                    <input
-                                                        type="color"
-                                                        value={brandingForm.primary_color || '#6366f1'}
-                                                        onChange={(e) => setBrandingForm((p) => ({ ...p, primary_color: e.target.value }))}
-                                                        className="w-12 h-12 rounded-lg cursor-pointer bg-transparent"
-                                                        aria-label="Primary color picker"
-                                                    />
-                                                    <Input
-                                                        value={brandingForm.primary_color || '#6366f1'}
-                                                        onChange={(e) => setBrandingForm((p) => ({ ...p, primary_color: e.target.value }))}
-                                                        className="flex-1"
-                                                    />
-                                                </div>
-                                            </div>
                                         </div>
                                     </Card>
 
@@ -1347,7 +1319,7 @@ export default function AdminConsole() {
                                             ) : (
                                                 <div
                                                     className="w-16 h-16 rounded-2xl flex items-center justify-center"
-                                                    style={{ background: `linear-gradient(135deg, ${brandingForm.primary_color}, ${brandingForm.primary_color}dd)` }}
+                                                    style={{ background: 'linear-gradient(135deg, #6366f1, #6366f1dd)' }}
                                                 >
                                                     <Sparkles className="w-8 h-8 text-white" />
                                                 </div>
@@ -2915,11 +2887,6 @@ export default function AdminConsole() {
                             <div className="mt-8">
                                 <AuditLogViewer />
                             </div>
-                        )}
-
-                        {/* API Costs Tab */}
-                        {currentTab === 'costs' && (
-                            <CostTracker />
                         )}
 
                     </div>
