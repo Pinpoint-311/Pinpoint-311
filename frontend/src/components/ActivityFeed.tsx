@@ -49,42 +49,47 @@ export default function ActivityFeed({
             // Skip old requests
             if (requestAge > sevenDays) return;
 
-            // New request in user's department (< 24 hours)
+            // Relevance mirrors the notification logic: a request matters to you
+            // if it's assigned to you or routed to your department. Staff with no
+            // departments configured (e.g. admins) see all activity — the same
+            // convention the dashboard uses, and safe because the request list is
+            // already department-scoped server-side.
+            const mine = request.assigned_to === userId;
+            const deptMatch = !!request.assigned_department_id && userDepartmentIds.includes(request.assigned_department_id);
+            const noDeptScope = userDepartmentIds.length === 0;
+            if (!mine && !deptMatch && !noDeptScope) return;
+
+            const updatedTime = request.updated_datetime ? new Date(request.updated_datetime).getTime() : null;
+            const wasUpdated = updatedTime !== null && Math.abs(updatedTime - requestTime) > 60 * 1000;
+
+            // New request attached to you or your department (< 24 hours)
             if (requestAge < twentyFourHours) {
-                if (request.assigned_department_id && userDepartmentIds.includes(request.assigned_department_id)) {
-                    items.push({
-                        id: `new-${request.service_request_id}`,
-                        type: 'new_request',
-                        title: `New: ${request.service_name}`,
-                        description: request.description?.substring(0, 80) + (request.description && request.description.length > 80 ? '...' : '') || 'No description',
-                        timestamp: new Date(request.requested_datetime),
-                        request,
-                        isNew: !readItems.has(`new-${request.service_request_id}`)
-                    });
-                }
+                items.push({
+                    id: `new-${request.service_request_id}`,
+                    type: mine ? 'assigned_to_me' : 'new_request',
+                    title: mine ? `New & assigned to you: ${request.service_name}` : `New: ${request.service_name}`,
+                    description: (request.description?.substring(0, 80) + (request.description && request.description.length > 80 ? '...' : '')) || `Request #${request.service_request_id}`,
+                    timestamp: new Date(request.requested_datetime),
+                    request,
+                    isNew: !readItems.has(`new-${request.service_request_id}`)
+                });
+            }
+            // Otherwise, a recent status/activity update on a request relevant to you
+            else if (wasUpdated && (now - (updatedTime as number)) < twentyFourHours * 2) {
+                items.push({
+                    id: `upd-${request.service_request_id}-${updatedTime}`,
+                    type: 'status_change',
+                    title: `Updated: ${request.service_name}`,
+                    description: `Status: ${String(request.status).replace(/_/g, ' ')}${mine ? ' · assigned to you' : ''}`,
+                    timestamp: new Date(request.updated_datetime as string),
+                    request,
+                    isNew: !readItems.has(`upd-${request.service_request_id}-${updatedTime}`)
+                });
             }
 
-            // Assigned to me
-            if (request.assigned_to === userId) {
-                const updateTime = request.updated_datetime ? new Date(request.updated_datetime).getTime() : requestTime;
-                if (now - updateTime < twentyFourHours) {
-                    items.push({
-                        id: `assigned-${request.service_request_id}`,
-                        type: 'assigned_to_me',
-                        title: `Assigned to you: ${request.service_name}`,
-                        description: `Request #${request.service_request_id}`,
-                        timestamp: request.updated_datetime ? new Date(request.updated_datetime) : new Date(request.requested_datetime),
-                        request,
-                        isNew: !readItems.has(`assigned-${request.service_request_id}`)
-                    });
-                }
-            }
-
-            // Requests in my department that are unassigned
-            if (request.assigned_department_id &&
-                userDepartmentIds.includes(request.assigned_department_id) &&
-                !request.assigned_to &&
-                requestAge < twentyFourHours * 3) {
+            // Unassigned request in your department that still needs an owner
+            if (deptMatch && !request.assigned_to &&
+                requestAge >= twentyFourHours && requestAge < twentyFourHours * 3) {
                 items.push({
                     id: `dept-${request.service_request_id}`,
                     type: 'assigned_to_dept',
@@ -264,18 +269,23 @@ export function useActivityFeedCount(
         requests.forEach(request => {
             const requestTime = new Date(request.requested_datetime).getTime();
             const requestAge = now - requestTime;
+            if (requestAge > twentyFourHours * 2) return;
 
+            const mine = request.assigned_to === userId;
+            const deptMatch = !!request.assigned_department_id && userDepartmentIds.includes(request.assigned_department_id);
+            const noDeptScope = userDepartmentIds.length === 0;
+            if (!mine && !deptMatch && !noDeptScope) return;
+
+            const updatedTime = request.updated_datetime ? new Date(request.updated_datetime).getTime() : null;
+            const wasUpdated = updatedTime !== null && Math.abs(updatedTime - requestTime) > 60 * 1000;
+
+            // New request attached to you or your department
             if (requestAge < twentyFourHours) {
-                if (request.assigned_department_id && userDepartmentIds.includes(request.assigned_department_id)) {
-                    if (!readItems.has(`new-${request.service_request_id}`)) count++;
-                }
+                if (!readItems.has(`new-${request.service_request_id}`)) count++;
             }
-
-            if (request.assigned_to === userId) {
-                const updateTime = request.updated_datetime ? new Date(request.updated_datetime).getTime() : requestTime;
-                if (now - updateTime < twentyFourHours) {
-                    if (!readItems.has(`assigned-${request.service_request_id}`)) count++;
-                }
+            // Recent status/activity update on a relevant request
+            else if (wasUpdated && (now - (updatedTime as number)) < twentyFourHours * 2) {
+                if (!readItems.has(`upd-${request.service_request_id}-${updatedTime}`)) count++;
             }
         });
 
