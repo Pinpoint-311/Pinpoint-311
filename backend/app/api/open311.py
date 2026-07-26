@@ -900,13 +900,16 @@ async def update_request_status(
     
     # Send notification if status changed
     if "status" in update_dict and update_dict["status"] and update_dict["status"].value != old_status:
-        from app.tasks.service_requests import send_branded_notification
+        from app.tasks.service_requests import send_branded_notification, notify_staff_of_activity
         send_branded_notification.delay(
             request.id,
             "status_update",
             old_status=old_status,
             completion_message=update_dict.get("completion_message")
         )
+
+        # Notify assigned staff / department (respects each user's preferences).
+        notify_staff_of_activity.delay(request.id, "status_changes", actor=current_user.username)
 
         # Mirror the status change to linked govtech platforms
         from app.tasks.integrations import push_status_to_integrations

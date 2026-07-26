@@ -884,6 +884,10 @@ export default function AdminConsole() {
                     .split(",").map((r: string) => r.trim()).filter(Boolean);
                 config.third_party_message = serviceRouting.routing_config.third_party_message;
                 config.third_party_contacts = serviceRouting.routing_config.third_party_contacts;
+                // Specific-person routing for the roads the municipality handles —
+                // resolved the same way as Municipality mode (route_to + staff_ids).
+                config.route_to = serviceRouting.routing_config.route_to;
+                config.staff_ids = serviceRouting.routing_config.staff_ids;
             }
 
             // Always include custom questions
@@ -3374,6 +3378,77 @@ export default function AdminConsole() {
                                     ))}
                                 </select>
                             </div>
+
+                            {/* Route To (specific staff) — mirrors Municipality mode so a
+                                road-based request the town handles can go to a named person. */}
+                            {serviceRouting.assigned_department_id && (
+                                <div className="space-y-2">
+                                    <label className="block text-sm font-medium text-white/70">Route To</label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => setServiceRouting(p => ({
+                                                ...p,
+                                                routing_config: { ...p.routing_config, route_to: 'all_staff', staff_ids: [] }
+                                            }))}
+                                            className={`p-3 rounded-lg border text-center ${serviceRouting.routing_config.route_to === 'all_staff'
+                                                ? 'bg-primary-500/20 border-primary-500 text-white'
+                                                : 'bg-white/5 border-white/10 text-white/70'
+                                                }`}
+                                        >
+                                            <Users className="w-5 h-5 mx-auto mb-1" />
+                                            <div className="text-sm font-medium">All Staff in Dept</div>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setServiceRouting(p => ({
+                                                ...p,
+                                                routing_config: { ...p.routing_config, route_to: 'specific_staff' }
+                                            }))}
+                                            className={`p-3 rounded-lg border text-center ${serviceRouting.routing_config.route_to === 'specific_staff'
+                                                ? 'bg-primary-500/20 border-primary-500 text-white'
+                                                : 'bg-white/5 border-white/10 text-white/70'
+                                                }`}
+                                        >
+                                            <UserCheck className="w-5 h-5 mx-auto mb-1" />
+                                            <div className="text-sm font-medium">Specific Staff</div>
+                                        </button>
+                                    </div>
+                                    {serviceRouting.routing_config.route_to === 'specific_staff' && (
+                                        <div className="space-y-2 mt-3">
+                                            <label className="block text-xs text-white/50">Select staff members:</label>
+                                            <div className="max-h-32 overflow-y-auto p-2 rounded-lg bg-white/5 border border-white/10">
+                                                {users
+                                                    .filter(u => u.role === 'staff' || u.role === 'admin')
+                                                    .map(u => (
+                                                        <label key={u.id} className="flex items-center gap-2 p-1.5 hover:bg-white/5 rounded cursor-pointer">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={(serviceRouting.routing_config.staff_ids || []).includes(u.id)}
+                                                                onChange={(e) => {
+                                                                    const currentIds = serviceRouting.routing_config.staff_ids || [];
+                                                                    const newIds = e.target.checked
+                                                                        ? [...currentIds, u.id]
+                                                                        : currentIds.filter((id: number) => id !== u.id);
+                                                                    setServiceRouting(p => ({
+                                                                        ...p,
+                                                                        routing_config: { ...p.routing_config, staff_ids: newIds }
+                                                                    }));
+                                                                }}
+                                                                className="w-4 h-4 rounded border-white/20 bg-white/10 text-primary-500"
+                                                            />
+                                                            <span className="text-sm text-white/80">{u.full_name || u.username}</span>
+                                                            <span className="text-xs text-white/40">@{u.username}</span>
+                                                        </label>
+                                                    ))}
+                                            </div>
+                                            {(serviceRouting.routing_config.staff_ids || []).length === 0 && (
+                                                <p className="text-xs text-amber-400">No staff selected - will route to all staff</p>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
 
                             {/* Conditional Road Lists */}
                             {serviceRouting.routing_config.default_handler === 'township' ? (

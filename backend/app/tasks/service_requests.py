@@ -637,13 +637,33 @@ def send_department_notification(request_id: int, department_email: str):
                     .where(user_departments.c.department_id == department.id)
                     .where(User.is_active == True)
                 )
-                staff_members = staff_result.scalars().all()
-                
+                staff_members = list(staff_result.scalars().all())
+
+                # Guarantee the specifically-assigned person is in the recipient
+                # set even if they aren't a member of the routed department, so
+                # "route to a specific staff member" actually reaches that person.
+                if request.assigned_to and not any(s.username == request.assigned_to for s in staff_members):
+                    assignee_result = await db.execute(
+                        select(User)
+                        .where(User.username == request.assigned_to)
+                        .where(User.is_active == True)
+                    )
+                    assignee = assignee_result.scalar_one_or_none()
+                    if assignee:
+                        staff_members.append(assignee)
+
+                from app.services.notification_rules import should_notify_staff
                 for staff in staff_members:
                     prefs = staff.notification_preferences or {}
-                    
-                    # Check if they want new request notifications
-                    if not prefs.get('email_new_requests', True) and not prefs.get('sms_new_requests', False):
+
+                    # Enforce Assigned Only + the new-request email/SMS toggles.
+                    is_assigned_to_me = bool(request.assigned_to) and staff.username == request.assigned_to
+                    send_email, send_sms = should_notify_staff(
+                        prefs, "new_requests",
+                        is_assigned_to_me=is_assigned_to_me,
+                        sms_enabled_globally=sms_enabled_globally,
+                    )
+                    if not send_email and not send_sms:
                         continue
                     
                     # Build notification content
@@ -676,7 +696,7 @@ def send_department_notification(request_id: int, department_email: str):
                     """
                     
                     # Send email if enabled
-                    if prefs.get('email_new_requests', True) and staff.email:
+                    if send_email and staff.email:
                         notification_service.send_email(
                             to=staff.email,
                             subject=subject,
@@ -684,9 +704,9 @@ def send_department_notification(request_id: int, department_email: str):
                             from_name=f"{township_name} 311"
                         )
                         notified_staff.append({"email": staff.email, "type": "email"})
-                    
+
                     # Send SMS if enabled globally and by user preference
-                    if sms_enabled_globally and prefs.get('sms_new_requests', False) and staff.phone:
+                    if send_sms and staff.phone:
                         short_desc = (request.description or "")[:50]
                         sms_message = f"""📋 {township_name} 311
 New Request: {request.service_name}
@@ -725,7 +745,120 @@ New Request: {request.service_name}
             
             logger.info(f"[Dept Notification] Sent to {len(notified_staff)} recipients for request {request.service_request_id}")
             return {"status": "sent", "recipients": notified_staff}
-    
+
+    try:
+        return run_async(_notify())
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@celery_app.task
+def notify_staff_of_activity(request_id: int, event: str, actor: str = None):
+    """Notify assigned staff / department about activity on an existing request,
+    honoring each user's notification preferences.
+
+    event: 'status_changes' or 'comments' — maps to the email_/sms_ preference
+    keys and the copy. `actor` is the username who triggered it and is skipped,
+    so a staffer isn't emailed about their own action. Recipients are the routed
+    department's staff plus the specifically-assigned user; anyone with
+    "Assigned Only" set is included only when the request is assigned to them.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    label = "Status updated" if event == "status_changes" else "New comment"
+
+    async def _notify():
+        from app.models import SystemSettings, User, user_departments
+
+        async with SessionLocal() as db:
+            await configure_notifications(db)
+
+            settings_result = await db.execute(select(SystemSettings).limit(1))
+            settings = settings_result.scalar_one_or_none()
+            modules = settings.modules if settings else {}
+            sms_enabled_globally = modules.get('sms_alerts', False)
+            township_name = settings.township_name if settings else "Your Township"
+            custom_domain = (settings.custom_domain if settings else None) or os.environ.get('DOMAIN', '')
+            portal_url = f"https://{custom_domain}" if custom_domain and custom_domain != 'localhost' else "http://localhost:5173"
+
+            result = await db.execute(select(ServiceRequest).where(ServiceRequest.id == request_id))
+            request = result.scalar_one_or_none()
+            if not request:
+                return {"error": "Request not found"}
+
+            # Recipient set: routed department staff + the assigned user (deduped).
+            recipients = {}
+            if request.assigned_department_id:
+                staff_result = await db.execute(
+                    select(User)
+                    .join(user_departments)
+                    .where(user_departments.c.department_id == request.assigned_department_id)
+                    .where(User.is_active == True)
+                )
+                for s in staff_result.scalars().all():
+                    recipients[s.id] = s
+            if request.assigned_to:
+                assignee_result = await db.execute(
+                    select(User)
+                    .where(User.username == request.assigned_to)
+                    .where(User.is_active == True)
+                )
+                assignee = assignee_result.scalar_one_or_none()
+                if assignee:
+                    recipients[assignee.id] = assignee
+
+            staff_link = f"{portal_url}/staff#request/{request.service_request_id}"
+            status_text = getattr(request.status, 'value', request.status) or ''
+            subject = f"{label}: {request.service_request_id} — {request.service_name}"
+
+            from app.services.notification_rules import should_notify_staff
+            notified = []
+            for staff in recipients.values():
+                prefs = staff.notification_preferences or {}
+                is_assigned_to_me = bool(request.assigned_to) and staff.username == request.assigned_to
+                send_email, send_sms = should_notify_staff(
+                    prefs, event,
+                    is_assigned_to_me=is_assigned_to_me,
+                    is_actor=bool(actor) and staff.username == actor,
+                    sms_enabled_globally=sms_enabled_globally,
+                )
+
+                if send_email and staff.email:
+                    body_html = f"""
+                    <html><body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                        <div style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; padding: 20px; border-radius: 12px 12px 0 0;">
+                            <h2 style="margin: 0;">{label}</h2>
+                            <p style="margin: 6px 0 0 0; opacity: 0.9;">{township_name} 311</p>
+                        </div>
+                        <div style="background: #f8fafc; padding: 20px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 12px 12px;">
+                            <p style="margin: 0 0 12px 0;"><strong>Hi {staff.full_name or staff.username},</strong></p>
+                            <p style="margin: 0 0 12px 0;">{label.lower()} on a request in your department:</p>
+                            <div style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 14px;">
+                                <p style="margin: 0 0 6px 0;"><strong>Request:</strong> {request.service_request_id} — {request.service_name}</p>
+                                <p style="margin: 0 0 6px 0;"><strong>Status:</strong> {status_text}</p>
+                                <p style="margin: 0;"><strong>Address:</strong> {request.address or 'Not provided'}</p>
+                            </div>
+                            <a href="{staff_link}" style="display: inline-block; background: #6366f1; color: white; text-decoration: none; padding: 10px 22px; border-radius: 8px; font-weight: 500;">View Request →</a>
+                        </div>
+                    </body></html>
+                    """
+                    notification_service.send_email(
+                        to=staff.email, subject=subject, body_html=body_html,
+                        from_name=f"{township_name} 311"
+                    )
+                    notified.append(staff.email)
+
+                if send_sms and staff.phone:
+                    await notification_service.send_sms(
+                        staff.phone,
+                        f"{township_name} 311 — {label} on {request.service_request_id}: {status_text}\n🔗 {staff_link}"
+                    )
+                    notified.append(staff.phone)
+
+            logger.info(f"[Staff Activity:{event}] notified {len(notified)} for request {request.service_request_id}")
+            return {"status": "sent", "recipients": notified}
+
     try:
         return run_async(_notify())
     except Exception as e:
