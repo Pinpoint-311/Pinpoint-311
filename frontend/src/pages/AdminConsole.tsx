@@ -2059,6 +2059,7 @@ export default function AdminConsole() {
                                                             <Button
                                                                 size="sm"
                                                                 variant="ghost"
+                                                                aria-label="Download boundary GeoJSON"
                                                                 onClick={() => {
                                                                     const dataStr = JSON.stringify(townshipBoundary, null, 2);
                                                                     const blob = new Blob([dataStr], { type: 'application/json' });
@@ -2077,6 +2078,7 @@ export default function AdminConsole() {
                                                             <Button
                                                                 size="sm"
                                                                 variant="ghost"
+                                                                aria-label="Clear municipality boundary"
                                                                 onClick={async () => {
                                                                     if (confirm('Are you sure you want to clear the municipality boundary?')) {
                                                                         try {
@@ -2363,6 +2365,7 @@ export default function AdminConsole() {
                                                                             api.getServices().then(setServices).catch(console.error);
                                                                             setShowLayerModal(true);
                                                                         }}
+                                                                        aria-label={`Edit ${layer.name}`}
                                                                         className="p-2 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 transition-all"
                                                                     >
                                                                         <Edit className="w-4 h-4" />
@@ -2379,6 +2382,7 @@ export default function AdminConsole() {
                                                                                 console.error('Failed to delete layer:', err);
                                                                             }
                                                                         }}
+                                                                        aria-label={`Delete ${layer.name}`}
                                                                         className="p-2 rounded-lg text-white/20 hover:text-red-400 hover:bg-red-500/10 transition-all"
                                                                     >
                                                                         <Trash2 className="w-4 h-4" />
@@ -3280,23 +3284,23 @@ export default function AdminConsole() {
                                     <div key={idx} className="p-3 rounded-lg bg-white/5 border border-white/10 space-y-2">
                                         <div className="flex justify-between items-center">
                                             <span className="text-xs text-white/40">Contact {idx + 1}</span>
-                                            <button type="button" onClick={() => {
+                                            <button type="button" aria-label="Remove contact" onClick={() => {
                                                 const c = serviceRouting.routing_config.contacts.filter((_, i) => i !== idx);
                                                 setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, contacts: c } }));
                                             }} className="p-1 text-red-400 hover:text-red-300"><X className="w-3 h-3" /></button>
                                         </div>
-                                        <input placeholder="Name (e.g., Mercer County Roads)" value={contact.name} onChange={(e) => {
+                                        <input aria-label="Contact name" placeholder="Name (e.g., Mercer County Roads)" value={contact.name} onChange={(e) => {
                                             const c = [...serviceRouting.routing_config.contacts];
                                             c[idx] = { ...c[idx], name: e.target.value };
                                             setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, contacts: c } }));
                                         }} className="w-full h-9 rounded-lg bg-white/10 border border-white/20 text-white px-3 text-sm" />
                                         <div className="grid grid-cols-2 gap-2">
-                                            <input placeholder="Phone" value={contact.phone} onChange={(e) => {
+                                            <input aria-label="Contact phone" placeholder="Phone" value={contact.phone} onChange={(e) => {
                                                 const c = [...serviceRouting.routing_config.contacts];
                                                 c[idx] = { ...c[idx], phone: e.target.value };
                                                 setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, contacts: c } }));
                                             }} className="w-full h-9 rounded-lg bg-white/10 border border-white/20 text-white px-3 text-sm" />
-                                            <input placeholder="Website URL" value={contact.url} onChange={(e) => {
+                                            <input aria-label="Contact website URL" placeholder="Website URL" value={contact.url} onChange={(e) => {
                                                 const c = [...serviceRouting.routing_config.contacts];
                                                 c[idx] = { ...c[idx], url: e.target.value };
                                                 setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, contacts: c } }));
@@ -3348,6 +3352,7 @@ export default function AdminConsole() {
                                         assigned_department_id: e.target.value ? parseInt(e.target.value) : null
                                     }))}
                                     className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
+                                    aria-label="Municipality department"
                                 >
                                     <option value="">Select department...</option>
                                     {departments.map(d => (
@@ -3514,7 +3519,7 @@ export default function AdminConsole() {
                                         <div key={q.id} className="p-3 rounded-lg bg-white/5 border border-white/10 space-y-2">
                                             <div className="flex justify-between items-center">
                                                 <span className="text-xs text-white/40">Question {idx + 1}</span>
-                                                <button type="button" onClick={() => {
+                                                <button type="button" aria-label="Remove question" onClick={() => {
                                                     const newQs = serviceRouting.routing_config.custom_questions.filter((_, i) => i !== idx);
                                                     setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, custom_questions: newQs } }));
                                                 }} className="p-1 text-red-400 hover:text-red-300"><X className="w-3 h-3" /></button>
@@ -3522,6 +3527,7 @@ export default function AdminConsole() {
 
                                             {/* Question Label */}
                                             <input
+                                                aria-label="Question text"
                                                 placeholder="Question text..."
                                                 value={q.label}
                                                 onChange={(e) => {
@@ -3535,6 +3541,7 @@ export default function AdminConsole() {
                                             {/* Type and Required Row */}
                                             <div className="flex gap-2 items-center">
                                                 <select
+                                                    aria-label="Question type"
                                                     value={q.type}
                                                     onChange={(e) => {
                                                         const newQs = [...serviceRouting.routing_config.custom_questions];
@@ -3570,6 +3577,7 @@ export default function AdminConsole() {
                                             {/* Options (for select/radio/checkbox) */}
                                             {['select', 'radio', 'checkbox'].includes(q.type) && (
                                                 <input
+                                                    aria-label="Question options"
                                                     placeholder="Options (comma-separated): Option A, Option B, Option C"
                                                     value={q.options?.join(', ') || ''}
                                                     onChange={(e) => {
@@ -3584,6 +3592,7 @@ export default function AdminConsole() {
                                             {/* Placeholder (for text types) */}
                                             {['text', 'textarea', 'number'].includes(q.type) && (
                                                 <input
+                                                    aria-label="Question placeholder"
                                                     placeholder="Placeholder text (optional)"
                                                     value={q.placeholder}
                                                     onChange={(e) => {
