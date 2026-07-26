@@ -3647,13 +3647,13 @@ Season: {'Winter' if now.month in [12,1,2] else 'Spring' if now.month in [3,4,5]
 {json.dumps(request_details[:50], indent=None, default=str)}
 
 ## RESPONSE FORMAT RULES
-- Use **##** section headers to organize responses into clear sections
-- Use bullet points for lists of 3+ items
-- **Bold** all key numbers, percentages, and metric values
-- Use tables (| col | col |) when comparing departments, categories, or time periods
-- Keep paragraphs short: 2-3 sentences maximum
-- End substantive responses with a "## Key Takeaway" section (1-2 sentences)
-- When recommending actions, use numbered lists for priority order
+The chat UI renders plain text with basic inline markdown only — it does NOT render markdown tables or headers, so those come out as raw pipes and hashes. Format accordingly:
+- NEVER use markdown tables (| col | col |). To compare departments, categories, or time periods, use a bullet list with a bold label per item instead — e.g. "**Public Works** — 42 requests, 3.1 day avg".
+- Do NOT use markdown headers (#, ##, ###). For a section title, put a short **bold line** on its own line instead.
+- Use bullet points ("- ") for lists of 3+ items, and numbered lists ("1. ") for prioritized actions.
+- **Bold** all key numbers, percentages, and metric values.
+- Keep paragraphs short: 2-3 sentences maximum.
+- End substantive responses with a bold **Key Takeaway** line followed by 1-2 sentences.
 
 ## IMPORTANT RULES
 - NEVER share or reference resident names, emails, or phone numbers
