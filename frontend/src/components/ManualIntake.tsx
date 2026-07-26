@@ -315,6 +315,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                         value={description}
                         onChange={e => setDescription(e.target.value)}
                         rows={3}
+                        aria-label={copy.descLabel}
                         placeholder={copy.descPlaceholder}
                         className={`${inputCls} resize-y min-h-[84px]`}
                     />
@@ -330,6 +331,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                     <div className="relative">
                         <PhoneIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/35" aria-hidden="true" />
                         <input value={phone} onChange={e => setPhone(e.target.value)} inputMode="tel"
+                            aria-label={copy.phoneLabel}
                             placeholder={copy.phonePlaceholder} className={`${inputCls} pl-9`} />
                     </div>
                 </div>
@@ -358,6 +360,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                         <div className="relative">
                             <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/35" aria-hidden="true" />
                             <input value={address} onChange={e => setAddress(e.target.value)}
+                                aria-label="Location"
                                 placeholder="123 Main St, or nearest intersection" className={`${inputCls} pl-9`} />
                         </div>
                     )}
@@ -385,15 +388,16 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3">
                                     <div>
                                         <span className={labelCls}>First name</span>
-                                        <input value={firstName} onChange={e => setFirstName(e.target.value)} className={inputCls} />
+                                        <input value={firstName} onChange={e => setFirstName(e.target.value)} aria-label="First name" className={inputCls} />
                                     </div>
                                     <div>
                                         <span className={labelCls}>Last name</span>
-                                        <input value={lastName} onChange={e => setLastName(e.target.value)} className={inputCls} />
+                                        <input value={lastName} onChange={e => setLastName(e.target.value)} aria-label="Last name" className={inputCls} />
                                     </div>
                                     <div className="sm:col-span-2">
                                         <span className={labelCls}>{copy.emailLabel}</span>
                                         <input value={email} onChange={e => setEmail(e.target.value)} type="email" inputMode="email"
+                                            aria-label={copy.emailLabel}
                                             placeholder={copy.emailPlaceholder} className={inputCls} />
                                     </div>
                                 </div>
