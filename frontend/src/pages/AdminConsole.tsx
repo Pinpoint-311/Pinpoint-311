@@ -1994,6 +1994,7 @@ export default function AdminConsole() {
 
                         {/* Maps Configuration - part of System Settings */}
                         {currentTab === 'system' && (
+                          <>
                             <div className="mt-8 rounded-2xl bg-white/[0.03] backdrop-blur-xl border border-white/10 overflow-hidden shadow-2xl">
                                 {/* Section Header */}
                                 <div className="px-5 sm:px-6 py-4 border-b border-white/10 bg-gradient-to-r from-white/[0.05] to-transparent">
@@ -2231,19 +2232,22 @@ export default function AdminConsole() {
                                             </label>
                                         </div>
 
-                                        {/* Custom Map Layers — a distinct function (infrastructure asset
-                                            layers) from the jurisdiction boundary above, so it reads as
-                                            its own panel with a clear separator and tonal shift. */}
-                                        <div className="px-5 sm:px-6 pt-7 pb-6 mt-2 border-t-2 border-white/10 bg-white/[0.02]">
-                                            <div className="flex items-center justify-between gap-4 mb-5">
-                                                <div className="flex items-center gap-4">
-                                                    <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-violet-500/20 to-violet-600/10 border border-violet-500/20 flex items-center justify-center shrink-0">
-                                                        <Layers className="w-5 h-5 text-violet-400" />
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Custom Map Layers — its own card/section, matching Maps Configuration above */}
+                            {mapsApiKey && (
+                                <div className="mt-6 rounded-2xl bg-white/[0.03] backdrop-blur-xl border border-white/10 overflow-hidden shadow-2xl">
+                                    <div className="px-5 sm:px-6 py-4 border-b border-white/10 bg-gradient-to-r from-white/[0.05] to-transparent flex items-center justify-between gap-4">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500/20 to-violet-600/10 border border-violet-500/20 flex items-center justify-center shrink-0">
+                                                        <Layers className="w-4 h-4 text-violet-400" />
                                                     </div>
                                                     <div className="min-w-0">
-                                                        <p className="text-[10px] font-semibold uppercase tracking-wider text-violet-300/70 mb-0.5">Portal Map</p>
-                                                        <h3 className="text-sm font-semibold text-white">Custom Map Layers</h3>
-                                                        <p className="text-xs text-white/50 mt-0.5">Infrastructure assets displayed on the portal map</p>
+                                                        <h2 className="text-sm font-semibold text-white">Custom Map Layers</h2>
+                                                        <p className="text-xs text-white/40 mt-0.5">Infrastructure assets displayed on the portal map</p>
                                                     </div>
                                                 </div>
                                                 <Button
@@ -2272,8 +2276,8 @@ export default function AdminConsole() {
                                                 >
                                                     Add Layer
                                                 </Button>
-                                            </div>
-
+                                    </div>
+                                    <div className="px-5 sm:px-6 py-5">
                                             {mapLayers.length === 0 ? (
                                                 <div className="flex flex-col items-center justify-center py-12 rounded-xl border border-dashed border-white/[0.08] bg-white/[0.02]">
                                                     <div className="w-14 h-14 rounded-2xl bg-white/[0.04] flex items-center justify-center mb-3">
@@ -2386,13 +2390,9 @@ export default function AdminConsole() {
                                                 </div>
                                             )}
                                         </div>
-
-                                    </>
-
+                                    </div>
                                 )}
-                                </div>
-                            </div>
-
+                            </>
                         )}
 
                         {/* Document Retention Tab */}
