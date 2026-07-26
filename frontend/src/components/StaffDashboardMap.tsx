@@ -3,6 +3,7 @@ import { MapPin, Layers, Search, X, ChevronDown, ChevronRight, Users } from 'luc
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
 import { ServiceRequest, ServiceDefinition, User, Department } from '../types';
 import { MapLayer } from '../services/api';
+import { loadGoogleMaps } from '../utils/googleMaps';
 import { useTranslation } from '../context/TranslationContext';
 
 declare global {
@@ -135,17 +136,7 @@ export default function StaffDashboardMap({
             return;
         }
 
-        if (window.google?.maps) {
-            initMap();
-            return;
-        }
-
-        const script = document.createElement("script");
-        script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&loading=async`;
-        script.async = true;
-        script.onload = () => initMap();
-        script.onerror = () => setIsLoading(false);
-        document.head.appendChild(script);
+        loadGoogleMaps(apiKey).then(() => initMap()).catch(() => setIsLoading(false));
 
         return () => {
             markersRef.current.forEach(m => m.setMap(null));

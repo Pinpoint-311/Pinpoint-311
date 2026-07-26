@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { MapPin, Users, FileText, AlertTriangle, Eye } from 'lucide-react';
 import { HeatmapData, HotspotData } from '../types';
+import { loadGoogleMaps } from '../utils/googleMaps';
 
 interface SpatialBiasHeatmapProps {
     heatmapData: HeatmapData | null;
@@ -183,24 +184,9 @@ export default function SpatialBiasHeatmap({
             setIsLoading(false);
             return;
         }
-        const start = () => setTimeout(() => initMap(), 100);
-
-        if (window.google?.maps) {
-            start();
-            return;
-        }
-        const existing = document.querySelector<HTMLScriptElement>('script[data-gmaps-loader]');
-        if (existing) {
-            existing.addEventListener('load', start);
-            return;
-        }
-        const script = document.createElement('script');
-        script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&loading=async`;
-        script.async = true;
-        script.dataset.gmapsLoader = '1';
-        script.onload = start;
-        script.onerror = () => setIsLoading(false);
-        document.head.appendChild(script);
+        loadGoogleMaps(apiKey)
+            .then(() => setTimeout(() => initMap(), 100))
+            .catch(() => setIsLoading(false));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [apiKey]);
 
