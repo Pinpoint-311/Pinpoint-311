@@ -1393,7 +1393,7 @@ export interface RunbookResult {
     action: string;
     executed_by: string;
     timestamp: string;
-    status: 'success' | 'error' | 'timeout' | 'skipped';
+    status: 'success' | 'error' | 'timeout' | 'skipped' | 'partial' | 'unavailable';
     details: Record<string, unknown>;
 }
 

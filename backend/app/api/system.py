@@ -3155,39 +3155,78 @@ async def execute_runbook(
         "details": {}
     }
     
+    import shutil
+
+    def _compose_cmd():
+        """Resolve a usable Docker Compose command, or None if unavailable.
+
+        Prefers Compose v2 (`docker compose`) and falls back to v1
+        (`docker-compose`). Also requires the project directory to exist — the
+        app can only drive Compose if it has the Docker socket + the repo on disk
+        (e.g. a self-hosted host mount), which isn't the case in many
+        environments. Returns (cmd_list, project_root) or (None, project_root)."""
+        project_root = os.environ.get("PROJECT_ROOT", "/project")
+        if not os.path.isdir(project_root):
+            return None, project_root
+        if shutil.which("docker"):
+            return ["docker", "compose"], project_root
+        if shutil.which("docker-compose"):
+            return ["docker-compose"], project_root
+        return None, project_root
+
     try:
-        if action == "restart-all":
-            # Restart all containers (except database to avoid data issues)
-            for service in ["backend", "frontend", "redis", "caddy"]:
-                subprocess.run(
-                    ["docker-compose", "restart", service],
-                    cwd="/home/ubuntu/Pinpoint-311",
-                    capture_output=True, timeout=60
-                )
-            result["details"]["restarted"] = ["backend", "frontend", "redis", "caddy"]
-            result["details"]["note"] = "Database not restarted for safety"
-        
-        elif action.startswith("restart-"):
-            service = action.replace("restart-", "")
-            if service not in ["backend", "frontend", "redis", "caddy"]:
-                raise HTTPException(status_code=400, detail=f"Cannot restart service: {service}")
-            subprocess.run(
-                ["docker-compose", "restart", service],
-                cwd="/home/ubuntu/Pinpoint-311",
-                capture_output=True, timeout=60
+        if action == "restart-all" or action.startswith("restart-"):
+            services = (
+                ["backend", "frontend", "redis", "caddy"]
+                if action == "restart-all"
+                else [action.replace("restart-", "")]
             )
-            result["details"]["restarted"] = [service]
-        
+            for service in services:
+                if service not in ["backend", "frontend", "redis", "caddy"]:
+                    raise HTTPException(status_code=400, detail=f"Cannot restart service: {service}")
+
+            compose, project_root = _compose_cmd()
+            if not compose:
+                # Report honestly rather than pretending it worked.
+                result["status"] = "unavailable"
+                result["details"]["error"] = (
+                    "Container restarts aren't available to the app in this environment "
+                    "(Docker Compose or the project directory isn't reachable). "
+                    "Run `docker compose restart <service>` on the host instead."
+                )
+            else:
+                restarted, failed = [], {}
+                for service in services:
+                    proc = subprocess.run(
+                        compose + ["restart", service],
+                        cwd=project_root, capture_output=True, timeout=60, text=True,
+                    )
+                    if proc.returncode == 0:
+                        restarted.append(service)
+                    else:
+                        failed[service] = (proc.stderr or proc.stdout or "restart failed").strip()[:300]
+                result["details"]["restarted"] = restarted
+                if failed:
+                    result["details"]["failed"] = failed
+                    result["status"] = "partial" if restarted else "error"
+                if action == "restart-all":
+                    result["details"]["note"] = "Database not restarted for safety"
+
         elif action == "clear-cache":
             if redis_client:
-                redis_client.flushdb()
+                await redis_client.flushdb()
                 result["details"]["cleared"] = True
             else:
                 result["status"] = "skipped"
                 result["details"]["reason"] = "Redis not configured"
-        
+
         elif action == "vacuum":
-            await db.execute(text("VACUUM ANALYZE"))
+            # VACUUM cannot run inside a transaction block, so use a dedicated
+            # AUTOCOMMIT connection rather than the request's transactional session.
+            from app.db.session import engine
+            async with engine.connect() as conn:
+                ac = conn.execution_options(isolation_level="AUTOCOMMIT")
+                await ac.execute(text("VACUUM ANALYZE"))
             result["details"]["operation"] = "VACUUM ANALYZE completed"
         
         elif action == "restore":
