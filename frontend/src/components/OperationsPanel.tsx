@@ -3,10 +3,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     Server, Database, RefreshCw, Play, Trash2, HardDrive, Clock,
     CheckCircle, XCircle, Loader2, RotateCcw, Wrench,
-    Shield, Cloud, Languages, Sparkles, Key, Activity, Link2
+    Shield, Cloud, Languages, Sparkles, Key, Activity, Link2, AlertTriangle
 } from 'lucide-react';
 import { Card, Button } from './ui';
-import api, { HealthDashboard, RunbookResult } from '../services/api';
+import api, { HealthDashboard, RunbookResult, ProactiveHealth } from '../services/api';
 import { useDialog } from './DialogProvider';
 
 interface ServiceStatus {
@@ -49,6 +49,7 @@ export default function OperationsPanel() {
     const [integrations, setIntegrations] = useState<IntegrationHealth | null>(null);
     const [uptimeStats, setUptimeStats] = useState<import('../services/api').UptimeStats | null>(null);
     const [uptimeHistory, setUptimeHistory] = useState<import('../services/api').UptimeHistory | null>(null);
+    const [proactive, setProactive] = useState<ProactiveHealth | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [runbookLoading, setRunbookLoading] = useState<string | null>(null);
@@ -60,19 +61,27 @@ export default function OperationsPanel() {
         setIsLoading(true);
         setError(null);
         try {
-            // Fetch both infrastructure and integrations health
-            const [healthData, integrationsData, statsData, historyData] = await Promise.all([
-                api.getHealthDashboard(),
+            // Every source is fetched independently and tolerant of failure, so a
+            // single failing probe (e.g. infra introspection in a managed env)
+            // degrades that section instead of blanking the whole panel.
+            const [healthData, integrationsData, statsData, historyData, proactiveData] = await Promise.all([
+                api.getHealthDashboard().catch(() => null),
                 fetch('/api/health/', {
                     headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
                 }).then(r => r.ok ? r.json() : null).catch(() => null),
                 api.getUptimeStats().catch(() => null),
-                api.getUptimeHistory(48).catch(() => null)
+                api.getUptimeHistory(48).catch(() => null),
+                api.getProactiveHealth().catch(() => null),
             ]);
             setHealth(healthData);
             setIntegrations(integrationsData);
             setUptimeStats(statsData);
             setUptimeHistory(historyData);
+            setProactive(proactiveData);
+            // Only show the hard error state if literally nothing loaded.
+            if (!healthData && !integrationsData && !statsData && !historyData && !proactiveData) {
+                setError('Failed to fetch system status');
+            }
         } catch (err: any) {
             setError(err.message || 'Failed to fetch system status');
         } finally {
@@ -251,6 +260,43 @@ export default function OperationsPanel() {
                         </div>
                     </Card>
                 </div>
+            )}
+
+            {/* Proactive (leading-indicator) health — warns before something fails */}
+            {proactive && (
+                proactive.overall_status === 'ok' ? (
+                    <Card className="bg-green-500/5 border-green-500/20">
+                        <div className="flex items-center gap-3">
+                            <CheckCircle className="w-5 h-5 text-green-400" />
+                            <p className="text-green-200/90 text-sm font-medium">
+                                All early-warning checks passing (disk, memory, database, backups, cache).
+                            </p>
+                        </div>
+                    </Card>
+                ) : (
+                    <Card className={proactive.overall_status === 'critical' ? 'bg-red-500/5 border-red-500/30' : 'bg-amber-500/5 border-amber-500/30'}>
+                        <h3 className={`text-lg font-semibold mb-1 flex items-center gap-2 ${proactive.overall_status === 'critical' ? 'text-red-300' : 'text-amber-300'}`}>
+                            <AlertTriangle className="w-5 h-5" />
+                            Needs attention {proactive.overall_status === 'critical' ? '— act now' : 'soon'}
+                        </h3>
+                        <p className="text-gray-400 text-xs mb-3">Leading indicators — resolving these prevents an outage. Admins are emailed when a check crosses a threshold.</p>
+                        <div className="space-y-2">
+                            {proactive.checks
+                                .filter(c => c.status === 'warning' || c.status === 'critical')
+                                .map(c => (
+                                    <div key={c.key} className="flex items-start gap-3 bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
+                                        <span className={`px-2 py-0.5 mt-0.5 text-xs rounded-full border shrink-0 ${getStatusBadge(c.status === 'critical' ? 'error' : 'fallback')}`}>
+                                            {c.status}
+                                        </span>
+                                        <div className="min-w-0">
+                                            <p className="text-white text-sm font-medium">{c.label}: <span className="font-normal text-gray-300">{c.message}</span></p>
+                                            {c.action && <p className="text-gray-400 text-xs mt-0.5">→ {c.action}</p>}
+                                        </div>
+                                    </div>
+                                ))}
+                        </div>
+                    </Card>
+                )
             )}
 
             {/* Infrastructure Services */}

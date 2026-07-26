@@ -1053,6 +1053,16 @@ class ApiClient {
         return this.request<HealthDashboard>('/system/health-dashboard');
     }
 
+    // Proactive (leading-indicator) health — per-check detail for admins.
+    async getProactiveHealth(): Promise<ProactiveHealth> {
+        return this.request<ProactiveHealth>('/health/proactive');
+    }
+
+    // Plain-language rollup for the staff status pill.
+    async getHealthSummary(): Promise<HealthSummary> {
+        return this.request<HealthSummary>('/health/summary');
+    }
+
     async executeRunbook(action: string, backupName?: string): Promise<RunbookResult> {
         const params = backupName ? `?backup_name=${encodeURIComponent(backupName)}` : '';
         return this.request<RunbookResult>(`/system/runbook/${action}${params}`, { method: 'POST' });
@@ -1334,6 +1344,28 @@ export interface BackupResult {
 }
 
 // Health Dashboard (Bus Factor Mitigation)
+export interface HealthCheck {
+    key: string;
+    label: string;
+    status: 'ok' | 'warning' | 'critical' | 'unknown';
+    value: number | null;
+    message: string;
+    action: string;
+}
+
+export interface HealthSummary {
+    level: 'ok' | 'warning' | 'critical';
+    label: string;
+    detail: string;
+}
+
+export interface ProactiveHealth {
+    overall_status: 'ok' | 'warning' | 'critical';
+    summary: HealthSummary;
+    checks: HealthCheck[];
+    timestamp: string;
+}
+
 export interface HealthDashboard {
     timestamp: string;
     overall_status: 'healthy' | 'degraded' | 'critical';

@@ -1414,3 +1414,93 @@ def refresh_ai_models():
     except Exception as e:
         logger.error(f"[AI models] refresh task failed: {e}")
         return {"status": "error", "error": str(e)}
+
+
+@celery_app.task
+def proactive_health_scan():
+    """Evaluate proactive (leading-indicator) health and email admins when a
+    check crosses into a worse state — so problems surface *before* an outage,
+    not after. De-duped against the last-seen state so a persistently-degraded
+    check doesn't email every run. Scheduled via Celery Beat."""
+    import logging
+    logger = logging.getLogger(__name__)
+
+    async def _scan():
+        from app.models import SystemSettings, User
+        from app.services.proactive_health import evaluate, is_worse
+        from app.services.notifications import notification_service
+
+        async with SessionLocal() as db:
+            await configure_notifications(db)
+
+            result = await evaluate(db)
+            checks = result["checks"]
+
+            settings_res = await db.execute(select(SystemSettings).limit(1))
+            settings = settings_res.scalar_one_or_none()
+            if not settings:
+                return {"status": "no_settings"}
+            prev = dict(settings.health_alert_state or {})
+
+            # Which checks just got worse (ok/unknown -> warning/critical, or
+            # warning -> critical)? Those are the ones worth an alert.
+            escalations = [
+                c for c in checks
+                if c["status"] in ("warning", "critical") and is_worse(c["status"], prev.get(c["key"]))
+            ]
+
+            # Persist the new per-check state regardless (so recoveries reset it).
+            settings.health_alert_state = {c["key"]: c["status"] for c in checks}
+            await db.commit()
+
+            if not escalations:
+                return {"status": "ok", "overall": result["overall_status"], "alerts": 0}
+
+            # Email active admins.
+            admins_res = await db.execute(
+                select(User).where(User.role == "admin", User.is_active == True)
+            )
+            admins = [a for a in admins_res.scalars().all() if a.email]
+            if not admins:
+                logger.warning("[proactive] escalations found but no admin emails to notify")
+                return {"status": "no_admins", "alerts": len(escalations)}
+
+            township = settings.township_name or "Your 311"
+            crit = [c for c in escalations if c["status"] == "critical"]
+            worst = "Critical" if crit else "Warning"
+            rows = "".join(
+                f"<tr><td style='padding:6px 10px;border-bottom:1px solid #e2e8f0;'><strong>{c['label']}</strong></td>"
+                f"<td style='padding:6px 10px;border-bottom:1px solid #e2e8f0;color:{'#dc2626' if c['status']=='critical' else '#d97706'};text-transform:uppercase;font-size:12px;'>{c['status']}</td>"
+                f"<td style='padding:6px 10px;border-bottom:1px solid #e2e8f0;color:#475569;'>{c['message']}<br><span style='color:#64748b;font-size:12px;'>{c['action']}</span></td></tr>"
+                for c in escalations
+            )
+            body_html = f"""
+            <html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:640px;margin:0 auto;padding:20px;">
+                <div style="background:linear-gradient(135deg,#f59e0b,#dc2626);color:white;padding:20px;border-radius:12px 12px 0 0;">
+                    <h2 style="margin:0;">{worst}: system needs attention</h2>
+                    <p style="margin:6px 0 0 0;opacity:.9;">{township} — proactive health alert</p>
+                </div>
+                <div style="background:#f8fafc;padding:20px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;">
+                    <p style="margin:0 0 12px 0;">These leading indicators just crossed a threshold. Acting now can prevent an outage:</p>
+                    <table style="width:100%;border-collapse:collapse;background:white;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">{rows}</table>
+                    <p style="margin:14px 0 0 0;color:#64748b;font-size:13px;">See Admin Console → System Health for details and one-click restart/maintenance actions.</p>
+                </div>
+            </body></html>
+            """
+            subject = f"[{worst}] {township} — {len(escalations)} system check(s) need attention"
+            for admin in admins:
+                try:
+                    notification_service.send_email(
+                        to=admin.email, subject=subject, body_html=body_html,
+                        from_name=f"{township} System Monitor",
+                    )
+                except Exception as e:
+                    logger.warning(f"[proactive] failed to email {admin.email}: {e}")
+
+            return {"status": "alerted", "overall": result["overall_status"], "alerts": len(escalations)}
+
+    try:
+        return run_async(_scan())
+    except Exception as e:
+        logger.error(f"[proactive] scan failed: {e}")
+        return {"status": "error", "error": str(e)}

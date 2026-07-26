@@ -500,6 +500,10 @@ class SystemSettings(Base):
     # Refreshed on demand (admin "Refresh models") and by a daily Celery task.
     ai_models_cache = Column(JSON, default={})
 
+    # Last-seen status per proactive health check ({check_key: status}), so the
+    # alerting task only emails admins when a check crosses into a worse state.
+    health_alert_state = Column(JSON, default={})
+
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 

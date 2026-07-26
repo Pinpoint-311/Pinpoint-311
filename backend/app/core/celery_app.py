@@ -21,6 +21,13 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     # Celery Beat Schedule
     beat_schedule={
+        # Proactive health scan: warn admins by email before something fails
+        # (disk/memory/connections/backup staleness), every 15 minutes.
+        "proactive-health-scan": {
+            "task": "app.tasks.service_requests.proactive_health_scan",
+            "schedule": 60 * 15,  # Every 15 minutes
+            "options": {"queue": "default"}
+        },
         # Daily anchor of the audit hash-chain head (tamper-evidence beyond the DB)
         "daily-audit-anchor": {
             "task": "app.tasks.service_requests.anchor_audit_chain",
