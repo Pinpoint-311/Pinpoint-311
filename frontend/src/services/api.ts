@@ -1058,11 +1058,6 @@ class ApiClient {
         return this.request<ProactiveHealth>('/health/proactive');
     }
 
-    // Plain-language rollup for the staff status pill.
-    async getHealthSummary(): Promise<HealthSummary> {
-        return this.request<HealthSummary>('/health/summary');
-    }
-
     async executeRunbook(action: string, backupName?: string): Promise<RunbookResult> {
         const params = backupName ? `?backup_name=${encodeURIComponent(backupName)}` : '';
         return this.request<RunbookResult>(`/system/runbook/${action}${params}`, { method: 'POST' });

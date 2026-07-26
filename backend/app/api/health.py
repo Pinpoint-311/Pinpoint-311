@@ -17,7 +17,7 @@ from typing import Dict, Any, Optional
 import os
 
 from app.db.session import get_db
-from app.core.auth import get_current_admin, get_current_staff
+from app.core.auth import get_current_admin
 from app.models import SystemSecret
 from app.core.encryption import decrypt_safe
 
@@ -30,20 +30,9 @@ async def proactive_health(
     _=Depends(get_current_admin),
 ):
     """Leading-indicator health for admins: per-check status, values, and the
-    suggested action — shown alongside the restart/diagnose runbooks."""
+    suggested action — shown alongside the restart/diagnose runbooks. Admin-only."""
     from app.services.proactive_health import evaluate
     return await evaluate(db)
-
-
-@router.get("/summary")
-async def health_summary(
-    db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_staff),
-):
-    """Plain-language rollup for non-technical staff — drives the status pill."""
-    from app.services.proactive_health import evaluate
-    result = await evaluate(db)
-    return result["summary"]
 
 
 async def get_config_value(db: AsyncSession, key_name: str, env_name: Optional[str] = None) -> Optional[str]:
