@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { MapPin, Layers, ChevronDown, ChevronRight, X } from 'lucide-react';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
+import { loadGoogleMaps } from '../utils/googleMaps';
 
 declare global {
     interface Window {
@@ -109,17 +110,7 @@ export default function ResidentMapView({
             return;
         }
 
-        if (window.google?.maps) {
-            initMap();
-            return;
-        }
-
-        const script = document.createElement("script");
-        script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&loading=async`;
-        script.async = true;
-        script.onload = () => initMap();
-        script.onerror = () => setIsLoading(false);
-        document.head.appendChild(script);
+        loadGoogleMaps(apiKey).then(() => initMap()).catch(() => setIsLoading(false));
 
         return () => {
             markersRef.current.forEach(m => m.setMap(null));

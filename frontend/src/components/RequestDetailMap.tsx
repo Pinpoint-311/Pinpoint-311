@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { MapPin } from 'lucide-react';
 import { MapLayer } from '../services/api';
+import { loadGoogleMaps } from '../utils/googleMaps';
 
 declare global {
     interface Window {
@@ -48,21 +49,10 @@ export default function RequestDetailMap({
             return;
         }
 
-        if (window.google?.maps) {
-            // Delay slightly to ensure all maps objects are ready
-            setTimeout(() => initMap(), 100);
-            return;
-        }
-
-        const script = document.createElement("script");
-        script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&loading=async`;
-        script.async = true;
-        script.onload = () => {
-            // Delay to ensure MapTypeControlStyle is available
-            setTimeout(() => initMap(), 200);
-        };
-        script.onerror = () => setIsLoading(false);
-        document.head.appendChild(script);
+        loadGoogleMaps(apiKey)
+            // Delay slightly to ensure all maps objects are ready.
+            .then(() => setTimeout(() => initMap(), 100))
+            .catch(() => setIsLoading(false));
 
         return () => {
             if (markerRef.current) markerRef.current.setMap(null);

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { MapPin, Crosshair, Loader2 } from 'lucide-react';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
 import { MapLayer, api } from '../services/api';
+import { loadGoogleMaps } from '../utils/googleMaps';
 
 declare global {
     interface Window {
@@ -115,39 +116,9 @@ const isPointInBoundary = (lat: number, lng: number, geojson: any): boolean => {
 };
 
 
-// Script loading state to prevent multiple loads
-let googleMapsLoadingPromise: Promise<void> | null = null;
-
-const loadGoogleMapsScript = (apiKey: string): Promise<void> => {
-    if (window.google?.maps) {
-        return Promise.resolve();
-    }
-
-    if (googleMapsLoadingPromise) {
-        return googleMapsLoadingPromise;
-    }
-
-    googleMapsLoadingPromise = new Promise((resolve, reject) => {
-        const script = document.createElement("script");
-        script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&loading=async&callback=initGoogleMaps`;
-        script.async = true;
-        script.defer = true;
-
-        window.initGoogleMaps = () => {
-            resolve();
-            delete window.initGoogleMaps;
-        };
-
-        script.onerror = () => {
-            googleMapsLoadingPromise = null;
-            reject(new Error('Failed to load Google Maps'));
-        };
-
-        document.head.appendChild(script);
-    });
-
-    return googleMapsLoadingPromise;
-};
+// Use the shared, single-inclusion loader (see utils/googleMaps) so this picker
+// never double-loads the API when another map is already on the page.
+const loadGoogleMapsScript = (apiKey: string): Promise<void> => loadGoogleMaps(apiKey);
 
 export default function GoogleMapsLocationPicker({
     apiKey,
