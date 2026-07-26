@@ -786,8 +786,11 @@ def notify_staff_of_activity(request_id: int, event: str, actor: str = None):
             if not request:
                 return {"error": "Request not found"}
 
-            # Recipient default: the specifically-assigned person. Only when no
-            # one is assigned do we fall back to the whole routed department.
+            # Recipient default: the specifically-assigned person. If nobody is
+            # assigned, notify whoever last worked the request — the most recent
+            # staff member (other than the current actor) to change its status or
+            # comment on it — so the person handling it stays in the loop. Only if
+            # there's no prior toucher either do we fall back to the department.
             recipients = {}
             if request.assigned_to:
                 assignee_result = await db.execute(
@@ -798,15 +801,57 @@ def notify_staff_of_activity(request_id: int, event: str, actor: str = None):
                 assignee = assignee_result.scalar_one_or_none()
                 if assignee:
                     recipients[assignee.id] = assignee
-            elif request.assigned_department_id:
-                staff_result = await db.execute(
-                    select(User)
-                    .join(user_departments)
-                    .where(user_departments.c.department_id == request.assigned_department_id)
-                    .where(User.is_active == True)
+            else:
+                from app.models import RequestComment, RequestAuditLog
+                last_username, last_ts = None, None
+
+                # Most recent staff status-change / edit from the audit trail.
+                audit_rows = await db.execute(
+                    select(RequestAuditLog.actor_name, RequestAuditLog.created_at)
+                    .where(RequestAuditLog.service_request_id == request.id)
+                    .where(RequestAuditLog.actor_type.in_(["staff", "admin"]))
+                    .where(RequestAuditLog.actor_name.isnot(None))
+                    .order_by(RequestAuditLog.created_at.desc())
                 )
-                for s in staff_result.scalars().all():
-                    recipients[s.id] = s
+                for name, ts in audit_rows.all():
+                    if actor and name == actor:
+                        continue
+                    last_username, last_ts = name, ts
+                    break
+
+                # Most recent comment author (comments are staff-authored).
+                comment_rows = await db.execute(
+                    select(RequestComment.username, RequestComment.created_at)
+                    .where(RequestComment.service_request_id == request.id)
+                    .order_by(RequestComment.created_at.desc())
+                )
+                for name, ts in comment_rows.all():
+                    if actor and name == actor:
+                        continue
+                    if last_ts is None or (ts and ts > last_ts):
+                        last_username, last_ts = name, ts
+                    break
+
+                if last_username:
+                    u_result = await db.execute(
+                        select(User)
+                        .where(User.username == last_username)
+                        .where(User.is_active == True)
+                    )
+                    u = u_result.scalar_one_or_none()
+                    if u:
+                        recipients[u.id] = u
+
+                # No assignee and no prior toucher — fall back to the department.
+                if not recipients and request.assigned_department_id:
+                    staff_result = await db.execute(
+                        select(User)
+                        .join(user_departments)
+                        .where(user_departments.c.department_id == request.assigned_department_id)
+                        .where(User.is_active == True)
+                    )
+                    for s in staff_result.scalars().all():
+                        recipients[s.id] = s
 
             staff_link = f"{portal_url}/staff#request/{request.service_request_id}"
             status_text = getattr(request.status, 'value', request.status) or ''
