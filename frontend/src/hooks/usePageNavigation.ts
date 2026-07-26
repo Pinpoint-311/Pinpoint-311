@@ -49,13 +49,12 @@ export function usePageNavigation({ baseTitle, scrollContainerRef, onHashChange 
         }
     }, [baseTitle]);
 
-    // Scroll to top of content area
+    // Scroll to top of content area. Depending on the page layout the actual
+    // scroller may be the inner content container OR the window, so reset both —
+    // scrolling only one silently no-ops when the other is the real scroller.
     const scrollToTop = useCallback((behavior: ScrollBehavior = 'smooth') => {
-        if (scrollContainerRef?.current) {
-            scrollContainerRef.current.scrollTo({ top: 0, behavior });
-        } else {
-            window.scrollTo({ top: 0, behavior });
-        }
+        scrollContainerRef?.current?.scrollTo({ top: 0, behavior });
+        window.scrollTo({ top: 0, behavior });
     }, [scrollContainerRef]);
 
     // Get current hash
