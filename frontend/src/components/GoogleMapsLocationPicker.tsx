@@ -762,6 +762,7 @@ export default function GoogleMapsLocationPicker({
                     placeholder={placeholder}
                     value={inputValue}
                     onChange={handleInputChange}
+                    aria-label="Location or address"
                     className="w-full h-12 pl-12 pr-14 rounded-xl bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/20 transition-all"
                     disabled={isLoading}
                     autoComplete="off"
@@ -772,6 +773,7 @@ export default function GoogleMapsLocationPicker({
                     onClick={handleUseMyLocation}
                     disabled={isLoading || isLocating}
                     className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 rounded-lg bg-primary-500/20 hover:bg-primary-500/30 transition-colors disabled:opacity-50"
+                    aria-label="Use my current location"
                     title="Use my current location"
                 >
                     {isLocating ? (
