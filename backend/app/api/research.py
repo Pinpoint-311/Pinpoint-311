@@ -1527,7 +1527,7 @@ async def get_data_dictionary(
             "priority": {
                 "type": "integer",
                 "range": "1-10",
-                "description": "Priority level (1=highest, 10=lowest)"
+                "description": "Priority level (1-10 scale, 10=highest)"
             },
             "address_anonymized": {
                 "type": "string",
@@ -1616,7 +1616,7 @@ async def get_data_dictionary(
             "ai_priority_score": {
                 "type": "float",
                 "range": "1-10",
-                "description": "AI-generated priority score (1=highest priority)",
+                "description": "AI-generated priority score (1-10 scale, 10=highest priority)",
                 "note": "Use with ai_vs_manual_priority_diff to study AI-human alignment"
             },
             "ai_classification": {
@@ -1888,7 +1888,7 @@ async def export_data_dictionary_csv(
         # AI Analysis
         ("ai_flagged", "boolean", "Whether AI flagged this request for staff review", "AI/ML Research Pack"),
         ("ai_flag_reason", "string", "Reason for AI flag (safety, urgent, inappropriate)", "AI/ML Research Pack"),
-        ("ai_priority_score", "float (1-10)", "AI-generated priority score (1=highest)", "AI/ML Research Pack"),
+        ("ai_priority_score", "float (1-10)", "AI-generated priority score (10=highest)", "AI/ML Research Pack"),
         ("ai_classification", "string", "AI-assigned service category", "AI/ML Research Pack"),
         ("ai_summary_sanitized", "string", "AI-generated summary (PII redacted)", "AI/ML Research Pack"),
         ("ai_analyzed", "boolean", "Whether AI has processed this request", "AI/ML Research Pack"),
@@ -1897,7 +1897,7 @@ async def export_data_dictionary_csv(
         # Status & Resolution
         ("status", "string", "Current status: open, in_progress, closed", "Core"),
         ("closed_substatus", "string", "How closed: resolved, no_action, third_party", "Core"),
-        ("priority", "integer (1-10)", "Priority level (1=highest, 10=lowest)", "Core"),
+        ("priority", "integer (1-10)", "Priority level (1-10 scale, 10=highest)", "Core"),
         ("resolution_outcome", "string", "Standardized outcome: completed, no_action_needed, referred_external, etc.", "Core"),
         
         # Location (privacy-aware)
@@ -2217,7 +2217,7 @@ async def research_chat(
 | has_photos / photo_count | bool/int | Photo attachments |
 | status | string | open, in_progress, closed |
 | closed_substatus | string | Resolution type |
-| priority | int (1-10) | Priority level (1=highest) |
+| priority | int (1-10) | Priority level (10=highest) |
 | resolution_outcome | string | Standardized resolution category |
 | address_anonymized | string | Generalized address |
 | latitude / longitude | float | Coordinates (fuzzed in privacy mode) |
