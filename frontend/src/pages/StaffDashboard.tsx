@@ -210,6 +210,9 @@ export default function StaffDashboard() {
     // Activity feed state
     const [showActivityFeed, setShowActivityFeed] = useState(false);
 
+    // Export dropdown open state (keyboard-operable)
+    const [exportOpen, setExportOpen] = useState(false);
+
     // AI Analytics Chat state
     const [chatOpen, setChatOpen] = useState(false);
     const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
@@ -1056,13 +1059,18 @@ export default function StaffDashboard() {
                                         <span className="hidden sm:inline">Research Portal</span>
                                         <span className="sm:hidden">Research</span>
                                     </button>
-                                    <div className="relative group">
-                                        <button className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 sm:py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all text-xs sm:text-sm font-medium w-full shadow-lg shadow-purple-900/30">
+                                    <div className="relative group" onKeyDown={(e) => { if (e.key === 'Escape') setExportOpen(false); }}>
+                                        <button
+                                            onClick={() => setExportOpen(o => !o)}
+                                            aria-haspopup="menu"
+                                            aria-expanded={exportOpen}
+                                            className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 sm:py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all text-xs sm:text-sm font-medium w-full shadow-lg shadow-purple-900/30"
+                                        >
                                             <Download className="w-4 h-4" />
                                             <span>Export</span>
-                                            <ChevronDown className="w-3 h-3 transition-transform duration-200 group-hover:rotate-180" />
+                                            <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${exportOpen ? 'rotate-180' : ''}`} />
                                         </button>
-                                        <div className="absolute right-0 mt-2 w-64 origin-top-right rounded-2xl border border-white/10 bg-slate-900/95 backdrop-blur-xl shadow-2xl shadow-black/50 ring-1 ring-white/5 opacity-0 invisible translate-y-1 group-hover:opacity-100 group-hover:visible group-hover:translate-y-0 transition-all duration-200 z-50 overflow-hidden">
+                                        <div role="menu" className={`absolute right-0 mt-2 w-64 origin-top-right rounded-2xl border border-white/10 bg-slate-900/95 backdrop-blur-xl shadow-2xl shadow-black/50 ring-1 ring-white/5 transition-all duration-200 z-50 overflow-hidden ${exportOpen ? 'opacity-100 visible translate-y-0' : 'opacity-0 invisible translate-y-1'}`}>
                                             <div className="p-2">
                                                 <p className="px-2.5 pt-1.5 pb-1 text-[10px] font-semibold text-white/40 uppercase tracking-wider">Requests</p>
                                                 {[
@@ -1070,7 +1078,7 @@ export default function StaffDashboard() {
                                                     { fmt: 'json', Icon: Braces, label: 'JSON', hint: 'Structured records', ext: '.json', fn: () => handleExportRequests('json') },
                                                     { fmt: 'geojson', Icon: Map, label: 'GeoJSON', hint: 'Mapping / GIS', ext: '.geojson', fn: () => handleExportRequests('geojson') },
                                                 ].map(({ fmt, Icon, label, hint, ext, fn }) => (
-                                                    <button key={fmt} onClick={fn} className="group/item w-full flex items-center gap-3 px-2.5 py-2 rounded-xl text-left hover:bg-white/[0.07] transition-colors">
+                                                    <button key={fmt} role="menuitem" onClick={() => { fn(); setExportOpen(false); }} className="group/item w-full flex items-center gap-3 px-2.5 py-2 rounded-xl text-left hover:bg-white/[0.07] transition-colors">
                                                         <span className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-primary-300 group-hover/item:bg-primary-500/15 group-hover/item:border-primary-400/30 transition-colors">
                                                             <Icon className="w-4 h-4" />
                                                         </span>
@@ -1087,7 +1095,7 @@ export default function StaffDashboard() {
                                                     { fmt: 'csv', Icon: BarChart3, label: 'CSV', hint: 'Summary tables', ext: '.csv', fn: () => handleExportStatistics('csv') },
                                                     { fmt: 'json', Icon: TrendingUp, label: 'JSON', hint: 'Structured metrics', ext: '.json', fn: () => handleExportStatistics('json') },
                                                 ].map(({ fmt, Icon, label, hint, ext, fn }) => (
-                                                    <button key={fmt} onClick={fn} className="group/item w-full flex items-center gap-3 px-2.5 py-2 rounded-xl text-left hover:bg-white/[0.07] transition-colors">
+                                                    <button key={fmt} role="menuitem" onClick={() => { fn(); setExportOpen(false); }} className="group/item w-full flex items-center gap-3 px-2.5 py-2 rounded-xl text-left hover:bg-white/[0.07] transition-colors">
                                                         <span className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-primary-300 group-hover/item:bg-primary-500/15 group-hover/item:border-primary-400/30 transition-colors">
                                                             <Icon className="w-4 h-4" />
                                                         </span>
@@ -1357,6 +1365,7 @@ export default function StaffDashboard() {
                                         )}
                                         <button
                                             onClick={() => setChatOpen(false)}
+                                            aria-label="Close"
                                             className="flex items-center justify-center transition-colors"
                                             style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '8px', width: '30px', height: '30px', cursor: 'pointer', color: 'rgba(255,255,255,0.5)', fontSize: '0.85rem' }}
                                         >
@@ -2874,7 +2883,7 @@ export default function StaffDashboard() {
                                                     )}
                                                 </div>
 
-                                                <button onClick={() => setShowDeleteModal(true)} className="py-2.5 px-4 rounded-lg bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 text-sm font-medium flex items-center gap-2 transition-colors">
+                                                <button onClick={() => setShowDeleteModal(true)} aria-label="Delete request" className="py-2.5 px-4 rounded-lg bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 text-sm font-medium flex items-center gap-2 transition-colors">
                                                     <Trash2 className="w-4 h-4" />
                                                 </button>
                                             </div>
