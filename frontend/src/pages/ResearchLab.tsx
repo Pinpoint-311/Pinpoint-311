@@ -46,7 +46,7 @@ const RESEARCH_PACKS = [
         audience: 'Equity Analysts, Social Researchers',
         fields: [
             { name: 'census_tract_geoid', type: 'string', description: '11-digit FIPS code for Census dataset joins', source: 'US Census Geocoder API (real)' },
-            { name: 'social_vulnerability_index', type: 'float (0-1)', description: 'Vulnerability approximation (0=lowest, 1=highest) — NOT the CDC SVI', source: 'Derived: 3 ACS variables' },
+            { name: 'social_vulnerability_index', type: 'float (0-1)', description: 'Vulnerability percentile ranked within this export — NOT the official CDC SVI', source: 'ACS-derived, ranked' },
             { name: 'housing_tenure_renter_pct', type: 'float (0-1)', description: 'Renter % in zone (ownership patterns)', source: 'Derived from GEOID' },
             { name: 'income_quintile', type: 'int (1-5)', description: 'Income band from fixed national cutoffs (not true population quintiles)', source: 'Census ACS median income' },
             { name: 'population_density', type: 'string', description: 'low / medium / high — banded from tract population (land area not used)', source: 'Census ACS population' },
@@ -87,7 +87,7 @@ const RESEARCH_PACKS = [
         color: 'pink',
         audience: 'Civic Engagement Analysts, Administrators',
         fields: [
-            { name: 'sentiment_score', type: 'float (-1 to +1)', description: 'Sentiment (-1=angry, +1=grateful) — keyword scoring, no negation handling', source: 'Lexicon (in-app)' },
+            { name: 'sentiment_score', type: 'float (-1 to +1)', description: 'Sentiment (-1=angry, +1=grateful) — handles negation and intensifiers', source: 'VADER (rule-based)' },
             { name: 'is_repeat_report', type: 'boolean', description: 'Text indicates prior report of same issue', source: 'Regex detection (real)' },
             { name: 'prior_report_mentioned', type: 'boolean', description: 'References ticket/case number', source: 'Regex detection (real)' },
             { name: 'frustration_expressed', type: 'boolean', description: 'Trust erosion indicators present', source: 'Regex detection (real)' },
@@ -112,8 +112,8 @@ const RESEARCH_PACKS = [
             { name: 'escalation_occurred', type: 'boolean', description: 'Priority was manually increased by staff', source: 'Audit logs (real)' },
             { name: 'total_hours_to_resolve', type: 'float', description: 'Total hours from submission to closure', source: 'Calculated (real)' },
             { name: 'business_hours_to_resolve', type: 'float', description: 'Business hours only (Mon-Fri 8am-5pm)', source: 'Calculated (real)' },
-            { name: 'days_to_first_update', type: 'float', description: 'Days to the MOST RECENT update (not the first action)', source: 'Calculated' },
-            { name: 'status_change_count', type: 'int', description: 'Count of all audit-log entries (not only status changes)', source: 'Audit logs' },
+            { name: 'days_to_first_update', type: 'float', description: 'Days to the first staff action', source: 'Audit logs' },
+            { name: 'status_change_count', type: 'int', description: 'Number of status changes', source: 'Audit logs' },
         ],
         suggestedAnalyses: [
             'Triage time vs resolution outcome',
@@ -129,10 +129,9 @@ const RESEARCH_PACKS = [
         color: 'green',
         audience: 'Data Scientists, AI/ML Engineers',
         fields: [
-            { name: 'ai_flagged', type: 'boolean', description: 'Flagged for staff review (content-moderation wordlist, not AI)', source: 'Moderation wordlist' },
-            { name: 'ai_flag_reason', type: 'string', description: 'Flag reason, e.g. "Auto-flagged: profanity"', source: 'Moderation wordlist' },
+            { name: 'moderation_flagged', type: 'boolean', description: 'Flagged for staff review by the content-moderation wordlist (not AI)', source: 'Moderation wordlist' },
+            { name: 'moderation_flag_reason', type: 'string', description: 'Flag reason, e.g. "Auto-flagged: profanity"', source: 'Moderation wordlist' },
             { name: 'ai_priority_score', type: 'float (1-10)', description: 'AI-suggested priority (10=highest); blank when AI never ran', source: 'AI provider' },
-            { name: 'ai_classification', type: 'string', description: 'RESERVED — always empty; no pipeline writes it yet', source: 'Not populated' },
             { name: 'ai_summary_sanitized', type: 'string', description: 'AI summary with PII patterns redacted', source: 'AI provider' },
             { name: 'ai_analyzed', type: 'boolean', description: 'Whether AI processed this request', source: 'System (real)' },
             { name: 'ai_vs_manual_priority_diff', type: 'float', description: 'manual_priority - ai_priority', source: 'Calculated (real)' },
@@ -785,7 +784,7 @@ export const ResearchLab: React.FC = () => {
                             Data Export
                         </h2>
                         <p className="text-white/60 text-sm mb-4">
-                            Download all {totalFields} fields for offline analysis. Exports apply PII redaction and coordinate grid-snapping per your privacy mode — review before external release.
+                            Download all {totalFields} fields for offline analysis. Exports apply PII redaction, coordinate grid-snapping, and small-cell suppression (census-tract fields are withheld for tracts with fewer than 5 records). Review before external release.
                         </p>
                         <div className="grid grid-cols-2 gap-4 mb-4">
                             <Button onClick={handleExportCSV} variant="secondary" size="lg">
@@ -873,8 +872,8 @@ export const ResearchLab: React.FC = () => {
                         {[
                             ['US Census Bureau Geocoder + ACS', 'Live API (free, no key). Tract, income, tenure.'],
                             ['Open-Meteo Archive API', 'Live API. Blank when the call fails — never estimated.'],
-                            ['Sentiment & trust indicators', 'Lexicon/keyword scoring in-app — not an NLP model.'],
-                            ['Vulnerability approximation', 'Derived from 3 ACS variables — not the CDC SVI.'],
+                            ['Sentiment & trust indicators', 'VADER rule-based scoring in-app — handles negation.'],
+                            ['Vulnerability percentile', 'ACS-derived, ranked within the export — not the CDC SVI.'],
                             ['AI analysis fields', 'From stored model output; blank when AI never ran.'],
                             ['Flags', 'Content-moderation wordlist at intake, not AI.'],
                         ].map(([name, detail]) => (

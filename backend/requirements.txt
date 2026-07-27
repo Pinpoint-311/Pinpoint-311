@@ -29,3 +29,8 @@ sentry-sdk[fastapi]==2.54.0
 
 # Content moderation for public inputs (profanity/explicit text detection)
 better-profanity==0.7.0
+
+# Sentiment analysis for the research portal. VADER is a published, validated
+# rule-based model (MIT, pure Python, no model download) that handles negation
+# and intensifiers. Optional: research exports fall back to a keyword scorer.
+vaderSentiment==3.3.2
