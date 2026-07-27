@@ -40,6 +40,23 @@ redis_client = redis.from_url(_settings.redis_url, decode_responses=True)
 CACHE_TTL = 60  # seconds
 
 
+def public_visibility_filters():
+    """WHERE clauses that define what the PUBLIC may see in a listing.
+
+    Kept as one named helper so every public list uses the same rule and a future
+    edit can't quietly drop it — a missing clause here silently republishes every
+    report a resident asked to keep unlisted.
+
+    Excludes soft-deleted records and requests the resident marked unlisted.
+    Unlisted still means: reachable by direct tracking link, and fully visible to
+    staff. It never hides a request from the town.
+    """
+    return (
+        ServiceRequest.deleted_at.is_(None),
+        ServiceRequest.is_public.is_(True),
+    )
+
+
 @router.get("/public/requests")
 async def list_public_requests(
     status: Optional[str] = Query(None, description="Filter by status"),
@@ -60,8 +77,11 @@ async def list_public_requests(
     except redis.RedisError:
         logger.debug("Redis unavailable for cache read, proceeding without cache")
 
-    query = select(ServiceRequest).where(ServiceRequest.deleted_at.is_(None))
-    
+    # Unlisted reports are excluded from every public listing. They remain fully
+    # reachable by their direct tracking link (the by-id endpoints below) and are
+    # always visible to staff — "unlisted", not "hidden from the town".
+    query = select(ServiceRequest).where(*public_visibility_filters())
+
     if status:
         query = query.where(ServiceRequest.status == status)
     if service_code:
@@ -634,6 +654,7 @@ async def create_request(
         preferred_language=request_data.preferred_language or "en",  # Capture user's UI language
         media_urls=request_data.media_urls[:3] if request_data.media_urls else [],  # Limit to 3 photos
         matched_asset=request_data.matched_asset,
+        is_public=True if request_data.is_public is None else request_data.is_public,
         custom_fields=request_data.custom_fields,
         source="resident_portal",
         assigned_department_id=assigned_department_id,
@@ -990,6 +1011,7 @@ async def create_manual_intake(
         preferred_language=intake_data.preferred_language or "en",
         media_urls=intake_data.media_urls[:3] if intake_data.media_urls else [],
         matched_asset=intake_data.matched_asset,
+        is_public=True if intake_data.is_public is None else intake_data.is_public,
         custom_fields=intake_data.custom_fields,
         source=intake_data.source.value,
         assigned_department_id=assigned_department_id,

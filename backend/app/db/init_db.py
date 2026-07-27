@@ -171,6 +171,10 @@ async def _run_schema_migrations():
         # Optional per-category SLA target in hours (added 2026-07-27). NULL means
         # no SLA is set for that service category.
         "ALTER TABLE service_definitions ADD COLUMN IF NOT EXISTS sla_hours INTEGER",
+        # Resident-chosen public-feed visibility (added 2026-07-27). Existing rows
+        # default to public, preserving current behavior.
+        "ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT true",
+        "CREATE INDEX IF NOT EXISTS ix_service_requests_is_public ON service_requests (is_public)",
         # GovTech integrations: comment/document sync tracking (added 2026-07-01)
         "ALTER TABLE request_comments ADD COLUMN IF NOT EXISTS external_ref VARCHAR(200)",
         "CREATE INDEX IF NOT EXISTS ix_request_comments_external_ref ON request_comments (external_ref)",

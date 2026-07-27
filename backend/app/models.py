@@ -245,6 +245,13 @@ class ServiceRequest(Base):
     # Metadata
     source = Column(String(50), default="resident_portal")  # resident_portal, phone, walk_in, email
     media_urls = Column(JSON, default=[])  # Array of up to 3 photo URLs/base64
+
+    # Public-feed visibility, chosen by the resident at submission.
+    #   True  (default) - appears in the public feed/map and public list APIs
+    #   False ("unlisted") - excluded from every public listing, but still fully
+    #          viewable by anyone holding the direct tracking link, and always
+    #          visible to town staff. Never means "hidden from staff".
+    is_public = Column(Boolean, default=True, server_default='true', nullable=False, index=True)
     
     # AI Analysis
     ai_analysis = Column(JSON)

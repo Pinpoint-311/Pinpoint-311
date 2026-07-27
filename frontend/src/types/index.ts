@@ -102,6 +102,8 @@ export interface ServiceRequest {
     updated_datetime: string | null;
     source: string;
     flagged: boolean;
+    /** false = unlisted: hidden from public feeds/APIs (staff always see it). */
+    is_public?: boolean;
     // Assignment
     assigned_department_id: number | null;
     assigned_to: string | null;
@@ -209,6 +211,8 @@ export interface ServiceRequestCreate {
         distance_meters?: number;
     };
     custom_fields?: Record<string, string | string[]>;
+    /** false = unlisted: excluded from public feeds/APIs, still viewable by direct link. */
+    is_public?: boolean;
 }
 
 
@@ -226,6 +230,8 @@ export interface ManualIntakeCreate {
     media_urls?: string[];
     matched_asset?: Record<string, any> | null;
     custom_fields?: Record<string, string | string[]>;
+    /** false = unlisted: excluded from public feeds/APIs, still viewable by direct link. */
+    is_public?: boolean;
     source: 'phone' | 'walk_in' | 'email';
 }
 

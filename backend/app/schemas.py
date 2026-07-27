@@ -190,6 +190,10 @@ class ServiceRequestCreate(BaseModel):
     media_urls: Optional[List[str]] = []  # Up to 3 photo URLs/base64
     matched_asset: Optional[Dict[str, Any]] = None  # Nearby asset from map layers
     custom_fields: Optional[Dict[str, Any]] = {} # Standard custom question responses
+    # Resident's choice: show this report in the public feed/map (default), or
+    # keep it unlisted — still reachable by its tracking link, still worked by
+    # staff, just excluded from public listings.
+    is_public: Optional[bool] = True
 
 
 
@@ -228,7 +232,14 @@ class ServiceRequestResponse(BaseModel):
     updated_datetime: Optional[datetime] = None
     source: str
     flagged: bool = False
-    
+    # Whether this report appears in public listings (False = unlisted).
+    is_public: bool = True
+
+    @field_validator('is_public', mode='before')
+    @classmethod
+    def coalesce_is_public(cls, v):
+        return True if v is None else v
+
     @field_validator('flagged', mode='before')
     @classmethod
     def coalesce_flagged(cls, v):
@@ -322,6 +333,8 @@ class ManualIntakeCreate(BaseModel):
     media_urls: Optional[List[str]] = []
     matched_asset: Optional[Dict[str, Any]] = None
     custom_fields: Optional[Dict[str, Any]] = {}
+    # Honor the same choice when a staffer takes the report by phone/walk-in.
+    is_public: Optional[bool] = True
     source: RequestSource = RequestSource.phone
 
 
