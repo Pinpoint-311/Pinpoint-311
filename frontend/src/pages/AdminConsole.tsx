@@ -95,6 +95,15 @@ function formatYears(days: number): string {
     return `${rounded} ${rounded === 1 ? 'year' : 'years'}`;
 }
 
+// Render an SLA target in hours as something readable ("72 hours" -> "3 days").
+export function formatSlaTarget(hours: number): string {
+    if (!hours || hours <= 0) return 'No target';
+    if (hours < 24) return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+    const days = hours / 24;
+    const rounded = Number.isInteger(days) ? days : Math.round(days * 10) / 10;
+    return `${rounded} ${rounded === 1 ? 'day' : 'days'}`;
+}
+
 // Icon library for service categories
 const ICON_LIBRARY: { name: string; icon: LucideIcon }[] = [
     { name: 'AlertCircle', icon: AlertCircle },
@@ -424,6 +433,8 @@ export default function AdminConsole() {
         routing_mode: 'township' as 'township' | 'third_party' | 'road_based',
         assigned_department_id: null as number | null,
         icon: 'AlertCircle',
+        // Optional SLA target in hours; '' means no SLA for this category.
+        sla_hours: '' as string,
         routing_config: {
             // Township mode
             route_to: 'all_staff' as 'all_staff' | 'specific_staff',
@@ -832,6 +843,7 @@ export default function AdminConsole() {
             routing_mode: service.routing_mode || 'township',
             assigned_department_id: service.assigned_department_id || null,
             icon: service.icon || 'AlertCircle',
+            sla_hours: service.sla_hours ? String(service.sla_hours) : '',
             routing_config: {
                 // Township mode
                 route_to: config.route_to || 'all_staff',
@@ -895,6 +907,8 @@ export default function AdminConsole() {
                 routing_config: config,
                 assigned_department_id: serviceRouting.assigned_department_id || undefined,
                 icon: serviceRouting.icon,
+                // 0 explicitly clears the SLA; a value sets it.
+                sla_hours: serviceRouting.sla_hours ? parseInt(serviceRouting.sla_hours) : 0,
             });
 
             setShowServiceEditModal(false);
@@ -3155,6 +3169,48 @@ export default function AdminConsole() {
                                     <IconComponent className="w-4 h-4" />
                                 </button>
                             ))}
+                        </div>
+                    </div>
+
+                    {/* Optional SLA target */}
+                    <div className="space-y-2 p-4 rounded-lg bg-sky-500/10 border border-sky-500/20">
+                        <div className="flex items-center gap-2">
+                            <Clock className="w-4 h-4 text-sky-300" />
+                            <label htmlFor="sla-hours" className="text-sm font-medium text-white">
+                                Service Level Target <span className="text-white/40 font-normal">(optional)</span>
+                            </label>
+                        </div>
+                        <p className="text-xs text-white/50">
+                            Target time from submission to closure for this category. Leave blank for no
+                            target — categories without one are simply excluded from SLA reporting.
+                        </p>
+                        <div className="flex items-center gap-2">
+                            <input
+                                id="sla-hours"
+                                type="number"
+                                min={1}
+                                max={8760}
+                                inputMode="numeric"
+                                placeholder="e.g. 72"
+                                value={serviceRouting.sla_hours}
+                                onChange={(e) => setServiceRouting(p => ({ ...p, sla_hours: e.target.value }))}
+                                className="w-32 h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
+                            />
+                            <span className="text-sm text-white/60">hours</span>
+                            {serviceRouting.sla_hours && Number(serviceRouting.sla_hours) > 0 && (
+                                <span className="text-xs text-sky-300 ml-1">
+                                    = {formatSlaTarget(Number(serviceRouting.sla_hours))}
+                                </span>
+                            )}
+                            {serviceRouting.sla_hours && (
+                                <button
+                                    type="button"
+                                    onClick={() => setServiceRouting(p => ({ ...p, sla_hours: '' }))}
+                                    className="text-xs text-white/40 hover:text-white/70 underline underline-offset-2 ml-auto"
+                                >
+                                    Clear
+                                </button>
+                            )}
                         </div>
                     </div>
 

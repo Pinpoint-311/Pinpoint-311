@@ -283,6 +283,12 @@ class ApiClient {
         return this.request<void>(`/services/${id}`, { method: 'DELETE' });
     }
 
+    // SLA performance per service category (staff). Only categories with an SLA
+    // configured are scored; the rest are listed as uncovered.
+    async getSlaPerformance(days: number = 90): Promise<SlaPerformance> {
+        return this.request<SlaPerformance>(`/services/sla-performance?days=${days}`);
+    }
+
     async updateService(id: number, data: Partial<ServiceDefinition>): Promise<ServiceDefinition> {
         return this.request<ServiceDefinition>(`/services/${id}`, {
             method: 'PUT',
@@ -1339,6 +1345,38 @@ export interface BackupResult {
 }
 
 // Health Dashboard (Bus Factor Mitigation)
+export interface SlaCategory {
+    service_code: string;
+    service_name: string;
+    sla_hours: number;
+    resolved: number;
+    met: number;
+    breached: number;
+    open_overdue: number;
+    open_at_risk: number;
+    open_on_track: number;
+    /** null when nothing has been resolved yet — unknown, not 0%. */
+    compliance_rate: number | null;
+    avg_resolution_hours: number | null;
+    avg_vs_target_hours: number | null;
+}
+
+export interface SlaPerformance {
+    period_days: number;
+    generated_at: string;
+    overall: {
+        categories_with_sla: number;
+        resolved: number;
+        met: number;
+        breached: number;
+        open_overdue: number;
+        open_at_risk: number;
+        compliance_rate: number | null;
+    };
+    categories: SlaCategory[];
+    categories_without_sla: { service_code: string; service_name: string }[];
+}
+
 export interface HealthCheck {
     key: string;
     label: string;

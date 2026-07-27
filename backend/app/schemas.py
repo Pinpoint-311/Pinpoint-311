@@ -133,6 +133,8 @@ class ServiceCreate(ServiceBase):
     routing_config: Optional[Dict[str, Any]] = {}
     assigned_department_id: Optional[int] = None
     display_order: Optional[int] = 0
+    # Optional SLA target in hours; omit or null for no SLA.
+    sla_hours: Optional[int] = Field(default=None, ge=1, le=8760)
 
 
 class ServiceUpdate(BaseModel):
@@ -145,12 +147,15 @@ class ServiceUpdate(BaseModel):
     routing_config: Optional[Dict[str, Any]] = None
     assigned_department_id: Optional[int] = None
     display_order: Optional[int] = None
+    # Send 0 to explicitly clear the SLA (omitting it leaves the value unchanged).
+    sla_hours: Optional[int] = Field(default=None, ge=0, le=8760)
 
 
 class ServiceResponse(ServiceBase):
     id: int
     is_active: bool
     display_order: int = 0
+    sla_hours: Optional[int] = None
     departments: List[DepartmentResponse] = []
     routing_mode: Optional[str] = "township"
     routing_config: Optional[Dict[str, Any]] = {}

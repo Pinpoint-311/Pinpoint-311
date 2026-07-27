@@ -127,6 +127,7 @@ export default function StaffDashboard() {
     const [services, setServices] = useState<ServiceDefinition[]>([]);
     const [statistics, setStatistics] = useState<Statistics | null>(null);
     const [advancedStats, setAdvancedStats] = useState<AdvancedStatistics | null>(null);
+    const [slaPerf, setSlaPerf] = useState<import('../services/api').SlaPerformance | null>(null);
     const [heatmapData, setHeatmapData] = useState<HeatmapData | null>(null);
 
     // Dashboard-specific state
@@ -515,14 +516,16 @@ export default function StaffDashboard() {
 
     const loadStatistics = async () => {
         try {
-            const [statsData, advancedData, heatmap] = await Promise.all([
+            const [statsData, advancedData, heatmap, sla] = await Promise.all([
                 api.getStatistics(),
                 api.getAdvancedStatistics(),
-                api.getHeatmapData().catch(() => null)
+                api.getHeatmapData().catch(() => null),
+                api.getSlaPerformance(90).catch(() => null)
             ]);
             setStatistics(statsData);
             setAdvancedStats(advancedData);
             if (heatmap) setHeatmapData(heatmap);
+            setSlaPerf(sla);
         } catch (err) {
             console.error('Failed to load statistics:', err);
         }
@@ -1199,6 +1202,92 @@ export default function StaffDashboard() {
                                     <div className="text-[10px] sm:text-xs text-white/60 mt-1">Peak: {advancedStats?.predictive_insights?.seasonal_peak_month || 'N/A'}</div>
                                 </div>
                             </div>
+
+                            {/* SLA performance — only rendered once at least one
+                                category has a target configured (the feature is opt-in). */}
+                            {slaPerf && slaPerf.categories.length > 0 && (
+                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
+                                    <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
+                                        <div>
+                                            <h3 className="text-lg font-semibold text-white">Service Level Performance</h3>
+                                            <p className="text-xs text-white/40 mt-0.5">
+                                                Against configured targets · last {slaPerf.period_days} days
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-4 sm:gap-6">
+                                            <div className="text-right">
+                                                <div className={`text-2xl font-bold ${slaPerf.overall.compliance_rate === null ? 'text-white/40'
+                                                    : slaPerf.overall.compliance_rate >= 90 ? 'text-emerald-300'
+                                                        : slaPerf.overall.compliance_rate >= 75 ? 'text-amber-300' : 'text-red-300'}`}>
+                                                    {slaPerf.overall.compliance_rate === null ? '—' : `${slaPerf.overall.compliance_rate}%`}
+                                                </div>
+                                                <div className="text-[10px] text-white/40 uppercase tracking-wider">On time</div>
+                                            </div>
+                                            {slaPerf.overall.open_overdue > 0 && (
+                                                <div className="text-right">
+                                                    <div className="text-2xl font-bold text-red-300">{slaPerf.overall.open_overdue}</div>
+                                                    <div className="text-[10px] text-white/40 uppercase tracking-wider">Overdue now</div>
+                                                </div>
+                                            )}
+                                            {slaPerf.overall.open_at_risk > 0 && (
+                                                <div className="text-right">
+                                                    <div className="text-2xl font-bold text-amber-300">{slaPerf.overall.open_at_risk}</div>
+                                                    <div className="text-[10px] text-white/40 uppercase tracking-wider">At risk</div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-2.5">
+                                        {slaPerf.categories.map(c => {
+                                            const rate = c.compliance_rate;
+                                            const barColor = rate === null ? 'bg-white/20'
+                                                : rate >= 90 ? 'bg-emerald-400' : rate >= 75 ? 'bg-amber-400' : 'bg-red-400';
+                                            return (
+                                                <div key={c.service_code} className="p-3 rounded-lg bg-white/[0.03] border border-white/[0.06]">
+                                                    <div className="flex items-center justify-between gap-3 mb-1.5 flex-wrap">
+                                                        <span className="text-sm font-medium text-white">{c.service_name}</span>
+                                                        <span className="text-[11px] text-white/40">
+                                                            target {c.sla_hours}h
+                                                            {c.avg_resolution_hours !== null && (
+                                                                <> · avg {c.avg_resolution_hours}h
+                                                                    <span className={c.avg_vs_target_hours !== null && c.avg_vs_target_hours > 0 ? 'text-red-300' : 'text-emerald-300'}>
+                                                                        {c.avg_vs_target_hours !== null && (c.avg_vs_target_hours > 0
+                                                                            ? ` (+${c.avg_vs_target_hours}h over)` : ` (${Math.abs(c.avg_vs_target_hours)}h under)`)}
+                                                                    </span>
+                                                                </>
+                                                            )}
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="flex-1 h-2 rounded-full bg-white/10 overflow-hidden">
+                                                            <div className={`h-full rounded-full ${barColor}`} style={{ width: `${rate ?? 0}%` }} />
+                                                        </div>
+                                                        <span className="text-sm font-semibold text-white w-12 text-right">
+                                                            {rate === null ? '—' : `${rate}%`}
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex items-center gap-3 mt-1.5 text-[11px] text-white/40 flex-wrap">
+                                                        {c.resolved > 0
+                                                            ? <span>{c.met} of {c.resolved} resolved on time</span>
+                                                            : <span>No requests resolved yet</span>}
+                                                        {c.open_overdue > 0 && <span className="text-red-300">{c.open_overdue} overdue</span>}
+                                                        {c.open_at_risk > 0 && <span className="text-amber-300">{c.open_at_risk} at risk</span>}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+
+                                    {slaPerf.categories_without_sla.length > 0 && (
+                                        <p className="text-[11px] text-white/30 mt-3">
+                                            No target set for {slaPerf.categories_without_sla.length} other{' '}
+                                            {slaPerf.categories_without_sla.length === 1 ? 'category' : 'categories'} —
+                                            these are excluded from the numbers above.
+                                        </p>
+                                    )}
+                                </div>
+                            )}
 
                             {/* Two-Column: Categories + Weekly Trend */}
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">

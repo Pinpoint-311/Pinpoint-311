@@ -47,6 +47,8 @@ export interface ServiceDefinition {
     icon: string;
     is_active: boolean;
     display_order: number;
+    /** Optional SLA target in hours from submission to closure. null = no SLA. */
+    sla_hours?: number | null;
     departments: Department[];
     routing_mode?: 'township' | 'third_party' | 'road_based';
     routing_config?: {
