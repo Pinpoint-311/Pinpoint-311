@@ -63,11 +63,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if "X-Powered-By" in response.headers:
             del response.headers["X-Powered-By"]
 
-        # Content Security Policy. API responses are pure JSON and load nothing,
-        # so lock them all the way down — a reflected parameter is then completely
-        # inert (defense against reflected-XSS probes). Server-rendered HTML pages
-        # (auth bootstrap/demo) still deny plugins, framing, and base-tag hijacking.
-        if request_path.startswith("/api/"):
+        # Content Security Policy, decided by response TYPE (not URL path): JSON
+        # responses load nothing, so lock them all the way down — a reflected
+        # parameter is then completely inert (defense against reflected-XSS
+        # probes). Server-rendered HTML pages (e.g. the /api/auth bootstrap and
+        # demo-login pages) legitimately use inline scripts/styles, so they get a
+        # policy that keeps working while still denying plugins, framing, and
+        # base-tag hijacking. Keying off path would have broken those HTML pages.
+        content_type = response.headers.get("content-type", "")
+        if content_type.startswith("application/json"):
             response.headers["Content-Security-Policy"] = (
                 "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
             )
