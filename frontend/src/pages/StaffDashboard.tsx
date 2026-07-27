@@ -11,6 +11,7 @@ import {
     Clock,
     FileText,
     Braces,
+    EyeOff,
     TrendingUp,
     Map,
     Sparkles,
@@ -1920,6 +1921,15 @@ export default function StaffDashboard() {
                                                 <div className="flex items-center gap-1.5 sm:gap-2 mb-0.5 sm:mb-1 flex-wrap">
                                                     <span className="font-mono text-[10px] sm:text-xs text-white/50 bg-white/5 px-1.5 sm:px-2 py-0.5 rounded">{selectedRequest.service_request_id}</span>
                                                     <StatusBadge status={selectedRequest.status} />
+                                                    {(selectedRequest as any).is_public === false && (
+                                                        <span
+                                                            className="inline-flex items-center gap-1 text-[10px] sm:text-xs font-medium px-1.5 sm:px-2 py-0.5 rounded bg-slate-500/20 text-slate-300 border border-slate-400/30"
+                                                            title="The resident asked to keep this off the public map and feed. Work it normally — just don't share it publicly."
+                                                        >
+                                                            <EyeOff className="w-3 h-3" aria-hidden="true" />
+                                                            Unlisted
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 <h1 className="text-base sm:text-lg font-semibold text-white truncate">{selectedRequest.service_name}</h1>
                                             </div>

@@ -205,6 +205,7 @@ export default function ResidentPortal() {
         last_name: '',
         email: '',
         phone: '',
+        is_public: true,
     });
     const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
@@ -462,6 +463,7 @@ export default function ResidentPortal() {
             last_name: '',
             email: '',
             phone: '',
+            is_public: true,
         });
         setFormErrors({});
         setSubmittedId(null);
@@ -1386,6 +1388,39 @@ export default function ResidentPortal() {
                                                     }
                                                 />
                                             </div>
+                                        </Card>
+
+                                        {/* Public-feed visibility. Default is to share, which
+                                            keeps the community feed useful; opting out is one click. */}
+                                        <Card>
+                                            <label className="flex items-start gap-3 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={formData.is_public !== false}
+                                                    onChange={(e) =>
+                                                        setFormData((prev) => ({ ...prev, is_public: e.target.checked }))
+                                                    }
+                                                    className="mt-0.5 w-5 h-5 rounded border-white/20 bg-white/10 text-primary-500 shrink-0"
+                                                />
+                                                <span className="min-w-0">
+                                                    <span className="block text-sm font-medium text-white">
+                                                        Show this report on the public map and feed
+                                                    </span>
+                                                    <span className="block text-xs text-white/50 mt-1 leading-relaxed">
+                                                        {formData.is_public !== false ? (
+                                                            <>Neighbors will be able to see this report (never your name or
+                                                                contact details) so the community can see what&apos;s being
+                                                                worked on.</>
+                                                        ) : (
+                                                            <>Your report won&apos;t appear on the public map, feed, or open
+                                                                data feeds. <strong className="text-white/70">Anyone you send
+                                                                    your tracking link to can still view it.</strong> Town staff
+                                                                always see it and will work it normally, and it still counts in
+                                                                anonymized statistics.</>
+                                                        )}
+                                                    </span>
+                                                </span>
+                                            </label>
                                         </Card>
 
                                         {formErrors.submit && (
