@@ -1391,9 +1391,9 @@ export default function ResidentPortal() {
                                         </Card>
 
                                         {/* Public-feed visibility. Only offered when the town has
-                                            turned the Private Reports module on. Sharing is the
+                                            turned the Unlisted Reports module on. Sharing is the
                                             default; hiding is a deliberate, unchecked-by-default box. */}
-                                        {settings?.modules?.private_reports && (
+                                        {(settings?.modules?.unlisted_reports ?? (settings?.modules as any)?.private_reports) && (
                                             <Card>
                                                 <label className="flex items-start gap-3 cursor-pointer">
                                                     <input

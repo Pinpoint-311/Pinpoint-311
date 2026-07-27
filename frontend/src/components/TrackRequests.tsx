@@ -23,7 +23,6 @@ import {
 import { Card, Input, Button, Textarea } from './ui';
 import { api } from '../services/api';
 import { PublicServiceRequest, RequestComment, AuditLogEntry } from '../types';
-import { useTranslation } from '../context/TranslationContext';
 import { TranslatedContent } from './TranslatedContent';
 
 type StatusFilter = 'all' | 'open' | 'in_progress' | 'closed';
@@ -34,7 +33,7 @@ interface TrackRequestsProps {
     onRequestSelect?: (requestId: string | null) => void;  // Callback for when a request is selected/deselected
 }
 
-const getStatusColors = (t: (text: string) => string): Record<string, { bg: string; text: string; border: string; label: string; icon: React.ReactNode }> => ({
+const STATUS_COLORS: Record<string, { bg: string; text: string; border: string; label: string; icon: React.ReactNode }> = {
     open: {
         bg: 'bg-gradient-to-r from-amber-500/20 to-yellow-500/20',
         text: 'text-amber-200',  // Was 300, now 200 for better contrast
@@ -56,11 +55,10 @@ const getStatusColors = (t: (text: string) => string): Record<string, { bg: stri
         label: "Resolved",
         icon: <CheckCircle className="w-4 h-4" />
     },
-});
+};
 
 export default function TrackRequests({ initialRequestId, selectedRequestId, onRequestSelect }: TrackRequestsProps) {
-    const { t } = useTranslation();
-    const statusColors = getStatusColors(t);
+    const statusColors = STATUS_COLORS;
     const [requests, setRequests] = useState<PublicServiceRequest[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');

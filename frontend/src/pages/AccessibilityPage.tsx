@@ -1,4 +1,3 @@
-import React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Accessibility, Check } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';

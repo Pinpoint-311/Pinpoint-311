@@ -117,7 +117,7 @@ class _FakeDB:
 @pytest.mark.asyncio
 async def test_opt_out_honored_when_module_enabled():
     assert await open311.resolve_is_public(
-        _FakeDB({"private_reports": True}), False
+        _FakeDB({"unlisted_reports": True}), False
     ) is False
 
 
@@ -126,8 +126,17 @@ async def test_opt_out_ignored_when_module_disabled():
     """A client POSTing is_public=false must not hide a report in a town that
     never turned the feature on."""
     assert await open311.resolve_is_public(
-        _FakeDB({"private_reports": False}), False
+        _FakeDB({"unlisted_reports": False}), False
     ) is True
+
+
+@pytest.mark.asyncio
+async def test_legacy_key_name_still_honored():
+    """The module key was renamed private_reports -> unlisted_reports. A town
+    that had already turned it on must not silently lose the setting."""
+    assert await open311.resolve_is_public(
+        _FakeDB({"private_reports": True}), False
+    ) is False
 
 
 @pytest.mark.asyncio
@@ -155,10 +164,10 @@ async def test_settings_read_failure_fails_public():
 
 
 def test_module_default_is_off():
-    """Towns opt in to private reports; they don't get it silently."""
+    """Towns opt in to unlisted reports; they don't get it silently."""
     from app.models import SystemSettings
 
-    assert SystemSettings.__table__.c.modules.default.arg["private_reports"] is False
+    assert SystemSettings.__table__.c.modules.default.arg["unlisted_reports"] is False
 
 
 def test_response_schema_exposes_visibility_to_staff():

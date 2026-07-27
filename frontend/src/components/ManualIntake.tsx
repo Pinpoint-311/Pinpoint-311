@@ -413,7 +413,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                     </AnimatePresence>
                 </div>
 
-                {settings?.modules?.private_reports && (
+                {(settings?.modules?.unlisted_reports ?? (settings?.modules as any)?.private_reports) && (
                     <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3">
                         <input
                             type="checkbox"

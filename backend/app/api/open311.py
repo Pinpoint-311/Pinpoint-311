@@ -43,7 +43,7 @@ CACHE_TTL = 60  # seconds
 async def resolve_is_public(db: AsyncSession, requested_is_public) -> bool:
     """Decide a request's public-feed visibility, enforcing the admin setting.
 
-    Residents may only opt out when the town has enabled the `private_reports`
+    Residents may only opt out when the town has enabled the `unlisted_reports`
     module. This is enforced server-side on purpose: the checkbox can be absent
     from the UI, but a client could still POST is_public=false, and a town that
     hasn't turned the feature on must not end up with reports quietly missing
@@ -58,11 +58,14 @@ async def resolve_is_public(db: AsyncSession, requested_is_public) -> bool:
         result = await db.execute(select(SystemSettings).limit(1))
         settings_row = result.scalar_one_or_none()
         modules = (settings_row.modules if settings_row else None) or {}
-        return not bool(modules.get("private_reports", False))
+        # `private_reports` was the key's original name; read it too so a town
+        # that had already enabled the module doesn't silently lose the setting.
+        enabled = modules.get("unlisted_reports", modules.get("private_reports", False))
+        return not bool(enabled)
     except Exception as e:
         # Fail toward the town's configured default (public) rather than
         # silently hiding a report because a settings read hiccuped.
-        logger.warning(f"private_reports module check failed, defaulting to public: {e}")
+        logger.warning(f"unlisted_reports module check failed, defaulting to public: {e}")
         return True
 
 

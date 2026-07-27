@@ -273,7 +273,8 @@ async def seed_database():
             township_name="Your Township",
             hero_text="How can we help?",
             primary_color="#6366f1",
-            modules={"ai_analysis": False, "sms_alerts": False}
+            modules={"ai_analysis": False, "sms_alerts": False,
+                     "email_notifications": True, "unlisted_reports": False}
         )
         db.add(settings_obj)
         
