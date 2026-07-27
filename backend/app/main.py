@@ -57,9 +57,26 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         
         # Control referrer information
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        
-        # Content Security Policy
-        response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+
+        # Don't advertise the server software/version (information disclosure).
+        response.headers["Server"] = "Pinpoint"
+        if "X-Powered-By" in response.headers:
+            del response.headers["X-Powered-By"]
+
+        # Content Security Policy. API responses are pure JSON and load nothing,
+        # so lock them all the way down — a reflected parameter is then completely
+        # inert (defense against reflected-XSS probes). Server-rendered HTML pages
+        # (auth bootstrap/demo) still deny plugins, framing, and base-tag hijacking.
+        if request_path.startswith("/api/"):
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+            )
+        else:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+            )
 
         # Force HTTPS for a year on this host and its subdomains (HSTS). Sent on
         # every response; browsers only honor it over TLS, so it's harmless on
@@ -274,6 +291,26 @@ app = FastAPI(
     openapi_url="/api/openapi.json" if _docs_enabled else None,
     lifespan=lifespan
 )
+
+
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Return 422 validation errors without echoing the raw submitted values.
+
+    FastAPI's default handler reflects the offending `input` (and `ctx`) back in
+    the response body; a scanner injecting a payload sees it reflected and flags
+    a (non-exploitable, JSON) reflected-XSS. Strip those echoed values — clients
+    only need the field location, message, and type.
+    """
+    safe_errors = [
+        {"loc": e.get("loc"), "msg": e.get("msg"), "type": e.get("type")}
+        for e in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": safe_errors})
 
 
 from fastapi.responses import HTMLResponse

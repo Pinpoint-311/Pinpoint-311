@@ -4,6 +4,9 @@
     # API routes - must come first for proper matching
     # Rate limiting is handled by SlowAPI in the backend (500 req/min per IP)
     handle /api/* {
+        # API responses are pure JSON and load nothing — lock the CSP all the way
+        # down so any reflected parameter is inert (defense against reflected-XSS).
+        header Content-Security-Policy "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
         reverse_proxy backend:8000
     }
 
@@ -17,6 +20,9 @@
 
     # Security headers
     header {
+        # Don't advertise server software/version (information disclosure).
+        -Server
+        -X-Powered-By
         X-Content-Type-Options nosniff
         X-Frame-Options DENY
         Referrer-Policy strict-origin-when-cross-origin
