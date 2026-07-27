@@ -46,7 +46,8 @@ const RESEARCH_PACKS = [
         audience: 'Equity Analysts, Social Researchers',
         fields: [
             { name: 'census_tract_geoid', type: 'string', description: '11-digit FIPS code for Census dataset joins', source: 'US Census Geocoder API (real)' },
-            { name: 'social_vulnerability_index', type: 'float (0-1)', description: 'Vulnerability percentile ranked within this export — NOT the official CDC SVI', source: 'ACS-derived, ranked' },
+            { name: 'social_vulnerability_index', type: 'float (0-1)', description: 'Social vulnerability percentile (0=least, 1=most) — official CDC/ATSDR SVI when available', source: 'CDC/ATSDR SVI' },
+            { name: 'svi_source', type: 'string', description: "'cdc_svi_official' or 'acs_approximation' — check before pooling values", source: 'Provenance marker' },
             { name: 'housing_tenure_renter_pct', type: 'float (0-1)', description: 'Renter % in zone (ownership patterns)', source: 'Derived from GEOID' },
             { name: 'income_quintile', type: 'int (1-5)', description: 'Income band from fixed national cutoffs (not true population quintiles)', source: 'Census ACS median income' },
             { name: 'population_density', type: 'string', description: 'low / medium / high — banded from tract population (land area not used)', source: 'Census ACS population' },
@@ -873,7 +874,7 @@ export const ResearchLab: React.FC = () => {
                             ['US Census Bureau Geocoder + ACS', 'Live API (free, no key). Tract, income, tenure.'],
                             ['Open-Meteo Archive API', 'Live API. Blank when the call fails — never estimated.'],
                             ['Sentiment & trust indicators', 'VADER rule-based scoring in-app — handles negation.'],
-                            ['Vulnerability percentile', 'ACS-derived, ranked within the export — not the CDC SVI.'],
+                            ['Social vulnerability', 'Official CDC/ATSDR SVI; local ACS fallback is marked in svi_source.'],
                             ['AI analysis fields', 'From stored model output; blank when AI never ran.'],
                             ['Flags', 'Content-moderation wordlist at intake, not AI.'],
                         ].map(([name, detail]) => (

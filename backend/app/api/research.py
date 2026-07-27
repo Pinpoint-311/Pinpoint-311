@@ -29,6 +29,7 @@ import logging
 import re
 import hashlib
 import hmac
+from app.services.cdc_svi import get_cdc_svi
 
 from app.db.session import get_db
 from app.models import ServiceRequest, SystemSettings, ResearchAccessLog
@@ -594,11 +595,28 @@ async def build_equity_map(requests, privacy_mode: str = "fuzzed") -> dict:
         if key not in by_coord:
             geoid = await get_census_tract_geoid(req.lat, req.long)
             zone = generate_zone_id(req.lat, req.long)
+
+            # Prefer the OFFICIAL CDC/ATSDR SVI (nationally ranked, 16 variables,
+            # 4 themes). Only if CDC is unavailable do we fall back to the local
+            # ACS approximation — and `svi_source` always records which one it is,
+            # so the two are never silently conflated in analysis.
+            cdc = await get_cdc_svi(geoid)
+            if cdc:
+                svi_value = cdc["overall"]
+                svi_source = "cdc_svi_official"
+                svi_themes = cdc.get("themes") or {}
+            else:
+                svi_value = await get_social_vulnerability_index(geoid)
+                svi_source = "acs_approximation" if svi_value is not None else None
+                svi_themes = {}
+
             by_coord[key] = {
                 "census_geoid": geoid,
                 "income_band": await get_income_quintile_from_zone(zone, geoid),
                 "population_density": await get_population_density_category(zone, geoid),
-                "social_vulnerability_index": await get_social_vulnerability_index(geoid),
+                "social_vulnerability_index": svi_value,
+                "svi_source": svi_source,
+                "svi_themes": svi_themes,
                 "housing_tenure_renter_pct": await get_housing_tenure_mix(geoid),
             }
         entry = dict(by_coord[key])
@@ -631,6 +649,7 @@ _TRACT_FIELDS = (
     "income_band",
     "population_density",
     "social_vulnerability_index",
+    "svi_source",
     "housing_tenure_renter_pct",
 )
 
@@ -670,6 +689,10 @@ def _apply_svi_percentiles(enrichment: dict) -> None:
     """
     by_tract = {}
     for e in enrichment.values():
+        # Official CDC values are ALREADY national percentiles — re-ranking them
+        # against a handful of local tracts would destroy their meaning.
+        if e.get("svi_source") != "acs_approximation":
+            continue
         geoid, raw = e.get("census_geoid"), e.get("social_vulnerability_index")
         if geoid and raw is not None:
             by_tract[geoid] = raw
@@ -1264,7 +1287,7 @@ async def export_csv(
             # Location (privacy-aware)
             "address_anonymized", "latitude", "longitude", "zone_id",
             # SOCIAL EQUITY PACK (Sociologists)
-            "census_tract_geoid", "social_vulnerability_index", "housing_tenure_renter_pct",
+            "census_tract_geoid", "social_vulnerability_index", "svi_source", "housing_tenure_renter_pct",
             "income_quintile", "population_density",
             # ENVIRONMENTAL CONTEXT PACK (Urban Planners)
             "weather_precip_24h_mm", "weather_temp_max_c", "weather_temp_min_c", "weather_code",
@@ -1409,6 +1432,7 @@ async def export_csv(
                 # Social Equity Pack
                 census_geoid,
                 svi,
+                _eq.get("svi_source"),
                 housing_tenure,
                 income_quintile,
                 pop_density,
@@ -1653,6 +1677,7 @@ async def export_geojson(
                 # SOCIAL EQUITY PACK
                 "census_tract_geoid": census_geoid,
                 "social_vulnerability_index": svi,
+                "svi_source": _eq.get("svi_source"),
                 "housing_tenure_renter_pct": housing_tenure,
                 "income_quintile": income_quintile,
                 "population_density": pop_density,
@@ -1958,7 +1983,7 @@ async def get_data_dictionary(
             "social_vulnerability_index": {
                 "type": "float",
                 "range": "0.0-1.0",
-                "description": "Social vulnerability percentile (0=least, 1=most vulnerable), ranked among the census tracts present in THIS export. Derived from ACS variables using CDC-style themes — it is NOT the official CDC SVI (which ranks against all US tracts using 16 variables)",
+                "description": "Social vulnerability percentile (0=least, 1=most vulnerable). Prefers the official CDC/ATSDR SVI (RPL_THEMES, nationally ranked across 16 variables in 4 themes). Falls back to a local ACS-derived approximation ranked within this export only. ALWAYS check svi_source before pooling values.",
                 "note": "Calculated from Census ACS income, housing tenure, and population data",
                 "source": "Census Bureau ACS 5-year estimates (B19013, B25003, B01003)"
             },
@@ -2159,7 +2184,8 @@ COLUMN_DICTIONARY = [
     
     # Social Equity Pack
     ("census_tract_geoid", "string", "11-digit FIPS code from US Census Bureau Geocoder API", "Social Equity Pack"),
-    ("social_vulnerability_index", "float (0-1)", "Vulnerability percentile ranked within this export's tracts (ACS-derived; NOT the official CDC SVI)", "Social Equity Pack"),
+    ("social_vulnerability_index", "float (0-1)", "Social vulnerability percentile, 0=least to 1=most vulnerable. Official CDC/ATSDR SVI when available (see svi_source)", "Social Equity Pack"),
+    ("svi_source", "string", "Provenance of social_vulnerability_index: 'cdc_svi_official' (CDC/ATSDR, nationally ranked, 16 variables) or 'acs_approximation' (local ACS-derived fallback, ranked within this export only). Do not pool the two.", "Social Equity Pack"),
     ("housing_tenure_renter_pct", "float (0-1)", "Renter percentage in zone (derived from GEOID)", "Social Equity Pack"),
     ("income_quintile", "integer (1-5)", "Anonymized income quintile of zone (1=lowest)", "Social Equity Pack"),
     ("population_density", "string", "Density category: low, medium, high", "Social Equity Pack"),
@@ -2504,7 +2530,8 @@ async def research_chat(
 | Field | Type | Source |
 |-------|------|--------|
 | census_tract_geoid | string | US Census Geocoder API (real) — 11-digit FIPS code |
-| social_vulnerability_index | float (0-1) | ACS-derived approximation (3 variables) — NOT the CDC SVI |
+| social_vulnerability_index | float (0-1) | Official CDC/ATSDR SVI when available; else local approximation |
+| svi_source | string | `cdc_svi_official` or `acs_approximation` — check before pooling |
 | housing_tenure_renter_pct | float (0-1) | Census ACS B25003 |
 | income_quintile | int (1-5) | Census ACS B19013 median household income |
 | population_density | string (low/medium/high) | Census ACS B01003 |
