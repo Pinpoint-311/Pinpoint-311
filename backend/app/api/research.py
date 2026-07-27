@@ -2710,3 +2710,226 @@ async def research_chat(
         logger.error(f"Research chat error: {e}")
         raise HTTPException(status_code=500, detail="Failed to get AI response")
 
+
+
+# Ordered analytical schema shared by the research export and the staff export,
+# so the two can never drift apart (drift is what produced the documented-vs-
+# actual mismatches this module was audited for).
+RESEARCH_COLUMNS = [
+    "request_id",
+    "service_code",
+    "service_name",
+    "infrastructure_category",
+    "matched_asset_type",
+    "matched_asset_attributes",
+    "description_sanitized",
+    "description_word_count",
+    "has_photos",
+    "photo_count",
+    "moderation_flagged",
+    "moderation_flag_reason",
+    "ai_priority_score",
+    "ai_summary_sanitized",
+    "ai_analyzed",
+    "ai_vs_manual_priority_diff",
+    "status",
+    "closed_substatus",
+    "priority",
+    "resolution_outcome",
+    "address_anonymized",
+    "latitude",
+    "longitude",
+    "zone_id",
+    "census_tract_geoid",
+    "social_vulnerability_index",
+    "svi_source",
+    "housing_tenure_renter_pct",
+    "income_quintile",
+    "population_density",
+    "weather_precip_24h_mm",
+    "weather_temp_max_c",
+    "weather_temp_min_c",
+    "weather_code",
+    "nearby_asset_age_years",
+    "sentiment_score",
+    "is_repeat_report",
+    "prior_report_mentioned",
+    "frustration_expressed",
+    "submitted_datetime",
+    "closed_datetime",
+    "updated_datetime",
+    "submission_hour",
+    "submission_day_of_week",
+    "submission_month",
+    "submission_year",
+    "is_weekend_submission",
+    "is_business_hours_submission",
+    "season",
+    "time_to_triage_hours",
+    "reassignment_count",
+    "off_hours_submission",
+    "escalation_occurred",
+    "total_hours_to_resolve",
+    "business_hours_to_resolve",
+    "days_to_first_update",
+    "status_change_count",
+    "submission_channel",
+    "department_id",
+    "comment_count",
+    "public_comment_count",
+]
+
+
+def build_dataset_row(req, _eq, privacy_mode, *, operational=False, include_pii=False) -> dict:
+    """Build one analytical row.
+
+    Shared by the privacy-preserving research export and the staff operational
+    export. `_eq` is this request's entry from build_equity_map().
+
+    operational=True adds the columns staff legitimately need for their work
+    (raw description, exact address/coordinates, assignee, staff notes) on top of
+    the analytical schema. include_pii=True additionally adds reporter contact
+    details — that path is admin-gated and audit-logged by the caller, exactly as
+    before; nothing here widens who can see PII.
+    """
+    lat, long = (req.lat, req.long) if privacy_mode == "exact" else fuzz_location(req.lat, req.long)
+    desc_sanitized = sanitize_description(req.description)
+    address_anon = anonymize_address(req.address, privacy_mode)
+    photo_count = len(req.media_urls) if req.media_urls else 0
+    has_photos = bool(req.media_urls and len(req.media_urls) > 0)
+    desc_word_count = len(req.description.split()) if req.description else 0
+    infra_category = get_infrastructure_category(req.service_code)
+    asset_type = None
+    if req.matched_asset and isinstance(req.matched_asset, dict):
+        asset_type = req.matched_asset.get('asset_type') or req.matched_asset.get('layer_name')
+    asset_attributes = get_matched_asset_attributes(req.matched_asset)
+    asset_age = get_asset_age_years(req.matched_asset)
+    zone_id = generate_zone_id(req.lat, req.long)
+    season = get_season(req.requested_datetime)
+    time_info = get_time_period(req.requested_datetime)
+    weather = (_eq or {}).get("weather") or {}
+    sentiment = analyze_sentiment(req.description)
+    trust = detect_trust_indicators(req.description)
+    total_comments = len(req.comments) if req.comments else 0
+    public_comments = len([c for c in req.comments if c.visibility == 'external']) if req.comments else 0
+    resolution_hours = None
+    if req.closed_datetime and req.requested_datetime:
+        resolution_hours = round((req.closed_datetime - req.requested_datetime).total_seconds() / 3600, 2)
+    business_hours = calculate_business_hours(req.requested_datetime, req.closed_datetime)
+    time_to_triage = calculate_time_to_triage(req.requested_datetime, req.audit_logs)
+    reassignments = count_reassignments(req.audit_logs)
+    off_hours = is_off_hours_submission(req.requested_datetime)
+    escalation = calculate_escalation_occurred(req.audit_logs)
+    status_changes = count_status_changes(req)
+    days_to_first_update = days_to_first_staff_action(req)
+    ai_analysis = req.ai_analysis if isinstance(req.ai_analysis, dict) else {}
+    ai_priority = ai_analysis.get("priority_score")
+    ai_summary = sanitize_description(req.vertex_ai_summary) if req.vertex_ai_summary else None
+    ai_priority_diff = (
+        round(req.manual_priority_score - ai_priority, 2)
+        if (ai_priority is not None and req.manual_priority_score is not None) else None
+    )
+    resolution_outcome = None
+    if req.status == 'closed':
+        resolution_outcome = {
+            'resolved': 'completed', 'no_action': 'no_action_needed',
+            'third_party': 'referred_external',
+        }.get(req.closed_substatus, 'closed_other')
+    elif req.status == 'in_progress':
+        resolution_outcome = 'in_progress'
+    else:
+        resolution_outcome = 'pending'
+    census_geoid = (_eq or {}).get("census_geoid")
+    svi = (_eq or {}).get("social_vulnerability_index")
+    housing_tenure = (_eq or {}).get("housing_tenure_renter_pct")
+    income_quintile = (_eq or {}).get("income_band")
+    pop_density = (_eq or {}).get("population_density")
+
+    row = {
+        "request_id": req.service_request_id,
+        "service_code": req.service_code,
+        "service_name": req.service_name,
+        "infrastructure_category": infra_category,
+        "matched_asset_type": asset_type,
+        "matched_asset_attributes": asset_attributes,
+        "description_sanitized": sanitize_description(req.description),
+        "description_word_count": desc_word_count,
+        "has_photos": has_photos,
+        "photo_count": photo_count,
+        "moderation_flagged": req.flagged,
+        "moderation_flag_reason": req.flag_reason,
+        "ai_priority_score": ai_priority,
+        "ai_summary_sanitized": ai_summary,
+        "ai_analyzed": bool(req.vertex_ai_analyzed_at),
+        "ai_vs_manual_priority_diff": ai_priority_diff,
+        "status": req.status,
+        "closed_substatus": req.closed_substatus,
+        "priority": req.priority,
+        "resolution_outcome": resolution_outcome,
+        "address_anonymized": anonymize_address(req.address, privacy_mode),
+        "latitude": lat,
+        "longitude": long,
+        "zone_id": zone_id,
+        "census_tract_geoid": census_geoid,
+        "social_vulnerability_index": svi,
+        "svi_source": _eq.get("svi_source"),
+        "housing_tenure_renter_pct": housing_tenure,
+        "income_quintile": income_quintile,
+        "population_density": pop_density,
+        "weather_precip_24h_mm": weather.get('precip_24h_mm'),
+        "weather_temp_max_c": weather.get('temp_max_c'),
+        "weather_temp_min_c": weather.get('temp_min_c'),
+        "weather_code": weather.get('weather_code'),
+        "nearby_asset_age_years": asset_age,
+        "sentiment_score": sentiment,
+        "is_repeat_report": trust.get('is_repeat_report'),
+        "prior_report_mentioned": trust.get('prior_report_mentioned'),
+        "frustration_expressed": trust.get('frustration_expressed'),
+        "submitted_datetime": req.requested_datetime.isoformat() if req.requested_datetime else None,
+        "closed_datetime": req.closed_datetime.isoformat() if req.closed_datetime else None,
+        "updated_datetime": req.updated_datetime.isoformat() if req.updated_datetime else None,
+        "submission_hour": time_info.get('hour_of_day'),
+        "submission_day_of_week": time_info.get('day_of_week'),
+        "submission_month": time_info.get('month'),
+        "submission_year": time_info.get('year'),
+        "is_weekend_submission": time_info.get('is_weekend'),
+        "is_business_hours_submission": time_info.get('is_business_hours'),
+        "season": season,
+        "time_to_triage_hours": time_to_triage,
+        "reassignment_count": reassignments,
+        "off_hours_submission": off_hours,
+        "escalation_occurred": escalation,
+        "total_hours_to_resolve": resolution_hours,
+        "business_hours_to_resolve": business_hours,
+        "days_to_first_update": days_to_first_update,
+        "status_change_count": status_changes,
+        "submission_channel": req.source,
+        "department_id": req.assigned_department_id,
+        "comment_count": total_comments,
+        "public_comment_count": public_comments,
+    }
+
+    if operational:
+        # Staff-only operational columns. Kept OUT of the research export.
+        row.update({
+            "description_raw": req.description,
+            "address_exact": req.address,
+            "latitude_exact": req.lat,
+            "longitude_exact": req.long,
+            "assigned_to": req.assigned_to or "",
+            "staff_notes": req.staff_notes or "",
+        })
+    if include_pii:
+        row.update({
+            "reporter_name": f"{req.first_name or ''} {req.last_name or ''}".strip(),
+            "reporter_email": req.email or "",
+            "reporter_phone": req.phone or "",
+        })
+    return row
+
+
+OPERATIONAL_COLUMNS = [
+    "description_raw", "address_exact", "latitude_exact", "longitude_exact",
+    "assigned_to", "staff_notes",
+]
+PII_COLUMNS = ["reporter_name", "reporter_email", "reporter_phone"]

@@ -1077,9 +1077,9 @@ export default function StaffDashboard() {
                                             <div className="p-2">
                                                 <p className="px-2.5 pt-1.5 pb-1 text-[10px] font-semibold text-white/40 uppercase tracking-wider">Requests</p>
                                                 {[
-                                                    { fmt: 'csv', Icon: FileText, label: 'CSV', hint: 'Spreadsheet-ready', ext: '.csv', fn: () => handleExportRequests('csv') },
-                                                    { fmt: 'json', Icon: Braces, label: 'JSON', hint: 'Structured records', ext: '.json', fn: () => handleExportRequests('json') },
-                                                    { fmt: 'geojson', Icon: Map, label: 'GeoJSON', hint: 'Mapping / GIS', ext: '.geojson', fn: () => handleExportRequests('geojson') },
+                                                    { fmt: 'csv', Icon: FileText, label: 'CSV', hint: 'Full analytical dataset', ext: '.csv', fn: () => handleExportRequests('csv') },
+                                                    { fmt: 'json', Icon: Braces, label: 'JSON', hint: 'Same fields, structured', ext: '.json', fn: () => handleExportRequests('json') },
+                                                    { fmt: 'geojson', Icon: Map, label: 'GeoJSON', hint: 'Same fields, mapping / GIS', ext: '.geojson', fn: () => handleExportRequests('geojson') },
                                                 ].map(({ fmt, Icon, label, hint, ext, fn }) => (
                                                     <button key={fmt} role="menuitem" onClick={() => { fn(); setExportOpen(false); }} className="group/item w-full flex items-center gap-3 px-2.5 py-2 rounded-xl text-left hover:bg-white/[0.07] transition-colors">
                                                         <span className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-primary-300 group-hover/item:bg-primary-500/15 group-hover/item:border-primary-400/30 transition-colors">
@@ -1092,6 +1092,7 @@ export default function StaffDashboard() {
                                                         <span className="text-[10px] font-mono text-white/30">{ext}</span>
                                                     </button>
                                                 ))}
+                                                <p className="px-2.5 pb-1 text-[10px] text-white/30 leading-snug">Same analytical fields as the Research Portal export, plus operational detail (exact address, assignee, notes).</p>
                                                 <div className="border-t border-white/10 my-1.5" />
                                                 <p className="px-2.5 pt-1.5 pb-1 text-[10px] font-semibold text-white/40 uppercase tracking-wider">Statistics</p>
                                                 {[
