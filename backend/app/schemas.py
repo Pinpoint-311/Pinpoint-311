@@ -345,7 +345,7 @@ class SystemSettingsBase(BaseModel):
     favicon_url: Optional[str] = None
     hero_text: str = "How can we help?"
     primary_color: str = "#6366f1"
-    modules: Dict[str, bool] = {"ai_analysis": False, "sms_alerts": False}
+    modules: Dict[str, bool] = {"ai_analysis": False, "sms_alerts": False, "private_reports": False}
     social_links: Optional[List[Dict[str, str]]] = []
     privacy_policy: Optional[str] = None  # Custom privacy policy (Markdown)
     terms_of_service: Optional[str] = None  # Custom terms of service (Markdown)

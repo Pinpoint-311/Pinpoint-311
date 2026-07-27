@@ -254,6 +254,7 @@ export interface SystemSettings {
         sms_alerts: boolean;
         email_notifications?: boolean;
         research_portal?: boolean;
+        private_reports?: boolean;
     };
     social_links?: SocialLink[];
     privacy_policy?: string | null;  // Custom privacy policy (Markdown)

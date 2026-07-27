@@ -21,6 +21,7 @@ interface ModulesState {
     sms_alerts: boolean;
     email_notifications: boolean;
     research_portal: boolean;
+    private_reports: boolean;
 }
 
 interface SetupIntegrationsPageProps {
