@@ -467,7 +467,7 @@ export default function AdminConsole() {
 
 
     // Modules state
-    const [modules, setModules] = useState({ ai_analysis: false, sms_alerts: false, email_notifications: false, research_portal: false });
+    const [modules, setModules] = useState({ ai_analysis: false, sms_alerts: false, email_notifications: false, research_portal: false, private_reports: false });
 
     // Maps tab state
     const [mapsApiKey, setMapsApiKey] = useState<string | null>(null);
@@ -597,6 +597,7 @@ export default function AdminConsole() {
                 sms_alerts: settings.modules?.sms_alerts || false,
                 email_notifications: settings.modules?.email_notifications || false,
                 research_portal: settings.modules?.research_portal || false,
+                private_reports: settings.modules?.private_reports || false,
             });
         }
     }, [settings]);
@@ -1955,6 +1956,7 @@ export default function AdminConsole() {
                                             { key: 'sms_alerts' as const, label: 'SMS Alerts', desc: 'Enable SMS notifications to residents', icon: MessageSquare, color: 'green' },
                                             { key: 'email_notifications' as const, label: 'Email Notifications', desc: 'Send email updates to residents', icon: Mail, color: 'sky' },
                                             { key: 'research_portal' as const, label: 'Research Portal', desc: 'Enable researcher access to anonymized data exports', icon: FlaskConical, color: 'violet' },
+                                            { key: 'private_reports' as const, label: 'Private Reports', desc: 'Let residents hide a report from the public map and feed (the tracking link still works; staff always see it)', icon: EyeOff, color: 'slate' },
                                         ].map((mod, idx) => {
                                             const Icon = mod.icon;
                                             const isOn = modules[mod.key];
@@ -1963,6 +1965,7 @@ export default function AdminConsole() {
                                                 green: 'from-emerald-500/20 to-emerald-600/10 border-emerald-500/20 text-emerald-400',
                                                 sky: 'from-sky-500/20 to-sky-600/10 border-sky-500/20 text-sky-400',
                                                 violet: 'from-violet-500/20 to-violet-600/10 border-violet-500/20 text-violet-400',
+                                                slate: 'from-slate-500/20 to-slate-600/10 border-slate-500/20 text-slate-300',
                                             };
                                             const colors = colorMap[mod.color];
                                             return (

@@ -40,6 +40,32 @@ redis_client = redis.from_url(_settings.redis_url, decode_responses=True)
 CACHE_TTL = 60  # seconds
 
 
+async def resolve_is_public(db: AsyncSession, requested_is_public) -> bool:
+    """Decide a request's public-feed visibility, enforcing the admin setting.
+
+    Residents may only opt out when the town has enabled the `private_reports`
+    module. This is enforced server-side on purpose: the checkbox can be absent
+    from the UI, but a client could still POST is_public=false, and a town that
+    hasn't turned the feature on must not end up with reports quietly missing
+    from its public feed.
+
+    Defaults to public whenever the choice is absent or the module is off.
+    """
+    if requested_is_public is not False:
+        return True
+    try:
+        from app.models import SystemSettings
+        result = await db.execute(select(SystemSettings).limit(1))
+        settings_row = result.scalar_one_or_none()
+        modules = (settings_row.modules if settings_row else None) or {}
+        return not bool(modules.get("private_reports", False))
+    except Exception as e:
+        # Fail toward the town's configured default (public) rather than
+        # silently hiding a report because a settings read hiccuped.
+        logger.warning(f"private_reports module check failed, defaulting to public: {e}")
+        return True
+
+
 def public_visibility_filters():
     """WHERE clauses that define what the PUBLIC may see in a listing.
 
@@ -654,7 +680,7 @@ async def create_request(
         preferred_language=request_data.preferred_language or "en",  # Capture user's UI language
         media_urls=request_data.media_urls[:3] if request_data.media_urls else [],  # Limit to 3 photos
         matched_asset=request_data.matched_asset,
-        is_public=True if request_data.is_public is None else request_data.is_public,
+        is_public=await resolve_is_public(db, request_data.is_public),
         custom_fields=request_data.custom_fields,
         source="resident_portal",
         assigned_department_id=assigned_department_id,
@@ -1011,7 +1037,7 @@ async def create_manual_intake(
         preferred_language=intake_data.preferred_language or "en",
         media_urls=intake_data.media_urls[:3] if intake_data.media_urls else [],
         matched_asset=intake_data.matched_asset,
-        is_public=True if intake_data.is_public is None else intake_data.is_public,
+        is_public=await resolve_is_public(db, intake_data.is_public),
         custom_fields=intake_data.custom_fields,
         source=intake_data.source.value,
         assigned_department_id=assigned_department_id,

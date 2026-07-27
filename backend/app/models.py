@@ -479,7 +479,7 @@ class SystemSettings(Base):
     hero_text = Column(String(500), default="How can we help?")
     primary_color = Column(String(7), default="#6366f1")
     custom_domain = Column(String(255))  # For custom domain configuration
-    modules = Column(JSON, default={"ai_analysis": False, "sms_alerts": False, "email_notifications": True})
+    modules = Column(JSON, default={"ai_analysis": False, "sms_alerts": False, "email_notifications": True, "private_reports": False})
     township_boundary = Column(JSON)  # GeoJSON boundary from OpenStreetMap
     
     # Multi-language support

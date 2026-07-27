@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Phone, Mail, Footprints, Search, CheckCircle, Loader2, Sparkles,
-    ChevronDown, MapPin, User as UserIcon, X, AlertCircle,
+    ChevronDown, MapPin, User as UserIcon, X, AlertCircle, EyeOff,
 } from 'lucide-react';
 
 import { Modal } from './ui';
 import { api, MapLayer } from '../services/api';
 import GoogleMapsLocationPicker from './GoogleMapsLocationPicker';
 import { ServiceDefinition, ServiceRequest } from '../types';
+import { useSettings } from '../context/SettingsContext';
 
 type Source = 'phone' | 'email' | 'walk_in';
 
@@ -85,7 +86,11 @@ interface ManualIntakeProps {
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function ManualIntake({ isOpen, onClose, services, onCreated }: ManualIntakeProps) {
+    const { settings } = useSettings();
     const [source, setSource] = useState<Source>('phone');
+    // Honors a caller who asks not to be listed publicly — same rule as the
+    // resident form, and only offered when the town enabled the module.
+    const [hideFromPublic, setHideFromPublic] = useState(false);
     const [serviceCode, setServiceCode] = useState('');
     const [catQuery, setCatQuery] = useState('');
     const [catOpen, setCatOpen] = useState(false);
@@ -129,6 +134,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
         setDescription(''); setPhone(''); setAddress('');
         setLat(null); setLng(null); setMatchedAsset(null); setMapKey(k => k + 1);
         setShowContact(false); setFirstName(''); setLastName(''); setEmail('');
+        setHideFromPublic(false);
         setError(null);
     };
 
@@ -173,6 +179,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                 last_name: lastName.trim() || undefined,
                 email: email.trim() || undefined,
                 phone: phone.trim() || undefined,
+                is_public: hideFromPublic ? false : undefined,
                 source,
             });
             onCreated(created);
@@ -405,6 +412,26 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                         )}
                     </AnimatePresence>
                 </div>
+
+                {settings?.modules?.private_reports && (
+                    <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3">
+                        <input
+                            type="checkbox"
+                            checked={hideFromPublic}
+                            onChange={e => setHideFromPublic(e.target.checked)}
+                            className="mt-0.5 w-4 h-4 rounded border-white/20 bg-white/10 text-primary-500 shrink-0"
+                        />
+                        <span className="min-w-0">
+                            <span className="flex items-center gap-1.5 text-sm font-medium text-white">
+                                <EyeOff className="w-3.5 h-3.5 text-white/50" /> Hide from the public map and feed
+                            </span>
+                            <span className="block text-[11px] text-white/50 mt-1 leading-relaxed">
+                                Check only if the resident asked to keep it unlisted. Staff still see and work it
+                                normally, the tracking link still works, and it still counts in anonymized statistics.
+                            </span>
+                        </span>
+                    </label>
+                )}
 
                 {error && (
                     <div className="rounded-xl bg-amber-500/10 border border-amber-400/30 px-3 py-2.5 text-sm text-amber-200 flex items-start gap-2">

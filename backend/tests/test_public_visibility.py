@@ -86,6 +86,81 @@ def test_create_schemas_accept_the_choice_and_default_public():
     ).is_public is False
 
 
+# ---- admin module gate -----------------------------------------------------
+
+class _FakeResult:
+    def __init__(self, row):
+        self._row = row
+
+    def scalar_one_or_none(self):
+        return self._row
+
+
+class _FakeSettings:
+    def __init__(self, modules):
+        self.modules = modules
+
+
+class _FakeDB:
+    """Returns one SystemSettings row, or raises to simulate a read failure."""
+
+    def __init__(self, modules=None, boom=False):
+        self._modules = modules
+        self._boom = boom
+
+    async def execute(self, _q):
+        if self._boom:
+            raise RuntimeError("db down")
+        return _FakeResult(None if self._modules is None else _FakeSettings(self._modules))
+
+
+@pytest.mark.asyncio
+async def test_opt_out_honored_when_module_enabled():
+    assert await open311.resolve_is_public(
+        _FakeDB({"private_reports": True}), False
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_opt_out_ignored_when_module_disabled():
+    """A client POSTing is_public=false must not hide a report in a town that
+    never turned the feature on."""
+    assert await open311.resolve_is_public(
+        _FakeDB({"private_reports": False}), False
+    ) is True
+
+
+@pytest.mark.asyncio
+async def test_opt_out_ignored_when_module_key_absent():
+    assert await open311.resolve_is_public(_FakeDB({"ai_analysis": True}), False) is True
+
+
+@pytest.mark.asyncio
+async def test_opt_out_ignored_when_no_settings_row():
+    assert await open311.resolve_is_public(_FakeDB(None), False) is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("requested", [True, None])
+async def test_absent_or_true_choice_is_always_public(requested):
+    """No settings read is even needed — a failing DB would still return True."""
+    assert await open311.resolve_is_public(_FakeDB(boom=True), requested) is True
+
+
+@pytest.mark.asyncio
+async def test_settings_read_failure_fails_public():
+    """Better to publish than to silently hide a report on a transient error;
+    the resident sees the outcome on their tracking page either way."""
+    assert await open311.resolve_is_public(_FakeDB(boom=True), False) is True
+
+
+def test_module_default_is_off():
+    """Towns opt in to private reports; they don't get it silently."""
+    from app.models import SystemSettings
+
+    assert SystemSettings.__table__.c.modules.default.arg["private_reports"] is False
+
+
 def test_response_schema_exposes_visibility_to_staff():
     """Staff need to see that a report is unlisted so they don't discuss it
     publicly; a legacy row with NULL reads as public."""
