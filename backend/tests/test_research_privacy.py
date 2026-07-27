@@ -120,19 +120,32 @@ def test_suppression_is_per_tract():
 
 # ---- SVI percentile ranking ------------------------------------------------
 
-def test_svi_is_percentile_ranked_within_export():
-    e = {
-        1: {"census_geoid": "A", "social_vulnerability_index": 0.10},
-        2: {"census_geoid": "B", "social_vulnerability_index": 0.50},
-        3: {"census_geoid": "C", "social_vulnerability_index": 0.90},
-    }
+def _approx(geoid, value):
+    return {"census_geoid": geoid, "social_vulnerability_index": value,
+            "svi_source": "acs_approximation"}
+
+
+def test_approximation_is_percentile_ranked_within_export():
+    e = {1: _approx("A", 0.10), 2: _approx("B", 0.50), 3: _approx("C", 0.90)}
     _apply_svi_percentiles(e)
     assert e[1]["social_vulnerability_index"] == 0.0    # least vulnerable tract
     assert e[3]["social_vulnerability_index"] == 1.0    # most vulnerable tract
 
 
+def test_official_cdc_values_are_never_re_ranked():
+    """CDC SVI is already a national percentile — re-ranking it against a few
+    local tracts would destroy its meaning."""
+    e = {
+        1: {"census_geoid": "A", "social_vulnerability_index": 0.10, "svi_source": "cdc_svi_official"},
+        2: {"census_geoid": "B", "social_vulnerability_index": 0.90, "svi_source": "cdc_svi_official"},
+    }
+    _apply_svi_percentiles(e)
+    assert e[1]["social_vulnerability_index"] == 0.10   # untouched
+    assert e[2]["social_vulnerability_index"] == 0.90
+
+
 def test_single_tract_keeps_raw_score():
-    e = {1: {"census_geoid": "A", "social_vulnerability_index": 0.42}}
+    e = {1: _approx("A", 0.42)}
     _apply_svi_percentiles(e)
     assert e[1]["social_vulnerability_index"] == 0.42
 
