@@ -68,57 +68,11 @@ async def get_requests_for_export(
     return result.scalars().all()
 
 
-def request_to_dict(request: ServiceRequest, include_pii: bool = True) -> dict:
-    """Convert request to dictionary for export."""
-    data = {
-        "id": request.id,
-        "request_id": request.service_request_id,
-        "status": request.status,
-        "priority": request.priority,
-        "service_code": request.service_code,
-        "service_name": request.service_name,
-        "department_id": request.assigned_department_id,
-        "department_name": request.assigned_department.name if request.assigned_department else "",
-        "description": request.description,
-        "address": request.address,
-        "latitude": request.lat,
-        "longitude": request.long,
-        "created_at": format_datetime(request.requested_datetime),
-        "updated_at": format_datetime(request.updated_datetime),
-        "closed_at": format_datetime(request.closed_datetime),
-        "assigned_to": request.assigned_to or "",
-        "staff_notes": request.staff_notes or "",
-        "ai_summary": request.vertex_ai_summary or "",
-        "source": request.source or "",
-    }
-    
-    if include_pii:
-        data["reporter_name"] = f"{request.first_name or ''} {request.last_name or ''}".strip()
-        data["reporter_email"] = request.email or ""
-        data["reporter_phone"] = request.phone or ""
-    else:
-        data["reporter_name"] = "[redacted]"
-        data["reporter_email"] = "[redacted]"
-        data["reporter_phone"] = "[redacted]"
-    
-    return data
-
-
-def request_to_geojson_feature(request: ServiceRequest, include_pii: bool = True) -> dict:
-    """Convert request to GeoJSON feature."""
-    properties = request_to_dict(request, include_pii)
-    # Remove lat/lng from properties since they're in geometry
-    properties.pop("latitude", None)
-    properties.pop("longitude", None)
-    
-    return {
-        "type": "Feature",
-        "geometry": {
-            "type": "Point",
-            "coordinates": [request.long or 0, request.lat or 0]
-        },
-        "properties": properties
-    }
+# NOTE: the former request_to_dict / request_to_geojson_feature helpers were
+# removed — staff exports now build rows via the shared
+# app.api.research.build_dataset_row, so the staff and research schemas cannot
+# drift apart. Operational and PII columns are added there behind the same
+# admin-gated, audit-logged opt-in as before.
 
 
 @router.get("/requests")
@@ -177,18 +131,40 @@ async def export_requests(
     
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     
+    # Staff exports use the SAME analytical schema as the research export (one
+    # shared row builder, so the two can never drift apart), plus the operational
+    # columns staff need — exact address/coordinates, assignee, staff notes and
+    # the raw description. PII remains behind the existing explicit, admin-gated,
+    # audit-logged opt-in; nothing here widens who can see it.
+    from app.api.research import (
+        RESEARCH_COLUMNS, OPERATIONAL_COLUMNS, PII_COLUMNS,
+        build_dataset_row, build_equity_map,
+    )
+
+    export_columns = list(RESEARCH_COLUMNS) + list(OPERATIONAL_COLUMNS)
+    if include_pii:
+        export_columns += list(PII_COLUMNS)
+
+    # Census/CDC-SVI/weather enrichment, resolved once up front (async).
+    equity_map = await build_equity_map(requests, "exact")
+
+    def _row(req):
+        return build_dataset_row(
+            req, equity_map.get(req.id, {}), "exact",
+            operational=True, include_pii=include_pii,
+        )
+
     if format.lower() == "csv":
         # Generate CSV
         output = io.StringIO()
-        
+
         if requests:
-            fieldnames = list(request_to_dict(requests[0], include_pii).keys())
-            writer = csv.DictWriter(output, fieldnames=fieldnames)
+            writer = csv.DictWriter(output, fieldnames=export_columns, extrasaction="ignore")
             writer.writeheader()
-            
+
             for req in requests:
-                writer.writerow(request_to_dict(req, include_pii))
-        
+                writer.writerow(_row(req))
+
         output.seek(0)
         
         return StreamingResponse(
@@ -215,7 +191,7 @@ async def export_requests(
                     "pii_included": include_pii
                 }
             },
-            "requests": [request_to_dict(req, include_pii) for req in requests]
+            "requests": [_row(req) for req in requests]
         }
         
         json_str = json.dumps(data, indent=2)
@@ -237,7 +213,21 @@ async def export_requests(
                 "exported_at": datetime.utcnow().isoformat(),
                 "total_features": len(requests)
             },
-            "features": [request_to_geojson_feature(req, include_pii) for req in requests]
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": (
+                        {"type": "Point", "coordinates": [req.long, req.lat]}
+                        if req.lat is not None and req.long is not None else None
+                    ),
+                    # Coordinates live in the geometry, so drop the duplicates.
+                    "properties": {
+                        k: v for k, v in _row(req).items()
+                        if k not in ("latitude", "longitude", "latitude_exact", "longitude_exact")
+                    },
+                }
+                for req in requests
+            ]
         }
         
         json_str = json.dumps(geojson, indent=2)
