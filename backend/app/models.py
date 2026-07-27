@@ -98,6 +98,10 @@ class ServiceDefinition(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     # Routing configuration
+    # Optional service-level agreement: target hours from submission to closure.
+    # NULL = no SLA set for this category (the feature is entirely opt-in).
+    sla_hours = Column(Integer, nullable=True)
+
     routing_mode = Column(String(50), default="township")  # township, third_party, road_based
     routing_config = Column(JSON, default={})
     # For third_party: { "url": "...", "message": "..." }

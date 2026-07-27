@@ -7,7 +7,7 @@ from typing import List
 from app.db.session import get_db
 from app.models import ServiceDefinition, Department, User
 from app.schemas import ServiceCreate, ServiceResponse, ServiceUpdate, ServiceReorderRequest
-from app.core.auth import get_current_admin
+from app.core.auth import get_current_admin, get_current_staff
 
 router = APIRouter()
 
@@ -42,6 +42,7 @@ async def list_services(
                 "description": service.description,
                 "icon": service.icon,
                 "is_active": service.is_active,
+                "sla_hours": service.sla_hours,
                 "routing_mode": service.routing_mode,
                 "routing_config": service.routing_config,
                 "assigned_department_id": service.assigned_department_id,
@@ -123,6 +124,7 @@ async def create_service(
         service_name=service_data.service_name,
         description=service_data.description,
         icon=service_data.icon,
+        sla_hours=service_data.sla_hours,
         display_order=service_data.display_order if service_data.display_order else max_order + 1
     )
     service.departments = departments
@@ -137,6 +139,69 @@ async def create_service(
         .options(selectinload(ServiceDefinition.departments))
     )
     return result.scalar_one()
+
+
+@router.get("/sla-performance")
+async def sla_performance(
+    days: int = 90,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_staff),
+):
+    """SLA performance per service category (staff only).
+
+    Only categories with an SLA configured are reported — categories without one
+    are listed separately so admins can see what isn't covered yet, but they are
+    never counted as failing.
+    """
+    from datetime import datetime, timedelta
+    from app.models import ServiceRequest
+    from app.services.sla import summarize_category, overall_summary
+
+    now = datetime.utcnow()
+    since = now - timedelta(days=max(1, min(days, 730)))
+
+    services_result = await db.execute(select(ServiceDefinition))
+    services = services_result.scalars().all()
+
+    rows_result = await db.execute(
+        select(
+            ServiceRequest.service_code,
+            ServiceRequest.requested_datetime,
+            ServiceRequest.closed_datetime,
+        ).where(
+            ServiceRequest.deleted_at.is_(None),
+            ServiceRequest.requested_datetime >= since,
+        )
+    )
+    by_code: dict = {}
+    for code, requested, closed in rows_result.all():
+        by_code.setdefault(code, []).append(
+            {"requested_datetime": requested, "closed_datetime": closed}
+        )
+
+    categories = []
+    without_sla = []
+    for svc in services:
+        if svc.sla_hours:
+            categories.append(
+                summarize_category(
+                    svc.service_code, svc.service_name, svc.sla_hours,
+                    by_code.get(svc.service_code, []), now,
+                )
+            )
+        elif svc.is_active is not False:
+            without_sla.append({"service_code": svc.service_code, "service_name": svc.service_name})
+
+    # Worst compliance first so the categories needing attention lead.
+    categories.sort(key=lambda c: (c["compliance_rate"] is None, c["compliance_rate"] or 0))
+
+    return {
+        "period_days": days,
+        "generated_at": now.isoformat(),
+        "overall": overall_summary(categories),
+        "categories": categories,
+        "categories_without_sla": without_sla,
+    }
 
 
 @router.get("/{service_id}", response_model=ServiceResponse)
@@ -187,7 +252,10 @@ async def update_service(
         service.assigned_department_id = service_data.assigned_department_id
     if service_data.display_order is not None:
         service.display_order = service_data.display_order
-    
+    if service_data.sla_hours is not None:
+        # 0 explicitly clears the SLA back to "none"; omitting the field leaves it.
+        service.sla_hours = service_data.sla_hours or None
+
     if service_data.department_ids is not None:
         departments = []
         for dept_id in service_data.department_ids:
