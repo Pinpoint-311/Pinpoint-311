@@ -467,7 +467,7 @@ export default function AdminConsole() {
 
 
     // Modules state
-    const [modules, setModules] = useState({ ai_analysis: false, sms_alerts: false, email_notifications: false, research_portal: false, private_reports: false });
+    const [modules, setModules] = useState({ ai_analysis: false, sms_alerts: false, email_notifications: false, research_portal: false, unlisted_reports: false });
 
     // Maps tab state
     const [mapsApiKey, setMapsApiKey] = useState<string | null>(null);
@@ -597,7 +597,7 @@ export default function AdminConsole() {
                 sms_alerts: settings.modules?.sms_alerts || false,
                 email_notifications: settings.modules?.email_notifications || false,
                 research_portal: settings.modules?.research_portal || false,
-                private_reports: settings.modules?.private_reports || false,
+                unlisted_reports: settings.modules?.unlisted_reports ?? (settings.modules as any)?.private_reports ?? false,
             });
         }
     }, [settings]);
@@ -1956,7 +1956,7 @@ export default function AdminConsole() {
                                             { key: 'sms_alerts' as const, label: 'SMS Alerts', desc: 'Enable SMS notifications to residents', icon: MessageSquare, color: 'green' },
                                             { key: 'email_notifications' as const, label: 'Email Notifications', desc: 'Send email updates to residents', icon: Mail, color: 'sky' },
                                             { key: 'research_portal' as const, label: 'Research Portal', desc: 'Enable researcher access to anonymized data exports', icon: FlaskConical, color: 'violet' },
-                                            { key: 'private_reports' as const, label: 'Private Reports', desc: 'Let residents hide a report from the public map and feed (the tracking link still works; staff always see it)', icon: EyeOff, color: 'slate' },
+                                            { key: 'unlisted_reports' as const, label: 'Unlisted Reports', desc: 'Let residents keep a report off the public map and feed. The tracking link still works and staff always see it', icon: EyeOff, color: 'slate' },
                                         ].map((mod, idx) => {
                                             const Icon = mod.icon;
                                             const isOn = modules[mod.key];
