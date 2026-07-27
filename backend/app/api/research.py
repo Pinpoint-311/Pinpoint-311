@@ -345,8 +345,10 @@ async def get_census_acs_data(census_geoid: str) -> Optional[dict]:
                 
     except Exception as e:
         logger.warning(f"Census ACS API error for {census_geoid}: {e}")
-    
-    _census_acs_cache[census_geoid] = None
+
+    # Transient failure: don't cache. A negative cache entry here would blank the
+    # ACS-derived fields (income, SVI, tenure) for this tract for the rest of the
+    # process, turning one timeout into permanently missing data.
     return None
 
 
@@ -396,12 +398,11 @@ async def get_census_tract_geoid(lat: float, lng: float) -> Optional[str]:
     
     Results are cached to avoid repeated API calls for same location.
     """
-    if getattr(settings, 'demo_mode', False):
-        # Return a deterministic mock GEOID based on coordinates
-        cache_key_hash = sum(ord(c) for c in f"{lat},{lng}")
-        tract_num = 10000 + (cache_key_hash % 90000)
-        return f"340210{tract_num}"
-
+    # NOTE: demo mode previously returned a synthetic FIPS code derived from the
+    # coordinates. That fake tract then drove the income/SVI/tenure lookups, so a
+    # demo export looked like real Census-linked data. Demo mode now resolves the
+    # real tract like any other deployment (the geocoder is free and keyless);
+    # if it can't be resolved the fields are simply empty.
     if lat is None or lng is None:
         return None
     
@@ -434,10 +435,15 @@ async def get_census_tract_geoid(lat: float, lng: float) -> Optional[str]:
                 geoid = tracts[0].get("GEOID")
                 _census_geoid_cache[cache_key] = geoid
                 return geoid
+            # A clean 200 with no tract is a real answer (e.g. offshore) — cache it.
+            _census_geoid_cache[cache_key] = None
+            return None
     except Exception as e:
         logger.warning(f"Census geocoder error: {e}")
-    
-    _census_geoid_cache[cache_key] = None
+
+    # Transient failure (timeout, non-200, network error): do NOT cache. Caching
+    # it would permanently blank this location for the life of the process, so a
+    # one-off blip would silently strip Census fields from every later export.
     return None
 
 
@@ -512,6 +518,44 @@ async def get_housing_tenure_mix(census_geoid: str) -> Optional[float]:
     return None
 
 
+async def build_equity_map(requests) -> dict:
+    """Resolve the Census-derived equity fields for a set of requests, up front.
+
+    These lookups are async (real Census Geocoder + ACS calls), but the CSV
+    export streams from a *synchronous* generator where awaiting is impossible.
+    Calling them there produced un-awaited coroutines that were stringified into
+    the file, so every row shipped "<coroutine object ...>" instead of data.
+
+    Resolving them here — once, before streaming — keeps the values real. Work is
+    deduplicated by rounded coordinate so a batch of nearby requests costs one
+    Census round-trip instead of one per row.
+
+    Returns {request.id: {census_geoid, income_band, population_density,
+                          social_vulnerability_index, housing_tenure_renter_pct}}.
+    """
+    by_coord: dict = {}
+    out: dict = {}
+
+    for req in requests:
+        if req.lat is None or req.long is None:
+            out[req.id] = {}
+            continue
+        key = (round(req.lat, 4), round(req.long, 4))
+        if key not in by_coord:
+            geoid = await get_census_tract_geoid(req.lat, req.long)
+            zone = generate_zone_id(req.lat, req.long)
+            by_coord[key] = {
+                "census_geoid": geoid,
+                "income_band": await get_income_quintile_from_zone(zone, geoid),
+                "population_density": await get_population_density_category(zone, geoid),
+                "social_vulnerability_index": await get_social_vulnerability_index(geoid),
+                "housing_tenure_renter_pct": await get_housing_tenure_mix(geoid),
+            }
+        out[req.id] = by_coord[key]
+
+    return out
+
+
 # ============================================================================
 # ENVIRONMENTAL CONTEXT PACK - For Urban Planners
 # ============================================================================
@@ -580,23 +624,20 @@ def get_weather_context(requested_datetime: datetime, lat: float, lng: float) ->
                     "weather_code": weather_code
                 }
     except Exception as e:
-        logger.warning(f"Weather API error, falling back to estimates: {e}")
-    
-    # Fallback to seasonal estimates
-    month = requested_datetime.month
-    seasonal_temps = {
-        1: (-5, 5), 2: (-3, 7), 3: (2, 13), 4: (7, 18),
-        5: (12, 24), 6: (17, 29), 7: (20, 32), 8: (19, 31),
-        9: (15, 26), 10: (8, 19), 11: (3, 12), 12: (-2, 7)
-    }
-    temp_min, temp_max = seasonal_temps.get(month, (10, 20))
-    day_hash = int(hashlib.md5(f"{requested_datetime.date()}".encode()).hexdigest()[:4], 16)
-    
+        logger.warning(f"Weather API error; leaving weather fields empty: {e}")
+
+    # No usable observation. Return empty values rather than inventing them.
+    #
+    # This previously synthesized temperatures from a hardcoded seasonal table and
+    # precipitation from an MD5 hash of the date, and wrote them into the same
+    # columns as real readings with no way to tell them apart — researchers would
+    # have analyzed fabricated weather as if it were observed. Missing data must
+    # read as missing.
     return {
-        "precip_24h_mm": round((day_hash % 30) / 10, 1) if (day_hash % 100) < 30 else 0.0,
-        "temp_max_c": temp_max + (day_hash % 6) - 3,
-        "temp_min_c": temp_min + (day_hash % 6) - 3,
-        "weather_code": None  # Unknown when estimated
+        "precip_24h_mm": None,
+        "temp_max_c": None,
+        "temp_min_c": None,
+        "weather_code": None,
     }
 
 
@@ -1000,10 +1041,14 @@ async def export_csv(
         len(requests), privacy_mode
     )
     
+    # Resolve the async Census/equity lookups before streaming — the generator
+    # below is synchronous and cannot await (see build_equity_map).
+    equity_map = await build_equity_map(requests)
+
     def generate_csv():
         output = io.StringIO()
         writer = csv.writer(output)
-        
+
         # Enhanced headers for research
         writer.writerow([
             # Identifiers
@@ -1109,12 +1154,14 @@ async def export_csv(
             # Zone-based demographic proxies (for equity research)
             zone_id = generate_zone_id(req.lat, req.long)
             
-            # SOCIAL EQUITY PACK - Real Census-based metrics
-            census_geoid = get_census_tract_geoid(req.lat, req.long)  # Real API call (cached)
-            income_quintile = get_income_quintile_from_zone(zone_id, census_geoid)
-            pop_density = get_population_density_category(zone_id, census_geoid)
-            svi = get_social_vulnerability_index(census_geoid)
-            housing_tenure = get_housing_tenure_mix(census_geoid)
+            # SOCIAL EQUITY PACK — resolved before streaming (see build_equity_map);
+            # these are real awaited Census lookups, not coroutines.
+            _eq = equity_map.get(req.id, {})
+            census_geoid = _eq.get("census_geoid")
+            income_quintile = _eq.get("income_band")
+            pop_density = _eq.get("population_density")
+            svi = _eq.get("social_vulnerability_index")
+            housing_tenure = _eq.get("housing_tenure_renter_pct")
             
             # ENVIRONMENTAL CONTEXT PACK - Real weather data
             weather = get_weather_context(req.requested_datetime, req.lat, req.long)
@@ -1273,6 +1320,9 @@ async def export_geojson(
         len(requests), privacy_mode
     )
     
+    # Real awaited Census/equity lookups, deduplicated by coordinate.
+    equity_map = await build_equity_map(requests)
+
     features = []
     for req in requests:
         # Privacy-aware location
@@ -1334,12 +1384,15 @@ async def export_geojson(
         total_comments = len(req.comments) if req.comments else 0
         public_comments = len([c for c in req.comments if c.visibility == 'external']) if req.comments else 0
         
-        # SOCIAL EQUITY PACK - Real Census ACS data
-        census_geoid = get_census_tract_geoid(req.lat, req.long)
-        income_quintile = get_income_quintile_from_zone(zone_id, census_geoid)
-        pop_density = get_population_density_category(zone_id, census_geoid)
-        svi = get_social_vulnerability_index(census_geoid)
-        housing_tenure = get_housing_tenure_mix(census_geoid)
+        # SOCIAL EQUITY PACK — resolved up front by build_equity_map (real awaited
+        # Census lookups); previously these were un-awaited coroutines, which made
+        # json.dumps below raise and 500 the whole export.
+        _eq = equity_map.get(req.id, {})
+        census_geoid = _eq.get("census_geoid")
+        income_quintile = _eq.get("income_band")
+        pop_density = _eq.get("population_density")
+        svi = _eq.get("social_vulnerability_index")
+        housing_tenure = _eq.get("housing_tenure_renter_pct")
         
         # ENVIRONMENTAL CONTEXT PACK - Real weather data
         weather = get_weather_context(req.requested_datetime, req.lat, req.long)
@@ -1607,7 +1660,7 @@ async def get_data_dictionary(
             },
             "ai_flagged": {
                 "type": "boolean",
-                "description": "Whether AI flagged this request for staff review"
+                "description": "Whether the request was flagged for staff review. Set by the content-moderation wordlist at intake (AI vision can add to it) — not an AI classification"
             },
             "ai_flag_reason": {
                 "type": "string",
@@ -1621,8 +1674,8 @@ async def get_data_dictionary(
             },
             "ai_classification": {
                 "type": "string",
-                "description": "AI-assigned category classification",
-                "note": "May differ from service_code; useful for classification accuracy studies"
+                "description": "RESERVED — currently always empty",
+                "note": "No pipeline writes an AI category today. Blank means 'never produced', not 'missing for this record'. Do not use in analysis until populated."
             },
             "ai_summary_sanitized": {
                 "type": "string",
@@ -1650,7 +1703,7 @@ async def get_data_dictionary(
             },
             "status_change_count": {
                 "type": "integer",
-                "description": "Number of status changes in audit log",
+                "description": "Count of audit-log entries for the request (all action types, not only status changes)",
                 "note": "Indicator of issue complexity or workflow efficiency"
             },
             "season": {
@@ -1695,7 +1748,7 @@ async def get_data_dictionary(
             "social_vulnerability_index": {
                 "type": "float",
                 "range": "0.0-1.0",
-                "description": "CDC-style Social Vulnerability Index (0=lowest, 1=highest vulnerability)",
+                "description": "Social Vulnerability approximation (0=lowest, 1=highest). NOT the CDC SVI: a 3-variable ACS-derived proxy (income, renter share, tract population), not CDC's 16-variable index",
                 "note": "Calculated from Census ACS income, housing tenure, and population data",
                 "source": "Census Bureau ACS 5-year estimates (B19013, B25003, B01003)"
             },
@@ -1741,7 +1794,7 @@ async def get_data_dictionary(
             "sentiment_score": {
                 "type": "float",
                 "range": "-1.0 to +1.0",
-                "description": "NLP sentiment analysis of description (-1=angry, 0=neutral, +1=grateful)",
+                "description": "Lexicon-based sentiment score (-1=angry, 0=neutral, +1=grateful). Keyword counting, not an NLP model; no negation handling",
                 "note": "Research Q: 'Are wealthier neighborhoods more polite in requests?'",
                 "source": "Word-based sentiment analysis"
             },
@@ -1856,6 +1909,95 @@ async def get_data_dictionary(
     }
 
 
+# Single source of truth for exported columns: (name, type, description, pack).
+# Used by the data-dictionary export AND the chat assistant's field counts so
+# researchers are never quoted a number that disagrees with the actual export.
+COLUMN_DICTIONARY = [
+    # Core identifiers
+    ("request_id", "string", "Unique identifier for the service request", "Core"),
+    ("service_code", "string", "Category code for the type of issue (e.g., pothole, streetlight)", "Core"),
+    ("service_name", "string", "Human-readable category name", "Core"),
+    ("infrastructure_category", "string", "Grouped infrastructure type (roads_pavement, stormwater, etc.)", "Core"),
+    ("matched_asset_type", "string", "Type of linked infrastructure asset from GIS layer", "Core"),
+    ("matched_asset_attributes", "JSON string", "Full properties of matched asset (pressure_psi, install_year, etc.)", "Environmental Context Pack"),
+    
+    # Issue details
+    ("description_sanitized", "string", "Issue description with PII removed (phone/email/names redacted)", "Core"),
+    ("description_word_count", "integer", "Word count of original description", "Core"),
+    ("has_photos", "boolean", "Whether request includes photo attachments", "Core"),
+    ("photo_count", "integer", "Number of photos attached to request", "Core"),
+    
+    # AI Analysis
+    ("ai_flagged", "boolean", "Flagged for staff review — set by the content-moderation wordlist, not by AI", "AI/ML Research Pack"),
+    ("ai_flag_reason", "string", "Flag reason, e.g. \"Auto-flagged: profanity\" (content-moderation wordlist)", "AI/ML Research Pack"),
+    ("ai_priority_score", "float (1-10)", "AI-generated priority score (10=highest)", "AI/ML Research Pack"),
+    ("ai_classification", "string", "RESERVED — always empty. No pipeline currently writes an AI category; do not treat blanks as missing data", "AI/ML Research Pack"),
+    ("ai_summary_sanitized", "string", "AI-generated summary (PII redacted)", "AI/ML Research Pack"),
+    ("ai_analyzed", "boolean", "Whether AI has processed this request", "AI/ML Research Pack"),
+    ("ai_vs_manual_priority_diff", "float", "manual_priority - ai_priority (positive = human prioritized higher)", "AI/ML Research Pack"),
+    
+    # Status & Resolution
+    ("status", "string", "Current status: open, in_progress, closed", "Core"),
+    ("closed_substatus", "string", "How closed: resolved, no_action, third_party", "Core"),
+    ("priority", "integer (1-10)", "Priority level (1-10 scale, 10=highest)", "Core"),
+    ("resolution_outcome", "string", "Standardized outcome: completed, no_action_needed, referred_external, etc.", "Core"),
+    
+    # Location (privacy-aware)
+    ("address_anonymized", "string", "Street address with house numbers removed in fuzzed mode", "Core"),
+    ("latitude", "float", "Latitude coordinate (snapped to ~100ft grid in fuzzed mode)", "Core"),
+    ("longitude", "float", "Longitude coordinate (snapped to ~100ft grid in fuzzed mode)", "Core"),
+    ("zone_id", "string", "Anonymous geographic zone (~0.5 mile cells) for clustering", "Core"),
+    
+    # Social Equity Pack
+    ("census_tract_geoid", "string", "11-digit FIPS code from US Census Bureau Geocoder API", "Social Equity Pack"),
+    ("social_vulnerability_index", "float (0-1)", "ACS-derived vulnerability approximation (NOT CDC SVI; 3 variables, not 16)", "Social Equity Pack"),
+    ("housing_tenure_renter_pct", "float (0-1)", "Renter percentage in zone (derived from GEOID)", "Social Equity Pack"),
+    ("income_quintile", "integer (1-5)", "Anonymized income quintile of zone (1=lowest)", "Social Equity Pack"),
+    ("population_density", "string", "Density category: low, medium, high", "Social Equity Pack"),
+    
+    # Environmental Context Pack
+    ("weather_precip_24h_mm", "float", "Precipitation in 24h before report (mm) from Open-Meteo API", "Environmental Context Pack"),
+    ("weather_temp_max_c", "float", "Max temperature on report day (Celsius) from Open-Meteo API", "Environmental Context Pack"),
+    ("weather_temp_min_c", "float", "Min temperature on report day (Celsius) from Open-Meteo API", "Environmental Context Pack"),
+    ("weather_code", "integer", "WMO weather code (e.g., 0=clear, 61=rain, 71=snow)", "Environmental Context Pack"),
+    ("nearby_asset_age_years", "float", "Age of matched infrastructure asset in years", "Environmental Context Pack"),
+    
+    # Sentiment & Trust Pack
+    ("sentiment_score", "float (-1 to +1)", "Lexicon-based sentiment (keyword counting, not an NLP model)", "Sentiment & Trust Pack"),
+    ("is_repeat_report", "boolean", "Text indicates prior report of same issue", "Sentiment & Trust Pack"),
+    ("prior_report_mentioned", "boolean", "Text references a prior ticket/case number", "Sentiment & Trust Pack"),
+    ("frustration_expressed", "boolean", "Text contains trust erosion indicators", "Sentiment & Trust Pack"),
+    
+    # Temporal fields
+    ("submitted_datetime", "ISO8601", "When the request was submitted", "Core"),
+    ("closed_datetime", "ISO8601", "When the request was closed (null if still open)", "Core"),
+    ("updated_datetime", "ISO8601", "When the request was last updated", "Core"),
+    ("submission_hour", "integer (0-23)", "Hour of day when submitted", "Core"),
+    ("submission_day_of_week", "integer (0-6)", "Day of week when submitted (0=Monday)", "Core"),
+    ("submission_month", "integer (1-12)", "Month when submitted", "Core"),
+    ("submission_year", "integer", "Year when submitted", "Core"),
+    ("is_weekend_submission", "boolean", "Whether submitted on Saturday or Sunday", "Core"),
+    ("is_business_hours_submission", "boolean", "Whether submitted Mon-Fri 8am-5pm", "Core"),
+    ("season", "string", "Season at time of submission: winter, spring, summer, fall", "Environmental Context Pack"),
+    
+    # Bureaucratic Friction Pack
+    ("time_to_triage_hours", "float", "Hours from submission to first 'In Progress' status", "Bureaucratic Friction Pack"),
+    ("reassignment_count", "integer", "Number of times request was reassigned between departments", "Bureaucratic Friction Pack"),
+    ("off_hours_submission", "boolean", "Submitted before 6am or after 10pm", "Bureaucratic Friction Pack"),
+    ("escalation_occurred", "boolean", "Priority was manually increased by staff", "Bureaucratic Friction Pack"),
+    ("total_hours_to_resolve", "float", "Total clock hours from submission to closure", "Bureaucratic Friction Pack"),
+    ("business_hours_to_resolve", "float", "Business hours only (Mon-Fri 8am-5pm) to resolve", "Bureaucratic Friction Pack"),
+    ("days_to_first_update", "float", "Days from submission to the MOST RECENT update (uses updated_datetime; not the first action)", "Bureaucratic Friction Pack"),
+    ("status_change_count", "integer", "Count of all audit-log entries (not only status changes)", "Bureaucratic Friction Pack"),
+    
+    # Civic Engagement
+    ("submission_channel", "string", "How submitted: portal, phone, walk_in, email", "Core"),
+    ("department_id", "integer", "ID of assigned department", "Core"),
+    ("comment_count", "integer", "Total comments on request (internal + external)", "Core"),
+    ("public_comment_count", "integer", "Public/external comments visible to reporter", "Core"),
+]
+
+
 @router.get("/export/data-dictionary")
 async def export_data_dictionary_csv(
     db: AsyncSession = Depends(get_db),
@@ -1870,90 +2012,8 @@ async def export_data_dictionary_csv(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Research Suite is not enabled")
     
     # Define all columns in export order with their documentation
-    COLUMN_DICTIONARY = [
-        # Core identifiers
-        ("request_id", "string", "Unique identifier for the service request", "Core"),
-        ("service_code", "string", "Category code for the type of issue (e.g., pothole, streetlight)", "Core"),
-        ("service_name", "string", "Human-readable category name", "Core"),
-        ("infrastructure_category", "string", "Grouped infrastructure type (roads_pavement, stormwater, etc.)", "Core"),
-        ("matched_asset_type", "string", "Type of linked infrastructure asset from GIS layer", "Core"),
-        ("matched_asset_attributes", "JSON string", "Full properties of matched asset (pressure_psi, install_year, etc.)", "Environmental Context Pack"),
-        
-        # Issue details
-        ("description_sanitized", "string", "Issue description with PII removed (phone/email/names redacted)", "Core"),
-        ("description_word_count", "integer", "Word count of original description", "Core"),
-        ("has_photos", "boolean", "Whether request includes photo attachments", "Core"),
-        ("photo_count", "integer", "Number of photos attached to request", "Core"),
-        
-        # AI Analysis
-        ("ai_flagged", "boolean", "Whether AI flagged this request for staff review", "AI/ML Research Pack"),
-        ("ai_flag_reason", "string", "Reason for AI flag (safety, urgent, inappropriate)", "AI/ML Research Pack"),
-        ("ai_priority_score", "float (1-10)", "AI-generated priority score (10=highest)", "AI/ML Research Pack"),
-        ("ai_classification", "string", "AI-assigned service category", "AI/ML Research Pack"),
-        ("ai_summary_sanitized", "string", "AI-generated summary (PII redacted)", "AI/ML Research Pack"),
-        ("ai_analyzed", "boolean", "Whether AI has processed this request", "AI/ML Research Pack"),
-        ("ai_vs_manual_priority_diff", "float", "manual_priority - ai_priority (positive = human prioritized higher)", "AI/ML Research Pack"),
-        
-        # Status & Resolution
-        ("status", "string", "Current status: open, in_progress, closed", "Core"),
-        ("closed_substatus", "string", "How closed: resolved, no_action, third_party", "Core"),
-        ("priority", "integer (1-10)", "Priority level (1-10 scale, 10=highest)", "Core"),
-        ("resolution_outcome", "string", "Standardized outcome: completed, no_action_needed, referred_external, etc.", "Core"),
-        
-        # Location (privacy-aware)
-        ("address_anonymized", "string", "Street address with house numbers removed in fuzzed mode", "Core"),
-        ("latitude", "float", "Latitude coordinate (snapped to ~100ft grid in fuzzed mode)", "Core"),
-        ("longitude", "float", "Longitude coordinate (snapped to ~100ft grid in fuzzed mode)", "Core"),
-        ("zone_id", "string", "Anonymous geographic zone (~0.5 mile cells) for clustering", "Core"),
-        
-        # Social Equity Pack
-        ("census_tract_geoid", "string", "11-digit FIPS code from US Census Bureau Geocoder API", "Social Equity Pack"),
-        ("social_vulnerability_index", "float (0-1)", "CDC SVI (0=lowest, 1=highest vulnerability)", "Social Equity Pack"),
-        ("housing_tenure_renter_pct", "float (0-1)", "Renter percentage in zone (derived from GEOID)", "Social Equity Pack"),
-        ("income_quintile", "integer (1-5)", "Anonymized income quintile of zone (1=lowest)", "Social Equity Pack"),
-        ("population_density", "string", "Density category: low, medium, high", "Social Equity Pack"),
-        
-        # Environmental Context Pack
-        ("weather_precip_24h_mm", "float", "Precipitation in 24h before report (mm) from Open-Meteo API", "Environmental Context Pack"),
-        ("weather_temp_max_c", "float", "Max temperature on report day (Celsius) from Open-Meteo API", "Environmental Context Pack"),
-        ("weather_temp_min_c", "float", "Min temperature on report day (Celsius) from Open-Meteo API", "Environmental Context Pack"),
-        ("weather_code", "integer", "WMO weather code (e.g., 0=clear, 61=rain, 71=snow)", "Environmental Context Pack"),
-        ("nearby_asset_age_years", "float", "Age of matched infrastructure asset in years", "Environmental Context Pack"),
-        
-        # Sentiment & Trust Pack
-        ("sentiment_score", "float (-1 to +1)", "NLP sentiment (-1=angry/frustrated, 0=neutral, +1=grateful)", "Sentiment & Trust Pack"),
-        ("is_repeat_report", "boolean", "Text indicates prior report of same issue", "Sentiment & Trust Pack"),
-        ("prior_report_mentioned", "boolean", "Text references a prior ticket/case number", "Sentiment & Trust Pack"),
-        ("frustration_expressed", "boolean", "Text contains trust erosion indicators", "Sentiment & Trust Pack"),
-        
-        # Temporal fields
-        ("submitted_datetime", "ISO8601", "When the request was submitted", "Core"),
-        ("closed_datetime", "ISO8601", "When the request was closed (null if still open)", "Core"),
-        ("updated_datetime", "ISO8601", "When the request was last updated", "Core"),
-        ("submission_hour", "integer (0-23)", "Hour of day when submitted", "Core"),
-        ("submission_day_of_week", "integer (0-6)", "Day of week when submitted (0=Monday)", "Core"),
-        ("submission_month", "integer (1-12)", "Month when submitted", "Core"),
-        ("submission_year", "integer", "Year when submitted", "Core"),
-        ("is_weekend_submission", "boolean", "Whether submitted on Saturday or Sunday", "Core"),
-        ("is_business_hours_submission", "boolean", "Whether submitted Mon-Fri 8am-5pm", "Core"),
-        ("season", "string", "Season at time of submission: winter, spring, summer, fall", "Environmental Context Pack"),
-        
-        # Bureaucratic Friction Pack
-        ("time_to_triage_hours", "float", "Hours from submission to first 'In Progress' status", "Bureaucratic Friction Pack"),
-        ("reassignment_count", "integer", "Number of times request was reassigned between departments", "Bureaucratic Friction Pack"),
-        ("off_hours_submission", "boolean", "Submitted before 6am or after 10pm", "Bureaucratic Friction Pack"),
-        ("escalation_occurred", "boolean", "Priority was manually increased by staff", "Bureaucratic Friction Pack"),
-        ("total_hours_to_resolve", "float", "Total clock hours from submission to closure", "Bureaucratic Friction Pack"),
-        ("business_hours_to_resolve", "float", "Business hours only (Mon-Fri 8am-5pm) to resolve", "Bureaucratic Friction Pack"),
-        ("days_to_first_update", "float", "Days until first staff action/update", "Bureaucratic Friction Pack"),
-        ("status_change_count", "integer", "Total number of status changes", "Bureaucratic Friction Pack"),
-        
-        # Civic Engagement
-        ("submission_channel", "string", "How submitted: portal, phone, walk_in, email", "Core"),
-        ("department_id", "integer", "ID of assigned department", "Core"),
-        ("comment_count", "integer", "Total comments on request (internal + external)", "Core"),
-        ("public_comment_count", "integer", "Public/external comments visible to reporter", "Core"),
-    ]
+    # Column documentation lives at module scope (COLUMN_DICTIONARY) so the
+    # dictionary export and the chat assistant report the SAME field counts.
     
     def generate_csv():
         output = io.StringIO()
@@ -2184,10 +2244,12 @@ async def research_chat(
 
     context_used.append("request_analytics")
 
-    # Count fields
-    core_field_count = 26
-    research_field_count = 30
-    total_field_count = core_field_count + research_field_count
+    # Count fields from the actual exported-column dictionary rather than
+    # hardcoding. The hardcoded 26/30 disagreed with what the export really
+    # produced, so researchers were told a field count that wasn't true.
+    core_field_count = sum(1 for c in COLUMN_DICTIONARY if c[3] == "Core")
+    research_field_count = sum(1 for c in COLUMN_DICTIONARY if c[3] != "Core")
+    total_field_count = len(COLUMN_DICTIONARY)
 
     system_prompt = f"""You are a data assistant for the {township_name} Pinpoint 311 Research & Analytics Lab. You help researchers and municipal staff understand the available data, methodology, and analysis techniques.
 
@@ -2233,7 +2295,7 @@ async def research_chat(
 | Field | Type | Source |
 |-------|------|--------|
 | census_tract_geoid | string | US Census Geocoder API (real) — 11-digit FIPS code |
-| social_vulnerability_index | float (0-1) | Derived from Census ACS — CDC SVI approximation |
+| social_vulnerability_index | float (0-1) | ACS-derived approximation (3 variables) — NOT the CDC SVI |
 | housing_tenure_renter_pct | float (0-1) | Census ACS B25003 |
 | income_quintile | int (1-5) | Census ACS B19013 median household income |
 | population_density | string (low/medium/high) | Census ACS B01003 |
@@ -2265,8 +2327,8 @@ async def research_chat(
 | escalation_occurred | bool | Priority manually increased |
 | total_hours_to_resolve | float | Submission to closure |
 | business_hours_to_resolve | float | Mon-Fri 8am-5pm only |
-| days_to_first_update | float | Days until first staff action |
-| status_change_count | int | Number of status changes |
+| days_to_first_update | float | Days to the most recent update (not the first action) |
+| status_change_count | int | Count of all audit-log entries (not only status changes) |
 
 ## RESEARCH PACK: AI/ML Research (Data Scientists, AI/ML Engineers)
 | Field | Type | Source |
@@ -2274,7 +2336,7 @@ async def research_chat(
 | ai_flagged | bool | Vertex AI flagged for review |
 | ai_flag_reason | string | Safety, urgent, etc. |
 | ai_priority_score | float (1-10) | AI-generated priority |
-| ai_classification | string | AI-assigned category |
+| ai_classification | string | RESERVED — always empty (no pipeline writes it) |
 | ai_summary_sanitized | string | AI summary (PII redacted) |
 | ai_analyzed | bool | Whether AI processed this request |
 | ai_vs_manual_priority_diff | float | manual - ai priority difference |

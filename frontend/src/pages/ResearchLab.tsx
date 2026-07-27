@@ -46,10 +46,10 @@ const RESEARCH_PACKS = [
         audience: 'Equity Analysts, Social Researchers',
         fields: [
             { name: 'census_tract_geoid', type: 'string', description: '11-digit FIPS code for Census dataset joins', source: 'US Census Geocoder API (real)' },
-            { name: 'social_vulnerability_index', type: 'float (0-1)', description: 'CDC SVI (0=lowest, 1=highest vulnerability)', source: 'Derived from GEOID' },
+            { name: 'social_vulnerability_index', type: 'float (0-1)', description: 'Vulnerability approximation (0=lowest, 1=highest) — NOT the CDC SVI', source: 'Derived: 3 ACS variables' },
             { name: 'housing_tenure_renter_pct', type: 'float (0-1)', description: 'Renter % in zone (ownership patterns)', source: 'Derived from GEOID' },
-            { name: 'income_quintile', type: 'int (1-5)', description: 'Anonymized income quintile of zone', source: 'Zone-based proxy' },
-            { name: 'population_density', type: 'string', description: 'low / medium / high density category', source: 'Zone-based proxy' },
+            { name: 'income_quintile', type: 'int (1-5)', description: 'Income band from fixed national cutoffs (not true population quintiles)', source: 'Census ACS median income' },
+            { name: 'population_density', type: 'string', description: 'low / medium / high — banded from tract population (land area not used)', source: 'Census ACS population' },
         ],
         suggestedAnalyses: [
             'Join with Census ACS for demographic correlation',
@@ -65,10 +65,10 @@ const RESEARCH_PACKS = [
         color: 'blue',
         audience: 'Planners, Engineers, Operations Staff',
         fields: [
-            { name: 'weather_precip_24h_mm', type: 'float', description: 'Precipitation in 24h before report (mm)', source: 'Open-Meteo Archive API (real)' },
-            { name: 'weather_temp_max_c', type: 'float', description: 'Max temperature on report day (°C)', source: 'Open-Meteo Archive API (real)' },
-            { name: 'weather_temp_min_c', type: 'float', description: 'Min temperature on report day (°C)', source: 'Open-Meteo Archive API (real)' },
-            { name: 'weather_code', type: 'int', description: 'WMO weather code (e.g., 61=rain)', source: 'Open-Meteo Archive API (real)' },
+            { name: 'weather_precip_24h_mm', type: 'float', description: 'Precipitation in 24h before report (mm)', source: 'Open-Meteo Archive API' },
+            { name: 'weather_temp_max_c', type: 'float', description: 'Max temperature on report day (°C)', source: 'Open-Meteo Archive API' },
+            { name: 'weather_temp_min_c', type: 'float', description: 'Min temperature on report day (°C)', source: 'Open-Meteo Archive API' },
+            { name: 'weather_code', type: 'int', description: 'WMO weather code (e.g., 61=rain)', source: 'Open-Meteo Archive API' },
             { name: 'nearby_asset_age_years', type: 'float', description: 'Age of matched infrastructure asset', source: 'Asset properties (real)' },
             { name: 'matched_asset_attributes', type: 'JSON string', description: 'Full properties of matched asset', source: 'GeoJSON layer (real)' },
             { name: 'season', type: 'string', description: 'winter / spring / summer / fall', source: 'Calculated' },
@@ -87,7 +87,7 @@ const RESEARCH_PACKS = [
         color: 'pink',
         audience: 'Civic Engagement Analysts, Administrators',
         fields: [
-            { name: 'sentiment_score', type: 'float (-1 to +1)', description: 'NLP sentiment (-1=angry, +1=grateful)', source: 'Word-based NLP (real)' },
+            { name: 'sentiment_score', type: 'float (-1 to +1)', description: 'Sentiment (-1=angry, +1=grateful) — keyword scoring, no negation handling', source: 'Lexicon (in-app)' },
             { name: 'is_repeat_report', type: 'boolean', description: 'Text indicates prior report of same issue', source: 'Regex detection (real)' },
             { name: 'prior_report_mentioned', type: 'boolean', description: 'References ticket/case number', source: 'Regex detection (real)' },
             { name: 'frustration_expressed', type: 'boolean', description: 'Trust erosion indicators present', source: 'Regex detection (real)' },
@@ -112,8 +112,8 @@ const RESEARCH_PACKS = [
             { name: 'escalation_occurred', type: 'boolean', description: 'Priority was manually increased by staff', source: 'Audit logs (real)' },
             { name: 'total_hours_to_resolve', type: 'float', description: 'Total hours from submission to closure', source: 'Calculated (real)' },
             { name: 'business_hours_to_resolve', type: 'float', description: 'Business hours only (Mon-Fri 8am-5pm)', source: 'Calculated (real)' },
-            { name: 'days_to_first_update', type: 'float', description: 'Days until first staff action', source: 'Calculated (real)' },
-            { name: 'status_change_count', type: 'int', description: 'Number of status changes', source: 'Audit logs (real)' },
+            { name: 'days_to_first_update', type: 'float', description: 'Days to the MOST RECENT update (not the first action)', source: 'Calculated' },
+            { name: 'status_change_count', type: 'int', description: 'Count of all audit-log entries (not only status changes)', source: 'Audit logs' },
         ],
         suggestedAnalyses: [
             'Triage time vs resolution outcome',
@@ -129,11 +129,11 @@ const RESEARCH_PACKS = [
         color: 'green',
         audience: 'Data Scientists, AI/ML Engineers',
         fields: [
-            { name: 'ai_flagged', type: 'boolean', description: 'AI flagged for staff review', source: 'Vertex AI (real)' },
-            { name: 'ai_flag_reason', type: 'string', description: 'Reason for AI flag (safety, urgent)', source: 'Vertex AI (real)' },
-            { name: 'ai_priority_score', type: 'float (1-10)', description: 'AI-generated priority', source: 'Vertex AI (real)' },
-            { name: 'ai_classification', type: 'string', description: 'AI-assigned category', source: 'Vertex AI (real)' },
-            { name: 'ai_summary_sanitized', type: 'string', description: 'AI summary (PII redacted)', source: 'Vertex AI (real)' },
+            { name: 'ai_flagged', type: 'boolean', description: 'Flagged for staff review (content-moderation wordlist, not AI)', source: 'Moderation wordlist' },
+            { name: 'ai_flag_reason', type: 'string', description: 'Flag reason, e.g. "Auto-flagged: profanity"', source: 'Moderation wordlist' },
+            { name: 'ai_priority_score', type: 'float (1-10)', description: 'AI-suggested priority (10=highest); blank when AI never ran', source: 'AI provider' },
+            { name: 'ai_classification', type: 'string', description: 'RESERVED — always empty; no pipeline writes it yet', source: 'Not populated' },
+            { name: 'ai_summary_sanitized', type: 'string', description: 'AI summary with PII patterns redacted', source: 'AI provider' },
             { name: 'ai_analyzed', type: 'boolean', description: 'Whether AI processed this request', source: 'System (real)' },
             { name: 'ai_vs_manual_priority_diff', type: 'float', description: 'manual_priority - ai_priority', source: 'Calculated (real)' },
         ],
@@ -440,7 +440,7 @@ export const ResearchLab: React.FC = () => {
                     </h2>
                     <p className="text-white/60 max-w-2xl mx-auto">
                         Export rich, privacy-preserving datasets for operational analysis, equity studies,
-                        infrastructure planning, and data science. All {totalFields} fields computed on-the-fly with real data sources.
+                        infrastructure planning, and data science. All {totalFields} fields are computed at export time from your live data; see Data Sources & Provenance below for how each is produced.
                     </p>
                 </motion.div>
 
@@ -785,7 +785,7 @@ export const ResearchLab: React.FC = () => {
                             Data Export
                         </h2>
                         <p className="text-white/60 text-sm mb-4">
-                            Download all {totalFields} fields for offline analysis. Exports are PII-free and respect your privacy mode.
+                            Download all {totalFields} fields for offline analysis. Exports apply PII redaction and coordinate grid-snapping per your privacy mode — review before external release.
                         </p>
                         <div className="grid grid-cols-2 gap-4 mb-4">
                             <Button onClick={handleExportCSV} variant="secondary" size="lg">
@@ -859,26 +859,33 @@ export const ResearchLab: React.FC = () => {
                     </Card>
                 </div>
 
-                {/* Data Sources Footer */}
+                {/* Data provenance. These are descriptions of where each field comes
+                    from — not live health indicators. The previous version showed
+                    hardcoded green "online" dots that stayed green even when a source
+                    was failing, which misrepresented data quality. */}
                 <div className="mt-8 p-6 rounded-xl bg-white/5 border border-white/10">
-                    <h3 className="text-sm font-semibold text-white/70 mb-3">Real-Time Data Sources</h3>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs text-white/50">
-                        <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full bg-green-400"></div>
-                            <span>US Census Bureau Geocoder</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full bg-green-400"></div>
-                            <span>Open-Meteo Archive API</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full bg-green-400"></div>
-                            <span>NLP Sentiment Analysis</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full bg-green-400"></div>
-                            <span>Vertex AI Analysis Data</span>
-                        </div>
+                    <h3 className="text-sm font-semibold text-white/70 mb-1">Data Sources &amp; Provenance</h3>
+                    <p className="text-[11px] text-white/35 mb-3">
+                        How each field is produced. When an external source is unavailable, the affected
+                        fields are left empty rather than estimated.
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2.5 text-xs">
+                        {[
+                            ['US Census Bureau Geocoder + ACS', 'Live API (free, no key). Tract, income, tenure.'],
+                            ['Open-Meteo Archive API', 'Live API. Blank when the call fails — never estimated.'],
+                            ['Sentiment & trust indicators', 'Lexicon/keyword scoring in-app — not an NLP model.'],
+                            ['Vulnerability approximation', 'Derived from 3 ACS variables — not the CDC SVI.'],
+                            ['AI analysis fields', 'From stored model output; blank when AI never ran.'],
+                            ['Flags', 'Content-moderation wordlist at intake, not AI.'],
+                        ].map(([name, detail]) => (
+                            <div key={name} className="flex items-start gap-2">
+                                <div className="w-1.5 h-1.5 rounded-full bg-white/30 mt-1.5 shrink-0" />
+                                <div className="min-w-0">
+                                    <div className="text-white/70">{name}</div>
+                                    <div className="text-white/35">{detail}</div>
+                                </div>
+                            </div>
+                        ))}
                     </div>
                 </div>
             </main>
