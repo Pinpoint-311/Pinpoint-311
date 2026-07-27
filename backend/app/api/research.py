@@ -28,6 +28,7 @@ import json
 import logging
 import re
 import hashlib
+import hmac
 
 from app.db.session import get_db
 from app.models import ServiceRequest, SystemSettings, ResearchAccessLog
@@ -93,26 +94,66 @@ async def log_research_access(
     await db.commit()
 
 
+# Street suffixes used to spot in-text addresses ("123 Maple Ave").
+_STREET_SUFFIX = (
+    r'St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Ln|Lane|Dr|Drive|Ct|Court|'
+    r'Pl|Place|Ter|Terrace|Way|Cir|Circle|Pkwy|Parkway|Hwy|Highway|Trl|Trail'
+)
+
+
 def sanitize_description(description: str) -> str:
-    """Mask PII patterns in description text"""
+    """Mask PII patterns in description text.
+
+    Best-effort pattern redaction, not guaranteed de-identification. It now also
+    catches street addresses, unit numbers, URLs, social handles, and untitled
+    two-word capitalized names — the previous version only caught phones, emails,
+    and names carrying a title (Mr./Dr.), so "call Sarah Whitman at 12 Maple Ave"
+    passed through almost intact.
+
+    Deliberately conservative on names: only a capitalized pair immediately after
+    a person-referring cue word is redacted, so ordinary place names ("Maple Park
+    Playground") survive for research use.
+    """
     if not description:
         return ""
     result = description
-    
-    # Mask phone numbers
-    phone_patterns = [
-        r'\d{3}[-.\s]?\d{3}[-.\s]?\d{4}',
+
+    # Phone numbers
+    for pattern in (
         r'\(\d{3}\)\s?\d{3}[-.\s]?\d{4}',
-    ]
-    for pattern in phone_patterns:
+        r'\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b',
+        r'\b\d{10}\b',
+    ):
         result = re.sub(pattern, '[PHONE REDACTED]', result)
-    
-    # Mask email addresses
+
+    # Email addresses
     result = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '[EMAIL REDACTED]', result)
-    
-    # Mask potential names (patterns like "John Smith" or "Mr. Smith")
-    result = re.sub(r'\b(Mr\.|Mrs\.|Ms\.|Dr\.)\s+[A-Z][a-z]+', '[NAME REDACTED]', result)
-    
+
+    # URLs and social handles
+    result = re.sub(r'https?://\S+|www\.\S+', '[URL REDACTED]', result)
+    result = re.sub(r'(?<![\w@])@[A-Za-z0-9_]{3,}', '[HANDLE REDACTED]', result)
+
+    # Street addresses: number + optional street name + suffix
+    result = re.sub(
+        rf'\b\d+[A-Za-z]?\s+(?:[A-Z][a-zA-Z]*\.?\s+){{0,3}}(?:{_STREET_SUFFIX})\b\.?',
+        '[ADDRESS REDACTED]', result, flags=re.IGNORECASE,
+    )
+
+    # Unit / apartment identifiers
+    result = re.sub(r'\b(?:Apt|Apartment|Unit|Suite|Ste|#)\s*\.?\s*[A-Za-z]?\d+[A-Za-z]?\b',
+                    '[UNIT REDACTED]', result, flags=re.IGNORECASE)
+
+    # Titled names ("Mr. Smith", "Dr. Jane Doe")
+    result = re.sub(r'\b(?:Mr|Mrs|Ms|Dr|Miss|Sgt|Officer|Chief)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?',
+                    '[NAME REDACTED]', result)
+
+    # Untitled names, only after an explicit person cue.
+    result = re.sub(
+        r'\b(?:my name is|i am|i\'m|contact|ask for|spoke (?:to|with)|talked to|'
+        r'resident|neighbor|owner|tenant|call)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+        lambda m: m.group(0).replace(m.group(1), '[NAME REDACTED]'), result, flags=re.IGNORECASE,
+    )
+
     return result
 
 
@@ -220,10 +261,14 @@ def generate_zone_id(lat: float, long: float) -> str:
     # Create larger grid cells (~0.5 mile zones)
     zone_lat = round(lat / 0.007) * 0.007
     zone_long = round(long / 0.007) * 0.007
-    
-    # Hash to create anonymous zone ID
+
+    # Keyed hash, not a bare MD5 of the coordinates. An unsalted digest over a
+    # coarse coordinate grid is trivially reversible — an attacker can hash every
+    # cell in a state (a few million) and look the value up, recovering the cell.
+    # HMAC with the deployment's SECRET_KEY removes that offline attack.
     zone_str = f"{zone_lat:.3f},{zone_long:.3f}"
-    zone_hash = hashlib.md5(zone_str.encode()).hexdigest()[:8]
+    secret = (getattr(settings, "secret_key", None) or "pinpoint-zone-salt").encode()
+    zone_hash = hmac.new(secret, zone_str.encode(), hashlib.sha256).hexdigest()[:8]
     return f"ZONE-{zone_hash.upper()}"
 
 
@@ -518,7 +563,7 @@ async def get_housing_tenure_mix(census_geoid: str) -> Optional[float]:
     return None
 
 
-async def build_equity_map(requests) -> dict:
+async def build_equity_map(requests, privacy_mode: str = "fuzzed") -> dict:
     """Resolve the Census-derived equity fields for a set of requests, up front.
 
     These lookups are async (real Census Geocoder + ACS calls), but the CSV
@@ -530,10 +575,15 @@ async def build_equity_map(requests) -> dict:
     deduplicated by rounded coordinate so a batch of nearby requests costs one
     Census round-trip instead of one per row.
 
+    Weather is resolved here too, for the same reason (its API call is async now,
+    and it previously blocked the event loop from inside the request loop).
+
     Returns {request.id: {census_geoid, income_band, population_density,
-                          social_vulnerability_index, housing_tenure_renter_pct}}.
+                          social_vulnerability_index, housing_tenure_renter_pct,
+                          weather}}.
     """
     by_coord: dict = {}
+    by_weather: dict = {}
     out: dict = {}
 
     for req in requests:
@@ -551,21 +601,100 @@ async def build_equity_map(requests) -> dict:
                 "social_vulnerability_index": await get_social_vulnerability_index(geoid),
                 "housing_tenure_renter_pct": await get_housing_tenure_mix(geoid),
             }
-        out[req.id] = by_coord[key]
+        entry = dict(by_coord[key])
 
+        # One weather lookup per (date, rounded location) — a day's worth of
+        # requests in one neighborhood costs a single call, not one per row.
+        wkey = (req.requested_datetime.date() if req.requested_datetime else None, key)
+        if wkey not in by_weather:
+            by_weather[wkey] = await get_weather_context(req.requested_datetime, req.lat, req.long)
+        entry["weather"] = by_weather[wkey]
+
+        out[req.id] = entry
+
+    # Percentile-rank the vulnerability scores across the tracts actually present
+    # in this export, so the value is interpretable relative to the jurisdiction.
+    _apply_svi_percentiles(out)
+    if privacy_mode != "exact":
+        _suppress_small_tracts(out)
     return out
+
+
+# Minimum records sharing a census tract before tract-level attributes are
+# released. Below this, a tract join can single out an individual report.
+K_ANONYMITY_THRESHOLD = 5
+
+# Tract-derived fields withheld together — releasing any one of them can
+# re-identify the tract via a public ACS lookup, so they suppress as a group.
+_TRACT_FIELDS = (
+    "census_geoid",
+    "income_band",
+    "population_density",
+    "social_vulnerability_index",
+    "housing_tenure_renter_pct",
+)
+
+
+def _suppress_small_tracts(enrichment: dict, k: int = K_ANONYMITY_THRESHOLD) -> None:
+    """Blank tract-level attributes for tracts with fewer than k records.
+
+    Small-cell suppression: a census tract represented by one or two requests can
+    be joined against public ACS data to narrow down who filed them. Withholding
+    the tract block below a threshold is the standard mitigation and is what
+    reviewers expect before tract-level equity data leaves the building.
+
+    Admins exporting in `exact` privacy mode are exempt (already audit-logged).
+    """
+    counts: dict = {}
+    for e in enrichment.values():
+        geoid = e.get("census_geoid")
+        if geoid:
+            counts[geoid] = counts.get(geoid, 0) + 1
+
+    for e in enrichment.values():
+        geoid = e.get("census_geoid")
+        if geoid and counts.get(geoid, 0) < k:
+            for field in _TRACT_FIELDS:
+                e[field] = None
+            e["tract_suppressed"] = True
+
+
+def _apply_svi_percentiles(enrichment: dict) -> None:
+    """Convert raw vulnerability scores into 0-1 percentile ranks in-place.
+
+    CDC's published SVI is a percentile rank against every US tract. We cannot
+    reproduce that from per-tract API calls, so we rank within the tracts present
+    in this export and label it accordingly in the data dictionary. Ranking makes
+    the number comparable across categories in the same jurisdiction, which is
+    what equity comparisons here actually need.
+    """
+    by_tract = {}
+    for e in enrichment.values():
+        geoid, raw = e.get("census_geoid"), e.get("social_vulnerability_index")
+        if geoid and raw is not None:
+            by_tract[geoid] = raw
+    if len(by_tract) < 2:
+        return  # a single tract has no meaningful ranking; leave the raw score
+
+    ordered = sorted(by_tract.items(), key=lambda kv: kv[1])
+    ranks = {geoid: round(i / (len(ordered) - 1), 3) for i, (geoid, _) in enumerate(ordered)}
+    for e in enrichment.values():
+        geoid = e.get("census_geoid")
+        if geoid in ranks:
+            e["social_vulnerability_index"] = ranks[geoid]
 
 
 # ============================================================================
 # ENVIRONMENTAL CONTEXT PACK - For Urban Planners
 # ============================================================================
 
-def get_weather_context(requested_datetime: datetime, lat: float, lng: float) -> dict:
+async def get_weather_context(requested_datetime: datetime, lat: float, lng: float) -> dict:
     """
-    Get weather conditions around the time of the report using Open-Meteo Archive API.
-    
-    Uses the same free API as the Vertex AI analysis but for historical dates.
-    Falls back to seasonal estimates if API fails.
+    Get observed weather for the report date from the Open-Meteo API (free, no key).
+
+    Async + httpx: this used to call blocking `requests.get` from inside an async
+    endpoint, stalling the whole event loop for up to 3s per record. When the call
+    fails the fields are left empty — never estimated.
     """
     if not requested_datetime or lat is None or lng is None:
         return {"precip_24h_mm": None, "temp_max_c": None, "temp_min_c": None, "weather_code": None}
@@ -600,10 +729,10 @@ def get_weather_context(requested_datetime: datetime, lat: float, lng: float) ->
                 "timezone": "America/New_York"
             }
         
-        # Synchronous call (we're in a sync generator context)
-        import requests
-        response = requests.get(url, params=params, timeout=3)
-        
+        import httpx
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, params=params, timeout=3)
+
         if response.status_code == 200:
             data = response.json()
             daily = data.get("daily", {})
@@ -714,16 +843,56 @@ def get_matched_asset_attributes(matched_asset: dict) -> str:
 # SENTIMENT & TRUST PACK - For Political Science
 # ============================================================================
 
+def sentiment_method() -> str:
+    """Which sentiment implementation is active — reported in the data dictionary
+    so researchers know what produced the score."""
+    return "vader" if _vader() is not None else "keyword_fallback"
+
+
+_VADER_ANALYZER = None
+_VADER_TRIED = False
+
+
+def _vader():
+    """Lazily load VADER (MIT, pure-Python, no model download).
+
+    VADER is a published, validated rule-based sentiment model that handles
+    negation ("not good"), intensifiers ("very"), punctuation and capitalization —
+    none of which the previous raw keyword count did. If the package isn't
+    installed we fall back to the keyword scorer rather than failing the export.
+    """
+    global _VADER_ANALYZER, _VADER_TRIED
+    if not _VADER_TRIED:
+        _VADER_TRIED = True
+        try:
+            from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+            _VADER_ANALYZER = SentimentIntensityAnalyzer()
+        except Exception as e:  # pragma: no cover - depends on optional dep
+            logger.info(f"VADER unavailable, using keyword sentiment fallback: {e}")
+            _VADER_ANALYZER = None
+    return _VADER_ANALYZER
+
+
 def analyze_sentiment(text: str) -> float:
     """
-    Analyze sentiment of description text.
-    Returns score from -1.0 (angry/negative) to +1.0 (positive/grateful).
-    
-    Research Q: "Are wealthier neighborhoods more polite in their requests?"
+    Sentiment of the description, -1.0 (angry) to +1.0 (grateful).
+
+    Uses VADER when available (handles negation/intensifiers); otherwise falls
+    back to the original keyword count. `sentiment_method()` reports which ran.
     """
     if not text:
         return 0.0
-    
+
+    analyzer = _vader()
+    if analyzer is not None:
+        # compound is already normalized to [-1, 1].
+        return round(analyzer.polarity_scores(text)["compound"], 2)
+
+    return _keyword_sentiment(text)
+
+
+def _keyword_sentiment(text: str) -> float:
+    """Original keyword scorer — fallback only. No negation handling."""
     text_lower = text.lower()
     
     # Positive indicators
@@ -752,6 +921,35 @@ def analyze_sentiment(text: str) -> float:
     # Calculate score (-1 to +1)
     score = (positive_count - negative_count - frustration_count * 0.5) / 5.0
     return round(max(-1.0, min(1.0, score)), 2)
+
+
+def days_to_first_staff_action(req) -> Optional[float]:
+    """Days from submission to the FIRST staff action, from the audit log.
+
+    Previously this used `updated_datetime`, which is the *most recent* update —
+    so a request touched months later reported a huge "first response" time. The
+    audit log is the only place the genuine first action is recorded.
+    """
+    if not req.requested_datetime or not getattr(req, "audit_logs", None):
+        return None
+    staff_times = [
+        a.created_at for a in req.audit_logs
+        if a.created_at and a.actor_type in ("staff", "admin") and a.created_at > req.requested_datetime
+    ]
+    if not staff_times:
+        return None
+    return round((min(staff_times) - req.requested_datetime).total_seconds() / 86400, 2)
+
+
+def count_status_changes(req) -> int:
+    """Number of actual status changes, from the audit log.
+
+    Previously this was len(audit_logs) — every audit entry of any kind
+    (comments, assignment, edits), which overstated the real count.
+    """
+    if not getattr(req, "audit_logs", None):
+        return 0
+    return sum(1 for a in req.audit_logs if a.action == "status_change")
 
 
 def detect_trust_indicators(text: str) -> dict:
@@ -1043,7 +1241,7 @@ async def export_csv(
     
     # Resolve the async Census/equity lookups before streaming — the generator
     # below is synchronous and cannot await (see build_equity_map).
-    equity_map = await build_equity_map(requests)
+    equity_map = await build_equity_map(requests, privacy_mode)
 
     def generate_csv():
         output = io.StringIO()
@@ -1059,7 +1257,7 @@ async def export_csv(
             # Issue Details (sanitized)
             "description_sanitized", "description_word_count", "has_photos", "photo_count",
             # AI Analysis (for ML/NLP research)
-            "ai_flagged", "ai_flag_reason", "ai_priority_score", "ai_classification",
+            "moderation_flagged", "moderation_flag_reason", "ai_priority_score",
             "ai_summary_sanitized", "ai_analyzed", "ai_vs_manual_priority_diff",
             # Status & Resolution
             "status", "closed_substatus", "priority", "resolution_outcome",
@@ -1145,11 +1343,8 @@ async def export_csv(
             else:
                 resolution_outcome = 'pending'
             
-            # Days to first update
-            days_to_first_update = None
-            if req.updated_datetime and req.requested_datetime:
-                delta = req.updated_datetime - req.requested_datetime
-                days_to_first_update = round(delta.total_seconds() / 86400, 2)
+            # Days to the first STAFF action (from the audit log, not updated_datetime)
+            days_to_first_update = days_to_first_staff_action(req)
             
             # Zone-based demographic proxies (for equity research)
             zone_id = generate_zone_id(req.lat, req.long)
@@ -1164,7 +1359,7 @@ async def export_csv(
             housing_tenure = _eq.get("housing_tenure_renter_pct")
             
             # ENVIRONMENTAL CONTEXT PACK - Real weather data
-            weather = get_weather_context(req.requested_datetime, req.lat, req.long)
+            weather = _eq.get("weather") or {}
             asset_age = get_asset_age_years(req.matched_asset)
             asset_attributes = get_matched_asset_attributes(req.matched_asset)
             
@@ -1184,7 +1379,7 @@ async def export_csv(
             reassignments = count_reassignments(req.audit_logs)
             off_hours = is_off_hours_submission(req.requested_datetime)
             escalation = calculate_escalation_occurred(req.audit_logs)
-            status_changes = len(req.audit_logs) if req.audit_logs else 0
+            status_changes = count_status_changes(req)
             
             writer.writerow([
                 req.service_request_id,
@@ -1200,7 +1395,6 @@ async def export_csv(
                 req.flagged,
                 req.flag_reason,
                 ai_priority,  # Now from ai_analysis.priority_score
-                req.vertex_ai_classification,
                 ai_summary,
                 bool(req.vertex_ai_analyzed_at),
                 ai_priority_diff,
@@ -1321,7 +1515,7 @@ async def export_geojson(
     )
     
     # Real awaited Census/equity lookups, deduplicated by coordinate.
-    equity_map = await build_equity_map(requests)
+    equity_map = await build_equity_map(requests, privacy_mode)
 
     features = []
     for req in requests:
@@ -1395,7 +1589,7 @@ async def export_geojson(
         housing_tenure = _eq.get("housing_tenure_renter_pct")
         
         # ENVIRONMENTAL CONTEXT PACK - Real weather data
-        weather = get_weather_context(req.requested_datetime, req.lat, req.long)
+        weather = _eq.get("weather") or {}
         asset_age = get_asset_age_years(req.matched_asset)
         asset_attributes = get_matched_asset_attributes(req.matched_asset)
         
@@ -1408,6 +1602,14 @@ async def export_geojson(
         reassignments = count_reassignments(req.audit_logs)
         off_hours = is_off_hours_submission(req.requested_datetime)
         escalation = calculate_escalation_occurred(req.audit_logs)
+
+        # Fields the CSV emits that the GeoJSON was silently omitting, so the two
+        # exports (and the published data dictionary) now agree.
+        desc_sanitized = sanitize_description(req.description)
+        photo_count = len(req.media_urls) if req.media_urls else 0
+        address_anon = anonymize_address(req.address, privacy_mode)
+        days_to_first_update = days_to_first_staff_action(req)
+        status_changes = count_status_changes(req)
         
         features.append({
             "type": "Feature",
@@ -1428,14 +1630,16 @@ async def export_geojson(
                 "matched_asset_attributes": asset_attributes,  # Full JSON of asset properties
                 
                 # Issue Details
+                "description_sanitized": desc_sanitized,
                 "description_word_count": desc_word_count,
                 "has_photos": has_photos,
+                "photo_count": photo_count,
+                "address_anonymized": address_anon,
                 
                 # AI Analysis (for ML/NLP research)
-                "ai_flagged": req.flagged,
-                "ai_flag_reason": req.flag_reason,
+                "moderation_flagged": req.flagged,
+                "moderation_flag_reason": req.flag_reason,
                 "ai_priority_score": ai_priority,  # Now from ai_analysis.priority_score
-                "ai_classification": req.vertex_ai_classification,
                 "ai_summary_sanitized": ai_summary,
                 "ai_analyzed": bool(req.vertex_ai_analyzed_at),
                 "ai_vs_manual_priority_diff": ai_priority_diff,
@@ -1473,8 +1677,11 @@ async def export_geojson(
                 "submission_day_of_week": time_info.get('day_of_week'),
                 "submission_month": time_info.get('month'),
                 "submission_year": time_info.get('year'),
-                "is_weekend": time_info.get('is_weekend'),
-                "is_business_hours": time_info.get('is_business_hours'),
+                "updated_datetime": req.updated_datetime.isoformat() if req.updated_datetime else None,
+                "days_to_first_update": days_to_first_update,
+                "status_change_count": status_changes,
+                "is_weekend_submission": time_info.get('is_weekend'),
+                "is_business_hours_submission": time_info.get('is_business_hours'),
                 "season": season,
                 
                 # BUREAUCRATIC FRICTION PACK
@@ -1501,13 +1708,21 @@ async def export_geojson(
             "privacy_mode": privacy_mode,
             "record_count": len(features),
             "coordinate_precision": "fuzzed_100ft" if privacy_mode == "fuzzed" else "exact",
+            # Disclose the suppression rule so a blank tract field reads as
+            # "withheld for privacy", not "the lookup failed".
+            "small_cell_suppression": (
+                {"applied": True, "k": K_ANONYMITY_THRESHOLD,
+                 "note": f"Census-tract fields are withheld for tracts with fewer than "
+                         f"{K_ANONYMITY_THRESHOLD} records in this export."}
+                if privacy_mode != "exact" else {"applied": False}
+            ),
             "research_packs": {
                 "social_equity": ["social_vulnerability_index", "housing_tenure_renter_pct", "income_quintile", "population_density"],
                 "environmental_context": ["weather_precip_24h_mm", "weather_temp_max_c", "weather_temp_min_c", "nearby_asset_age_years", "season"],
                 "sentiment_trust": ["sentiment_score", "is_repeat_report", "prior_report_mentioned", "frustration_expressed"],
                 "bureaucratic_friction": ["time_to_triage_hours", "reassignment_count", "off_hours_submission", "escalation_occurred"],
                 "civil_engineering": ["infrastructure_category", "matched_asset_type"],
-                "ai_ml_research": ["ai_flagged", "ai_priority_score", "ai_classification", "ai_summary_sanitized", "ai_vs_manual_priority_diff"]
+                "ai_ml_research": ["ai_priority_score", "ai_summary_sanitized", "ai_vs_manual_priority_diff"], "moderation": ["moderation_flagged", "moderation_flag_reason"]
             }
         }
     }
@@ -1658,24 +1873,19 @@ async def get_data_dictionary(
                 "description": "Number of photos attached to the request",
                 "note": "Useful for studying documentation quality impact on resolution"
             },
-            "ai_flagged": {
+            "moderation_flagged": {
                 "type": "boolean",
-                "description": "Whether the request was flagged for staff review. Set by the content-moderation wordlist at intake (AI vision can add to it) — not an AI classification"
+                "description": "Whether the request was flagged for staff review by the content-moderation wordlist at intake (AI vision can also add to it). Not an AI classification."
             },
-            "ai_flag_reason": {
+            "moderation_flag_reason": {
                 "type": "string",
-                "description": "Reason provided by AI for flagging (e.g., 'safety concern', 'urgent')"
+                "description": "Flag reason, e.g. \"Auto-flagged: profanity\""
             },
             "ai_priority_score": {
                 "type": "float",
                 "range": "1-10",
                 "description": "AI-generated priority score (1-10 scale, 10=highest priority)",
                 "note": "Use with ai_vs_manual_priority_diff to study AI-human alignment"
-            },
-            "ai_classification": {
-                "type": "string",
-                "description": "RESERVED — currently always empty",
-                "note": "No pipeline writes an AI category today. Blank means 'never produced', not 'missing for this record'. Do not use in analysis until populated."
             },
             "ai_summary_sanitized": {
                 "type": "string",
@@ -1703,7 +1913,7 @@ async def get_data_dictionary(
             },
             "status_change_count": {
                 "type": "integer",
-                "description": "Count of audit-log entries for the request (all action types, not only status changes)",
+                "description": "Number of status changes (audit entries with action=status_change)",
                 "note": "Indicator of issue complexity or workflow efficiency"
             },
             "season": {
@@ -1748,7 +1958,7 @@ async def get_data_dictionary(
             "social_vulnerability_index": {
                 "type": "float",
                 "range": "0.0-1.0",
-                "description": "Social Vulnerability approximation (0=lowest, 1=highest). NOT the CDC SVI: a 3-variable ACS-derived proxy (income, renter share, tract population), not CDC's 16-variable index",
+                "description": "Social vulnerability percentile (0=least, 1=most vulnerable), ranked among the census tracts present in THIS export. Derived from ACS variables using CDC-style themes — it is NOT the official CDC SVI (which ranks against all US tracts using 16 variables)",
                 "note": "Calculated from Census ACS income, housing tenure, and population data",
                 "source": "Census Bureau ACS 5-year estimates (B19013, B25003, B01003)"
             },
@@ -1794,7 +2004,7 @@ async def get_data_dictionary(
             "sentiment_score": {
                 "type": "float",
                 "range": "-1.0 to +1.0",
-                "description": "Lexicon-based sentiment score (-1=angry, 0=neutral, +1=grateful). Keyword counting, not an NLP model; no negation handling",
+                "description": "Sentiment score (-1=angry, 0=neutral, +1=grateful) from VADER, a published rule-based model handling negation and intensifiers. Falls back to a simple keyword scorer if VADER is unavailable",
                 "note": "Research Q: 'Are wealthier neighborhoods more polite in requests?'",
                 "source": "Word-based sentiment analysis"
             },
@@ -1897,7 +2107,7 @@ async def get_data_dictionary(
             },
             "ai_ml_research": {
                 "audience": "Data Scientists, AI/ML Engineers",
-                "fields": ["ai_flagged", "ai_priority_score", "ai_classification", "ai_summary_sanitized", "ai_vs_manual_priority_diff", "ai_analyzed"],
+                "fields": ["ai_priority_score", "ai_summary_sanitized", "ai_vs_manual_priority_diff", "ai_analyzed", "moderation_flagged", "moderation_flag_reason"],
                 "suggested_analyses": [
                     "AI-human priority alignment study",
                     "Flagging accuracy and false positive rates",
@@ -1928,10 +2138,9 @@ COLUMN_DICTIONARY = [
     ("photo_count", "integer", "Number of photos attached to request", "Core"),
     
     # AI Analysis
-    ("ai_flagged", "boolean", "Flagged for staff review — set by the content-moderation wordlist, not by AI", "AI/ML Research Pack"),
-    ("ai_flag_reason", "string", "Flag reason, e.g. \"Auto-flagged: profanity\" (content-moderation wordlist)", "AI/ML Research Pack"),
+    ("moderation_flagged", "boolean", "Flagged for staff review by the content-moderation wordlist at intake (not AI)", "Moderation Pack"),
+    ("moderation_flag_reason", "string", "Flag reason, e.g. \"Auto-flagged: profanity\"", "Moderation Pack"),
     ("ai_priority_score", "float (1-10)", "AI-generated priority score (10=highest)", "AI/ML Research Pack"),
-    ("ai_classification", "string", "RESERVED — always empty. No pipeline currently writes an AI category; do not treat blanks as missing data", "AI/ML Research Pack"),
     ("ai_summary_sanitized", "string", "AI-generated summary (PII redacted)", "AI/ML Research Pack"),
     ("ai_analyzed", "boolean", "Whether AI has processed this request", "AI/ML Research Pack"),
     ("ai_vs_manual_priority_diff", "float", "manual_priority - ai_priority (positive = human prioritized higher)", "AI/ML Research Pack"),
@@ -1950,7 +2159,7 @@ COLUMN_DICTIONARY = [
     
     # Social Equity Pack
     ("census_tract_geoid", "string", "11-digit FIPS code from US Census Bureau Geocoder API", "Social Equity Pack"),
-    ("social_vulnerability_index", "float (0-1)", "ACS-derived vulnerability approximation (NOT CDC SVI; 3 variables, not 16)", "Social Equity Pack"),
+    ("social_vulnerability_index", "float (0-1)", "Vulnerability percentile ranked within this export's tracts (ACS-derived; NOT the official CDC SVI)", "Social Equity Pack"),
     ("housing_tenure_renter_pct", "float (0-1)", "Renter percentage in zone (derived from GEOID)", "Social Equity Pack"),
     ("income_quintile", "integer (1-5)", "Anonymized income quintile of zone (1=lowest)", "Social Equity Pack"),
     ("population_density", "string", "Density category: low, medium, high", "Social Equity Pack"),
@@ -1963,7 +2172,7 @@ COLUMN_DICTIONARY = [
     ("nearby_asset_age_years", "float", "Age of matched infrastructure asset in years", "Environmental Context Pack"),
     
     # Sentiment & Trust Pack
-    ("sentiment_score", "float (-1 to +1)", "Lexicon-based sentiment (keyword counting, not an NLP model)", "Sentiment & Trust Pack"),
+    ("sentiment_score", "float (-1 to +1)", "VADER rule-based sentiment (handles negation/intensifiers)", "Sentiment & Trust Pack"),
     ("is_repeat_report", "boolean", "Text indicates prior report of same issue", "Sentiment & Trust Pack"),
     ("prior_report_mentioned", "boolean", "Text references a prior ticket/case number", "Sentiment & Trust Pack"),
     ("frustration_expressed", "boolean", "Text contains trust erosion indicators", "Sentiment & Trust Pack"),
@@ -1987,8 +2196,8 @@ COLUMN_DICTIONARY = [
     ("escalation_occurred", "boolean", "Priority was manually increased by staff", "Bureaucratic Friction Pack"),
     ("total_hours_to_resolve", "float", "Total clock hours from submission to closure", "Bureaucratic Friction Pack"),
     ("business_hours_to_resolve", "float", "Business hours only (Mon-Fri 8am-5pm) to resolve", "Bureaucratic Friction Pack"),
-    ("days_to_first_update", "float", "Days from submission to the MOST RECENT update (uses updated_datetime; not the first action)", "Bureaucratic Friction Pack"),
-    ("status_change_count", "integer", "Count of all audit-log entries (not only status changes)", "Bureaucratic Friction Pack"),
+    ("days_to_first_update", "float", "Days from submission to the first staff action (from the audit log)", "Bureaucratic Friction Pack"),
+    ("status_change_count", "integer", "Number of status changes (audit entries with action=status_change)", "Bureaucratic Friction Pack"),
     
     # Civic Engagement
     ("submission_channel", "string", "How submitted: portal, phone, walk_in, email", "Core"),
@@ -2327,8 +2536,8 @@ async def research_chat(
 | escalation_occurred | bool | Priority manually increased |
 | total_hours_to_resolve | float | Submission to closure |
 | business_hours_to_resolve | float | Mon-Fri 8am-5pm only |
-| days_to_first_update | float | Days to the most recent update (not the first action) |
-| status_change_count | int | Count of all audit-log entries (not only status changes) |
+| days_to_first_update | float | Days to the first staff action |
+| status_change_count | int | Number of status changes |
 
 ## RESEARCH PACK: AI/ML Research (Data Scientists, AI/ML Engineers)
 | Field | Type | Source |
@@ -2336,7 +2545,6 @@ async def research_chat(
 | ai_flagged | bool | Vertex AI flagged for review |
 | ai_flag_reason | string | Safety, urgent, etc. |
 | ai_priority_score | float (1-10) | AI-generated priority |
-| ai_classification | string | RESERVED — always empty (no pipeline writes it) |
 | ai_summary_sanitized | string | AI summary (PII redacted) |
 | ai_analyzed | bool | Whether AI processed this request |
 | ai_vs_manual_priority_diff | float | manual - ai priority difference |

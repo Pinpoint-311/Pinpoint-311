@@ -162,8 +162,13 @@ def get_retention_policy(state_code: str) -> Dict[str, Any]:
         Dict with days, name, source, years, and public_records_law
     """
     state_code = state_code.upper() if state_code else "DEFAULT"
-    policy = STATE_RETENTION_POLICIES.get(state_code, STATE_RETENTION_POLICIES["DEFAULT"])
-    
+    if state_code not in STATE_RETENTION_POLICIES:
+        # Report the policy actually in effect. Echoing back an unrecognized code
+        # alongside the DEFAULT policy's name/law was internally inconsistent —
+        # the UI would show "ZZ" as if it were a configured state.
+        state_code = "DEFAULT"
+    policy = STATE_RETENTION_POLICIES[state_code]
+
     return {
         "state_code": state_code,
         "name": policy["name"],
