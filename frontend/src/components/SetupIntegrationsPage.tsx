@@ -92,15 +92,18 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         setTimeout(() => setCopyFeedback(null), 2000);
     };
 
-    // Status badge rendering - icons are inline where needed
-
-    const getStatusBadge = (configured: boolean | undefined) => {
-        if (configured) return <Badge variant="success">Configured</Badge>;
-        return <Badge variant="warning">Not Configured</Badge>;
-    };
 
     // Check configuration status
-    const auth0Configured = isConfigured('AUTH0_DOMAIN') && isConfigured('AUTH0_CLIENT_ID') && isConfigured('AUTH0_CLIENT_SECRET');
+    // Staff sign-in is required; Auth0 specifically is not. Identity is a
+    // pluggable capability with four providers (Auth0, Entra, Okta, and generic
+    // OIDC for anything else), so the checklist asks whether ANY of them is
+    // configured. Naming one vendor as "required" was both wrong and exactly
+    // the kind of lock-in framing this platform exists to avoid.
+    const signInConfigured =
+        (isConfigured('AUTH0_DOMAIN') && isConfigured('AUTH0_CLIENT_ID') && isConfigured('AUTH0_CLIENT_SECRET'))
+        || (isConfigured('ENTRA_TENANT_ID') && isConfigured('ENTRA_CLIENT_ID') && isConfigured('ENTRA_CLIENT_SECRET'))
+        || (isConfigured('OKTA_ISSUER') && isConfigured('OKTA_CLIENT_ID') && isConfigured('OKTA_CLIENT_SECRET'))
+        || (isConfigured('OIDC_ISSUER') && isConfigured('OIDC_CLIENT_ID') && isConfigured('OIDC_CLIENT_SECRET'));
     const smsProviderFromSecrets = secrets.find(s => s.key_name === 'SMS_PROVIDER')?.key_value;
     const smtpConfigured = isConfigured('SMTP_HOST') && isConfigured('SMTP_FROM_EMAIL');
 
@@ -120,7 +123,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     // (Google Cloud, DB Backups) are excluded — the state handles them, so
     // counting them would leave progress permanently "incomplete".
     const setupSteps = [
-        { label: 'Auth0 SSO', done: !!auth0Configured, required: true },
+        { label: 'Staff sign-in', done: !!signInConfigured, required: true },
         { label: 'Email (SMTP)', done: !!smtpConfigured, required: false },
         ...(managedMode ? [] : [{ label: 'Google Cloud', done: !!gcpConfigured, required: false }]),
         { label: 'Map provider', done: !!mapsConfigured, required: false },
@@ -283,7 +286,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 </div>
 
                                 {/* ── 1. Staff sign-in (always required) ── */}
-                                <Guide tone="orange" icon={Key} title="Staff sign-in (required)" done={auth0Configured}>
+                                <Guide tone="orange" icon={Key} title="Staff sign-in (required)" done={signInConfigured}>
                                     <InstructionStep num={1}>Create the tenant. Go to <a href="https://auth0.com" target="_blank" rel="noopener noreferrer" className="text-orange-300 underline underline-offset-2">auth0.com</a> and sign up (or sign in to your org's tenant). Pick a region that matches your data-residency needs — this can't be changed later.</InstructionStep>
                                     <InstructionStep num={2}>Create the application. In the left menu go to <strong className="text-white/90">Applications → Applications → Create Application</strong>, name it <em className="text-white/60">"{`{township} 311`}"</em>, choose <strong className="text-white/90">Regular Web Application</strong>, and click Create. (Skip the "quickstart" tech picker.)</InstructionStep>
                                     <InstructionStep num={3}>Set the URLs. Open the app's <strong className="text-white/90">Settings</strong> tab and scroll to <strong className="text-white/90">Application URIs</strong>. Set all three to your site:
@@ -431,64 +434,14 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             {/* Required Integrations */}
             <CollapsibleSection title="Required Integrations" icon={Shield} accent="primary" subtitle="Sign-in, database, and maps" defaultOpen={true}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Auth0 SSO */}
-                    <Card className="h-full">
-                        <div className="flex items-start justify-between mb-4">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-lg bg-orange-500/20 flex items-center justify-center">
-                                    <Key className="w-5 h-5 text-orange-400" />
-                                </div>
-                                <div>
-                                    <h3 className="font-semibold text-white">Auth0 SSO</h3>
-                                    <p className="text-gray-300 text-xs">Staff authentication with MFA</p>
-                                </div>
-                            </div>
-                            {getStatusBadge(auth0Configured)}
-                        </div>
-
-                        <div className="space-y-3">
-                            {['AUTH0_DOMAIN', 'AUTH0_CLIENT_ID', 'AUTH0_CLIENT_SECRET'].map(key => {
-                                const configured = isConfigured(key);
-                                const label = key.replace('AUTH0_', '').replace(/_/g, ' ');
-                                return (
-                                    <div key={key}>
-                                        <label className="text-xs text-gray-300 block mb-1">{label}</label>
-                                        {configured && !secretValues[key] ? (
-                                            <div className="flex items-center gap-2">
-                                                <div className="flex-1 h-9 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center px-3">
-                                                    <span className="text-green-300 text-xs">✓ Configured</span>
-                                                </div>
-                                                <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, [key]: '' }))}>
-                                                    Change
-                                                </Button>
-                                            </div>
-                                        ) : (
-                                            <div className="flex gap-2">
-                                                <Input
-                                                    type={key.includes('SECRET') ? 'password' : 'text'}
-                                                    placeholder={key.includes('DOMAIN') ? 'yourorg.us.auth0.com' : '...'}
-                                                    value={secretValues[key] || ''}
-                                                    onChange={(e) => setSecretValues(p => ({ ...p, [key]: e.target.value }))}
-                                                    className="flex-1 text-sm"
-                                                />
-                                                <Button
-                                                    size="sm"
-                                                    onClick={() => handleSave(key)}
-                                                    disabled={!secretValues[key] || savingKey === key}
-                                                >
-                                                    {savingKey === key ? '...' : 'Save'}
-                                                </Button>
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
-                        </div>
-
-                        <div className="mt-4 text-xs text-gray-500">
-                            Callback: <code className="bg-white/10 px-1 rounded break-all">{window.location.origin}/api/auth/callback</code>
-                        </div>
-                    </Card>
+                    {/* The Auth0 card that used to live here has been removed.
+                        Sign-in is a pluggable capability with four providers
+                        (Auth0, Entra, Okta, and generic OIDC for anything else),
+                        and this card wrote the same three AUTH0_* secrets the
+                        Staff Sign-In card already owns -- while implying Auth0
+                        was the only option. The callback URL a town has to
+                        register is in the Staff sign-in guide above, with a copy
+                        button. */}
 
                     {/* Database - usually auto-configured */}
                     <Card className="h-full">
