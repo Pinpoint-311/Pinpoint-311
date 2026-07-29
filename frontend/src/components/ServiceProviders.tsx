@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import {
     Sparkles, Languages, KeyRound, CheckCircle, AlertCircle,
-    ChevronDown, Loader2, Check, ShieldCheck, RefreshCw,
+    Loader2, Check, ShieldCheck, RefreshCw,
     Cloud, MapPin, Lock, Info, Map as MapIcon,
 } from 'lucide-react';
 
-import { Select, CollapsibleSection } from './ui';
+import { CollapsibleSection } from './ui';
 import SecretField from './SecretField';
 import { api, ProviderCatalog, ProviderInfo, ProviderModelSpec, CloudProfileState } from '../services/api';
 
@@ -44,7 +44,6 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const [selected, setSelected] = useState<string>('');
     const [model, setModel] = useState<string>('');
     const [values, setValues] = useState<Record<string, string>>({});
-    const [open, setOpen] = useState(false);
     const [busy, setBusy] = useState<'save' | 'test' | null>(null);
     const [result, setResult] = useState<{ ok: boolean; detail: string } | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -98,6 +97,11 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
 
     const active: ProviderInfo | undefined = catalog.providers.find(p => p.provider === selected);
     const currentName = catalog.providers.find(p => p.provider === catalog.current_provider)?.name || catalog.current_provider;
+
+    // Whether the provider actually in use has its credentials stored. Drives
+    // the same green treatment every other connector card uses, so "set up" and
+    // "not set up" read identically across the whole page.
+    const configured = !!catalog.configured?.[catalog.current_provider];
 
     const handleSave = async () => {
         if (!active) return;
@@ -160,43 +164,45 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-            className="premium-card p-5"
+            className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${configured
+                ? 'bg-gradient-to-br from-green-500/10 via-emerald-500/5 to-teal-500/10 border-green-500/30 shadow-lg shadow-green-500/10'
+                : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'}`}
         >
-            {/* Header */}
-            <div className="flex items-center justify-between gap-5">
-                <div className="flex items-center gap-3 min-w-0">
-                    <div className="relative shrink-0">
-                        <div className="absolute -inset-1 rounded-2xl bg-gradient-to-br from-primary-400/40 to-primary-600/20 blur-md" aria-hidden="true" />
-                        <div className="relative w-11 h-11 rounded-2xl bg-gradient-to-br from-primary-500/30 to-primary-700/20 border border-primary-400/30 flex items-center justify-center shadow-lg shadow-primary-900/40">
-                            <Icon className="w-5 h-5 text-primary-200" />
+            {configured && (
+                <div className="absolute inset-0 bg-gradient-to-r from-green-500/5 via-transparent to-emerald-500/5 pointer-events-none" aria-hidden="true" />
+            )}
+
+            <div className="relative">
+                {/* Header — same shape as every other connector card: a large
+                    gradient icon tile, the name, and a status pill on the right. */}
+                <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
+                    <div className="flex items-center gap-4 min-w-0">
+                        <div className={`w-14 h-14 shrink-0 rounded-2xl flex items-center justify-center transition-all duration-300 ${configured
+                            ? 'bg-gradient-to-br from-green-400 to-emerald-500 shadow-lg shadow-green-500/30'
+                            : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'}`}>
+                            <Icon className="w-7 h-7 text-white" />
+                        </div>
+                        <div className="min-w-0">
+                            <h3 className="font-bold text-lg text-white leading-tight">{title}</h3>
+                            <p className="text-white/50 text-sm truncate">
+                                {currentName}
+                                {cap === 'ai' && catalog.current_model ? ` · ${catalog.current_model}` : ''}
+                            </p>
                         </div>
                     </div>
-                    <h3 className="font-semibold text-white tracking-tight leading-snug min-w-0 pr-1">{title}</h3>
+                    {configured ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-green-500/20 to-emerald-500/20 text-green-300 border border-green-500/30 shadow-lg shadow-green-500/10">
+                            <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" />
+                            Configured
+                        </span>
+                    ) : (
+                        <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            Not configured
+                        </span>
+                    )}
                 </div>
-                <button
-                    onClick={() => setOpen(v => !v)}
-                    className="shrink-0 inline-flex items-center gap-1 text-xs font-medium text-white/70 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-full pl-3 pr-2.5 py-1.5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
-                    aria-expanded={open}
-                    aria-controls={`prov-${cap}`}
-                >
-                    Configure
-                    <motion.span animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.3 }} aria-hidden="true">
-                        <ChevronDown className="w-3.5 h-3.5" />
-                    </motion.span>
-                </button>
-            </div>
 
-            {/* Active provider — full-width pill so long names/models never wrap into a column */}
-            <div className="mt-3 flex items-center gap-2 rounded-xl bg-white/[0.04] border border-white/10 px-3 py-2">
-                <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400 shrink-0" aria-hidden="true" />
-                <p className="text-white/60 text-xs min-w-0 truncate">
-                    <span className="text-white/40">Active</span>{' '}
-                    <span className="text-white/85 font-medium">{currentName}</span>
-                    {cap === 'ai' && catalog.current_model ? <span className="text-white/55"> · {catalog.current_model}</span> : ''}
-                </p>
-            </div>
-
-            <p className="text-white/50 text-xs mt-3 leading-relaxed">{blurb}</p>
+                <p className="text-white/60 text-sm mb-4">{blurb}</p>
 
             {result && (
                 <motion.div
@@ -210,17 +216,11 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 </motion.div>
             )}
 
-            <AnimatePresence initial={false}>
-                {open && (
-                    <motion.div
-                        id={`prov-${cap}`}
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-                        className="overflow-hidden"
-                    >
-                        <div className="mt-4 pt-4 border-t border-white/10 space-y-5">
+            {/* Configuration is always visible. It used to sit behind a
+                "Configure" disclosure, which meant the fields a deployment
+                actually has to fill in were one click away from being missed,
+                and left the card looking finished when nothing was set. */}
+            <div id={`prov-${cap}`} className="mt-4 pt-4 border-t border-white/10 space-y-5">
                             {/* Provider picker — segmented tiles */}
                             <div>
                                 <label className="text-[11px] uppercase tracking-wider text-white/60 mb-2 block font-semibold">Provider</label>
@@ -303,12 +303,45 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                                 {refreshingModels ? 'Checking…' : 'Refresh from provider'}
                                             </button>
                                         </div>
-                                        <Select
-                                            options={models.map(m => ({ value: m.id, label: m.discovered ? `${m.label} · new` : m.label }))}
-                                            value={model || active.default_model || models[0].id}
-                                            onChange={(e) => setModel(e.target.value)}
-                                            aria-label="AI model"
-                                        />
+                                        {/* Tiles, not a <select>. The model list is short, the
+                                            choice is consequential, and a dropdown hides every
+                                            option but one -- including the "new" markers that
+                                            live discovery just added. Same control as the
+                                            provider picker above, so the page has one idiom. */}
+                                        {(() => {
+                                            const chosen = model || active.default_model || models[0].id;
+                                            return (
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="AI model">
+                                                    {models.map(m => {
+                                                        const isSel = m.id === chosen;
+                                                        return (
+                                                            <button
+                                                                key={m.id}
+                                                                type="button"
+                                                                role="radio"
+                                                                aria-checked={isSel}
+                                                                onClick={() => setModel(m.id)}
+                                                                className={`relative text-left rounded-xl px-3 py-2.5 border transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${isSel
+                                                                    ? 'bg-gradient-to-br from-primary-500/25 to-primary-700/15 border-primary-400/50 shadow-lg shadow-primary-900/30'
+                                                                    : 'bg-white/[0.03] border-white/10 hover:bg-white/[0.06] hover:border-white/20'}`}
+                                                            >
+                                                                <div className="flex items-center justify-between gap-2">
+                                                                    <span className={`text-sm font-medium truncate ${isSel ? 'text-white' : 'text-white/70'}`}>{m.label}</span>
+                                                                    {isSel && (
+                                                                        <span className="shrink-0 w-4 h-4 rounded-full bg-primary-400 flex items-center justify-center">
+                                                                            <Check className="w-3 h-3 text-primary-950" strokeWidth={3} />
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                {m.discovered && (
+                                                                    <span className="text-[10px] font-semibold uppercase tracking-wide text-primary-300/90 mt-1 inline-block">New</span>
+                                                                )}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            );
+                                        })()}
                                         <p className="text-[10px] text-white/40 mt-1.5">
                                             {source === 'live'
                                                 ? `Live from ${active.name}${fetchedAt ? ` · updated ${agoLabel(fetchedAt)}` : ''}`
@@ -366,10 +399,8 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                     <span className="text-white/60 text-[11px] ml-auto hidden sm:block">Auth0 default · Entra / Okta supported</span>
                                 )}
                             </div>
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            </div>
+            </div>
         </motion.div>
     );
 }
