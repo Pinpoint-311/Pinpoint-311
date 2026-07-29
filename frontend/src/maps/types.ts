@@ -14,7 +14,7 @@
  * useless in practice.
  */
 
-export type MapProviderId = 'google' | 'maplibre' | 'esri' | 'apple' | 'azure';
+export type MapProviderId = 'google' | 'esri' | 'apple' | 'azure';
 
 export interface LatLng {
     lat: number;

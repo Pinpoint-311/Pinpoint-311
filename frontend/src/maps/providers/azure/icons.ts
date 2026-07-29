@@ -1,7 +1,7 @@
 /**
  * MarkerIcon -> raster image, plus MarkerIcon -> DOM node.
  *
- * Both MapLibre and Azure Maps draw source-backed markers from a *named image
+ * Azure Maps (a MapLibre fork) draws source-backed markers from a *named image
  * in a sprite* that a style expression points at. That is exactly what makes
  * MarkerIcon-as-data pay off: a `{type:'circle'}` description can be rasterised
  * here once, registered under a stable key, and referenced by a symbol layer

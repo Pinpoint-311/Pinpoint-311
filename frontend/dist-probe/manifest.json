@@ -1,0 +1,17 @@
+{
+  "name": "Pinpoint 311",
+  "short_name": "311",
+  "description": "Report issues and track municipal service requests",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1e1b4b",
+  "theme_color": "#6366f1",
+  "icons": [
+    {
+      "src": "/pinpoint311_icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

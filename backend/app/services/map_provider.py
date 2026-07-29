@@ -37,15 +37,6 @@ PROVIDERS: Dict[str, Dict[str, Any]] = {
         "required": ["apiKey"],
         "setup": "Create an API key in Google Cloud Console and restrict it to your domain.",
     },
-    "maplibre": {
-        "label": "MapLibre (open source)",
-        "recommended": False,
-        # Nothing required: MapLibre needs no account at all. A town may point
-        # at its own tile server, otherwise a free public one is used.
-        "secrets": {"styleId": "MAPLIBRE_STYLE_URL"},
-        "required": [],
-        "setup": "No account needed. Optionally supply your own tile style URL.",
-    },
     "esri": {
         "label": "Esri / ArcGIS",
         "recommended": False,
@@ -78,6 +69,9 @@ PROVIDERS: Dict[str, Dict[str, Any]] = {
 }
 
 # Providers that cannot geocode at all, so a separate geocoder is required.
+# Every provider currently offered can, but the distinction is kept because the
+# fallback it drives -- Pinpoint's own backend geocoder -- is what a
+# render-only provider would need, and dropping it would hide that requirement.
 GEOCODING_CAPABLE = {"google", "esri", "apple", "azure"}
 
 
