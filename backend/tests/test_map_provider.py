@@ -26,21 +26,22 @@ def test_unknown_provider_falls_back_rather_than_failing():
 
 
 def test_provider_names_are_case_and_space_insensitive():
-    assert mp.normalize_provider("  MapLibre ") == "maplibre"
-    assert mp.normalize_provider("ESRI") == "esri"
+    assert mp.normalize_provider("  Esri ") == "esri"
+    assert mp.normalize_provider("AZURE") == "azure"
 
 
-@pytest.mark.parametrize("provider", ["google", "maplibre", "esri", "apple", "azure"])
+@pytest.mark.parametrize("provider", ["google", "esri", "apple", "azure"])
 def test_every_advertised_provider_resolves_to_itself(provider):
     assert mp.normalize_provider(provider) == provider
 
 
 # ---- geocoding is chosen separately ----------------------------------------
 
-def test_maplibre_gets_a_geocoder_because_it_has_none():
-    """MapLibre is a renderer only. Defaulting it to itself would leave address
-    search silently dead, which is worse than any wrong answer."""
-    assert mp.geocoder_for("maplibre", None) == "backend"
+def test_a_render_only_provider_would_get_the_backend_geocoder():
+    """Every provider offered today can geocode, but the fallback has to work:
+    a renderer-only provider defaulting to itself would leave address search
+    silently dead, which is worse than any wrong answer."""
+    assert mp.geocoder_for("some-render-only-provider", None) == "backend"
 
 
 @pytest.mark.parametrize("provider", ["google", "esri", "apple", "azure"])
@@ -64,7 +65,7 @@ def test_an_unknown_geocoder_falls_back_to_the_renderer():
 
 @pytest.mark.asyncio
 async def test_only_the_selected_provider_s_secrets_are_read():
-    """A MapLibre town must not receive a Google key just because one happens
+    """An Azure town must not receive a Google key just because one happens
     to be configured. Sending credentials a provider does not use leaks them to
     every browser that loads the page."""
     requested = []
@@ -73,7 +74,7 @@ async def test_only_the_selected_provider_s_secrets_are_read():
         requested.append(name)
         return f"value-for-{name}"
 
-    await mp.resolve_credentials("maplibre", fake_get_secret)
+    await mp.resolve_credentials("azure", fake_get_secret)
     assert not any("GOOGLE" in name for name in requested)
 
 
@@ -107,9 +108,10 @@ async def test_unknown_provider_resolves_the_default_s_credentials():
     assert "apiKey" in creds
 
 
-def test_maplibre_requires_nothing():
-    """No account, no key, no billing. That is its whole reason for existing."""
-    assert mp.missing_requirements("maplibre", {}) == []
+def test_a_provider_with_no_required_secrets_is_never_blocked():
+    """missing_requirements must return empty rather than inventing a
+    requirement, or such a provider could never be selected."""
+    assert mp.missing_requirements("google", {"apiKey": "k"}) == []
 
 
 def test_a_provider_missing_its_key_is_reported():
@@ -140,10 +142,10 @@ def test_catalog_covers_every_provider_and_says_what_each_needs():
         assert isinstance(entry["requires"], list)
 
 
-def test_catalog_flags_the_provider_that_cannot_geocode():
+def test_catalog_reports_geocoding_capability():
     by_id = {e["id"]: e for e in mp.catalog()}
-    assert by_id["maplibre"]["can_geocode"] is False
     assert by_id["google"]["can_geocode"] is True
+    assert by_id["esri"]["can_geocode"] is True
 
 
 def test_exactly_one_provider_is_recommended():

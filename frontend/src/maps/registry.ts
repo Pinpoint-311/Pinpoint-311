@@ -2,7 +2,7 @@
  * Runtime provider selection.
  *
  * Adapters are reached through dynamic import() so Vite emits one chunk per
- * provider: a town configured for MapLibre must never download Google's adapter
+ * provider: a town configured for Esri must never download Google's adapter
  * (or @googlemaps/markerclusterer), and must never see a maps.googleapis.com
  * request. That is the whole point of the indirection — it is not just tidiness.
  */
@@ -20,9 +20,9 @@ type FactoryLoader = () => Promise<MapProviderFactory>;
 
 const LOADERS: Partial<Record<MapProviderId, FactoryLoader>> = {
     google: async () => (await import('./providers/google')).googleMapProvider,
-    maplibre: async () => (await import('./providers/maplibre')).maplibreMapProvider,
     esri: async () => (await import('./providers/esri')).esriMapProvider,
-    // apple / azure land here once their adapters are written.
+    apple: async () => (await import('./providers/apple')).appleMapProvider,
+    azure: async () => (await import('./providers/azure')).azureMapProvider,
 };
 
 const cache = new Map<MapProviderId, Promise<MapProviderFactory>>();

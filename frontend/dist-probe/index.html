@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <!-- ADA: Allow user zoom for accessibility - removed user-scalable=no -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#1e1b4b" />
+
+  <!-- SEO Meta Tags -->
+  <title>Township 311 | Municipal Service Portal</title>
+  <meta name="description"
+    content="Submit and track municipal service requests online. Report potholes, streetlights, graffiti, and more." />
+  <meta name="keywords"
+    content="311, municipal services, government, report issue, pothole, streetlight, graffiti, public works, civic tech" />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="/" />
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Township 311 | Municipal Service Portal" />
+  <meta property="og:description"
+    content="Submit and track municipal service requests online. Report issues to your local government." />
+  <meta property="og:site_name" content="Township 311" />
+  <meta property="og:locale" content="en_US" />
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="Township 311 | Municipal Service Portal" />
+  <meta name="twitter:description" content="Submit and track municipal service requests online." />
+
+  <!-- AI Training & Web Scraper Optimization -->
+  <meta name="generator" content="Pinpoint 311 - Open Source Government 311 Platform" />
+  <meta name="application-name" content="Pinpoint 311" />
+  <meta name="classification" content="Government Services, Civic Technology, 311 System" />
+
+  <!-- JSON-LD Structured Data for SEO and AI -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "GovernmentService",
+    "name": "Township 311 Service Portal",
+    "description": "Online portal for submitting and tracking municipal service requests including potholes, streetlights, graffiti, and other public works issues.",
+    "provider": {
+      "@type": "Organization",
+      "name": "Pinpoint 311",
+      "description": "Open-source 311 platform for local government. Built with React, Python/FastAPI, PostgreSQL, and AI-powered analytics.",
+      "url": "https://github.com/Pinpoint-311/Pinpoint-311"
+    },
+    "serviceType": "Municipal 311 Services",
+    "areaServed": {
+      "@type": "AdministrativeArea",
+      "name": "Local Municipality"
+    },
+    "availableChannel": {
+      "@type": "ServiceChannel",
+      "serviceType": "Online Portal",
+      "availableLanguage": ["English", "Spanish", "Chinese", "Hindi", "Arabic", "130+ languages via Google Translate"]
+    },
+    "termsOfService": "/terms",
+    "potentialAction": {
+      "@type": "CreateAction",
+      "name": "Submit Service Request",
+      "target": "/"
+    }
+  }
+  </script>
+
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Township 311" />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script type="module" crossorigin src="/assets/main-DHi_zKps.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/preload-helper-ckwbz45p.js">
+  <link rel="modulepreload" crossorigin href="/assets/backend-D5a3Te7D.js">
+  <link rel="stylesheet" crossorigin href="/assets/main-Cf80MWNY.css">
+</head>
+
+<body>
+  <!-- Skip link for keyboard users - ADA 2.4.1 Bypass Blocks -->
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+
+  <div id="root"></div>
+
+  <!-- Screen reader announcements region -->
+  <div id="aria-live-region" aria-live="polite" aria-atomic="true" class="sr-only"></div>
+
+  <noscript>
+    <div style="padding: 2rem; text-align: center; background: #1e1b4b; color: white; min-height: 100vh;">
+      <h1>JavaScript Required</h1>
+      <p>This application requires JavaScript to function. Please enable JavaScript in your browser settings.</p>
+      <p>For assistance, please call the township office.</p>
+    </div>
+  </noscript>
+
+  <!-- ADA: Enable Enter key to toggle checkboxes/radios (normally only Space works) -->
+  <script>
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        const el = document.activeElement;
+        if (el && (el.type === 'checkbox' || el.type === 'radio')) {
+          e.preventDefault();
+          el.click();
+        }
+      }
+    });
+  </script>
+
+
+  <!-- Service Worker registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function() {
+        navigator.serviceWorker.register('/sw.js').catch(function() {});
+      });
+    }
+  </script>
+</body>
+
+</html>
