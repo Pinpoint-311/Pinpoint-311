@@ -71,6 +71,24 @@ def should_swap(existing_count: int, incoming_count: int) -> Tuple[bool, Optiona
     return True, None
 
 
+def extract_boundary_geometry(boundary: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(boundary, dict):
+        return None
+    btype = boundary.get("type")
+    if btype in ("Polygon", "MultiPolygon", "GeometryCollection"):
+        return boundary
+    if btype == "Feature":
+        return boundary.get("geometry")
+    if btype == "FeatureCollection" and boundary.get("features"):
+        features = boundary["features"]
+        if len(features) == 1:
+            return features[0].get("geometry")
+        return {
+            "type": "GeometryCollection",
+            "geometries": [f.get("geometry") for f in features if f.get("geometry")]
+        }
+    return None
+
 def boundary_bbox(geojson: Dict[str, Any]) -> Optional[Tuple[float, float, float, float]]:
     """(minx, miny, maxx, maxy) of a boundary, for the fetch envelope."""
     coordinates: List[List[float]] = []
@@ -229,7 +247,27 @@ async def seed_roads_for_boundary(db, *, force: bool = False) -> Dict[str, Any]:
             geom=func.ST_GeomFromText(wkt, 4326),
         ))
 
-    status.segment_count = len(result.segments)
+    await db.commit()
+
+    # Filter out segments outside the actual municipality boundary polygon
+    geom_obj = extract_boundary_geometry(boundary)
+    if geom_obj:
+        try:
+            import json
+            from sqlalchemy import text
+            geom_str = json.dumps(geom_obj)
+            del_sql = text("""
+                DELETE FROM road_segments 
+                WHERE NOT ST_Intersects(geom, ST_SetSRID(ST_GeomFromGeoJSON(:geom_str), 4326))
+            """)
+            del_res = await db.execute(del_sql, {"geom_str": geom_str})
+            await db.commit()
+            logger.info("Filtered out %s road segments outside municipal boundary", del_res.rowcount)
+        except Exception as filter_err:
+            logger.warning("Polygon intersection filter failed: %s", filter_err)
+
+    final_count = (await db.execute(select(func.count(RoadSegment.id)))).scalar() or 0
+    status.segment_count = final_count
     status.fetched_at = datetime.now(timezone.utc)
     status.consecutive_failures = 0
     status.last_error = None
