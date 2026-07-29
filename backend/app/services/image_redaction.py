@@ -1,0 +1,952 @@
+"""Blur faces and licence plates out of resident photos, on ingest.
+
+Why this is destructive, and why it happens here
+------------------------------------------------
+The obvious design -- keep the original, blur it when it is displayed -- is the
+wrong one for a public records system. A 311 photo is a government record: it
+goes out through the Open311 API, the research export, OPRA/FOIA responses and
+whatever the town's own dashboard renders, and every one of those is a separate
+place to forget to apply the blur. Worse, the unredacted face is still sitting
+in the database until retention deletes it, which is exactly the biometric
+retention question a state privacy review will ask about.
+
+So the blur is applied once, at intake, to the bytes that get stored. There is
+no original. That is a real trade-off -- if a photo's evidentiary value was the
+face, it is gone -- and it is the trade-off a municipality should want.
+
+What it will get wrong
+----------------------
+Face detection is good and still not perfect: profiles, faces smaller than
+roughly 30px, heavy shadow and motion blur are all missed. Plate detection is
+worse -- see `plate_like` -- because none of the cloud vendors sell a plate
+detector, so we are inferring "this text region is a plate" from OCR output and
+geometry. It over-blurs (a STOP sign, a house number, a bus route board) and it
+under-blurs (angled, dirty, obscured, or partially cropped plates).
+
+This is a mitigation, not a guarantee, and the admin UI must say so. A town that
+needs a guarantee has to review photos manually.
+
+Providers
+---------
+    google  -> Vision  images:annotate FACE_DETECTION / TEXT_DETECTION
+    aws     -> Rekognition DetectFaces / DetectText
+    azure   -> AI Face detect  +  AI Vision Image Analysis 4.0 read
+    local   -> OpenCV Haar cascades, offline, free, and noticeably weaker
+
+`local` exists because the per-photo cost of the cloud providers is small but
+not zero, and because "the unredacted image never leaves the building" is a
+materially better answer to a privacy review than "we send it to Google and
+they say they don't keep it."
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import logging
+import re
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+logger = logging.getLogger(__name__)
+
+REDACTION_PROVIDER_KEY = "REDACTION_PROVIDER"
+REDACT_FACES_KEY = "REDACT_FACES"
+REDACT_PLATES_KEY = "REDACT_PLATES"
+
+PROVIDERS = ("google", "aws", "azure", "local")
+
+# Detection confidence below which we ignore a hit. Deliberately low for faces:
+# a false blur costs a slightly worse photo, a missed face costs someone's
+# biometric data being published on a municipal website. The asymmetry is not
+# close, so we bias hard toward blurring.
+FACE_MIN_CONFIDENCE = 0.35
+
+# Plates get the opposite treatment. The plate signal is a guess built on OCR
+# geometry, and at a low threshold half the street signs in New Jersey get
+# smeared. Staff need to be able to read the report.
+PLATE_MIN_CONFIDENCE = 0.55
+
+# Detected boxes are grown before blurring. A face box is drawn tight around the
+# features and leaves hairline, jaw and ears legible; an OCR box is drawn around
+# the characters and leaves the plate's border and state name visible.
+FACE_PADDING = 0.25
+PLATE_PADDING = 0.45
+
+# Below this the blur is cosmetic rather than irreversible -- a lightly blurred
+# 200px face can be partially recovered. Radius scales with the box so a large
+# face is destroyed as thoroughly as a small one.
+BLUR_RADIUS_RATIO = 0.28
+MIN_BLUR_RADIUS = 6
+
+MAX_IMAGES = 3
+
+
+# --------------------------------------------------------------------------
+# geometry
+# --------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Box:
+    """A detection, in fractions of image width/height rather than pixels.
+
+    Fractional coordinates because the four providers disagree: Rekognition
+    returns ratios, Vision and Azure return pixels, and OpenCV returns pixels in
+    whatever resolution we downscaled to before running it. Normalising at the
+    parser boundary means the blur code never has to care.
+    """
+
+    left: float
+    top: float
+    right: float
+    bottom: float
+    kind: str = "face"          # face | plate
+    confidence: float = 1.0
+
+    @property
+    def width(self) -> float:
+        return max(0.0, self.right - self.left)
+
+    @property
+    def height(self) -> float:
+        return max(0.0, self.bottom - self.top)
+
+    @property
+    def area(self) -> float:
+        return self.width * self.height
+
+    def clamped(self) -> "Box":
+        """Trim to the image. Providers routinely return boxes that run off the
+        edge for a face at the frame border, and PIL will not crop past it."""
+        left, right = sorted((self.left, self.right))
+        top, bottom = sorted((self.top, self.bottom))
+        return Box(
+            max(0.0, min(1.0, left)),
+            max(0.0, min(1.0, top)),
+            max(0.0, min(1.0, right)),
+            max(0.0, min(1.0, bottom)),
+            self.kind,
+            self.confidence,
+        )
+
+    def padded(self, ratio: float) -> "Box":
+        """Grow by a fraction of the box's own size, then clamp."""
+        dx = self.width * ratio / 2
+        dy = self.height * ratio / 2
+        return Box(self.left - dx, self.top - dy, self.right + dx, self.bottom + dy,
+                   self.kind, self.confidence).clamped()
+
+    def to_pixels(self, width: int, height: int) -> Tuple[int, int, int, int]:
+        box = self.clamped()
+        return (
+            int(box.left * width),
+            int(box.top * height),
+            max(int(box.left * width) + 1, int(box.right * width)),
+            max(int(box.top * height) + 1, int(box.bottom * height)),
+        )
+
+
+def _overlap(a: Box, b: Box) -> float:
+    """Intersection area over the smaller box, not IoU.
+
+    IoU is the usual choice and it is wrong here. A small face box sitting
+    entirely inside a larger one -- which is what two providers, or a face
+    detector and a text detector, produce for the same subject -- has a low IoU
+    and should still be merged. Containment is the relationship we care about.
+    """
+    inter_w = max(0.0, min(a.right, b.right) - max(a.left, b.left))
+    inter_h = max(0.0, min(a.bottom, b.bottom) - max(a.top, b.top))
+    inter = inter_w * inter_h
+    smaller = min(a.area, b.area)
+    return inter / smaller if smaller > 0 else 0.0
+
+
+def merge_boxes(boxes: Sequence[Box], threshold: float = 0.4) -> List[Box]:
+    """Collapse overlapping detections into their union.
+
+    Blurring the same face twice is harmless, but each blur pass softens the
+    surrounding pixels again, and stacked passes on a busy photo turn it to
+    soup. Merging first also keeps the count we report to staff honest -- "3
+    faces blurred" should mean three people.
+    """
+    merged: List[Box] = []
+    for box in sorted(boxes, key=lambda b: b.area, reverse=True):
+        box = box.clamped()
+        if box.area <= 0:
+            continue
+        for i, existing in enumerate(merged):
+            if existing.kind == box.kind and _overlap(existing, box) >= threshold:
+                merged[i] = Box(
+                    min(existing.left, box.left),
+                    min(existing.top, box.top),
+                    max(existing.right, box.right),
+                    max(existing.bottom, box.bottom),
+                    box.kind,
+                    max(existing.confidence, box.confidence),
+                )
+                break
+        else:
+            merged.append(box)
+    return merged
+
+
+def _from_vertices(vertices: List[Dict[str, Any]], width: int, height: int,
+                   kind: str, confidence: float) -> Optional[Box]:
+    """Build a Box from a Vision-style vertex list.
+
+    Vision omits `x` or `y` entirely when the value is 0 rather than sending a
+    zero, so `v.get("x", 0)` is load-bearing and not defensive padding.
+    """
+    if not vertices or width <= 0 or height <= 0:
+        return None
+    xs = [float(v.get("x", 0) or 0) for v in vertices]
+    ys = [float(v.get("y", 0) or 0) for v in vertices]
+    if not xs or not ys:
+        return None
+    return Box(min(xs) / width, min(ys) / height, max(xs) / width, max(ys) / height,
+               kind, confidence).clamped()
+
+
+# --------------------------------------------------------------------------
+# pure response parsers -- no network, so they are the testable surface
+# --------------------------------------------------------------------------
+
+_GOOGLE_LIKELIHOOD = {
+    "VERY_LIKELY": 0.95, "LIKELY": 0.75, "POSSIBLE": 0.5,
+    "UNLIKELY": 0.25, "VERY_UNLIKELY": 0.05, "UNKNOWN": 0.0,
+}
+
+
+def google_faces(payload: Dict[str, Any], width: int, height: int) -> List[Box]:
+    """Parse Vision images:annotate FACE_DETECTION.
+
+    Vision gives two polygons per face. `boundingPoly` is generous and includes
+    hair and headwear; `fdBoundingPoly` ("face detection") is tight to the skin.
+    We take boundingPoly, because for redaction the generous one is the right
+    one -- hair and headwear are identifying, and the padding we add afterwards
+    is measured relative to whichever box we started from.
+    """
+    responses = payload.get("responses") or []
+    if not responses:
+        return []
+    boxes: List[Box] = []
+    for face in responses[0].get("faceAnnotations") or []:
+        confidence = float(face.get("detectionConfidence", 0) or 0)
+        if confidence < FACE_MIN_CONFIDENCE:
+            continue
+        poly = face.get("boundingPoly") or face.get("fdBoundingPoly") or {}
+        box = _from_vertices(poly.get("vertices") or [], width, height, "face", confidence)
+        if box and box.area > 0:
+            boxes.append(box)
+    return boxes
+
+
+def rekognition_faces(payload: Dict[str, Any]) -> List[Box]:
+    """Parse Rekognition DetectFaces. BoundingBox is already fractional."""
+    boxes: List[Box] = []
+    for face in payload.get("FaceDetails") or []:
+        confidence = float(face.get("Confidence", 0) or 0) / 100.0
+        if confidence < FACE_MIN_CONFIDENCE:
+            continue
+        bb = face.get("BoundingBox") or {}
+        left = float(bb.get("Left", 0) or 0)
+        top = float(bb.get("Top", 0) or 0)
+        box = Box(left, top, left + float(bb.get("Width", 0) or 0),
+                  top + float(bb.get("Height", 0) or 0), "face", confidence).clamped()
+        if box.area > 0:
+            boxes.append(box)
+    return boxes
+
+
+def azure_faces(payload: List[Dict[str, Any]], width: int, height: int) -> List[Box]:
+    """Parse Azure AI Face detect. Pixel rectangles, and no confidence score --
+    the API only returns faces it is already sure about, so we record 1.0 rather
+    than inventing a number."""
+    if width <= 0 or height <= 0:
+        return []
+    boxes: List[Box] = []
+    for face in payload or []:
+        rect = face.get("faceRectangle") or {}
+        left = float(rect.get("left", 0) or 0)
+        top = float(rect.get("top", 0) or 0)
+        box = Box(left / width, top / height,
+                  (left + float(rect.get("width", 0) or 0)) / width,
+                  (top + float(rect.get("height", 0) or 0)) / height,
+                  "face", 1.0).clamped()
+        if box.area > 0:
+            boxes.append(box)
+    return boxes
+
+
+# ---- plates ---------------------------------------------------------------
+
+# Signs and markings that OCR reads off a streetscape and that satisfy a naive
+# "short uppercase string" test. Not exhaustive and cannot be -- it is a
+# backstop under the structural rules in plate_like, not the primary filter.
+_NOT_A_PLATE = {
+    "STOP", "YIELD", "ONE WAY", "ONEWAY", "NO PARKING", "EXIT", "SPEED LIMIT",
+    "SLOW", "AHEAD", "DETOUR", "SCHOOL", "BUS", "TAXI", "POLICE", "FIRE",
+    "AMBULANCE", "OPEN", "CLOSED", "SALE", "FOR SALE", "FOR RENT", "MPH",
+    "KEEP RIGHT", "KEEP LEFT", "DO NOT ENTER", "PED XING", "RR XING",
+}
+
+_PLATE_CHARS = re.compile(r"[^A-Z0-9]")
+
+
+def plate_like(text: str, box: Box) -> float:
+    """How likely an OCR text region is a licence plate, 0..1.
+
+    There is no honest way to make this good. Google, AWS and Azure all sell
+    face detection and none of them sell plate detection, so what is actually
+    available is "here is some text and where it was", and the plate has to be
+    inferred from the shape of the string and the shape of the box.
+
+    The structural signals that survive contact with real photos:
+
+      * 4-8 characters after stripping punctuation. US plates are 5-7; the
+        window is widened by one at each end for OCR dropping or splitting a
+        character.
+      * Both a letter and a digit. This is the single strongest rule -- it
+        eliminates nearly every road sign in one go, because signs are words.
+      * A wide box. Plate text runs 2:1 to 5:1. A tall or square region is a
+        house number or a shopfront.
+      * Lower in the frame. A plate is on a vehicle at ground level; overhead
+        signage is not. Weak on its own, useful as a tiebreak.
+
+    All-numeric strings are scored but scored down, because they are equally
+    likely to be a house number, and a blurred house number in a pothole report
+    destroys the one thing that made the report actionable.
+
+    Deliberately not attempted: reading the plate to check it against a state
+    format. That means retaining the plate number to decide whether to hide the
+    plate number.
+    """
+    raw = (text or "").strip().upper()
+    if not raw or raw in _NOT_A_PLATE:
+        return 0.0
+    cleaned = _PLATE_CHARS.sub("", raw)
+    if not (4 <= len(cleaned) <= 8):
+        return 0.0
+    # A multi-word string is a sign. Plates are one token (the state name sits
+    # in its own OCR region, above or below).
+    if len(raw.split()) > 2:
+        return 0.0
+
+    has_alpha = any(c.isalpha() for c in cleaned)
+    has_digit = any(c.isdigit() for c in cleaned)
+    if not has_digit:
+        return 0.0
+
+    score = 0.55 if (has_alpha and has_digit) else 0.3
+
+    if box.height > 0:
+        aspect = box.width / box.height
+        if 1.8 <= aspect <= 5.5:
+            score += 0.25
+        elif 1.2 <= aspect < 1.8 or 5.5 < aspect <= 8.0:
+            score += 0.1
+        else:
+            score -= 0.2
+
+    # Vertical centre of the box. Below the midline is where vehicles are.
+    centre = (box.top + box.bottom) / 2
+    if centre >= 0.45:
+        score += 0.12
+
+    # A plate occupies a small part of a streetscape photo. A text region
+    # covering a third of the frame is a shopfront or a banner.
+    if box.area > 0.25:
+        score -= 0.3
+
+    return max(0.0, min(1.0, score))
+
+
+def google_text_plates(payload: Dict[str, Any], width: int, height: int) -> List[Box]:
+    """Parse Vision TEXT_DETECTION and keep the regions that look like plates.
+
+    textAnnotations[0] is the whole-image aggregate, so it is skipped -- keeping
+    it would blur the entire photo the moment any plate-shaped string appeared.
+    """
+    responses = payload.get("responses") or []
+    if not responses:
+        return []
+    annotations = responses[0].get("textAnnotations") or []
+    boxes: List[Box] = []
+    for ann in annotations[1:]:
+        poly = ann.get("boundingPoly") or {}
+        box = _from_vertices(poly.get("vertices") or [], width, height, "plate", 0.0)
+        if not box or box.area <= 0:
+            continue
+        score = plate_like(ann.get("description", ""), box)
+        if score >= PLATE_MIN_CONFIDENCE:
+            boxes.append(Box(box.left, box.top, box.right, box.bottom, "plate", score))
+    return boxes
+
+
+def rekognition_text_plates(payload: Dict[str, Any]) -> List[Box]:
+    """Parse Rekognition DetectText.
+
+    Only WORD detections, not LINE: a LINE glues the plate to the state name
+    and the dealer frame, which wrecks both the aspect-ratio test and the
+    character-count test.
+    """
+    boxes: List[Box] = []
+    for det in payload.get("TextDetections") or []:
+        if det.get("Type") != "WORD":
+            continue
+        bb = (det.get("Geometry") or {}).get("BoundingBox") or {}
+        left = float(bb.get("Left", 0) or 0)
+        top = float(bb.get("Top", 0) or 0)
+        box = Box(left, top, left + float(bb.get("Width", 0) or 0),
+                  top + float(bb.get("Height", 0) or 0), "plate", 0.0).clamped()
+        if box.area <= 0:
+            continue
+        score = plate_like(det.get("DetectedText", ""), box)
+        # Rekognition's own OCR confidence gates the geometry score, so a
+        # half-read smudge cannot reach the threshold on shape alone.
+        ocr = float(det.get("Confidence", 0) or 0) / 100.0
+        score *= max(0.0, min(1.0, ocr))
+        if score >= PLATE_MIN_CONFIDENCE:
+            boxes.append(Box(box.left, box.top, box.right, box.bottom, "plate", score))
+    return boxes
+
+
+def azure_text_plates(payload: Dict[str, Any], width: int, height: int) -> List[Box]:
+    """Parse Azure AI Vision Image Analysis 4.0 `read` output.
+
+    Azure returns a polygon as a flat list of {x, y} points in pixels, per word.
+    """
+    if width <= 0 or height <= 0:
+        return []
+    read = payload.get("readResult") or {}
+    boxes: List[Box] = []
+    for block in read.get("blocks") or []:
+        for line in block.get("lines") or []:
+            for word in line.get("words") or []:
+                box = _from_vertices(word.get("boundingPolygon") or [], width, height, "plate", 0.0)
+                if not box or box.area <= 0:
+                    continue
+                score = plate_like(word.get("text", ""), box)
+                score *= max(0.0, min(1.0, float(word.get("confidence", 1) or 0)))
+                if score >= PLATE_MIN_CONFIDENCE:
+                    boxes.append(Box(box.left, box.top, box.right, box.bottom, "plate", score))
+    return boxes
+
+
+# --------------------------------------------------------------------------
+# blurring
+# --------------------------------------------------------------------------
+
+@dataclass
+class RedactionResult:
+    """What came back from redacting one photo."""
+
+    media: str                                   # the redacted data URI, or the input unchanged
+    faces: int = 0
+    plates: int = 0
+    changed: bool = False
+    skipped_reason: str = ""                     # why nothing happened, for the audit trail
+
+    @property
+    def total(self) -> int:
+        return self.faces + self.plates
+
+
+@dataclass
+class BatchResult:
+    media: List[str] = field(default_factory=list)
+    faces: int = 0
+    plates: int = 0
+    skipped: List[str] = field(default_factory=list)
+
+    @property
+    def changed(self) -> bool:
+        return bool(self.faces or self.plates)
+
+
+def _decode(media: str) -> Optional[Tuple[bytes, str]]:
+    """Raw bytes plus the data-URI mime type, or None.
+
+    http(s) URLs are deliberately not fetched. Following a resident-supplied URL
+    server-side is an SSRF hole, and it is the same reason cloud_moderation
+    skips them. It also means an externally-hosted photo cannot be redacted at
+    all, which the caller has to surface rather than silently accept.
+    """
+    if not media or not isinstance(media, str):
+        return None
+    s = media.strip()
+    if s.startswith("http://") or s.startswith("https://"):
+        return None
+    mime = "image/jpeg"
+    if s.startswith("data:"):
+        header, _, s = s.partition(",")
+        if ";" in header and ":" in header:
+            candidate = header.split(":", 1)[1].split(";", 1)[0]
+            if candidate.startswith("image/"):
+                mime = candidate
+    try:
+        return base64.b64decode(s, validate=False), mime
+    except Exception:
+        return None
+
+
+def _encode(raw: bytes, mime: str) -> str:
+    return f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
+
+
+def blur_regions(raw: bytes, boxes: Sequence[Box]) -> Optional[bytes]:
+    """Gaussian-blur each box into the image and re-encode it.
+
+    Gaussian rather than pixelation, with the radius scaled to the box. A fixed
+    radius looks fine on a 60px face and leaves a 400px one recognisable, and
+    small-block pixelation is reversible in ways a wide Gaussian is not.
+
+    The alpha channel is dropped and the result is written as JPEG: PNG carries
+    the EXIF the phone attached, which for a resident photo usually includes GPS
+    to a few metres and sometimes the device serial. Stripping it here is a
+    second privacy win that falls out of the re-encode for free.
+    """
+    if not boxes:
+        return None
+    try:
+        import io
+
+        from PIL import Image, ImageFilter
+    except Exception:  # pragma: no cover - Pillow not installed
+        logger.warning("[Redaction] Pillow unavailable; cannot blur")
+        return None
+
+    try:
+        image = Image.open(io.BytesIO(raw))
+        image = image.convert("RGB")
+        width, height = image.size
+        applied = 0
+        for box in boxes:
+            left, top, right, bottom = box.to_pixels(width, height)
+            if right - left < 2 or bottom - top < 2:
+                continue
+            region = image.crop((left, top, right, bottom))
+            radius = max(MIN_BLUR_RADIUS, int(min(right - left, bottom - top) * BLUR_RADIUS_RATIO))
+            image.paste(region.filter(ImageFilter.GaussianBlur(radius)), (left, top))
+            applied += 1
+        if not applied:
+            return None
+        out = io.BytesIO()
+        # No exif= argument, so the original EXIF block is not carried over.
+        image.save(out, format="JPEG", quality=88, optimize=True)
+        return out.getvalue()
+    except Exception:
+        logger.warning("[Redaction] blur failed", exc_info=True)
+        return None
+
+
+def strip_exif(raw: bytes) -> Optional[bytes]:
+    """Re-encode without the camera metadata block.
+
+    Worth doing on its own, independently of any face. A phone photo of a
+    pothole normally carries GPS coordinates accurate to a few metres -- which
+    for a report filed from a driveway is the reporter's home address, arriving
+    with none of the protection the address field gets -- plus the capture
+    timestamp and often a device identifier. All of it currently flows straight
+    into media_urls and back out through the Open311 API and the research
+    export.
+
+    That is a larger privacy exposure than the faces, and unlike the faces it
+    costs nothing: no provider, no credentials, no per-image fee and no false
+    positives. So it runs whenever the bytes are decodable, including when no
+    detector found anything.
+
+    Returns None if the image cannot be re-encoded, in which case the caller
+    keeps the original rather than dropping the photo.
+    """
+    try:
+        import io
+
+        from PIL import Image
+
+        with Image.open(io.BytesIO(raw)) as image:
+            image = image.convert("RGB")
+            out = io.BytesIO()
+            image.save(out, format="JPEG", quality=88, optimize=True)
+            return out.getvalue()
+    except Exception:
+        return None
+
+
+def image_size(raw: bytes) -> Tuple[int, int]:
+    """(width, height), or (0, 0) if the bytes are not a readable image.
+
+    Needed before the detector runs, because Vision and Azure answer in pixels
+    and Box is fractional.
+    """
+    try:
+        import io
+
+        from PIL import Image
+
+        with Image.open(io.BytesIO(raw)) as image:
+            return image.size
+    except Exception:
+        return (0, 0)
+
+
+# --------------------------------------------------------------------------
+# configuration
+# --------------------------------------------------------------------------
+
+async def _flag(key: str, default: bool) -> bool:
+    from app.services.secret_manager import get_secret
+    raw = await get_secret(key)
+    if raw is None or str(raw).strip() == "":
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on", "enabled")
+
+
+async def resolve_provider() -> Optional[str]:
+    """Which detector to use, or None for "redaction is off".
+
+    Falls through to the moderation provider and then the AI provider, so a town
+    that has already pasted one set of cloud credentials gets redaction without
+    configuring a second thing. `local` is never chosen implicitly -- OpenCV
+    quality is low enough that it should be a decision, not a default.
+    """
+    from app.services.secret_manager import get_secret
+
+    override = ((await get_secret(REDACTION_PROVIDER_KEY)) or "").strip().lower()
+    if override in PROVIDERS:
+        return override
+    if override in ("none", "off", "disabled"):
+        return None
+
+    moderation = ((await get_secret("MODERATION_PROVIDER")) or "").strip().lower()
+    if moderation in ("google", "azure", "aws"):
+        return moderation
+    if moderation in ("none", "off", "disabled"):
+        return None
+
+    ai = ((await get_secret("AI_PROVIDER")) or "").strip().lower()
+    return {"vertex": "google", "azure": "azure", "bedrock": "aws"}.get(ai)
+
+
+async def settings() -> Tuple[Optional[str], bool, bool]:
+    """(provider, redact_faces, redact_plates).
+
+    Faces default on once a provider is resolvable: publishing a stranger's face
+    on a municipal website is a harm a town incurs by doing nothing, and the
+    default should not be the harmful one.
+
+    Plates default off. The detector guesses (see `plate_like`), the failure
+    mode is a blurred house number on an otherwise useful report, and a town
+    should opt into that knowingly.
+    """
+    provider = await resolve_provider()
+    if not provider:
+        return (None, False, False)
+    return (provider, await _flag(REDACT_FACES_KEY, True), await _flag(REDACT_PLATES_KEY, False))
+
+
+# --------------------------------------------------------------------------
+# detection, per provider
+# --------------------------------------------------------------------------
+
+async def detect(provider: str, raw: bytes, width: int, height: int,
+                 faces: bool, plates: bool) -> List[Box]:
+    """Every detection this provider can make on one image. Never raises."""
+    found: List[Box] = []
+    try:
+        if provider == "google":
+            found = await _google_detect(raw, width, height, faces, plates)
+        elif provider == "aws":
+            found = await _aws_detect(raw, faces, plates)
+        elif provider == "azure":
+            found = await _azure_detect(raw, width, height, faces, plates)
+        elif provider == "local":
+            found = await _local_detect(raw, width, height, faces, plates)
+    except Exception as exc:
+        from app.core.sanitize import sanitize_for_log
+        logger.info("[Redaction] %s detection unavailable: %s", provider, sanitize_for_log(str(exc)))
+        return []
+    return found
+
+
+# ---- Google Vision --------------------------------------------------------
+
+async def _google_detect(raw: bytes, width: int, height: int,
+                         faces: bool, plates: bool) -> List[Box]:
+    import httpx
+
+    from app.services.cloud_moderation import _google_token_and_project
+
+    features = []
+    if faces:
+        features.append({"type": "FACE_DETECTION", "maxResults": 50})
+    if plates:
+        features.append({"type": "TEXT_DETECTION"})
+    if not features:
+        return []
+
+    token, _ = await _google_token_and_project()
+    if not token:
+        return []
+
+    body = {"requests": [{"image": {"content": base64.b64encode(raw).decode("ascii")},
+                          "features": features}]}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=6.0)) as client:
+        resp = await client.post("https://vision.googleapis.com/v1/images:annotate",
+                                 headers={"Authorization": f"Bearer {token}"}, json=body)
+        resp.raise_for_status()
+        payload = resp.json()
+
+    out: List[Box] = []
+    if faces:
+        out += google_faces(payload, width, height)
+    if plates:
+        out += google_text_plates(payload, width, height)
+    return out
+
+
+# ---- AWS Rekognition ------------------------------------------------------
+
+async def _aws_detect(raw: bytes, faces: bool, plates: bool) -> List[Box]:
+    from app.services.cloud_moderation import _aws_kwargs
+
+    kwargs = await _aws_kwargs()
+    if not kwargs:
+        return []
+
+    def _sync() -> List[Box]:
+        import boto3
+        client = boto3.client("rekognition", **kwargs)
+        out: List[Box] = []
+        if faces:
+            out += rekognition_faces(client.detect_faces(Image={"Bytes": raw}, Attributes=["DEFAULT"]))
+        if plates:
+            out += rekognition_text_plates(client.detect_text(Image={"Bytes": raw}))
+        return out
+
+    return await asyncio.get_event_loop().run_in_executor(None, _sync)
+
+
+# ---- Azure ----------------------------------------------------------------
+#
+# Azure needs two separate resources: AI Face for faces and AI Vision for the
+# text read. They are not the same endpoint and not the same key.
+#
+# Face carries an access caveat the other providers do not. Microsoft placed the
+# Face API behind a Limited Access registration under its Responsible AI
+# Standard; detection (returning rectangles) is the least restricted operation,
+# but a subscription still has to be approved before the resource will serve
+# traffic. A town that cannot get through that form should pick another
+# provider, and the admin UI says so rather than letting them discover it from
+# a 403.
+
+async def _azure_face_creds():
+    from app.services.secret_manager import get_secret
+    endpoint = ((await get_secret("AZURE_FACE_ENDPOINT")) or "").rstrip("/")
+    key = await get_secret("AZURE_FACE_KEY")
+    return endpoint, key
+
+
+async def _azure_vision_creds():
+    from app.services.secret_manager import get_secret
+    endpoint = ((await get_secret("AZURE_VISION_ENDPOINT")) or "").rstrip("/")
+    key = await get_secret("AZURE_VISION_KEY")
+    return endpoint, key
+
+
+async def _azure_detect(raw: bytes, width: int, height: int,
+                        faces: bool, plates: bool) -> List[Box]:
+    import httpx
+
+    out: List[Box] = []
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=6.0)) as client:
+        if faces:
+            endpoint, key = await _azure_face_creds()
+            if endpoint and key:
+                resp = await client.post(
+                    f"{endpoint}/face/v1.0/detect",
+                    params={"returnFaceId": "false", "detectionModel": "detection_03"},
+                    headers={"Ocp-Apim-Subscription-Key": key,
+                             "Content-Type": "application/octet-stream"},
+                    content=raw,
+                )
+                resp.raise_for_status()
+                out += azure_faces(resp.json(), width, height)
+        if plates:
+            endpoint, key = await _azure_vision_creds()
+            if endpoint and key:
+                resp = await client.post(
+                    f"{endpoint}/computervision/imageanalysis:analyze",
+                    params={"api-version": "2024-02-01", "features": "read"},
+                    headers={"Ocp-Apim-Subscription-Key": key,
+                             "Content-Type": "application/octet-stream"},
+                    content=raw,
+                )
+                resp.raise_for_status()
+                out += azure_text_plates(resp.json(), width, height)
+    return out
+
+
+# ---- local (OpenCV, offline) ----------------------------------------------
+#
+# The free path. Both cascades ship inside opencv-python itself (Apache 2.0),
+# so there is no model download, no licence question, and no per-image cost.
+#
+# The quality gap is real and worth stating plainly: Haar cascades were state of
+# the art in 2001. Frontal faces at a reasonable size are found; profiles,
+# tilted heads and small faces are missed at a rate the cloud detectors do not
+# approach. The plate cascade was trained on Russian plates and fires on the
+# rectangular high-contrast shape rather than on anything US-specific, so it
+# finds many US plates and also many rectangular signs.
+#
+# It is here because "the photo never leaves the building" is worth a lot to
+# some deployments, and because a town with no cloud account at all should still
+# be able to turn something on.
+
+def _cascade(name: str):
+    import cv2
+    path = cv2.data.haarcascades + name
+    classifier = cv2.CascadeClassifier(path)
+    return None if classifier.empty() else classifier
+
+
+def _detect_local_sync(raw: bytes, faces: bool, plates: bool) -> List[Box]:
+    import cv2
+    import numpy as np
+
+    buffer = np.frombuffer(raw, dtype=np.uint8)
+    image = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+    if image is None:
+        return []
+    height, width = image.shape[:2]
+    if width <= 0 or height <= 0:
+        return []
+
+    # Haar is O(pixels) with a large constant. Downscaling to 1024px wide keeps
+    # a typical phone photo under a second on one core, and the boxes come back
+    # fractional anyway so the scale factor never has to be undone.
+    scale = min(1.0, 1024.0 / width)
+    if scale < 1.0:
+        image = cv2.resize(image, (int(width * scale), int(height * scale)))
+    small_h, small_w = image.shape[:2]
+    grey = cv2.equalizeHist(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY))
+
+    out: List[Box] = []
+
+    def run(classifier, kind: str, min_size: Tuple[int, int], confidence: float):
+        if classifier is None:
+            return
+        for (x, y, w, h) in classifier.detectMultiScale(
+            grey, scaleFactor=1.1, minNeighbors=5, minSize=min_size
+        ):
+            out.append(Box(x / small_w, y / small_h,
+                           (x + w) / small_w, (y + h) / small_h, kind, confidence).clamped())
+
+    if faces:
+        # Frontal first, then profile, and merge_boxes collapses the overlap for
+        # a three-quarter view that both happen to catch.
+        run(_cascade("haarcascade_frontalface_default.xml"), "face", (24, 24), 0.6)
+        run(_cascade("haarcascade_profileface.xml"), "face", (24, 24), 0.5)
+    if plates:
+        # Reported as 0.6 rather than a measured score -- a cascade has no
+        # confidence output, and pretending otherwise would put a fabricated
+        # number in the audit log.
+        run(_cascade("haarcascade_russian_plate_number.xml"), "plate", (40, 14), 0.6)
+
+    return out
+
+
+async def _local_detect(raw: bytes, width: int, height: int,
+                        faces: bool, plates: bool) -> List[Box]:
+    if not (faces or plates):
+        return []
+    return await asyncio.get_event_loop().run_in_executor(
+        None, _detect_local_sync, raw, faces, plates)
+
+
+# --------------------------------------------------------------------------
+# entry points
+# --------------------------------------------------------------------------
+
+async def redact_image(media: str, provider: str, faces: bool, plates: bool) -> RedactionResult:
+    """Redact one photo. Never raises.
+
+    Fails *open* -- an unredactable photo is stored as submitted rather than
+    dropped -- and records why in `skipped_reason`. That direction is
+    deliberate but it is the weaker of the two: a town whose Vision credentials
+    quietly expired will publish unblurred faces and only find out from the
+    admin console. The alternative, refusing the report, punishes the resident
+    for the town's misconfiguration, so the honest fix is surfacing the failure
+    loudly, not dropping the photo.
+    """
+    decoded = _decode(media)
+    if not decoded:
+        return RedactionResult(media, skipped_reason="not-inline-image")
+    raw, mime = decoded
+
+    width, height = image_size(raw)
+    if width <= 0 or height <= 0:
+        return RedactionResult(media, skipped_reason="unreadable-image")
+
+    found = await detect(provider, raw, width, height, faces, plates)
+    if not found:
+        # No faces, but the EXIF is still worth removing -- see strip_exif.
+        cleaned = strip_exif(raw)
+        if cleaned is not None:
+            return RedactionResult(_encode(cleaned, "image/jpeg"), changed=False,
+                                   skipped_reason="no-detections")
+        return RedactionResult(media, skipped_reason="no-detections")
+
+    padded = [b.padded(FACE_PADDING if b.kind == "face" else PLATE_PADDING) for b in found]
+    boxes = merge_boxes(padded)
+
+    blurred = blur_regions(raw, boxes)
+    if blurred is None:
+        return RedactionResult(media, skipped_reason="blur-failed")
+
+    return RedactionResult(
+        _encode(blurred, "image/jpeg" if mime == "image/png" else mime),
+        faces=sum(1 for b in boxes if b.kind == "face"),
+        plates=sum(1 for b in boxes if b.kind == "plate"),
+        changed=True,
+    )
+
+
+async def redact_media(media: Optional[List[str]]) -> BatchResult:
+    """Redact a submission's photos before they are persisted.
+
+    Called from the intake path, so it is on the resident's latency budget. The
+    photos are processed concurrently for that reason -- three sequential Vision
+    round trips is a visible pause on a phone, three parallel ones is one round
+    trip's worth.
+    """
+    items = [m for m in (media or []) if isinstance(m, str)][:MAX_IMAGES]
+    if not items:
+        return BatchResult(media=list(media or []))
+
+    provider, faces, plates = await settings()
+    if not provider or not (faces or plates):
+        return BatchResult(media=list(media or []))
+
+    results = await asyncio.gather(
+        *(redact_image(m, provider, faces, plates) for m in items),
+        return_exceptions=True,
+    )
+
+    out = BatchResult()
+    for original, result in zip(items, results):
+        if isinstance(result, Exception) or not isinstance(result, RedactionResult):
+            logger.warning("[Redaction] image failed", exc_info=isinstance(result, Exception))
+            out.media.append(original)
+            out.skipped.append("error")
+            continue
+        out.media.append(result.media)
+        out.faces += result.faces
+        out.plates += result.plates
+        if not result.changed and result.skipped_reason not in ("", "no-detections"):
+            out.skipped.append(result.skipped_reason)
+
+    # Anything past MAX_IMAGES was never a candidate; carry it through unchanged
+    # so this function cannot silently drop a photo.
+    out.media.extend(m for m in (media or [])[len(items):])
+    return out

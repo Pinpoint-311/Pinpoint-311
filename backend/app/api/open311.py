@@ -665,6 +665,19 @@ async def create_request(
                    "can't be submitted. Please remove it and try again.",
         )
 
+    # Blur faces and (optionally) licence plates out of the photos, and strip
+    # the EXIF block, before anything is written. Destructive on purpose: the
+    # original is never stored, so there is no unredacted copy to leak through
+    # the Open311 API, the research export or an OPRA response. Fails open --
+    # an undetectable photo is stored as submitted rather than the report being
+    # refused for the town's misconfiguration.
+    from app.services import image_redaction
+    redacted = await image_redaction.redact_media(request_data.media_urls)
+    request_data.media_urls = redacted.media
+    if redacted.changed:
+        logger.info("[CREATE REQUEST] redacted %d face(s), %d plate(s)",
+                    redacted.faces, redacted.plates)
+
     # Jurisdiction check. This used to live only in the resident portal's
     # JavaScript, so a report POSTed straight at this endpoint ignored road
     # rules entirely. Evaluating here means every intake path agrees, and the
@@ -1039,6 +1052,13 @@ async def create_manual_intake(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid service code"
         )
+
+    # Same redaction as a resident submission. A photo emailed in or attached
+    # by a clerk from a phone call is no less likely to have a bystander in it,
+    # and it goes to exactly the same public places.
+    from app.services import image_redaction
+    intake_redacted = await image_redaction.redact_media(intake_data.media_urls)
+    intake_data.media_urls = intake_redacted.media
 
     # Same jurisdiction rules as a resident submission, but a staffer may
     # knowingly override them. A clerk on the phone can see that the caller is
