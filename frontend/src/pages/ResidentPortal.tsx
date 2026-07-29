@@ -1570,7 +1570,7 @@ export default function ResidentPortal() {
                         href="https://pinpoint311.org"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="group inline-flex items-center gap-2.5"
+                        className="brand-link group inline-flex items-center gap-2.5"
                         data-no-translate
                     >
                         <span className="text-white/45 text-sm group-hover:text-white/70 transition-colors">

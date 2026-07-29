@@ -944,7 +944,7 @@ export default function StaffDashboard() {
                             href="https://pinpoint311.org"
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="group mt-3 pt-3 border-t border-white/5 flex items-center justify-center gap-2"
+                            className="brand-link group mt-3 pt-3 border-t border-white/5 flex items-center justify-center gap-2"
                         >
                             <span className="text-[10px] uppercase tracking-wider text-white/25 group-hover:text-white/45 transition-colors">
                                 Powered by
@@ -1207,7 +1207,7 @@ export default function StaffDashboard() {
                             </div>
 
                             {/* KPI Cards */}
-                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4">
+                            <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-4">
                                 <div className="bg-gradient-to-br from-purple-500/20 to-purple-500/5 border border-purple-500/30 rounded-xl p-3 sm:p-5">
                                     <div className="text-[10px] sm:text-xs font-medium text-purple-200 uppercase tracking-wider">Next Week Forecast</div>
                                     <div className="text-2xl sm:text-3xl font-bold text-white mt-1 sm:mt-2">{advancedStats?.predictive_insights?.volume_forecast_next_week || 0}</div>
@@ -1227,6 +1227,21 @@ export default function StaffDashboard() {
                                     <div className="text-[10px] sm:text-xs font-medium text-blue-200 uppercase tracking-wider">Peak Activity</div>
                                     <div className="text-2xl sm:text-3xl font-bold text-white mt-1 sm:mt-2">{advancedStats?.predictive_insights?.seasonal_peak_day || 'N/A'}</div>
                                     <div className="text-[10px] sm:text-xs text-white/60 mt-1">Peak: {advancedStats?.predictive_insights?.seasonal_peak_month || 'N/A'}</div>
+                                </div>
+                                {/* Redirected residents. A KPI card like the rest, and shown
+                                    even at zero: this used to be hidden entirely until the
+                                    first redirect happened, so a town that had just turned
+                                    road rules on had no way to tell the difference between
+                                    "nobody was redirected" and "the feature isn't reporting".
+                                    Zero is a real, useful answer here. */}
+                                <div className="bg-gradient-to-br from-amber-500/20 to-amber-500/5 border border-amber-500/30 rounded-xl p-3 sm:p-5">
+                                    <div className="text-[10px] sm:text-xs font-medium text-amber-200 uppercase tracking-wider">Redirected</div>
+                                    <div className="text-2xl sm:text-3xl font-bold text-white mt-1 sm:mt-2">{redirects?.total ?? 0}</div>
+                                    <div className="text-[10px] sm:text-xs text-white/60 mt-1">
+                                        {redirects
+                                            ? `Sent elsewhere · last ${redirects.days} days`
+                                            : 'Sent to another agency'}
+                                    </div>
                                 </div>
                             </div>
 
