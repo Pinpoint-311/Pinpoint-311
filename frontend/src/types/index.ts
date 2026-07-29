@@ -64,6 +64,11 @@ export interface ServiceDefinition {
         inclusion_list?: string[];
         third_party_message?: string;
         third_party_contacts?: { name: string; phone: string; url: string }[];
+        /** Stretches a clerk switched off, keyed to the road publisher's own
+         *  feature ids so a data refresh cannot orphan the corrections. */
+        excluded_segments?: string[];
+        /** How far from a centreline still counts as being on that road. */
+        corridor_metres?: number;
         // Custom questions (applies to all modes)
         custom_questions?: CustomQuestion[];
     };

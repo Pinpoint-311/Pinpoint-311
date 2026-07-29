@@ -731,6 +731,40 @@ class ApiClient {
         });
     }
 
+    /** GeoJSON for the selected roads, one feature per segment so a clerk can
+     *  switch an individual piece off. Never dissolved. */
+    async getRoadGeometry(names: string[]): Promise<{
+        type: 'FeatureCollection';
+        available?: boolean;
+        features: {
+            type: 'Feature';
+            geometry: { type: string; coordinates: number[][] };
+            properties: { segment_id: number; feature_id: string; name: string | null; ref: string | null };
+        }[];
+    }> {
+        return this.request(`/roads/geometry?names=${encodeURIComponent(names.join(','))}`);
+    }
+
+    /** Corridors that run alongside each other at a given width. Crossings are
+     *  not reported -- every intersection overlaps. */
+    async checkCorridors(routingConfig: Record<string, unknown>, corridorM: number): Promise<{
+        available?: boolean;
+        corridor_metres: number;
+        issues: { severity: 'error' | 'warning' | 'info'; kind: string; message: string; roads: string[] }[];
+    }> {
+        return this.request(`/roads/corridor-check?corridor_m=${corridorM}`, {
+            method: 'POST',
+            body: JSON.stringify({ routing_config: routingConfig }),
+        });
+    }
+
+    async setCorridorWidth(corridorMetres: number): Promise<{ corridor_metres: number }> {
+        return this.request('/roads/corridor-width', {
+            method: 'PUT',
+            body: JSON.stringify({ corridor_metres: corridorMetres }),
+        });
+    }
+
     /** Distinct road NAMES for the clerk's routing autocomplete, not segments. */
     async searchRoads(q: string): Promise<{
         available: boolean;
