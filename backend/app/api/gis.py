@@ -187,10 +187,34 @@ async def get_maps_config(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(SystemSettings).limit(1))
     settings = result.scalar_one_or_none()
     
+    # Which provider this town renders with, and only the credentials that
+    # provider actually needs. A MapLibre town has no business receiving a
+    # Google key just because one happens to be configured.
+    from app.services import map_provider as mp
+    from app.services.secret_manager import get_secret as _get_secret
+
+    modules = (settings.modules if settings else None) or {}
+    render_provider = mp.normalize_provider(modules.get("map_provider"))
+    geocode_provider = mp.geocoder_for(render_provider, modules.get("geocode_provider"))
+    credentials = await mp.resolve_credentials(render_provider, _get_secret)
+    missing = mp.missing_requirements(render_provider, credentials)
+
     return {
+        # Legacy fields. The frontend still reads these until every component
+        # goes through resolveMapProviderConfig(); they stay accurate for
+        # Google and are null elsewhere, which is the honest answer.
         "has_google_maps": bool(api_key),
         "google_maps_api_key": api_key if api_key else None,
         "google_maps_map_id": map_id,
+
+        "map_provider": render_provider,
+        "geocode_provider": geocode_provider,
+        "map_credentials": credentials,
+        # Non-empty means the town picked a provider it has not finished
+        # configuring. Reported rather than silently falling back, so an admin
+        # can see why their map is blank.
+        "map_provider_missing": missing,
+
         "township_boundary": settings.township_boundary if settings else None,
         "default_center": {
             "lat": 40.4168,  # Default to a central location
@@ -198,6 +222,14 @@ async def get_maps_config(db: AsyncSession = Depends(get_db)):
         },
         "default_zoom": 12
     }
+
+
+@router.get("/providers")
+async def list_map_providers():
+    """Map providers a town can choose, for the admin console."""
+    from app.services import map_provider as mp
+
+    return {"providers": mp.catalog(), "default": mp.DEFAULT_PROVIDER}
 
 
 
