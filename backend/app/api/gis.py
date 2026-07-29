@@ -479,6 +479,15 @@ async def save_township_boundary(
         if not settings:
             settings = SystemSettings()
             db.add(settings)
+
+        # Handle clearing boundary
+        if not geojson_data or geojson_data == {} or geojson_data.get("type") is None:
+            settings.township_boundary = None
+            from app.models import RoadSegment
+            from sqlalchemy import delete
+            await db.execute(delete(RoadSegment))
+            await db.commit()
+            return {"status": "success", "message": "Township boundary and road segments cleared"}
         
         # Normalize to FeatureCollection if needed
         boundary_data = geojson_data

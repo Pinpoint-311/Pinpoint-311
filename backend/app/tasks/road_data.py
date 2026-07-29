@@ -199,8 +199,9 @@ async def seed_roads_for_boundary(db, *, force: bool = False) -> Dict[str, Any]:
         row[0] for row in (await db.execute(select(RoadSegment.name))).all()
     ]
 
-    ok, refusal = should_swap(existing, len(result.segments))
-    if not ok:
+    if not force:
+        ok, refusal = should_swap(existing, len(result.segments))
+        if not ok:
         status.consecutive_failures = (status.consecutive_failures or 0) + 1
         status.last_error = refusal
         await db.commit()
