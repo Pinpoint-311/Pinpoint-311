@@ -1,5 +1,10 @@
 FROM python:3.11-slim
 
+LABEL org.opencontainers.image.title="Pinpoint 311 Backend" \
+      org.opencontainers.image.description="API, task workers and Open311 endpoints for the Pinpoint 311 municipal service-request platform" \
+      org.opencontainers.image.source="https://github.com/Pinpoint-311/Pinpoint-311" \
+      org.opencontainers.image.licenses="MIT"
+
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y \
@@ -22,6 +27,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+
+# Emit the license notices for everything installed above. This image is
+# redistributed as a binary artifact, so the notices have to travel inside it --
+# including the LGPL text and source pointer for psycopg2-binary.
+RUN python scripts/generate_licenses.py /app/THIRD-PARTY-LICENSES.txt
 
 EXPOSE 8000
 
