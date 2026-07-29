@@ -133,7 +133,18 @@ export default function RoadCorridorMap({
         };
     }, [apiKey]);
 
-    const bufferStyleFor, centerlineStyleFor = useCallback((feature: GeoFeature): VectorStyle => {
+        const bufferStyleFor = useCallback((feature: GeoFeature): VectorStyle => {
+        const id = String(feature.properties?.feature_id ?? "");
+        const off = excludedRef.current.has(id);
+        const bufferPx = Math.round(8 + (corridorMetres - 5) * (26 / 35));
+        return {
+            strokeColor: off ? "#64748b" : "#f87171",
+            strokeWidth: off ? 4 : bufferPx,
+            strokeOpacity: off ? 0.2 : 0.35,
+        };
+    }, [corridorMetres]);
+
+    const centerlineStyleFor = useCallback((feature: GeoFeature): VectorStyle => {
         const id = String(feature.properties?.feature_id ?? '');
         const off = excludedRef.current.has(id);
         return {
