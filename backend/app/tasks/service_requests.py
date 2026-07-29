@@ -61,60 +61,24 @@ async def configure_notifications(db):
             "from_number": await get_secret(db, "SMS_FROM_NUMBER")
         })
         logger.info("[SMS Config] Configured HTTP/Textbelt provider")
-    elif sms_provider == "sns":
-        notification_service.configure_sms("sns", {
-            "region": await get_secret(db, "AWS_REGION"),
-            "sender_id": await get_secret(db, "SMS_SENDER_ID"),
-            "access_key": await get_secret(db, "AWS_ACCESS_KEY_ID"),
-            "secret_key": await get_secret(db, "AWS_SECRET_ACCESS_KEY"),
-            "session_token": await get_secret(db, "AWS_SESSION_TOKEN"),
-        })
-        logger.info("[SMS Config] Configured Amazon SNS provider")
-    elif sms_provider == "acs":
-        notification_service.configure_sms("acs", {
-            "endpoint": await get_secret(db, "ACS_ENDPOINT"),
-            "access_key": await get_secret(db, "ACS_ACCESS_KEY"),
-            "from_number": await get_secret(db, "SMS_FROM_NUMBER"),
-        })
-        logger.info("[SMS Config] Configured Azure Communication Services provider")
     else:
         logger.warning("[SMS Config] Unknown or empty SMS_PROVIDER - SMS will not work")
-
+    
     # Configure Email provider
     email_enabled = await get_secret(db, "EMAIL_ENABLED")
     if email_enabled.lower() == "true":
-        email_provider = (await get_secret(db, "EMAIL_PROVIDER") or "smtp").strip().lower()
-        from_name = await get_secret(db, "SMTP_FROM_NAME") or "Township 311"
-        if email_provider == "ses":
-            notification_service.configure_email({
-                "region": await get_secret(db, "AWS_REGION"),
-                "from_email": await get_secret(db, "SES_FROM_EMAIL") or await get_secret(db, "SMTP_FROM_EMAIL"),
-                "from_name": from_name,
-                "access_key": await get_secret(db, "AWS_ACCESS_KEY_ID"),
-                "secret_key": await get_secret(db, "AWS_SECRET_ACCESS_KEY"),
-                "session_token": await get_secret(db, "AWS_SESSION_TOKEN"),
-            }, provider_type="ses")
-            logger.info("[Email Config] Configured Amazon SES provider")
-        elif email_provider == "acs":
-            notification_service.configure_email({
-                "endpoint": await get_secret(db, "ACS_ENDPOINT"),
-                "access_key": await get_secret(db, "ACS_ACCESS_KEY"),
-                "from_email": await get_secret(db, "ACS_FROM_EMAIL") or await get_secret(db, "SMTP_FROM_EMAIL"),
-                "from_name": from_name,
-            }, provider_type="acs")
-            logger.info("[Email Config] Configured Azure Communication Services email provider")
-        else:
-            smtp_port_str = await get_secret(db, "SMTP_PORT")
-            use_tls_str = await get_secret(db, "SMTP_USE_TLS")
-            notification_service.configure_email({
-                "smtp_host": await get_secret(db, "SMTP_HOST"),
-                "smtp_port": int(smtp_port_str) if smtp_port_str else 587,
-                "smtp_user": await get_secret(db, "SMTP_USER"),
-                "smtp_password": await get_secret(db, "SMTP_PASSWORD"),
-                "from_email": await get_secret(db, "SMTP_FROM_EMAIL"),
-                "from_name": from_name,
-                "use_tls": use_tls_str.lower() != "false" if use_tls_str else True
-            }, provider_type="smtp")
+        smtp_port_str = await get_secret(db, "SMTP_PORT")
+        use_tls_str = await get_secret(db, "SMTP_USE_TLS")
+        
+        notification_service.configure_email({
+            "smtp_host": await get_secret(db, "SMTP_HOST"),
+            "smtp_port": int(smtp_port_str) if smtp_port_str else 587,
+            "smtp_user": await get_secret(db, "SMTP_USER"),
+            "smtp_password": await get_secret(db, "SMTP_PASSWORD"),
+            "from_email": await get_secret(db, "SMTP_FROM_EMAIL"),
+            "from_name": await get_secret(db, "SMTP_FROM_NAME") or "Township 311",
+            "use_tls": use_tls_str.lower() != "false" if use_tls_str else True
+        })
 
 
 @celery_app.task(bind=True, max_retries=3)
@@ -136,42 +100,34 @@ def analyze_request(self, request_id: int):
         from datetime import datetime
         
         async with SessionLocal() as db:
+            # Check if AI analysis is enabled
             settings_result = await db.execute(select(SystemSettings).limit(1))
             settings = settings_result.scalar_one_or_none()
+            if not settings or not settings.modules.get('ai_analysis', False):
+                msg = f"[AI Analysis] Skipped - AI analysis not enabled. modules={settings.modules if settings else 'No settings'}"
+                logger.info(msg)
+                return {"status": "skipped", "reason": "AI analysis not enabled"}
+            
+            logger.info(f"[AI Analysis] AI module is enabled, proceeding...")
+            
+            # Select the configured AI provider (Vertex/Gemini is the default).
+            # None means AI is not configured for this instance → skip, as before.
+            from app.services.ai import get_ai_provider
+            ai_provider = await get_ai_provider(db)
+            if ai_provider is None:
+                msg = "[AI Analysis] Skipped - no AI provider configured"
+                logger.warning(msg)
+                return {"status": "skipped", "reason": "AI provider not configured"}
 
-            # Fetch the request first — enrichment below runs for it regardless of
-            # whether AI is available.
+            logger.info(f"[AI Analysis] Using provider={ai_provider.provider} model={ai_provider.model}")
+
+            # Get the request
             result = await db.execute(
                 select(ServiceRequest).where(ServiceRequest.id == request_id)
             )
             request = result.scalar_one_or_none()
             if not request:
                 return {"error": "Request not found"}
-
-            # AI powers ONLY the qualitative summary + suggested priority. The
-            # non-AI enrichment (nearby history, weather, proximity, similar
-            # reports) always runs, so those facts populate even when AI is off or
-            # not configured. This is what every intake path — resident portal,
-            # manual/call-taker, email, and webhook — shares.
-            ai_module_on = bool(settings and settings.modules.get('ai_analysis', False))
-            ai_provider = None
-            if ai_module_on:
-                from app.services.ai import get_ai_provider
-                ai_provider = await get_ai_provider(db)
-            logger.info(f"[Analysis] request {request_id}: ai_module_on={ai_module_on} "
-                        f"provider={getattr(ai_provider, 'provider', None)}")
-
-            # Phone/email/manual intake often carries an address but no map pin.
-            # Geocode so spatial + weather enrichment can run for it too. Skipped
-            # cleanly when there's no address to work with.
-            if (request.lat is None or request.long is None) and request.address:
-                try:
-                    _key = await get_secret(db, "GOOGLE_MAPS_API_KEY")
-                    _geo = await get_geocoding_service(_key if _key else None).geocode(request.address)
-                    if _geo:
-                        request.lat, request.long = _geo.lat, _geo.lng
-                except Exception:
-                    logger.debug("[Analysis] geocode fallback failed", exc_info=True)
             
             # Build request data with PII stripped
             request_data = {
@@ -191,99 +147,75 @@ def analyze_request(self, request_id: int):
             analysis_time = datetime.now(ZoneInfo("US/Eastern"))
             request_data["analysis_time"] = analysis_time.strftime("%Y-%m-%d %H:%M:%S %Z")
 
-            # ---- Enrichment: ALWAYS runs. Each step guards its own inputs and
-            # never fails the task, so a request with partial data (e.g. no
-            # coordinates) still yields whatever facts are computable. ----
-            historical_context, spatial_context, weather = {}, {}, None
-            try:
-                historical_context = await get_historical_context(
-                    db, request.address, request.service_code, request.lat, request.long,
-                    exclude_id=request.id, description=request.description or "",
-                ) or {}
-            except Exception:
-                logger.warning("[Analysis] historical context failed", exc_info=True)
-            try:
-                spatial_context = await get_spatial_context(
-                    db, request.lat, request.long, request.service_code,
-                ) or {}
-            except Exception:
-                logger.warning("[Analysis] spatial context failed", exc_info=True)
-            try:
-                weather = await get_weather_for_location(request.lat, request.long)
-            except Exception:
-                logger.debug("[Analysis] weather lookup failed", exc_info=True)
-            request_data["current_weather"] = weather or "Unknown"
+            # Get historical & spatial context
+            historical_context = await get_historical_context(
+                db, request.address, request.service_code, request.lat, request.long, exclude_id=request.id, description=request.description or ""
+            )
+            spatial_context = await get_spatial_context(
+                db, request.lat, request.long, request.service_code
+            )
+            
+            # Fetch real-time weather for triage location
+            request_data["current_weather"] = await get_weather_for_location(request.lat, request.long)
 
-            # The non-AI, computed facts the triage panel shows regardless of AI.
-            analysis = dict(request.ai_analysis) if isinstance(request.ai_analysis, dict) else {}
-            analysis["context"] = {
-                "similar_reports": historical_context.get("similar_reports", []),
-                "nearby_similar": historical_context.get("nearby_similar", 0),
-                "recurrence_count": historical_context.get("recurrence_count", 0),
-                "past_resolution_quality": historical_context.get("past_resolution_quality"),
-                "weather_at_report": weather,
-                "critical_infrastructure": spatial_context.get("critical_infrastructure", []),
-                "is_school_zone": spatial_context.get("is_school_zone", False),
-                "nearby_outages": spatial_context.get("nearby_outages", 0),
-                "vulnerable_pop_impact": spatial_context.get("vulnerable_pop_impact"),
-                "computed_at": analysis_time.isoformat(),
-            }
+            # Build the analysis prompt
+            prompt = build_analysis_prompt(
+                request_data,
+                historical_context=historical_context,
+                spatial_context=spatial_context
+            )
+            
+            # Get images for multimodal analysis
+            image_data = request.media_urls[:3] if request.media_urls else None
+            
+            # Call the selected AI provider
+            logger.info(f"[AI Analysis] Calling {ai_provider.provider} for request {request_id}...")
+
+            analysis_result = await ai_provider.complete_json(prompt, image_data)
+            
+            logger.info(f"[AI Analysis] Got result: {analysis_result}")
+            
+            # Track API usage for cost estimation
+            try:
+                from app.services.api_usage import track_api_usage
+                # Estimate token counts (rough estimation based on prompt/response)
+                tokens_in = len(prompt) // 4  # Rough estimate: ~4 chars per token
+                tokens_out = len(str(analysis_result)) // 4
+                await track_api_usage(
+                    db=db,
+                    service_name="vertex_ai",
+                    operation="analyze_request",
+                    tokens_input=tokens_in,
+                    tokens_output=tokens_out,
+                    request_id=request.service_request_id
+                )
+            except Exception as e:
+                logger.warning(f"[AI Analysis] Failed to track usage: {e}")
+            
+            # Check for errors in result
+            if "_error" in analysis_result:
+                logger.error(f"[AI Analysis] Error from Vertex AI: {analysis_result['_error']}")
+            
+            # Add similar_reports from historical context to the stored result
+            # These are already filtered by geo (500m) + category + description similarity (>25%)
             if historical_context.get("similar_reports"):
-                analysis["similar_reports"] = historical_context["similar_reports"]
-
-            # ---- AI summary + suggested priority: only when AI is available. ----
-            ai_ran = False
-            if ai_module_on and ai_provider and (request.description or request.media_urls):
-                try:
-                    prompt = build_analysis_prompt(
-                        request_data, historical_context=historical_context, spatial_context=spatial_context,
-                    )
-                    image_data = request.media_urls[:3] if request.media_urls else None
-                    logger.info(f"[Analysis] Calling {ai_provider.provider} for request {request_id}...")
-                    ai_result = await ai_provider.complete_json(prompt, image_data)
-                    if isinstance(ai_result, dict):
-                        if "_error" in ai_result:
-                            logger.error(f"[Analysis] AI error: {ai_result.get('_error')}")
-                            analysis["_error"] = ai_result["_error"]
-                        else:
-                            analysis.update(ai_result)
-                            ai_ran = True
-                            request.vertex_ai_summary = ai_result.get("qualitative_analysis", "")
-                            request.vertex_ai_analyzed_at = datetime.utcnow()
-                    # Keep the computed similar_reports even if the AI result omitted them.
-                    if historical_context.get("similar_reports"):
-                        analysis["similar_reports"] = historical_context["similar_reports"]
-                    try:
-                        from app.services.api_usage import track_api_usage
-                        await track_api_usage(
-                            db=db, service_name=ai_provider.provider, operation="analyze_request",
-                            tokens_input=len(prompt) // 4, tokens_output=len(str(ai_result)) // 4,
-                            request_id=request.service_request_id,
-                        )
-                    except Exception as e:
-                        logger.warning(f"[Analysis] usage tracking failed: {e}")
-                except Exception:
-                    logger.warning("[Analysis] AI summary failed", exc_info=True)
-
-            # Fold the AI photo/text assessment into the moderation flag (image
-            # moderation lives here — it needs the vision model). Graceful no-op
-            # when AI didn't run; the deterministic text scan already ran at
-            # intake, so we only ever raise the flag, never clear it.
-            try:
-                from app.services.content_moderation import flags_from_ai_assessment
-                ai_mod = flags_from_ai_assessment(analysis)
-                if ai_mod.flagged and not request.flagged:
-                    request.flagged = True
-                    request.flag_reason = (request.flag_reason or ai_mod.reason())[:255]
-            except Exception:
-                logger.warning("[Moderation] AI assessment fold-in failed", exc_info=True)
-
-            # Priority is never auto-applied — staff must accept the AI suggestion,
-            # which is stored in ai_analysis['priority_score'] for reference.
-            request.ai_analysis = analysis
+                analysis_result["similar_reports"] = historical_context["similar_reports"]
+            
+            # Store the analysis (but NOT the priority - staff must explicitly accept)
+            request.ai_analysis = analysis_result
+            # NOTE: We no longer auto-set request.priority or request.vertex_ai_priority_score
+            # The AI suggestion is stored in ai_analysis['priority_score'] 
+            # Staff must click "Accept AI Score" or manually set priority
+            # Legal hold (flagged) is admin-only — AI never auto-triggers it
+            # Safety and content flags are stored in ai_analysis JSON for staff reference only
+            
+            # Store summary and timestamp for display (but NOT the priority score)
+            request.vertex_ai_summary = analysis_result.get("qualitative_analysis", "")
+            request.vertex_ai_analyzed_at = datetime.utcnow()
+            
             await db.commit()
-            logger.info(f"[Analysis] Saved request {request_id} (ai_ran={ai_ran})")
-            return {"status": "success", "ai_ran": ai_ran}
+            logger.info(f"[AI Analysis] Saved analysis for request {request_id}")
+            return {"status": "success", "analysis": analysis_result}
     
     try:
         result = run_async(_analyze())
@@ -627,42 +559,23 @@ def send_department_notification(request_id: int, department_email: str):
             department = dept_result.scalar_one_or_none()
             
             notified_staff = []
-
-            # Recipient default: the specifically-assigned person. Only when no
-            # one is assigned do we notify the whole routed department.
-            from app.models import User, user_departments
-            staff_members = []
-            if request.assigned_to:
-                assignee_result = await db.execute(
-                    select(User)
-                    .where(User.username == request.assigned_to)
-                    .where(User.is_active == True)
-                )
-                assignee = assignee_result.scalar_one_or_none()
-                if assignee:
-                    staff_members = [assignee]
-            elif department:
+            
+            if department:
+                # Query staff in this department with their notification preferences
+                from app.models import User, user_departments
                 staff_result = await db.execute(
                     select(User)
                     .join(user_departments)
                     .where(user_departments.c.department_id == department.id)
                     .where(User.is_active == True)
                 )
-                staff_members = list(staff_result.scalars().all())
-
-            if staff_members:
-                from app.services.notification_rules import should_notify_staff
+                staff_members = staff_result.scalars().all()
+                
                 for staff in staff_members:
                     prefs = staff.notification_preferences or {}
-
-                    # Enforce Assigned Only + the new-request email/SMS toggles.
-                    is_assigned_to_me = bool(request.assigned_to) and staff.username == request.assigned_to
-                    send_email, send_sms = should_notify_staff(
-                        prefs, "new_requests",
-                        is_assigned_to_me=is_assigned_to_me,
-                        sms_enabled_globally=sms_enabled_globally,
-                    )
-                    if not send_email and not send_sms:
+                    
+                    # Check if they want new request notifications
+                    if not prefs.get('email_new_requests', True) and not prefs.get('sms_new_requests', False):
                         continue
                     
                     # Build notification content
@@ -695,7 +608,7 @@ def send_department_notification(request_id: int, department_email: str):
                     """
                     
                     # Send email if enabled
-                    if send_email and staff.email:
+                    if prefs.get('email_new_requests', True) and staff.email:
                         notification_service.send_email(
                             to=staff.email,
                             subject=subject,
@@ -703,9 +616,9 @@ def send_department_notification(request_id: int, department_email: str):
                             from_name=f"{township_name} 311"
                         )
                         notified_staff.append({"email": staff.email, "type": "email"})
-
+                    
                     # Send SMS if enabled globally and by user preference
-                    if send_sms and staff.phone:
+                    if sms_enabled_globally and prefs.get('sms_new_requests', False) and staff.phone:
                         short_desc = (request.description or "")[:50]
                         sms_message = f"""📋 {township_name} 311
 New Request: {request.service_name}
@@ -744,166 +657,7 @@ New Request: {request.service_name}
             
             logger.info(f"[Dept Notification] Sent to {len(notified_staff)} recipients for request {request.service_request_id}")
             return {"status": "sent", "recipients": notified_staff}
-
-    try:
-        return run_async(_notify())
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-
-@celery_app.task
-def notify_staff_of_activity(request_id: int, event: str, actor: str = None):
-    """Notify assigned staff / department about activity on an existing request,
-    honoring each user's notification preferences.
-
-    event: 'status_changes' or 'comments' — maps to the email_/sms_ preference
-    keys and the copy. `actor` is the username who triggered it and is skipped,
-    so a staffer isn't emailed about their own action. Recipients are the routed
-    department's staff plus the specifically-assigned user; anyone with
-    "Assigned Only" set is included only when the request is assigned to them.
-    """
-    import logging
-    logger = logging.getLogger(__name__)
-
-    label = "Status updated" if event == "status_changes" else "New comment"
-
-    async def _notify():
-        from app.models import SystemSettings, User, user_departments
-
-        async with SessionLocal() as db:
-            await configure_notifications(db)
-
-            settings_result = await db.execute(select(SystemSettings).limit(1))
-            settings = settings_result.scalar_one_or_none()
-            modules = settings.modules if settings else {}
-            sms_enabled_globally = modules.get('sms_alerts', False)
-            township_name = settings.township_name if settings else "Your Township"
-            custom_domain = (settings.custom_domain if settings else None) or os.environ.get('DOMAIN', '')
-            portal_url = f"https://{custom_domain}" if custom_domain and custom_domain != 'localhost' else "http://localhost:5173"
-
-            result = await db.execute(select(ServiceRequest).where(ServiceRequest.id == request_id))
-            request = result.scalar_one_or_none()
-            if not request:
-                return {"error": "Request not found"}
-
-            # Recipient default: the specifically-assigned person. If nobody is
-            # assigned, notify whoever last worked the request — the most recent
-            # staff member (other than the current actor) to change its status or
-            # comment on it — so the person handling it stays in the loop. Only if
-            # there's no prior toucher either do we fall back to the department.
-            recipients = {}
-            if request.assigned_to:
-                assignee_result = await db.execute(
-                    select(User)
-                    .where(User.username == request.assigned_to)
-                    .where(User.is_active == True)
-                )
-                assignee = assignee_result.scalar_one_or_none()
-                if assignee:
-                    recipients[assignee.id] = assignee
-            else:
-                from app.models import RequestComment, RequestAuditLog
-                last_username, last_ts = None, None
-
-                # Most recent staff status-change / edit from the audit trail.
-                audit_rows = await db.execute(
-                    select(RequestAuditLog.actor_name, RequestAuditLog.created_at)
-                    .where(RequestAuditLog.service_request_id == request.id)
-                    .where(RequestAuditLog.actor_type.in_(["staff", "admin"]))
-                    .where(RequestAuditLog.actor_name.isnot(None))
-                    .order_by(RequestAuditLog.created_at.desc())
-                )
-                for name, ts in audit_rows.all():
-                    if actor and name == actor:
-                        continue
-                    last_username, last_ts = name, ts
-                    break
-
-                # Most recent comment author (comments are staff-authored).
-                comment_rows = await db.execute(
-                    select(RequestComment.username, RequestComment.created_at)
-                    .where(RequestComment.service_request_id == request.id)
-                    .order_by(RequestComment.created_at.desc())
-                )
-                for name, ts in comment_rows.all():
-                    if actor and name == actor:
-                        continue
-                    if last_ts is None or (ts and ts > last_ts):
-                        last_username, last_ts = name, ts
-                    break
-
-                if last_username:
-                    u_result = await db.execute(
-                        select(User)
-                        .where(User.username == last_username)
-                        .where(User.is_active == True)
-                    )
-                    u = u_result.scalar_one_or_none()
-                    if u:
-                        recipients[u.id] = u
-
-                # No assignee and no prior toucher — fall back to the department.
-                if not recipients and request.assigned_department_id:
-                    staff_result = await db.execute(
-                        select(User)
-                        .join(user_departments)
-                        .where(user_departments.c.department_id == request.assigned_department_id)
-                        .where(User.is_active == True)
-                    )
-                    for s in staff_result.scalars().all():
-                        recipients[s.id] = s
-
-            staff_link = f"{portal_url}/staff#request/{request.service_request_id}"
-            status_text = getattr(request.status, 'value', request.status) or ''
-            subject = f"{label}: {request.service_request_id} — {request.service_name}"
-
-            from app.services.notification_rules import should_notify_staff
-            notified = []
-            for staff in recipients.values():
-                prefs = staff.notification_preferences or {}
-                is_assigned_to_me = bool(request.assigned_to) and staff.username == request.assigned_to
-                send_email, send_sms = should_notify_staff(
-                    prefs, event,
-                    is_assigned_to_me=is_assigned_to_me,
-                    is_actor=bool(actor) and staff.username == actor,
-                    sms_enabled_globally=sms_enabled_globally,
-                )
-
-                if send_email and staff.email:
-                    body_html = f"""
-                    <html><body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-                        <div style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; padding: 20px; border-radius: 12px 12px 0 0;">
-                            <h2 style="margin: 0;">{label}</h2>
-                            <p style="margin: 6px 0 0 0; opacity: 0.9;">{township_name} 311</p>
-                        </div>
-                        <div style="background: #f8fafc; padding: 20px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 12px 12px;">
-                            <p style="margin: 0 0 12px 0;"><strong>Hi {staff.full_name or staff.username},</strong></p>
-                            <p style="margin: 0 0 12px 0;">{label.lower()} on a request in your department:</p>
-                            <div style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 14px;">
-                                <p style="margin: 0 0 6px 0;"><strong>Request:</strong> {request.service_request_id} — {request.service_name}</p>
-                                <p style="margin: 0 0 6px 0;"><strong>Status:</strong> {status_text}</p>
-                                <p style="margin: 0;"><strong>Address:</strong> {request.address or 'Not provided'}</p>
-                            </div>
-                            <a href="{staff_link}" style="display: inline-block; background: #6366f1; color: white; text-decoration: none; padding: 10px 22px; border-radius: 8px; font-weight: 500;">View Request →</a>
-                        </div>
-                    </body></html>
-                    """
-                    notification_service.send_email(
-                        to=staff.email, subject=subject, body_html=body_html,
-                        from_name=f"{township_name} 311"
-                    )
-                    notified.append(staff.email)
-
-                if send_sms and staff.phone:
-                    await notification_service.send_sms(
-                        staff.phone,
-                        f"{township_name} 311 — {label} on {request.service_request_id}: {status_text}\n🔗 {staff_link}"
-                    )
-                    notified.append(staff.phone)
-
-            logger.info(f"[Staff Activity:{event}] notified {len(notified)} for request {request.service_request_id}")
-            return {"status": "sent", "recipients": notified}
-
+    
     try:
         return run_async(_notify())
     except Exception as e:
@@ -981,10 +735,6 @@ def enforce_retention_policy():
                 override_days = None
                 archive_mode = "anonymize"
             else:
-                # Instance-wide legal hold: freeze ALL purging until it is lifted.
-                if getattr(settings, "legal_hold", False):
-                    logger.info("[Retention] Legal hold is active — purge suspended, nothing archived")
-                    return {"status": "skipped_legal_hold", "archived": 0}
                 state_code = settings.retention_state_code or "NJ"
                 override_days = settings.retention_days_override
                 archive_mode = settings.retention_mode or "anonymize"
@@ -1370,137 +1120,4 @@ def anchor_audit_chain(self):
         return run_async(_anchor())
     except Exception as e:
         logger.error(f"[AUDIT ANCHOR] task failed: {e}")
-        return {"status": "error", "error": str(e)}
-
-
-@celery_app.task(name="app.tasks.service_requests.refresh_ai_models")
-def refresh_ai_models():
-    """Daily: live-discover each configured AI provider's current models into the
-    shared cache, so the model picker stays current even when no admin is in the
-    UI. Logs a warning when the configured model is no longer offered (the exact
-    situation where a retired preview id would otherwise fail silently)."""
-    import logging as _logging
-    _log = _logging.getLogger(__name__)
-
-    async def _refresh():
-        from app.services.ai.registry import AI_CATALOG, AI_PROVIDER_KEY
-        from app.services.ai import model_discovery as md
-        from app.services.secret_manager import get_secret as _get
-        results = {}
-        async with SessionLocal() as db:
-            current_provider = (await _get(AI_PROVIDER_KEY)) or "vertex"
-            for provider in AI_CATALOG.keys():
-                creds = await md.provider_creds(provider)
-                # Skip providers with no credentials configured — nothing to list.
-                if not creds:
-                    continue
-                try:
-                    entry = await md.refresh_provider(db, provider)
-                except Exception as e:  # never let one provider break the sweep
-                    _log.info(f"[AI models] refresh failed for {provider}: {e}")
-                    continue
-                results[provider] = entry.get("source")
-                if provider == current_provider and entry.get("current_model") \
-                        and not entry.get("current_model_available"):
-                    _log.warning(
-                        f"[AI models] configured model '{entry.get('current_model')}' for "
-                        f"provider '{provider}' is no longer offered — an admin should pick a "
-                        f"current model in Setup → AI Provider."
-                    )
-        return {"status": "ok", "refreshed": results}
-
-    try:
-        return run_async(_refresh())
-    except Exception as e:
-        logger.error(f"[AI models] refresh task failed: {e}")
-        return {"status": "error", "error": str(e)}
-
-
-@celery_app.task
-def proactive_health_scan():
-    """Evaluate proactive (leading-indicator) health and email admins when a
-    check crosses into a worse state — so problems surface *before* an outage,
-    not after. De-duped against the last-seen state so a persistently-degraded
-    check doesn't email every run. Scheduled via Celery Beat."""
-    import logging
-    logger = logging.getLogger(__name__)
-
-    async def _scan():
-        from app.models import SystemSettings, User
-        from app.services.proactive_health import evaluate, is_worse
-        from app.services.notifications import notification_service
-
-        async with SessionLocal() as db:
-            await configure_notifications(db)
-
-            result = await evaluate(db)
-            checks = result["checks"]
-
-            settings_res = await db.execute(select(SystemSettings).limit(1))
-            settings = settings_res.scalar_one_or_none()
-            if not settings:
-                return {"status": "no_settings"}
-            prev = dict(settings.health_alert_state or {})
-
-            # Which checks just got worse (ok/unknown -> warning/critical, or
-            # warning -> critical)? Those are the ones worth an alert.
-            escalations = [
-                c for c in checks
-                if c["status"] in ("warning", "critical") and is_worse(c["status"], prev.get(c["key"]))
-            ]
-
-            # Persist the new per-check state regardless (so recoveries reset it).
-            settings.health_alert_state = {c["key"]: c["status"] for c in checks}
-            await db.commit()
-
-            if not escalations:
-                return {"status": "ok", "overall": result["overall_status"], "alerts": 0}
-
-            # Email active admins.
-            admins_res = await db.execute(
-                select(User).where(User.role == "admin", User.is_active == True)
-            )
-            admins = [a for a in admins_res.scalars().all() if a.email]
-            if not admins:
-                logger.warning("[proactive] escalations found but no admin emails to notify")
-                return {"status": "no_admins", "alerts": len(escalations)}
-
-            township = settings.township_name or "Your 311"
-            crit = [c for c in escalations if c["status"] == "critical"]
-            worst = "Critical" if crit else "Warning"
-            rows = "".join(
-                f"<tr><td style='padding:6px 10px;border-bottom:1px solid #e2e8f0;'><strong>{c['label']}</strong></td>"
-                f"<td style='padding:6px 10px;border-bottom:1px solid #e2e8f0;color:{'#dc2626' if c['status']=='critical' else '#d97706'};text-transform:uppercase;font-size:12px;'>{c['status']}</td>"
-                f"<td style='padding:6px 10px;border-bottom:1px solid #e2e8f0;color:#475569;'>{c['message']}<br><span style='color:#64748b;font-size:12px;'>{c['action']}</span></td></tr>"
-                for c in escalations
-            )
-            body_html = f"""
-            <html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:640px;margin:0 auto;padding:20px;">
-                <div style="background:linear-gradient(135deg,#f59e0b,#dc2626);color:white;padding:20px;border-radius:12px 12px 0 0;">
-                    <h2 style="margin:0;">{worst}: system needs attention</h2>
-                    <p style="margin:6px 0 0 0;opacity:.9;">{township} — proactive health alert</p>
-                </div>
-                <div style="background:#f8fafc;padding:20px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;">
-                    <p style="margin:0 0 12px 0;">These leading indicators just crossed a threshold. Acting now can prevent an outage:</p>
-                    <table style="width:100%;border-collapse:collapse;background:white;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">{rows}</table>
-                    <p style="margin:14px 0 0 0;color:#64748b;font-size:13px;">See Admin Console → System Health for details and one-click restart/maintenance actions.</p>
-                </div>
-            </body></html>
-            """
-            subject = f"[{worst}] {township} — {len(escalations)} system check(s) need attention"
-            for admin in admins:
-                try:
-                    notification_service.send_email(
-                        to=admin.email, subject=subject, body_html=body_html,
-                        from_name=f"{township} System Monitor",
-                    )
-                except Exception as e:
-                    logger.warning(f"[proactive] failed to email {admin.email}: {e}")
-
-            return {"status": "alerted", "overall": result["overall_status"], "alerts": len(escalations)}
-
-    try:
-        return run_async(_scan())
-    except Exception as e:
-        logger.error(f"[proactive] scan failed: {e}")
         return {"status": "error", "error": str(e)}
