@@ -173,6 +173,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # is the Road Name Alias table, which matters for pin-to-road matching
     # because residents use alias names constantly ("Route 1" vs "Trenton Ave").
     "NJ": {
+        "verified_feature_count": 488925,
+        "verification_status": "verified-live",
         "name": "Statewide Road Centerlines for New Jersey (Next Generation 9-1-1 Format)",
         "publisher": "NJ Office of Information Technology, Office of GIS (NJOGIS)",
         "service_url": "https://maps.nj.gov/arcgis/rest/services/Framework/Transportation/MapServer",
@@ -199,6 +201,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # but statewide, name-attributed, and refreshed twice a month. The service
     # is scale-tiered: layer 4 is the largest-scale (fullest-detail) tier.
     "NY": {
+        "verified_feature_count": 1097069,
+        "verification_status": "verified-live",
         "name": "NYS Streets",
         "publisher": "NYS Office of Information Technology Services, GIS Program Office",
         "service_url": "https://gisservices.its.ny.gov/arcgis/rest/services/NYS_Streets/MapServer",
@@ -223,6 +227,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # roads as two separate layers. A municipality needs BOTH - most township
     # streets are in the local layer.
     "PA": {
+        "verified_feature_count": 590700,
+        "verification_status": "verified-live",
         "name": "PA Local Roads + PA State Roads (PennDOT)",
         "publisher": "PennDOT, served by PASDA (Penn State)",
         "service_url": "https://mapservices.pasda.psu.edu/server/rest/services/pasda/PennDOT/MapServer",
@@ -247,6 +253,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # Maryland: MD iMAP publishes a single comprehensive layer covering all
     # public roadways, assembled from FHWA/MDOT SHA/county/municipal sources.
     "MD": {
+        "verified_feature_count": 143182,
+        "verification_status": "verified-live",
         "name": "MD iMAP: Maryland Road Centerlines - Comprehensive",
         "publisher": "Maryland Department of Information Technology (MD iMAP) / MDOT SHA",
         "service_url": "https://mdgeodata.md.gov/imap/rest/services/Transportation/MD_RoadCenterlinesComprehensive/MapServer",
@@ -270,6 +278,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # Massachusetts: the MassDOT Road Inventory is the state's authoritative
     # linework - all public and some private roadways.
     "MA": {
+        "verified_feature_count": 595790,
+        "verification_status": "verified-live",
         "name": "MassDOT Road Inventory (year-end file)",
         "publisher": "MassDOT Highway Division / MassGIS",
         "service_url": "https://gis.massdot.state.ma.us/arcgis/rest/services/Roads/RoadInventoryYearEndFiles/FeatureServer",
@@ -315,6 +325,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # Vermont: VTrans is the steward of the E911 road centerline layer that the
     # VT E911 Board maintains as the authoritative road-name source.
     "VT": {
+        "verified_feature_count": 78946,
+        "verification_status": "verified-live",
         "name": "VTrans ALL ROADS (E911-derived road centerlines)",
         "publisher": "Vermont Agency of Transportation (VTrans) / VCGI",
         "service_url": "https://maps.vtrans.vermont.gov/arcgis/rest/services/Master/General/FeatureServer",
@@ -339,6 +351,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # Delaware: FirstMap is the state enterprise GIS; DE_Road_Inventory carries
     # road name plus physical inventory attributes.
     "DE": {
+        "verified_feature_count": 112272,
+        "verification_status": "verified-live",
         "name": "DE Road Inventory (FirstMap)",
         "publisher": "Delaware FirstMap / DelDOT",
         "service_url": "https://enterprise.firstmap.delaware.gov/arcgis/rest/services/Transportation/DE_Roadways_Main/MapServer",
@@ -365,6 +379,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # District of Columbia: DDOT is the sole road authority for the whole
     # District, so its own centerline IS the "statewide" layer.
     "DC": {
+        "verified_feature_count": 33611,
+        "verification_status": "verified-live",
         "name": "Street Segment (DDOT LRS Support)",
         "publisher": "District Department of Transportation (DDOT) / DC GIS",
         "service_url": "https://rh.dcgis.dc.gov/dcgis/rest/services/DDOT/LRSSupport/FeatureServer",
@@ -393,6 +409,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # program, but its road centerlines are provisioned per PSAP, not as one
     # public statewide service.
     "GA": {
+        "verified_feature_count": 74140,
+        "verification_status": "verified-live",
         "name": "GDOT Major Roads",
         "publisher": "Georgia Department of Transportation",
         "service_url": "https://maps.itos.uga.edu/arcgis/rest/services/FrameWork/Transportation/MapServer",
@@ -449,6 +467,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # already carries NENA Road Centerline GUIDs, which is a good sign the
     # state's NG911 lineage feeds it.
     "LA": {
+        "verified_feature_count": 685620,
+        "verification_status": "verified-live",
         "name": "Louisiana Roadways (Roads and Highways OpenData)",
         "publisher": "Louisiana Department of Transportation & Development (LADOTD)",
         "service_url": "https://maps.dotd.la.gov/road/rest/services/Roads_and_Highways_OpenData/FeatureServer",
@@ -473,6 +493,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # Mississippi: MDOT's Linear Referencing Model - state-maintained routes
     # AND local roads in one dataset, served by MARIS at Ole Miss.
     "MS": {
+        "verified_feature_count": 187288,
+        "verification_status": "verified-live",
         "name": "MDOT Linear Referencing Model (MS_MDOTLRM_Oct24)",
         "publisher": "Mississippi DOT, served by MARIS (Mississippi Automated Resource Information System)",
         "service_url": "https://gis.mississippi.edu/server/rest/services/Transportation/MS_MDOTLRM_Oct24/MapServer",
@@ -501,6 +523,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # Virginia: VBMP Road Centerline File, maintained jointly by local
     # governments, VDOT and VGIN. Extracted and redistributed quarterly.
     "VA": {
+        "verified_feature_count": 74242,
+        "verification_status": "verified-live",
         "name": "VBMP Road Centerlines (RCL)",
         "publisher": "Virginia Geographic Information Network (VGIN), VDEM",
         "service_url": "https://vginmaps.vdem.virginia.gov/arcgis/rest/services/VA_Base_Layers/VBMP_RCL/FeatureServer",
@@ -526,6 +550,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # centerlines - the NENA RoadCenterlineLine layer, aggregated by the state
     # from local GIS authorities.
     "NC": {
+        "verified_feature_count": 902421,
+        "verification_status": "verified-live",
         "name": "NG911 Centerlines (NC1Map_Transportation)",
         "publisher": "NC Department of Information Technology / NC OneMap",
         "service_url": "https://services.gis.nc.gov/secure/rest/services/NC1Map_Transportation/MapServer",
@@ -550,6 +576,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
 
     # Texas: TxDOT's statewide GIS roadway network.
     "TX": {
+        "verified_feature_count": 574291,
+        "verification_status": "verified-live",
         "name": "TxDOT Roadways",
         "publisher": "Texas Department of Transportation",
         "service_url": "https://services.arcgis.com/KTcxiTD9dsQw4r7Z/arcgis/rest/services/TxDOT_Roadways/FeatureServer",
@@ -575,6 +603,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # Utah: UGRC maintains Utah Roads with local governments, the Utah 911
     # Committee and UDOT. Monthly refresh for the populous counties.
     "UT": {
+        "verified_feature_count": 412877,
+        "verification_status": "verified-live",
         "name": "Utah Roads (SGID)",
         "publisher": "Utah Geospatial Resource Center (UGRC), SGID",
         "service_url": "https://services1.arcgis.com/99lidPhWCzftIe9K/ArcGIS/rest/services/UtahRoads/FeatureServer",
@@ -598,6 +628,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # Minnesota: MnGeo compiles county open data into one statewide-schema
     # layer. Read the coverage caveat - this is opt-in, not complete.
     "MN": {
+        "verified_feature_count": 439374,
+        "verification_status": "verified-live",
         "name": "Road Centerlines, Compiled from Opt-In Open Data Counties",
         "publisher": "Minnesota Geospatial Information Office (MnGeo)",
         "service_url": "https://enterprise.gisdata.mn.gov/aghost/rest/services/us_mn_state_mngeo/trans_road_centerlines_open/FeatureServer",
@@ -622,6 +654,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
 
     # Iowa: the RAMS road network covers every route class including municipal.
     "IA": {
+        "verified_feature_count": 359066,
+        "verification_status": "verified-live",
         "name": "RAMS Road Network",
         "publisher": "Iowa Department of Transportation",
         "service_url": "https://gis.iowadot.gov/agshost/rest/services/RAMS/Road_Network/FeatureServer",
@@ -645,6 +679,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # Michigan: the Michigan Geographic Framework is the state's base map and
     # its "All Roads" layer is the statewide centerline.
     "MI": {
+        "verified_feature_count": 795003,
+        "verification_status": "verified-live",
         "name": "All Roads (Michigan Geographic Framework)",
         "publisher": "State of Michigan, Center for Shared Solutions (MGF / MCGI)",
         "service_url": "https://gisagocss.state.mi.us/arcgis/rest/services/OpenData/michigan_geographic_framework/MapServer",
@@ -671,6 +707,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # Indiana: IGIO harvests county-maintained centerlines annually into one
     # statewide layer. There is a stable "Current" alias service.
     "IN": {
+        "verified_feature_count": 569734,
+        "verification_status": "verified-live",
         "name": "Road Centerlines of Indiana (Current)",
         "publisher": "Indiana Geographic Information Office (IGIO) / IndianaMap",
         "service_url": "https://gisdata.in.gov/server/rest/services/Hosted/Road_Centerlines_of_Indiana_Current/FeatureServer",
@@ -698,6 +736,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # North Dakota: the ND GIS Hub serves one combined transportation service
     # spanning local, state and federal roads.
     "ND": {
+        "verified_feature_count": 502386,
+        "verification_status": "verified-live",
         "name": "All_Transportation (ND GIS Hub)",
         "publisher": "North Dakota GIS Hub / NDDOT",
         "service_url": "https://ndgishub.nd.gov/ArcGIS/rest/services/All_Transportation/MapServer",
@@ -722,6 +762,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # South Dakota: the state enterprise server carries a Transportation_Roads
     # service; layer 0 is the only layer that turned up.
     "SD": {
+        "verified_feature_count": 143084,
+        "verification_status": "verified-live",
         "name": "SD_All / Transportation_Roads",
         "publisher": "State of South Dakota (BIT) enterprise GIS",
         "service_url": "https://arcgis.sd.gov/arcgis/rest/services/SD_All/Transportation_Roads/MapServer",
@@ -778,6 +820,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # Idaho: ITD runs ArcGIS Roads and Highways; its open-data mirror carries
     # an "All Idaho Road" layer covering the whole LRS.
     "ID": {
+        "verified_feature_count": 43068,
+        "verification_status": "verified-live",
         "name": "Idaho Transportation Layers For Open Data ('All Idaho Road')",
         "publisher": "Idaho Transportation Department (ITD)",
         "service_url": "https://gis.itd.idaho.gov/arcgisprod/rest/services/ArcGISOnline/IdahoTransportationLayersForOpenData/MapServer",
@@ -802,6 +846,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
 
     # Nevada: NDOT's ALRS extract. Weekly refresh, which is unusually good.
     "NV": {
+        "verified_feature_count": 66765,
+        "verification_status": "verified-live",
         "name": "ALRS_Download (NDOT statewide routes)",
         "publisher": "Nevada Department of Transportation, Roadway Systems Division",
         "service_url": "https://gis.dot.nv.gov/arcgis/rest/services/ArcGISOnline/ALRS_Download/MapServer",
@@ -830,6 +876,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # New Mexico: the real thing - NG911 centerlines consolidated MONTHLY by
     # EDAC at UNM from 80+ local data providers.
     "NM": {
+        "verified_feature_count": 213214,
+        "verification_status": "verified-live",
         "name": "NM911 Road Centerlines",
         "publisher": "NM911 Program / Earth Data Analysis Center (EDAC), University of New Mexico",
         "service_url": "https://services.arcgis.com/hOpd7wfnKm16p9D9/ArcGIS/rest/services/NM911_Road_Centerlines/FeatureServer",
@@ -857,6 +905,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # California: Caltrans' ARNOLD submission - the LRS network of ALL public
     # roads in the state, not just the State Highway Network.
     "CA": {
+        "verified_feature_count": 723692,
+        "verification_status": "verified-live",
         "name": "Caltrans All Roads (LRSN_AllRoads)",
         "publisher": "California Department of Transportation (Caltrans)",
         "service_url": "https://caltrans-gis.dot.ca.gov/arcgis/rest/services/CHhighway/All_Roads/FeatureServer",
@@ -886,6 +936,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # Oregon: ODOT's TransGIS catalog exposes an explicit "All Public Roads"
     # layer, the service form of the OR-Trans statewide compilation.
     "OR": {
+        "verified_feature_count": 771428,
+        "verification_status": "verified-live",
         "name": "All Public Roads (ODOT TransGIS catalog)",
         "publisher": "Oregon Department of Transportation, GIS Unit",
         "service_url": "https://gis.odot.state.or.us/arcgis1006/rest/services/transgis/catalog/MapServer",
@@ -914,6 +966,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # Washington: WSDOT splits state routes from local agency roads. For a
     # city, the LOCAL AGENCY layer is the one that matters.
     "WA": {
+        "verified_feature_count": 164987,
+        "verification_status": "verified-live",
         "name": "Local Agency Public Road - Line",
         "publisher": "WSDOT Transportation Data, GIS & Modeling Office",
         "service_url": "https://data.wsdot.wa.gov/arcgis/rest/services/Shared/LocalAgencyPublicRoadData/FeatureServer",
@@ -967,6 +1021,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # Hawaii: the statewide GIS program publishes roads PER ISLAND, not as one
     # merged statewide layer. Read the note before using this.
     "HI": {
+        "verified_feature_count": 2075,
+        "verification_status": "verified-live",
         "name": "Hawaii Statewide GIS Transportation (HPMS Roads)",
         "publisher": "Hawaii Statewide GIS Program, Office of Planning and Sustainable Development",
         "service_url": "https://geodata.hawaii.gov/arcgis/rest/services/Transportation/MapServer",
@@ -993,6 +1049,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
 
     # West Virginia: WVDOT's geospatial portal serves a Transportation service.
     "WV": {
+        "verified_feature_count": 98873,
+        "verification_status": "verified-live",
         "name": "WVDOT Dominant Routes (<250k)",
         "publisher": "West Virginia DOT, LRS Service Unit / WV GIS Technical Center",
         "service_url": "https://gis.transportation.wv.gov/arcgis/rest/services/Routes/FeatureServer",
@@ -1023,6 +1081,8 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # positionally loose and updated once a year, but they exist for every
     # county in the country, which is the whole point.
     "DEFAULT": {
+        "verified_feature_count": 17742081,
+        "verification_status": "verified-live",
         "name": "Census TIGERweb Transportation - Local Roads",
         "publisher": "US Census Bureau",
         "service_url": "https://tigerweb.geo.census.gov/arcgis/rest/services/Census2020/Transportation/MapServer",
