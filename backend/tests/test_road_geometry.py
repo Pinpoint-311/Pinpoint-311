@@ -218,3 +218,46 @@ def test_overlap_threshold_scales_with_corridor_width():
     overlaps = [{"road_a": "A", "road_b": "B", "overlap_length_m": 30}]
     assert rg.parallel_overlap_flags(overlaps, corridor_m=20) == []
     assert len(rg.parallel_overlap_flags(overlaps, corridor_m=8)) == 1
+
+
+# ---- clerk corrections from the coverage map --------------------------------
+
+def test_a_switched_off_stretch_cannot_be_claimed():
+    """The clerk saw on the map that this piece is not really the county's."""
+    config = {"jurisdictions": [COUNTY], "excluded_segments": ["7"]}
+    result = choose_road([road("Cranbury Rd", 3.0, segment_id=7)], config)
+    assert result[0].name == "Cranbury Rd"
+    assert result[1] is None  # town handles it
+
+
+def test_a_switched_off_stretch_can_still_be_the_nearest_road():
+    """It is excluded from the county's rule, not deleted. The town is still
+    responsible for it, and it must still beat a farther road."""
+    config = {"jurisdictions": [COUNTY], "excluded_segments": ["7"]}
+    result = choose_road(
+        [road("Cranbury Rd", 3.0, segment_id=7), road("Elm St", 18.0, segment_id=8)], config
+    )
+    assert result[0].name == "Cranbury Rd"
+    assert result[1] is None
+
+
+def test_other_stretches_of_the_same_road_still_block():
+    """Switching off one block must not disable the whole rule."""
+    config = {"jurisdictions": [COUNTY], "excluded_segments": ["7"]}
+    result = choose_road([road("Cranbury Rd", 3.0, segment_id=9)], config)
+    assert result[1] is not None and result[1][0]["name"] == "Middlesex County"
+
+
+def test_exclusions_key_on_the_publisher_feature_id():
+    """Not our row id, which changes on every monthly refresh and would orphan
+    every correction a clerk has made."""
+    config = {"jurisdictions": [COUNTY], "excluded_segments": ["NJ-RCL-99"]}
+    match = RoadMatch(name="Cranbury Rd", ref=None, distance_m=3.0, segment_id=412,
+                      source_feature_id="NJ-RCL-99", highway_class="secondary")
+    assert choose_road([match], config)[1] is None
+
+
+def test_a_malformed_exclusion_list_is_ignored():
+    for junk in ("not a list", 5, None, {}):
+        config = {"jurisdictions": [COUNTY], "excluded_segments": junk}
+        assert choose_road([road("Cranbury Rd", 3.0)], config)[1] is not None

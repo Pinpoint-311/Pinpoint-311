@@ -84,6 +84,7 @@ import { User, ServiceDefinition, SystemSettings, SystemSecret, Department } fro
 import { usePageNavigation } from '../hooks/usePageNavigation';
 import OperationsPanel from '../components/OperationsPanel';
 import RoadListInput from '../components/RoadListInput';
+import RoadCorridorMap from '../components/RoadCorridorMap';
 import SetupIntegrationsPage from '../components/SetupIntegrationsPage';
 import AuditLogViewer from '../components/AuditLogViewer';
 import VersionSwitcher from '../components/VersionSwitcher';
@@ -461,6 +462,11 @@ export default function AdminConsole() {
         severity: 'error' | 'warning' | 'info'; kind: string; message: string; roads: string[];
     }[]>([]);
     const [routingCanSave, setRoutingCanSave] = useState(true);
+    // Stretches the clerk switched off, keyed to the publisher's feature ids so
+    // a monthly data refresh keeps the corrections while still picking up newly
+    // built sections of the same road.
+    const [excludedSegments, setExcludedSegments] = useState<string[]>([]);
+    const [corridorMetres, setCorridorMetres] = useState(20);
 
     useEffect(() => {
         if (serviceRouting.routing_mode !== 'road_based') {
@@ -903,6 +909,9 @@ export default function AdminConsole() {
                 })),
             },
         });
+        // Restore the clerk's per-rule corrections alongside the config itself.
+        setExcludedSegments(Array.isArray(config.excluded_segments) ? config.excluded_segments : []);
+        setCorridorMetres(typeof config.corridor_metres === 'number' ? config.corridor_metres : 20);
         setShowServiceEditModal(true);
     };
 
@@ -935,6 +944,10 @@ export default function AdminConsole() {
                     .split(",").map((r: string) => r.trim()).filter(Boolean);
                 config.inclusion_list = serviceRouting.routing_config.inclusion_list
                     .split(",").map((r: string) => r.trim()).filter(Boolean);
+                // Clerk corrections travel with the rule, keyed to publisher
+                // feature ids so a data refresh cannot orphan them.
+                config.excluded_segments = excludedSegments;
+                config.corridor_metres = corridorMetres;
                 config.third_party_message = serviceRouting.routing_config.third_party_message;
                 config.third_party_contacts = serviceRouting.routing_config.third_party_contacts;
                 // Specific-person routing for the roads the municipality handles —
@@ -3578,6 +3591,19 @@ export default function AdminConsole() {
                                     }))}
                                 />
                             )}
+
+                            <RoadCorridorMap
+                                roads={
+                                    serviceRouting.routing_config.default_handler === 'township'
+                                        ? serviceRouting.routing_config.exclusion_list
+                                        : serviceRouting.routing_config.inclusion_list
+                                }
+                                excludedFeatureIds={excludedSegments}
+                                onExcludedChange={setExcludedSegments}
+                                corridorMetres={corridorMetres}
+                                onCorridorMetresChange={setCorridorMetres}
+                                apiKey={mapsApiKey}
+                            />
 
                             {routingIssues.length > 0 && (
                                 <ul className="space-y-2" aria-label="Routing configuration issues">

@@ -153,13 +153,27 @@ def _jurisdictions(config: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def _matching_jurisdiction(
-    jurisdictions: Sequence[Dict[str, Any]], road: RoadMatch
+    jurisdictions: Sequence[Dict[str, Any]],
+    road: RoadMatch,
+    excluded: Optional[set] = None,
 ) -> Optional[Tuple[Dict[str, Any], str]]:
+    if excluded and road.source_feature_id in excluded:
+        return None  # switched off in the coverage map
     for jurisdiction in jurisdictions:
         for entry in _as_list(jurisdiction.get("roads")):
             if road_matches(entry, road.name or "") or (road.ref and road_matches(entry, road.ref)):
                 return jurisdiction, entry
     return None
+
+
+def excluded_feature_ids(config: Dict[str, Any]) -> set:
+    """Stretches a clerk switched off in the coverage map.
+
+    Keyed to the publisher's own feature id rather than our row id, because the
+    row id changes on every monthly refresh and would orphan the correction.
+    """
+    raw = config.get("excluded_segments")
+    return {str(v) for v in raw} if isinstance(raw, list) else set()
 
 
 def choose_road(
@@ -178,6 +192,11 @@ def choose_road(
     """
     if not candidates:
         return None
+
+    # A stretch the clerk switched off is not removed from consideration -- it
+    # can still be the nearest road, and the town is still responsible for it.
+    # It just cannot be claimed by a jurisdiction.
+    excluded = excluded_feature_ids(config)
 
     ordered = sorted(candidates, key=lambda r: r.distance_m)
     municipal = _municipal_entries(config)
@@ -198,11 +217,11 @@ def choose_road(
         # Being wrong this way costs a reassignment; being wrong the other way
         # turns a resident away with no recourse.
         for road in tied:
-            if _matching_jurisdiction(jurisdictions, road) is None:
+            if _matching_jurisdiction(jurisdictions, road, excluded) is None:
                 return road, None
 
     for road in tied:
-        claim = _matching_jurisdiction(jurisdictions, road)
+        claim = _matching_jurisdiction(jurisdictions, road, excluded)
         if claim is not None:
             return road, claim
 
@@ -225,6 +244,13 @@ async def resolve_jurisdiction_spatial(
     """
     if not config or lat is None or lng is None:
         return None
+
+    # A per-rule width set in the coverage map beats the town default: one
+    # service may cover a highway with wide shoulders while another covers
+    # residential streets.
+    rule_width = config.get("corridor_metres")
+    if isinstance(rule_width, (int, float)) and 3 <= rule_width <= 100:
+        radius_m = float(rule_width)
 
     try:
         candidates = await nearest_roads(db, lat, lng, radius_m=radius_m)
