@@ -3825,3 +3825,73 @@ The chat UI renders plain text with basic inline markdown only — it does NOT r
         logger.error(f"Analytics chat error: {e}")
         raise HTTPException(status_code=500, detail="AI analytics chat failed")
 
+
+
+@router.get("/statistics/redirected")
+async def get_redirected_statistics(
+    days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_staff),
+):
+    """How many residents were redirected instead of filing, and to whom.
+
+    These are not service requests -- nobody worked them and they appear in no
+    queue, feed, export or map. But the count is the only way a town learns that
+    one road is turning away twenty people a month, which is either evidence for
+    a conversation with the county or a sign the routing config is wrong.
+
+    Road-based redirects (this road belongs to someone else) and whole-category
+    redirects (the whole service is handled elsewhere) are reported separately
+    because they mean different things to a clerk.
+    """
+    # system.py imports datetime lazily per-function; do the same rather than
+    # adding a module-level import that the rest of the file does not expect.
+    from datetime import datetime, timedelta, timezone
+
+    from app.models import BlockedRequestLog
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+
+    async def grouped(column):
+        rows = (
+            await db.execute(
+                select(column, func.count(BlockedRequestLog.id).label("count"))
+                .where(BlockedRequestLog.created_at >= since)
+                .group_by(column)
+                .order_by(func.count(BlockedRequestLog.id).desc())
+            )
+        ).all()
+        return [{"label": row[0] or "Unspecified", "count": row[1]} for row in rows]
+
+    try:
+        total = (
+            await db.execute(
+                select(func.count(BlockedRequestLog.id)).where(BlockedRequestLog.created_at >= since)
+            )
+        ).scalar() or 0
+
+        by_type = {
+            row["label"]: row["count"] for row in await grouped(BlockedRequestLog.block_type)
+        }
+
+        return {
+            "days": days,
+            "total": total,
+            "road_based": by_type.get("road_based", 0),
+            "category": by_type.get("category", 0),
+            "by_jurisdiction": await grouped(BlockedRequestLog.jurisdiction_name),
+            # road_name is null for whole-category redirects, which is why this
+            # list will not sum to `total`.
+            "by_road": [
+                r for r in await grouped(BlockedRequestLog.road_name) if r["label"] != "Unspecified"
+            ],
+            "by_service": await grouped(BlockedRequestLog.service_name),
+        }
+    except Exception as e:
+        # A town that has never redirected anyone has no table rows and possibly
+        # no table yet; that is an empty report, not a failure.
+        logger.info(f"Redirected statistics unavailable: {e}")
+        return {
+            "days": days, "total": 0, "road_based": 0, "category": 0,
+            "by_jurisdiction": [], "by_road": [], "by_service": [],
+        }
