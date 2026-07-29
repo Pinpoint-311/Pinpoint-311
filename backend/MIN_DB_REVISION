@@ -1,0 +1,19 @@
+# Oldest Alembic revision this build is able to start against.
+#
+# The orchestrator reads this (via the image's OCI labels) and refuses to
+# upgrade a town whose observed schema is outside
+# [min_db_revision .. db_revision]. It is the expand/contract contract:
+#
+#   * Purely ADDITIVE migration (expand) — leave this at the PREVIOUS head. The
+#     new build still runs on the old schema, so the town can be started on the
+#     new image and migrated with no window where code and schema disagree.
+#
+#   * DESTRUCTIVE migration (contract: column/table dropped or renamed, NOT NULL
+#     added, type narrowed) — set this to the NEW head. The new build cannot run
+#     on the old schema, so the orchestrator must see the town already migrated
+#     and will otherwise fail the canary rather than serve 500s.
+#
+# Blank or missing means "the revision immediately before head", which is the
+# expand case. Get it wrong in the safe direction: naming a NEWER revision only
+# blocks a rollout, while naming an older one lets a broken build reach towns.
+c3d4e5f6a7b8
