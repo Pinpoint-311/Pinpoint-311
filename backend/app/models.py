@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, Float, Text, Boolean, Table, event, select
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, Float, Text, Boolean, Table, UniqueConstraint, event, select
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.sql import func
@@ -811,3 +811,105 @@ class ApiUsageRecord(Base):
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
+
+
+class RoadSegment(Base):
+    """A single stretch of road, used to answer "which road is this pin on".
+
+    Road-based routing used to read a road name out of a reverse-geocoded
+    address string. That answers "what is the nearest *address*", which is a
+    different question: a corner lot's address belongs to the cross street, and
+    a park's mailing address puts its street name on a pin sitting 30 m inside
+    the park. Both wrongly BLOCKED residents from filing a report.
+
+    Measuring distance to real centreline geometry answers the question that was
+    actually being asked. Every road inside the boundary is stored, not only the
+    ones a clerk assigned to a jurisdiction -- without the unlisted ones,
+    "nearest road wins" is not a comparison. A pin 5 m from a residential street
+    and 18 m from a county road must resolve to the residential street, and it
+    can only do that if the residential street is in the table.
+    """
+
+    __tablename__ = "road_segments"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Identity in the upstream dataset. Clerk corrections key to this rather
+    # than to `id`, so a full table swap on refresh cannot orphan them. Not
+    # osm_way_id: the source may be a state NG911 layer (RCL_NGUID) or Census
+    # TIGER (LINEARID) rather than OpenStreetMap.
+    source_id = Column(String(40), nullable=False, index=True)
+    source_feature_id = Column(String(120), nullable=False, index=True)
+
+    name = Column(String(255), index=True)
+    name_norm = Column(String(255), index=True)
+    ref = Column(String(80))
+    ref_norm = Column(String(80), index=True)
+    highway_class = Column(String(40))
+
+    # WGS84. Distances cast to geography at query time, which returns true
+    # metres anywhere without picking a per-state projected SRID.
+    geom = Column(Geometry(geometry_type="LINESTRING", srid=4326), nullable=False)
+
+    updated_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("source_id", "source_feature_id", name="uq_road_segment_source"),
+    )
+
+
+class RoadDataStatus(Base):
+    """One row: where this town's road data came from and how fresh it is.
+
+    Read-only in admin System Health. Two timestamps matter and are easy to
+    conflate: `fetched_at` is when we last pulled, `source_updated_at` is when
+    the publisher last changed anything. Those diverging is the real signal --
+    re-fetching unchanged data forever looks healthy while the county quietly
+    stops maintaining the layer.
+    """
+
+    __tablename__ = "road_data_status"
+
+    id = Column(Integer, primary_key=True)
+    state_code = Column(String(2))
+    source_id = Column(String(40))
+    source_name = Column(String(255))
+    endpoint = Column(String(500))
+    segment_count = Column(Integer, default=0)
+    fetched_at = Column(DateTime(timezone=True))
+    source_updated_at = Column(DateTime(timezone=True))
+    consecutive_failures = Column(Integer, default=0)
+    last_error = Column(Text)
+    # Corridor half-width in metres, per town: a dense borough with 8 m
+    # rights-of-way and a rural township with wide shoulders want different
+    # numbers, and it also has to absorb disagreement between the road data and
+    # whatever basemap the resident is looking at.
+    corridor_metres = Column(Integer, default=20)
+
+
+class BlockedRequestLog(Base):
+    """A resident who was redirected instead of filing.
+
+    Deliberately NOT a ServiceRequest. A service request is something staff
+    work: it appears in queues, feeds, exports and the public map. A blocked
+    request was never filed and must appear in none of those. The town still
+    needs the count -- twenty redirects a month on one road is either evidence
+    for a conversation with the county or a sign the config is wrong.
+
+    No name, no email, no description.
+    """
+
+    __tablename__ = "blocked_request_log"
+
+    id = Column(Integer, primary_key=True)
+    service_code = Column(String(50), index=True)
+    service_name = Column(String(255))
+    jurisdiction_name = Column(String(255), index=True)
+    road_name = Column(String(255), index=True)
+    # "road_based" (this road belongs to someone else) vs "category" (the whole
+    # service is handled by an outside agency). Reported separately because they
+    # mean different things to a clerk.
+    block_type = Column(String(20), index=True)
+    lat = Column(Float)
+    long = Column(Float)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
