@@ -1,0 +1,623 @@
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { MapPin, Crosshair, Loader2 } from 'lucide-react';
+import { MapLayer } from '../services/api';
+import {
+    AutocompleteHandle,
+    GeocodingProvider,
+    LatLng,
+    MapProviderId,
+    MapRenderer,
+    MarkerHandle,
+    MarkerOptions,
+    TOP_MARKER_Z_INDEX,
+    backendGeocodingProvider,
+    boundsOfGeoJson,
+    chainGeocoders,
+    createGeocoder,
+    createMap,
+    extractFeatures,
+    firstPolygonRings,
+    isPointInGeoJson,
+    legacyMapProviderConfig,
+} from '../maps';
+
+interface LocationPickerProps {
+    apiKey: string;
+    /** Overrides the configured provider; defaults to the town's setting. */
+    provider?: MapProviderId;
+    townshipBoundary?: object | null; // GeoJSON boundary from OpenStreetMap
+    customLayers?: MapLayer[]; // Custom GeoJSON layers (parks, storm drains, etc.)
+    defaultCenter?: { lat: number; lng: number };
+    defaultZoom?: number;
+    value?: { address: string; lat: number | null; lng: number | null };
+    onChange: (location: { address: string; lat: number | null; lng: number | null }) => void;
+    onAssetSelect?: (asset: { layerName: string; properties: Record<string, any>; lat: number; lng: number }) => void;
+    onOutOfBounds?: () => void; // Called when pin is placed outside boundary
+    placeholder?: string;
+    className?: string;
+}
+
+// The dropped pin. Kept as an SVG data URI so it looks identical whichever
+// provider renders it — no vendor symbol vocabulary involved.
+const PIN_ICON_URL = 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="40" viewBox="0 0 28 40">
+        <defs>
+            <filter id="shadow" x="-50%" y="-20%" width="200%" height="150%">
+                <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000" flood-opacity="0.3"/>
+            </filter>
+        </defs>
+        <path d="M14 0 C6.268 0 0 6.268 0 14 C0 24.5 14 40 14 40 C14 40 28 24.5 28 14 C28 6.268 21.732 0 14 0 Z"
+              fill="#6366f1" filter="url(#shadow)"/>
+        <circle cx="14" cy="14" r="5" fill="white"/>
+    </svg>
+`);
+
+const clusterIconUrl = (count: number, size: number) =>
+    `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
+        <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+            <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 2}" fill="#2563eb" stroke="white" stroke-width="2"/>
+            <text x="50%" y="50%" text-anchor="middle" dy=".3em" fill="white" font-family="Arial" font-weight="bold" font-size="${size > 40 ? 14 : 12}">${count}</text>
+        </svg>
+    `)}`;
+
+export default function LocationPicker({
+    apiKey,
+    provider,
+    townshipBoundary,
+    customLayers = [],
+    defaultCenter = { lat: 40.3573, lng: -74.6672 }, // Default to central NJ
+    defaultZoom = 17,
+    value,
+    onChange,
+    onAssetSelect,
+    onOutOfBounds,
+    placeholder = 'Search for an address...',
+    className = '',
+}: LocationPickerProps) {
+
+    const mapContainerRef = useRef<HTMLDivElement>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
+    const mapRef = useRef<MapRenderer | null>(null);
+    const markerRef = useRef<MarkerHandle | null>(null);
+    const geocoderRef = useRef<GeocodingProvider | null>(null);
+    const autocompleteRef = useRef<AutocompleteHandle | null>(null);
+
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [inputValue, setInputValue] = useState(value?.address || '');
+    const [isLocating, setIsLocating] = useState(false);
+    const [isOutOfBounds, setIsOutOfBounds] = useState(false);
+
+    // Sync input value with external value ONLY when address changes from parent
+    useEffect(() => {
+        if (value?.address !== undefined && value.address !== inputValue && value.address !== '') {
+            setInputValue(value.address);
+        }
+    }, [value?.address]);
+
+    // Backend first (it meters geocoding for the cost report), provider SDK second.
+    const reverseGeocode = useCallback(async (lat: number, lng: number): Promise<string> => {
+        try {
+            const result = await geocoderRef.current?.reverseGeocode({ lat, lng });
+            if (result?.formattedAddress) return result.formattedAddress;
+        } catch (error) {
+            console.warn('Reverse geocode failed:', error);
+        }
+        return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    }, []);
+
+    // Place marker on map with a visible custom pin
+    const placeMarker = useCallback((position: LatLng) => {
+        const map = mapRef.current;
+        if (!map) return;
+
+        // Check if position is within boundary
+        const inBounds = isPointInGeoJson(position.lat, position.lng, townshipBoundary);
+        setIsOutOfBounds(!inBounds);
+
+        if (!inBounds && onOutOfBounds) {
+            onOutOfBounds();
+        }
+
+        if (markerRef.current) {
+            markerRef.current.setPosition(position);
+        } else {
+            markerRef.current = map.addMarker({
+                position,
+                draggable: true,
+                dropAnimation: true,
+                icon: {
+                    type: 'image',
+                    url: PIN_ICON_URL,
+                    width: 28,
+                    height: 40,
+                    anchor: { x: 14, y: 40 },
+                },
+                onDragEnd: async (dropped) => {
+                    const stillInBounds = isPointInGeoJson(dropped.lat, dropped.lng, townshipBoundary);
+                    setIsOutOfBounds(!stillInBounds);
+
+                    if (!stillInBounds && onOutOfBounds) {
+                        onOutOfBounds();
+                    }
+
+                    const address = await reverseGeocode(dropped.lat, dropped.lng);
+                    setInputValue(address);
+                    onChange({ address, lat: dropped.lat, lng: dropped.lng });
+                },
+            });
+        }
+
+        // Center map on marker
+        map.panTo(position);
+    }, [onChange, reverseGeocode, townshipBoundary, onOutOfBounds]);
+
+    // Initialize the map
+    useEffect(() => {
+        if (!apiKey) {
+            setError('Map API key is required');
+            setIsLoading(false);
+            return;
+        }
+
+        let isMounted = true;
+        const providerConfig = legacyMapProviderConfig(apiKey, null, provider);
+
+        const initMap = async () => {
+            try {
+                if (!mapContainerRef.current || !inputRef.current) return;
+
+                // Determine map center: value > boundary center > default
+                let mapCenter = defaultCenter;
+
+                const geojson = townshipBoundary as any;
+                if (geojson?.center?.lat && geojson?.center?.lng) {
+                    mapCenter = { lat: geojson.center.lat, lng: geojson.center.lng };
+                }
+
+                // Value takes precedence if coordinates are set
+                if (value?.lat && value?.lng) {
+                    mapCenter = { lat: value.lat, lng: value.lng };
+                }
+
+                const map = await createMap(mapContainerRef.current, providerConfig, {
+                    center: mapCenter,
+                    zoom: defaultZoom,
+                    baseMapType: 'hybrid', // Satellite with labels
+                    controls: {
+                        baseMapSwitcher: {
+                            enabled: true,
+                            position: 'top-right',
+                            types: ['roadmap', 'satellite', 'hybrid'],
+                        },
+                        streetView: { enabled: false },
+                        fullscreen: { enabled: true, position: 'right-bottom' },
+                        zoom: { enabled: true, position: 'right-center' },
+                    },
+                });
+
+                if (!isMounted) {
+                    map.destroy();
+                    return;
+                }
+                mapRef.current = map;
+
+                geocoderRef.current = chainGeocoders(
+                    backendGeocodingProvider,
+                    await createGeocoder(providerConfig),
+                );
+
+                // Add township boundary overlay if GeoJSON is provided
+                if (townshipBoundary) {
+                    try {
+                        // Ring 0 is the outer boundary and the rest are holes;
+                        // drawing them as one polygon is what renders the holes.
+                        const rings = firstPolygonRings(townshipBoundary);
+
+                        if (rings.length > 0) {
+                            map.addPolygon({
+                                paths: rings,
+                                style: {
+                                    fillColor: '#6366f1',
+                                    fillOpacity: 0.1,
+                                    strokeColor: '#6366f1',
+                                    strokeWidth: 3,
+                                    strokeOpacity: 1,
+                                    clickable: false,
+                                },
+                            });
+                        } else {
+                            // Fallback: hand the GeoJSON to a data layer as-is.
+                            map.addGeoJsonLayer({
+                                data: townshipBoundary,
+                                style: {
+                                    fillColor: '#6366f1',
+                                    fillOpacity: 0.1,
+                                    strokeColor: '#6366f1',
+                                    strokeWidth: 3,
+                                    strokeOpacity: 1,
+                                    clickable: false,
+                                },
+                            });
+                        }
+                    } catch (e) {
+                        console.warn('Failed to add township boundary:', e);
+                    }
+
+                    // Fit map to boundary bounds (if no existing pin location)
+                    if (!value?.lat && !value?.lng) {
+                        const boundaryBounds = boundsOfGeoJson(townshipBoundary);
+                        if (boundaryBounds) map.fitBounds(boundaryBounds);
+                    }
+                }
+
+                // Render custom layers (parks, storm drains, utilities, etc.)
+                // Points = visible markers (pucks), Polygons = not rendered here
+                const layerFeaturesRef: Array<{
+                    layer: MapLayer;
+                    properties: Record<string, any>;
+                    geometry: LatLng;
+                }> = [];
+
+                if (customLayers && customLayers.length > 0) {
+                    const popup = map.createPopup();
+                    const assetMarkers: MarkerOptions[] = [];
+
+                    customLayers.forEach((layer) => {
+                        try {
+                            if (!layer.geojson) return;
+
+                            extractFeatures(layer.geojson).forEach((feature) => {
+                                if (feature.geometryType !== 'Point' || !feature.position) return;
+
+                                const props = feature.properties as Record<string, any>;
+                                const position = feature.position;
+
+                                assetMarkers.push({
+                                    position,
+                                    icon: {
+                                        type: 'circle',
+                                        radius: 10,
+                                        fillColor: layer.fill_color,
+                                        fillOpacity: 0.95,
+                                        strokeColor: '#ffffff',
+                                        strokeWidth: 2,
+                                    },
+                                    title: props.name || props.asset_id || layer.name,
+                                    onClick: (_e, marker) => {
+                                        const assetName = props.name || layer.name;
+                                        const assetType = props.asset_type
+                                            ? String(props.asset_type).replace(/_/g, ' ')
+                                            : layer.layer_type || 'asset';
+
+                                        const propsHtml = Object.entries(props)
+                                            .filter(([key]) => key !== 'name') // Don't repeat name
+                                            .map(([key, val]) => `
+                                                <div style="display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid #e2e8f0;">
+                                                    <span style="color: #64748b; font-size: 12px; text-transform: capitalize;">${key.replace(/_/g, ' ')}</span>
+                                                    <span style="font-size: 12px; color: #334155; font-weight: 500; text-align: right;">${val}</span>
+                                                </div>
+                                            `).join('');
+
+                                        // The popup body is raw HTML, so its buttons reach
+                                        // back through globals rather than the provider's
+                                        // own close affordance (which is vendor markup).
+                                        const closeId = `closeAsset_${Date.now()}`;
+                                        (window as any)[closeId] = () => popup.close();
+
+                                        const callbackId = `selectAsset_${Date.now()}`;
+                                        (window as any)[callbackId] = () => {
+                                            if (markerRef.current) {
+                                                markerRef.current.setPosition(position);
+                                            }
+                                            map.panTo(position);
+
+                                            if (onAssetSelect) {
+                                                onAssetSelect({
+                                                    layerName: layer.name,
+                                                    properties: props,
+                                                    lat: position.lat,
+                                                    lng: position.lng,
+                                                });
+                                            }
+
+                                            reverseGeocode(position.lat, position.lng).then(address => {
+                                                onChange({ address, lat: position.lat, lng: position.lng });
+                                            });
+
+                                            popup.close();
+                                        };
+
+                                        popup.setContent(`
+                                            <div style="
+                                                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                                                padding: 2px 4px 8px 8px;
+                                                min-width: 180px;
+                                                max-width: 260px;
+                                            ">
+                                                <div style="
+                                                    display: flex;
+                                                    justify-content: space-between;
+                                                    align-items: flex-start;
+                                                    gap: 8px;
+                                                    margin-bottom: 4px;
+                                                ">
+                                                    <div style="
+                                                        font-size: 14px;
+                                                        font-weight: 700;
+                                                        color: #0f172a;
+                                                        line-height: 1.2;
+                                                        flex: 1;
+                                                    ">${assetName}</div>
+                                                    <button
+                                                        onclick="${closeId}()"
+                                                        style="
+                                                            background: none;
+                                                            border: none;
+                                                            cursor: pointer;
+                                                            padding: 0;
+                                                            color: #94a3b8;
+                                                            font-size: 18px;
+                                                            line-height: 1;
+                                                        "
+                                                    >×</button>
+                                                </div>
+
+                                                ${propsHtml ? `<div style="margin-bottom: 6px; border-top: 1px solid #e2e8f0; padding-top: 4px;">${propsHtml}</div>` : ''}
+
+                                                <button
+                                                    onclick="${callbackId}()"
+                                                    style="
+                                                        width: 100%;
+                                                        padding: 6px 10px;
+                                                        background: #8b5cf6;
+                                                        color: white;
+                                                        border: none;
+                                                        border-radius: 6px;
+                                                        font-size: 12px;
+                                                        font-weight: 600;
+                                                        cursor: pointer;
+                                                        text-transform: capitalize;
+                                                    "
+                                                >
+                                                    📍 Select this ${assetType}
+                                                </button>
+                                            </div>
+                                        `);
+                                        popup.openAt(marker);
+                                    },
+                                });
+
+                                // Store for proximity detection
+                                layerFeaturesRef.push({ layer, properties: props, geometry: position });
+                            });
+                        } catch (e) {
+                            console.warn(`Failed to render layer ${layer.name}:`, e);
+                        }
+                    });
+
+                    // Store the features ref for proximity detection
+                    (window as any).__mapLayerFeatures = layerFeaturesRef;
+
+                    if (assetMarkers.length > 0) {
+                        const assetLayer = map.createMarkerLayer({
+                            cluster: {
+                                style: (count) => {
+                                    const size = count > 50 ? 50 : count > 20 ? 44 : count > 10 ? 38 : 32;
+                                    return {
+                                        icon: { type: 'image', url: clusterIconUrl(count, size), width: size, height: size },
+                                        zIndex: TOP_MARKER_Z_INDEX + count,
+                                    };
+                                },
+                            },
+                        });
+                        assetLayer.setMarkers(assetMarkers);
+                    }
+                }
+
+                // Provider-native address autocomplete on the search input. The
+                // map feeds it viewport bias; the geocoder never sees the map.
+                const autocomplete = geocoderRef.current.attachAutocomplete?.(inputRef.current, {
+                    addressesOnly: true,
+                    countries: ['us'],
+                    biasBounds: map.getBounds(),
+                    onSelect: (place) => {
+                        setInputValue(place.formattedAddress);
+                        onChange({ address: place.formattedAddress, lat: place.position.lat, lng: place.position.lng });
+
+                        if (place.viewport) {
+                            map.fitBounds(place.viewport, { maxZoom: 19 });
+                        } else {
+                            map.setCenter(place.position);
+                            map.setZoom(19);
+                        }
+
+                        placeMarker(place.position);
+                    },
+                }) ?? null;
+                autocompleteRef.current = autocomplete;
+
+                if (autocomplete) {
+                    map.on('idle', () => autocomplete.setBiasBounds(map.getBounds()));
+                }
+
+                // Handle map clicks for precise location selection
+                map.on('click', async ({ position }) => {
+                    placeMarker(position);
+
+                    const address = await reverseGeocode(position.lat, position.lng);
+                    setInputValue(address);
+                    onChange({ address, lat: position.lat, lng: position.lng });
+                });
+
+                // Place initial marker if value exists
+                if (value?.lat && value?.lng) {
+                    placeMarker({ lat: value.lat, lng: value.lng });
+                }
+
+                setIsLoading(false);
+            } catch (err) {
+                if (isMounted) {
+                    setError('Failed to load the map');
+                    setIsLoading(false);
+                }
+            }
+        };
+
+        initMap();
+
+        return () => {
+            isMounted = false;
+            autocompleteRef.current?.destroy();
+            autocompleteRef.current = null;
+            markerRef.current = null;
+            mapRef.current?.destroy();
+            mapRef.current = null;
+        };
+    }, [apiKey, provider]); // Only re-init when the provider changes, not on every value change
+
+    // Update marker position when value changes from parent
+    useEffect(() => {
+        if (mapRef.current && value?.lat && value?.lng && !isLoading) {
+            placeMarker({ lat: value.lat, lng: value.lng });
+        }
+    }, [value?.lat, value?.lng, isLoading, placeMarker]);
+
+    // Handle "Use my location" button
+    const handleUseMyLocation = () => {
+        if (!navigator.geolocation) {
+            alert("Geolocation is not supported by your browser");
+            return;
+        }
+
+        setIsLocating(true);
+
+        navigator.geolocation.getCurrentPosition(
+            async (position) => {
+                const lat = position.coords.latitude;
+                const lng = position.coords.longitude;
+
+                if (mapRef.current) {
+                    mapRef.current.setCenter({ lat, lng });
+                    mapRef.current.setZoom(19);
+                    placeMarker({ lat, lng });
+
+                    const address = await reverseGeocode(lat, lng);
+                    setInputValue(address);
+                    onChange({ address, lat, lng });
+                }
+
+                setIsLocating(false);
+            },
+            (error) => {
+                console.error('Geolocation error:', error);
+                alert("Unable to get your location. Please enter an address manually.");
+                setIsLocating(false);
+            },
+            { enableHighAccuracy: true, timeout: 10000 }
+        );
+    };
+
+    // Handle manual input changes - only update local state, not parent
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setInputValue(e.target.value);
+        // Don't call onChange here - only update when:
+        // 1. User selects from autocomplete dropdown
+        // 2. User clicks on the map
+        // 3. User drags the marker
+        // 4. User uses "my location" button
+    };
+
+    if (error) {
+        return (
+            <div className={`p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-center ${className}`}>
+                <MapPin className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                <p className="text-sm">{error}</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className={`space-y-4 ${className}`}>
+            {/* Address Input with Autocomplete */}
+            <div className="relative">
+                <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40 pointer-events-none z-10" />
+                <input
+                    ref={inputRef}
+                    type="text"
+                    placeholder={placeholder}
+                    value={inputValue}
+                    onChange={handleInputChange}
+                    aria-label="Location or address"
+                    className="w-full h-12 pl-12 pr-14 rounded-xl bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/20 transition-all"
+                    disabled={isLoading}
+                    autoComplete="off"
+                />
+                {/* Use my location button */}
+                <button
+                    type="button"
+                    onClick={handleUseMyLocation}
+                    disabled={isLoading || isLocating}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 rounded-lg bg-primary-500/20 hover:bg-primary-500/30 transition-colors disabled:opacity-50"
+                    aria-label="Use my current location"
+                    title="Use my current location"
+                >
+                    {isLocating ? (
+                        <Loader2 className="w-5 h-5 text-primary-400 animate-spin" />
+                    ) : (
+                        <Crosshair className="w-5 h-5 text-primary-400" />
+                    )}
+                </button>
+            </div>
+
+            {/* Map Container */}
+            <div className="relative rounded-2xl overflow-hidden border-2 border-white/10 shadow-xl">
+                {isLoading && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-slate-900/80 z-10">
+                        <div className="text-center">
+                            <div className="w-10 h-10 border-3 border-primary-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                            <p className="text-sm text-white/60">Loading map...</p>
+                        </div>
+                    </div>
+                )}
+                <div
+                    ref={mapContainerRef}
+                    className="w-full h-72 md:h-96"
+                    style={{ minHeight: '288px' }}
+                />
+            </div>
+
+            {/* Out of bounds warning */}
+            {isOutOfBounds && (
+                <div className="flex items-center gap-2 text-sm bg-red-500/10 rounded-xl px-4 py-3 border border-red-500/30">
+                    <span className="text-red-400">⚠️</span>
+                    <span className="text-red-300">
+                        This location is outside the municipality boundary. Please select a location within the jurisdiction.
+                    </span>
+                </div>
+            )}
+
+            {/* Instructions or Selected location info - shown BELOW the map */}
+            {!value?.lat && !value?.lng && !isLoading ? (
+                <div className="flex items-center justify-center gap-2 text-sm bg-white/5 rounded-xl px-4 py-3 border border-white/10">
+                    <span className="text-primary-400">📍</span>
+                    <span className="text-white/70">Tap the map to select a location, or search above</span>
+                </div>
+            ) : value?.lat && value?.lng ? (
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-3 text-sm bg-white/5 rounded-xl px-4 py-3 border border-white/10">
+                    <div className="flex items-center gap-2 text-white/60">
+                        <MapPin className="w-4 h-4 text-primary-400 flex-shrink-0" />
+                        <span className="font-mono text-xs sm:text-sm">
+                            {value.lat.toFixed(6)}, {value.lng.toFixed(6)}
+                        </span>
+                    </div>
+                    <span className="hidden sm:block text-white/20">•</span>
+                    <span className="text-primary-400 text-xs sm:text-sm font-medium">
+                        📍 Drag the pin to fine-tune
+                    </span>
+                </div>
+            ) : null}
+
+        </div>
+    );
+}

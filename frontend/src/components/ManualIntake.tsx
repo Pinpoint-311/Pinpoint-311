@@ -7,7 +7,7 @@ import {
 
 import { Modal } from './ui';
 import { api, MapLayer } from '../services/api';
-import GoogleMapsLocationPicker from './GoogleMapsLocationPicker';
+import LocationPicker from './LocationPicker';
 import { ServiceDefinition, ServiceRequest } from '../types';
 import { useSettings } from '../context/SettingsContext';
 
@@ -348,7 +348,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                 <div>
                     <span className={labelCls}>Location <span className="normal-case tracking-normal text-white/40 font-normal ml-1">(optional)</span></span>
                     {mapsApiKey ? (
-                        <GoogleMapsLocationPicker
+                        <LocationPicker
                             key={mapKey}
                             apiKey={mapsApiKey}
                             townshipBoundary={townshipBoundary}
