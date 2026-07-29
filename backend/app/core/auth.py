@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+import secrets as pysecrets
 import jwt
 from jwt.exceptions import PyJWTError
 from passlib.context import CryptContext
@@ -26,7 +27,16 @@ def get_password_hash(password: str) -> str:
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """Mint a signed session token.
+
+    Always carries a `jti`. The audit log records it as the session id, so a
+    token without one produces an audit row reading session_id="unknown" --
+    which is what every login wrote before this. Callers that need the id
+    (to log it alongside the login) should pass their own `jti` in `data`
+    rather than decoding the token back apart.
+    """
     to_encode = data.copy()
+    to_encode.setdefault("jti", pysecrets.token_hex(16))
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:

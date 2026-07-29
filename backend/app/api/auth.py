@@ -10,7 +10,9 @@ import urllib.parse
 
 from app.db.session import get_db
 from app.models import User
-from app.core.auth import create_access_token, get_current_user
+import secrets as pysecrets
+
+from app.core.auth import create_access_token, decode_token, get_current_user
 from app.services.auth0_service import Auth0Service
 from app.services.audit_service import AuditService
 
@@ -415,13 +417,14 @@ async def auth0_callback(
                 status_code=302
             )
         
-        # Create our own JWT token
-        access_token = create_access_token(data={"sub": user.username, "role": user.role})
-        
-        # Extract JWT ID for session tracking
-        import jwt as jwt_lib
-        decoded = jwt_lib.decode(access_token, options={"verify_signature": False})
-        session_id = decoded.get("jti", "unknown")
+        # Create our own JWT token. Mint the session id up front rather than
+        # decoding the token we just signed -- the old code read `jti` back out
+        # of a token that never carried one, so every login_success row logged
+        # session_id="unknown".
+        session_id = pysecrets.token_hex(16)
+        access_token = create_access_token(
+            data={"sub": user.username, "role": user.role, "jti": session_id}
+        )
         
         # Log successful login
         await AuditService.log_login_success(
@@ -479,11 +482,12 @@ async def logout(
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
         try:
-            import jwt as jwt_lib
-            decoded = jwt_lib.decode(token, options={"verify_signature": False})
-            session_id = decoded.get("jti", "unknown")
+            # Verify the signature: this token came from the client, and an
+            # unverified decode would let a caller write any session id they
+            # liked into the audit trail.
+            session_id = decode_token(token).get("jti", "unknown")
         except Exception:
-            pass  # JWT decode failed, session_id stays "unknown"
+            pass  # Invalid/expired token, session_id stays "unknown"
     
     # Log logout event
     await AuditService.log_logout(
