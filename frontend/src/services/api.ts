@@ -689,7 +689,7 @@ class ApiClient {
         source?: string;
         reason?: string;
     }> {
-        return this.request(, {
+        return this.request("/roads/seed?force=" + force, {
             method: "POST",
         });
     }
