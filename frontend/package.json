@@ -42,7 +42,7 @@
         "vitest": "^3.2.7"
     },
     "overrides": {
-        "lodash": "^4.18.1",
+        "lodash": "^4.17.21",
         "eslint": {
             "minimatch": {
                 "brace-expansion": "^1.1.16"
