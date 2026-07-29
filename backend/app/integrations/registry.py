@@ -454,3 +454,17 @@ def build_connector(platform: str, config: Dict[str, Any], credentials: Dict[str
     if not cls:
         raise ValueError(f"Unknown integration platform: {platform}")
     return cls(config, credentials)
+
+
+async def build_connector_for(integration: Any) -> BaseConnector:
+    """Build a connector for an IntegrationConfig row, resolving any Secret
+    Manager credential references (@secret:NAME) to live values first.
+    """
+    if not integration:
+        raise ValueError("No integration specified")
+    from app.integrations.credentials import resolve_credentials
+    platform = getattr(integration, "platform", "")
+    raw_creds = getattr(integration, "credentials", None) or {}
+    config = getattr(integration, "config", None) or {}
+    creds = await resolve_credentials(raw_creds)
+    return build_connector(platform, config, creds)
