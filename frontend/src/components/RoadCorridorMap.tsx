@@ -150,6 +150,11 @@ export default function RoadCorridorMap({
         layerRef.current?.setStyle(styleFor);
     }, [styleFor]);
 
+    // Live update map buffer stroke whenever slider moves
+    useEffect(() => {
+        restyle();
+    }, [corridorMetres, restyle]);
+
     const toggleSegment = useCallback((featureId: string) => {
         const next = new Set(excludedRef.current);
         if (next.has(featureId)) next.delete(featureId);
@@ -370,7 +375,7 @@ export default function RoadCorridorMap({
             <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3">
                 <label htmlFor="corridor-width" className="flex items-baseline justify-between gap-4">
                     <span className="text-sm text-white/80">How close counts as &ldquo;on this road&rdquo;</span>
-                    <span className="text-sm font-medium text-white tabular-nums">{corridorMetres} m</span>
+                    <span className="text-sm font-medium text-white tabular-nums">{Math.round(corridorMetres * 3.28084)} ft <span className="text-white/40 text-xs font-normal">({corridorMetres} m)</span></span>
                 </label>
                 <input
                     id="corridor-width"
