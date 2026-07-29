@@ -3,6 +3,7 @@ name: Build and Publish Docker Images
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 env:
@@ -10,13 +11,78 @@ env:
   IMAGE_PREFIX: ${{ github.repository_owner }}/pinpoint-311
 
 jobs:
+  # The orchestrator gates rollouts on version + DB-revision compatibility, and
+  # it reads both from the image it is about to deploy rather than from a repo
+  # checkout — the label travels with the signed artifact, so what was verified
+  # is what runs. Derived once here and passed to both image builds.
+  stamp:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.stamp.outputs.version }}
+      db_revision: ${{ steps.stamp.outputs.db_revision }}
+      min_db_revision: ${{ steps.stamp.outputs.min_db_revision }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Derive version and migration stamp
+        id: stamp
+        working-directory: ./backend
+        run: |
+          set -euo pipefail
+          pip install --quiet 'alembic>=1.13'
+
+          # Alembic resolves heads from the script directory alone — no database
+          # and no env.py, so this is safe to run in CI.
+          read -r HEAD_REV PREV_REV <<<"$(python - <<'PY'
+          from alembic.config import Config
+          from alembic.script import ScriptDirectory
+
+          script = ScriptDirectory.from_config(Config("alembic.ini"))
+          heads = script.get_heads()
+          if len(heads) != 1:
+              raise SystemExit(
+                  f"expected exactly one alembic head, found {heads}. Merge the "
+                  "branches before publishing — the orchestrator cannot express a "
+                  "compatibility window across divergent heads."
+              )
+          head = heads[0]
+          print(head, script.get_revision(head).down_revision or head)
+          PY
+          )"
+
+          # Explicit declaration wins; see backend/MIN_DB_REVISION for the rule.
+          MIN_REV="$(grep -v '^[[:space:]]*#' MIN_DB_REVISION 2>/dev/null | tr -d '[:space:]' || true)"
+          MIN_REV="${MIN_REV:-$PREV_REV}"
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0-main.${GITHUB_SHA::7}"
+          fi
+
+          {
+            echo "version=${VERSION}"
+            echo "db_revision=${HEAD_REV}"
+            echo "min_db_revision=${MIN_REV}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "version=${VERSION} db_revision=${HEAD_REV} min_db_revision=${MIN_REV}"
+
   build-and-push:
+    needs: stamp
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
       security-events: write
-    
+      id-token: write   # keyless cosign signing via the Actions OIDC token
+
     strategy:
       matrix:
         include:
@@ -35,6 +101,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
       - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
@@ -50,8 +119,18 @@ jobs:
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          labels: |
+            org.opencontainers.image.version=${{ needs.stamp.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.pinpoint311.app.version=${{ needs.stamp.outputs.version }}
+            org.pinpoint311.app.git_sha=${{ github.sha }}
+            org.pinpoint311.app.db_revision=${{ needs.stamp.outputs.db_revision }}
+            org.pinpoint311.app.min_db_revision=${{ needs.stamp.outputs.min_db_revision }}
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: ${{ matrix.context }}
@@ -62,11 +141,20 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Sign the immutable digest, never a tag — a tag can be repointed at other
+      # content after signing, which would make the signature meaningless. The
+      # orchestrator refuses to deploy anything it cannot verify this way.
+      - name: Sign image with cosign (keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         continue-on-error: true
         with:
-          image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image }}:latest'
+          image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image }}@${{ steps.build.outputs.digest }}'
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
@@ -77,4 +165,3 @@ jobs:
         continue-on-error: true
         with:
           sarif_file: 'trivy-results.sarif'
-
