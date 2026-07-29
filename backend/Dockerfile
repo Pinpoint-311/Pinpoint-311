@@ -40,4 +40,9 @@ RUN python scripts/generate_licenses.py /app/THIRD-PARTY-LICENSES.txt
 
 EXPOSE 8000
 
+# The entrypoint reconciles the database schema before the API serves anything.
+# It refuses to start on a schema it could not bring to head -- see
+# app/db/migrate.py for why that is better than starting and 500ing later.
+RUN chmod +x /app/scripts/entrypoint.sh
+ENTRYPOINT ["/app/scripts/entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

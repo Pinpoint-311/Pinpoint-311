@@ -9,12 +9,12 @@ from alembic import context
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.db.session import Base
-from app.models import (  # noqa: F401 - must import all models to register with Base.metadata
-    User, Department, ServiceRequest, ServiceDefinition, SystemSettings,
-    SystemSecret, RequestAuditLog, MapLayer, RequestComment, AuditLog,
-    DisclaimerAcknowledgment, UptimeRecord, ApiUsageRecord, ResearchAccessLog,
-    Translation,
-)
+# Import the module, not a hand-listed subset. The explicit list had gone stale
+# -- RoadSegment, RoadDataStatus and BlockedRequestLog were all missing from it,
+# so autogenerate could not see those tables and would have proposed dropping
+# them. A list of model names is a thing that silently rots; importing the
+# module cannot.
+import app.models  # noqa: F401 - registers every model with Base.metadata
 
 config = context.config
 
