@@ -151,8 +151,15 @@ export default function RoadListInput({
 
     // Only claim a road is unrecognised when we actually have data to check
     // against. Warning against an empty table would train clerks to ignore it.
-    const isUnverified = (name: string) =>
-        dataAvailable === true && knownNames.size > 0 && !knownNames.has(name.toLowerCase());
+    const isUnverified = (name: string) => {
+        if (dataAvailable !== true || knownNames.size === 0) return false;
+        const low = name.toLowerCase().trim();
+        if (knownNames.has(low)) return false;
+        for (const known of knownNames) {
+            if (known.includes(low) || low.includes(known)) return false;
+        }
+        return true;
+    };
 
     return (
         <div className="space-y-2" ref={containerRef}>

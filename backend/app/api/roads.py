@@ -83,6 +83,8 @@ async def search_roads(
     name once and every segment comes along. Segment-level control lives on the
     map, where they can click an individual piece off.
     """
+    from app.services.road_matching import normalize_road_name
+
     query = (
         select(
             RoadSegment.name,
@@ -90,12 +92,22 @@ async def search_roads(
             func.count(RoadSegment.id).label("segments"),
         )
         .where(RoadSegment.name.isnot(None))
-        .group_by(RoadSegment.name, RoadSegment.ref)
+    )
+    if q and q.strip():
+        raw_q = q.strip()
+        norm_q = normalize_road_name(raw_q)
+        search_pattern = f"%{raw_q}%"
+        norm_pattern = f"%{norm_q}%" if norm_q else search_pattern
+        query = query.where(
+            RoadSegment.name_norm.ilike(norm_pattern) |
+            RoadSegment.name.ilike(search_pattern)
+        )
+
+    query = (
+        query.group_by(RoadSegment.name, RoadSegment.ref)
         .order_by(func.count(RoadSegment.id).desc())
         .limit(limit)
     )
-    if q:
-        query = query.where(RoadSegment.name_norm.ilike(f"%{q.strip().lower()}%"))
 
     try:
         rows = (await db.execute(query)).all()
