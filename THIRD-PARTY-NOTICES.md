@@ -10,8 +10,10 @@ SSPL, BUSL, Elastic License, CC-BY-NC, or commercially restricted code** in
 either tree. Nothing Pinpoint 311 depends on imposes a reciprocal licensing
 obligation on Pinpoint 311's own source.
 
-This file records the notices that permissive licenses do require, plus the
-two dependencies that carry obligations beyond a simple notice.
+Pinpoint 311 ships as prebuilt container images, not only as source. That
+raises the bar: notices must travel with the images, not merely live in this
+repository. Section 2 describes what is distributed, and sections 3 and 4
+describe what that obliges.
 
 ---
 
@@ -61,7 +63,46 @@ repository.
 
 ---
 
-## 2. Dependencies with obligations beyond attribution
+## 2. How Pinpoint 311 is distributed
+
+**Pinpoint 311 is distributed as prebuilt multi-architecture container images**,
+published from `.github/workflows/build-publish.yml` on every push to `main`:
+
+- `<registry>/pinpoint-311-backend` — `python:3.11-slim` (Debian) with the
+  Python dependency tree installed into the image.
+- `<registry>/pinpoint-311-frontend` — `nginx:alpine` serving a compiled Vite
+  bundle produced by `npm run build`.
+
+This matters for licensing. Distributing built artifacts, rather than source
+that a recipient builds themselves, is what activates the obligations in
+sections 3 and 4 below. Both images contain third-party binaries and compiled
+third-party JavaScript, and both are redistributed to deployers.
+
+Source for Pinpoint 311's own code is available at the project repository under
+the MIT License. Corresponding source for the third-party components described
+below is addressed per component.
+
+---
+
+## 3. The compiled frontend bundle
+
+The frontend image ships a minified JavaScript bundle that **contains the code
+of 62 production npm dependencies** (43 MIT, 14 ISC, 2 BSD-3-Clause, 1
+Apache-2.0, 1 0BSD, 1 "MIT AND ISC" — see `SBOM-licenses.md`).
+
+MIT, ISC, and BSD all require their copyright notice and permission text to be
+included in "all copies or substantial portions of the Software." A minified
+bundle is a copy. The notice must therefore travel with the image, not merely
+live in this repository.
+
+Framer Motion, Recharts, React, React DOM, React Router, the dnd-kit packages,
+lucide-react, and the Google Maps marker clusterer are the largest such
+components; the authoritative list is the production table in
+`SBOM-licenses.md`.
+
+---
+
+## 4. Dependencies with obligations beyond attribution
 
 ### psycopg2-binary — LGPL-3.0-or-later, with an OpenSSL exception
 
@@ -71,19 +112,34 @@ application's primary async path uses asyncpg).
 
 It is a dynamically imported extension module installed from PyPI, not vendored
 into this repository, so **it places no reciprocal obligation on Pinpoint 311's
-own MIT-licensed code**.
+own MIT-licensed code**. Pinpoint 311 remains MIT.
 
-The LGPL obligations — supplying the license text, offering corresponding
-source, and not preventing a recipient from substituting their own build — are
-triggered by *distributing a prebuilt binary artifact that contains it*. They
-are not triggered by distributing source that installs it at build time, which
-is what this repository and its Dockerfile do.
+However, the published backend image contains a compiled copy of it, and
+**Pinpoint 311 distributes prebuilt images** (section 2). The LGPL obligations
+therefore apply to those images:
 
-**If you redistribute Pinpoint 311 as a built container image rather than as
-source, these obligations apply to that image and must be satisfied.** Deployers
-should decide in writing which of the two they are doing. A container image
-additionally carries the GPL/LGPL components of its Debian base layer, subject
-to the same reasoning.
+1. **Supply the LGPL-3.0 license text** with the distributed image.
+2. **Offer corresponding source** for psycopg2-binary — satisfied by naming the
+   exact version and its upstream source location, since it is an unmodified
+   published release.
+3. **Do not prevent replacement.** The recipient must be able to substitute
+   their own build of the library. Because psycopg2 is dynamically loaded from
+   `site-packages` rather than statically linked, a deployer can replace it in
+   a derived image or at runtime. Nothing in the image blocks this, and nothing
+   should be added that does.
+
+### Container base images
+
+- The backend image derives from `python:3.11-slim` (Debian), whose base layer
+  includes GPL- and LGPL-licensed system components.
+- The frontend image derives from `nginx:alpine`, whose base layer includes
+  BusyBox (GPL-2.0) alongside musl (MIT) and nginx itself (BSD-2-Clause).
+
+Redistributing these images makes Pinpoint 311 a distributor of those
+components. In both cases the layers are unmodified upstream images, and the
+obligation is discharged by identifying the base image and pointing to the
+distribution's published source, which is where the corresponding source
+already lives.
 
 ### certifi — Mozilla Public License 2.0
 
@@ -93,7 +149,7 @@ explicitly compatible with combination into an MIT-licensed work. Notice only.
 
 ---
 
-## 3. Dependencies whose declared license metadata is incomplete
+## 5. Dependencies whose declared license metadata is incomplete
 
 Recorded for transparency; none is believed to be a restriction.
 
@@ -117,7 +173,7 @@ Recorded for transparency; none is believed to be a restriction.
 
 ---
 
-## 4. External data sources
+## 6. External data sources
 
 Not code, and not bundled — these are queried at runtime — but they are
 surfaced to end users through the research portal and map, so they are credited
@@ -136,7 +192,7 @@ here as a matter of civic-data practice.
 
 ---
 
-## 5. Scope of this file
+## 7. Scope of this file
 
 This lists third-party work that is embedded in, or carries obligations for,
 this repository. It is not a substitute for the full dependency inventory in
