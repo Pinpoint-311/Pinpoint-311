@@ -467,6 +467,9 @@ export default function AdminConsole() {
     // built sections of the same road.
     const [excludedSegments, setExcludedSegments] = useState<string[]>([]);
     const [corridorMetres, setCorridorMetres] = useState(20);
+    // Partial coverage per stretch, as fractions of its length -- see
+    // RoadCorridorMap for why fractions rather than coordinates.
+    const [segmentTrims, setSegmentTrims] = useState<Record<string, { start: number; end: number }>>({});
 
     useEffect(() => {
         if (serviceRouting.routing_mode !== 'road_based') {
@@ -912,6 +915,9 @@ export default function AdminConsole() {
         // Restore the clerk's per-rule corrections alongside the config itself.
         setExcludedSegments(Array.isArray(config.excluded_segments) ? config.excluded_segments : []);
         setCorridorMetres(typeof config.corridor_metres === 'number' ? config.corridor_metres : 20);
+        setSegmentTrims(
+            config.segment_trims && typeof config.segment_trims === 'object' ? config.segment_trims : {},
+        );
         setShowServiceEditModal(true);
     };
 
@@ -947,6 +953,7 @@ export default function AdminConsole() {
                 // Clerk corrections travel with the rule, keyed to publisher
                 // feature ids so a data refresh cannot orphan them.
                 config.excluded_segments = excludedSegments;
+                config.segment_trims = segmentTrims;
                 config.corridor_metres = corridorMetres;
                 config.third_party_message = serviceRouting.routing_config.third_party_message;
                 config.third_party_contacts = serviceRouting.routing_config.third_party_contacts;
@@ -3600,6 +3607,8 @@ export default function AdminConsole() {
                                 }
                                 excludedFeatureIds={excludedSegments}
                                 onExcludedChange={setExcludedSegments}
+                                trims={segmentTrims}
+                                onTrimsChange={setSegmentTrims}
                                 corridorMetres={corridorMetres}
                                 onCorridorMetresChange={setCorridorMetres}
                                 apiKey={mapsApiKey}

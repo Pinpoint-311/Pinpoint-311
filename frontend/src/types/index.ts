@@ -69,6 +69,9 @@ export interface ServiceDefinition {
         excluded_segments?: string[];
         /** How far from a centreline still counts as being on that road. */
         corridor_metres?: number;
+        /** Partial coverage per stretch, as fractions of its length. Survives a
+         *  data refresh that re-draws the line, where a point would not. */
+        segment_trims?: Record<string, { start: number; end: number }>;
         // Custom questions (applies to all modes)
         custom_questions?: CustomQuestion[];
     };

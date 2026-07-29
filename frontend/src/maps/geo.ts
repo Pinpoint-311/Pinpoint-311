@@ -186,3 +186,98 @@ export function isPointInGeoJson(lat: number, lng: number, geojson: unknown): bo
         return true; // On error, allow the point.
     }
 }
+
+/**
+ * Position along a polyline, as a fraction of its total length.
+ *
+ * Fractions rather than coordinates: a rule trimmed to "the first 40% of this
+ * segment" survives the publisher re-drawing the line on a monthly refresh,
+ * where a stored point would end up floating off the geometry. This mirrors
+ * PostGIS ST_LineLocatePoint / ST_LineInterpolatePoint, which is what evaluates
+ * the same trim server-side.
+ *
+ * Distances are computed with an equirectangular approximation scaled by
+ * latitude. Over a single road segment the error is far below the metre or two
+ * that matters here, and it avoids a haversine per vertex on every drag frame.
+ */
+
+function segmentLengths(path: LatLng[]): { lengths: number[]; total: number } {
+    const lengths: number[] = [];
+    let total = 0;
+    for (let i = 1; i < path.length; i++) {
+        const a = path[i - 1];
+        const b = path[i];
+        const midLat = ((a.lat + b.lat) / 2) * (Math.PI / 180);
+        const dx = (b.lng - a.lng) * Math.cos(midLat);
+        const dy = b.lat - a.lat;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        lengths.push(d);
+        total += d;
+    }
+    return { lengths, total };
+}
+
+/** The point a given fraction (0..1) along a polyline. */
+export function pointAtFraction(path: LatLng[], fraction: number): LatLng | null {
+    if (path.length === 0) return null;
+    if (path.length === 1) return path[0];
+
+    const { lengths, total } = segmentLengths(path);
+    if (total === 0) return path[0];
+
+    const target = Math.min(Math.max(fraction, 0), 1) * total;
+    let walked = 0;
+    for (let i = 0; i < lengths.length; i++) {
+        if (walked + lengths[i] >= target) {
+            const t = lengths[i] === 0 ? 0 : (target - walked) / lengths[i];
+            const a = path[i];
+            const b = path[i + 1];
+            return { lat: a.lat + (b.lat - a.lat) * t, lng: a.lng + (b.lng - a.lng) * t };
+        }
+        walked += lengths[i];
+    }
+    return path[path.length - 1];
+}
+
+/**
+ * How far along a polyline the nearest point to `position` lies, as a fraction.
+ *
+ * Used while dragging a trim handle: the handle follows the cursor but the
+ * value stored is where it projects onto the road, so a handle dropped slightly
+ * off the line still means a sensible position along it.
+ */
+export function fractionAlongLine(path: LatLng[], position: LatLng): number {
+    if (path.length < 2) return 0;
+
+    const { lengths, total } = segmentLengths(path);
+    if (total === 0) return 0;
+
+    let best = { distance: Infinity, walked: 0 };
+    let walked = 0;
+
+    for (let i = 1; i < path.length; i++) {
+        const a = path[i - 1];
+        const b = path[i];
+        const midLat = ((a.lat + b.lat) / 2) * (Math.PI / 180);
+        const scale = Math.cos(midLat);
+
+        const ax = a.lng * scale, ay = a.lat;
+        const bx = b.lng * scale, by = b.lat;
+        const px = position.lng * scale, py = position.lat;
+
+        const vx = bx - ax, vy = by - ay;
+        const lengthSq = vx * vx + vy * vy;
+        // Project onto the segment, clamped so a point beyond either end maps
+        // to that end rather than off the line.
+        const t = lengthSq === 0 ? 0 : Math.min(Math.max(((px - ax) * vx + (py - ay) * vy) / lengthSq, 0), 1);
+        const dx = px - (ax + vx * t), dy = py - (ay + vy * t);
+        const distance = dx * dx + dy * dy;
+
+        if (distance < best.distance) {
+            best = { distance, walked: walked + lengths[i - 1] * t };
+        }
+        walked += lengths[i - 1];
+    }
+
+    return Math.min(Math.max(best.walked / total, 0), 1);
+}
