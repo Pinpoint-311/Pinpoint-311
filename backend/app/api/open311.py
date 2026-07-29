@@ -1040,6 +1040,28 @@ async def create_manual_intake(
             detail="Invalid service code"
         )
 
+    # Same jurisdiction rules as a resident submission, but a staffer may
+    # knowingly override them. A clerk on the phone can see that the caller is
+    # describing a county road and still decide to log it -- because the caller
+    # is elderly, because the town has agreed to forward these, because it is
+    # faster than explaining. Refusing them would just push the work into a
+    # notepad. Residents get no override; staff exercising judgement is the
+    # whole reason the role exists.
+    block = await road_blocking.evaluate(db, service, intake_data.lat, intake_data.long)
+    if block.blocked and not intake_data.override_jurisdiction:
+        await road_blocking.record(db, block, service, intake_data.lat, intake_data.long)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "redirected",
+                "jurisdiction": block.jurisdiction,
+                "message": block.message,
+                "contacts": block.contacts,
+                "road": block.road_name,
+                "can_override": True,
+            },
+        )
+
     # Same auto-assignment/routing as a resident submission
     assigned_department_id, assigned_to = await _resolve_assignment(db, service)
 

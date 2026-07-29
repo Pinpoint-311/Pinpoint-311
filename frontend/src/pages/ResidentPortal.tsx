@@ -211,6 +211,9 @@ export default function ResidentPortal() {
 
     // Blocking state for third-party/road-based services
     const [isBlocked, setIsBlocked] = useState(false);
+    // Named separately from the message so the notice can say WHO handles it
+    // rather than only quoting the town's configured sentence.
+    const [blockJurisdiction, setBlockJurisdiction] = useState<string | null>(null);
     const [blockMessage, setBlockMessage] = useState('');
     const [blockContacts, setBlockContacts] = useState<{ name: string; phone: string; url: string }[]>([]);
 
@@ -318,62 +321,46 @@ export default function ResidentPortal() {
         scrollToTop('instant');
     };
 
-    // Check if address matches road-based blocking rules
-    const checkRoadBasedBlocking = (address: string, service: ServiceDefinition) => {
-        if (service.routing_mode !== 'road_based' || !address) {
-            return;
+    // Which road the pin landed on, shown under the map so a resident can see
+    // the system agreed with them before they type anything.
+    const [detectedRoad, setDetectedRoad] = useState<{ name: string; distance_m: number } | null>(null);
+    const roadCheckSeq = useRef(0);
+
+    /**
+     * Ask the server whether a report here would be redirected.
+     *
+     * This used to lowercase the whole formatted address and substring-match
+     * configured road names into it, which put the city, county and ZIP into
+     * the match surface and read a corner lot's address off the cross street.
+     * The server measures distance to real road geometry instead. It also
+     * re-runs the same check on submit, so this is a courtesy rather than the
+     * enforcement point -- and it fails open: a check that errors never blocks.
+     */
+    const checkRoadBasedBlocking = useCallback(async (service: ServiceDefinition, lat?: number, lng?: number) => {
+        if (service.routing_mode !== 'road_based') return;
+        const seq = ++roadCheckSeq.current;
+        try {
+            const result = await api.roadCheck(service.service_code, lat, lng);
+            // A slower earlier request must not overwrite a newer answer.
+            if (seq !== roadCheckSeq.current) return;
+            setDetectedRoad(result.detected_road);
+            setIsBlocked(result.blocked);
+            setBlockMessage(result.blocked ? result.message : '');
+            setBlockContacts(
+                result.blocked
+                    ? (result.contacts || []).map(c => ({ name: c.name || '', phone: c.phone || '', url: c.url || '' }))
+                    : [],
+            );
+            setBlockJurisdiction(result.blocked ? result.jurisdiction : null);
+        } catch {
+            if (seq !== roadCheckSeq.current) return;
+            setDetectedRoad(null);
+            setIsBlocked(false);
+            setBlockMessage('');
+            setBlockContacts([]);
+            setBlockJurisdiction(null);
         }
-
-        const config = service.routing_config;
-        if (!config) {
-            return;
-        }
-
-        const addressLower = address.toLowerCase();
-        const defaultHandler = config.default_handler || 'township';
-
-        if (defaultHandler === 'township') {
-            // Check exclusion list - if address matches, block
-            const exclusionList = config.exclusion_list || [];
-
-            // Match road names - require the full road name to be in the address
-            const matchesExclusion = exclusionList.some(road => {
-                const roadLower = road.toLowerCase().trim();
-                // Exact substring match only - the road name must appear in the address
-                return addressLower.includes(roadLower);
-            });
-
-            if (matchesExclusion) {
-                setIsBlocked(true);
-                setBlockMessage(config.third_party_message || 'This road is handled by a third party.');
-                setBlockContacts(config.third_party_contacts || []);
-            } else {
-                setIsBlocked(false);
-                setBlockMessage('');
-                setBlockContacts([]);
-            }
-        } else {
-            // Third party default - check inclusion list - if NOT in list, block
-            const inclusionList = config.inclusion_list || [];
-
-            // Match road names - require the full road name to be in the address
-            const matchesInclusion = inclusionList.some(road => {
-                const roadLower = road.toLowerCase().trim();
-                // Exact substring match only - the road name must appear in the address
-                return addressLower.includes(roadLower);
-            });
-
-            if (!matchesInclusion) {
-                setIsBlocked(true);
-                setBlockMessage(config.third_party_message || 'This road is handled by a third party.');
-                setBlockContacts(config.third_party_contacts || []);
-            } else {
-                setIsBlocked(false);
-                setBlockMessage('');
-                setBlockContacts([]);
-            }
-        }
-    };
+    }, []);
 
     const validateForm = (): boolean => {
         const errors: Record<string, string> = {};
@@ -1068,10 +1055,12 @@ export default function ResidentPortal() {
                                                                     lat: newLocation.lat ?? undefined,
                                                                     long: newLocation.lng ?? undefined,
                                                                 }));
-                                                                // Check road-based blocking when address changes
-                                                                if (selectedService.routing_mode === 'road_based') {
-                                                                    checkRoadBasedBlocking(newLocation.address, selectedService);
-                                                                }
+                                                                // Road rules are decided from the pin, not the address text.
+                                                                checkRoadBasedBlocking(
+                                                                    selectedService,
+                                                                    newLocation.lat ?? undefined,
+                                                                    newLocation.lng ?? undefined,
+                                                                );
                                                             }}
                                                             placeholder="Search for an address or click on the map..."
                                                         />
@@ -1088,10 +1077,9 @@ export default function ResidentPortal() {
                                                             onChange={(e) => {
                                                                 const newAddress = e.target.value;
                                                                 setFormData((prev) => ({ ...prev, address: newAddress }));
-                                                                // Check road-based blocking when address changes
-                                                                if (selectedService.routing_mode === 'road_based') {
-                                                                    checkRoadBasedBlocking(newAddress, selectedService);
-                                                                }
+                                                                // Typed address with no map: nothing to measure against, so
+                                                                // no road rule can apply. Failing open is the point.
+                                                                void newAddress;
                                                             }}
                                                         />
                                                         <div className="p-4 rounded-xl bg-white/5 border border-white/10 text-center text-white/40">
@@ -1099,6 +1087,22 @@ export default function ResidentPortal() {
                                                             <p className="text-sm">Interactive map requires Google Maps API key</p>
                                                         </div>
                                                     </>
+                                                )}
+
+                                                {/* Which road the pin landed on. Shown whether or not anything
+                                                    is blocked, so a resident can see the system read their pin
+                                                    the way they meant it before they type a description. */}
+                                                {detectedRoad && (
+                                                    <div
+                                                        className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-white/[0.04] border border-white/10"
+                                                        role="status"
+                                                    >
+                                                        <SignpostBig className="w-4 h-4 text-white/40 shrink-0" aria-hidden="true" />
+                                                        <span className="text-sm text-white/60">
+                                                            Road detected:{' '}
+                                                            <span className="text-white/90 font-medium">{detectedRoad.name}</span>
+                                                        </span>
+                                                    </div>
                                                 )}
 
                                                 {/* Blocking Notice for Road-Based Services - shown after map */}
@@ -1114,11 +1118,24 @@ export default function ResidentPortal() {
                                                             </div>
                                                             <div className="flex-1">
                                                                 <h3 className="text-lg font-semibold text-red-300 mb-2">
-                                                                    Cannot Submit This Request
+                                                                    {blockJurisdiction
+                                                                        ? `${blockJurisdiction} maintains this location`
+                                                                        : 'This location is handled by another agency'}
                                                                 </h3>
-                                                                <p className="text-white/70 mb-4">
+                                                                <p className="text-white/70 mb-2">
                                                                     {blockMessage}
                                                                 </p>
+                                                                {/* Say which road decided this. A redirect with no
+                                                                    reason reads as the system being broken; naming the
+                                                                    road lets someone see it picked the wrong one and
+                                                                    move their pin. */}
+                                                                {detectedRoad && (
+                                                                    <p className="text-white/45 text-sm mb-4">
+                                                                        Your pin is on{' '}
+                                                                        <span className="text-white/70 font-medium">{detectedRoad.name}</span>.
+                                                                        If that is not the road you meant, move the pin and this will update.
+                                                                    </p>
+                                                                )}
 
                                                                 {blockContacts.length > 0 && (
                                                                     <div className="space-y-2">

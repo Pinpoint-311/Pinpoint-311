@@ -710,6 +710,60 @@ class ApiClient {
         return this.request(`/gis/geocode?address=${encodeURIComponent(address)}`);
     }
 
+    /**
+     * Would a report at this point be redirected to another agency, and which
+     * road decided that? The create endpoint re-evaluates the same rules
+     * server-side, so this is a courtesy that lets someone find out before they
+     * type a description -- never the enforcement point.
+     */
+    async roadCheck(serviceCode: string, lat?: number | null, lng?: number | null): Promise<{
+        blocked: boolean;
+        block_type: string | null;
+        jurisdiction: string | null;
+        message: string;
+        contacts: { name?: string; phone?: string; url?: string }[];
+        road: string | null;
+        detected_road: { name: string; distance_m: number } | null;
+    }> {
+        return this.request('/road-check', {
+            method: 'POST',
+            body: JSON.stringify({ service_code: serviceCode, lat: lat ?? null, long: lng ?? null }),
+        });
+    }
+
+    /** Distinct road NAMES for the clerk's routing autocomplete, not segments. */
+    async searchRoads(q: string): Promise<{
+        available: boolean;
+        roads: { name: string; ref: string | null; segments: number }[];
+    }> {
+        return this.request(`/roads/search?q=${encodeURIComponent(q)}`);
+    }
+
+    /** Conflicts in a routing config, checked before it can be saved. */
+    async checkRoutingConfig(routingConfig: Record<string, unknown>): Promise<{
+        issues: { severity: 'error' | 'warning' | 'info'; kind: string; message: string; roads: string[] }[];
+        can_save: boolean;
+        roads_known: number;
+    }> {
+        return this.request('/roads/config-check', {
+            method: 'POST',
+            body: JSON.stringify({ routing_config: routingConfig }),
+        });
+    }
+
+    /** Redirect counts for the statistics page. */
+    async getRedirectedStatistics(days = 30): Promise<{
+        days: number;
+        total: number;
+        road_based: number;
+        category: number;
+        by_jurisdiction: { label: string; count: number }[];
+        by_road: { label: string; count: number }[];
+        by_service: { label: string; count: number }[];
+    }> {
+        return this.request(`/system/statistics/redirected?days=${days}`);
+    }
+
     async reverseGeocode(lat: number, lng: number): Promise<{
         lat: number;
         lng: number;

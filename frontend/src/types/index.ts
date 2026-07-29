@@ -232,6 +232,8 @@ export interface ManualIntakeCreate {
     custom_fields?: Record<string, string | string[]>;
     /** false = unlisted: excluded from public feeds/APIs, still viewable by direct link. */
     is_public?: boolean;
+    /** Staff may knowingly log a report on a road another agency maintains. */
+    override_jurisdiction?: boolean;
     source: 'phone' | 'walk_in' | 'email';
 }
 

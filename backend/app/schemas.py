@@ -335,6 +335,9 @@ class ManualIntakeCreate(BaseModel):
     custom_fields: Optional[Dict[str, Any]] = {}
     # Honor the same choice when a staffer takes the report by phone/walk-in.
     is_public: Optional[bool] = True
+    # Staff may knowingly log a report on a road another agency maintains.
+    # Residents cannot; this is the judgement call the role exists for.
+    override_jurisdiction: bool = False
     source: RequestSource = RequestSource.phone
 
 

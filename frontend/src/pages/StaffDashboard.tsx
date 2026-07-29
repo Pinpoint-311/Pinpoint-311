@@ -130,6 +130,10 @@ export default function StaffDashboard() {
     const [statistics, setStatistics] = useState<Statistics | null>(null);
     const [advancedStats, setAdvancedStats] = useState<AdvancedStatistics | null>(null);
     const [slaPerf, setSlaPerf] = useState<import('../services/api').SlaPerformance | null>(null);
+    // Residents who were redirected instead of filing. Not service requests --
+    // nobody worked them and they appear in no queue or feed -- but the count is
+    // how a town learns one road is turning away twenty people a month.
+    const [redirects, setRedirects] = useState<Awaited<ReturnType<typeof api.getRedirectedStatistics>> | null>(null);
     const [heatmapData, setHeatmapData] = useState<HeatmapData | null>(null);
 
     // Dashboard-specific state
@@ -518,16 +522,18 @@ export default function StaffDashboard() {
 
     const loadStatistics = async () => {
         try {
-            const [statsData, advancedData, heatmap, sla] = await Promise.all([
+            const [statsData, advancedData, heatmap, sla, redirected] = await Promise.all([
                 api.getStatistics(),
                 api.getAdvancedStatistics(),
                 api.getHeatmapData().catch(() => null),
-                api.getSlaPerformance(90).catch(() => null)
+                api.getSlaPerformance(90).catch(() => null),
+                api.getRedirectedStatistics(30).catch(() => null)
             ]);
             setStatistics(statsData);
             setAdvancedStats(advancedData);
             if (heatmap) setHeatmapData(heatmap);
             setSlaPerf(sla);
+            setRedirects(redirected);
         } catch (err) {
             console.error('Failed to load statistics:', err);
         }
@@ -1226,6 +1232,65 @@ export default function StaffDashboard() {
 
                             {/* SLA performance — only rendered once at least one
                                 category has a target configured (the feature is opt-in). */}
+                            {/* Redirected reports. Shown only once there are any -- a town
+                                that redirects nobody should not carry an empty panel. */}
+                            {redirects && redirects.total > 0 && (
+                                <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
+                                    <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
+                                        <div>
+                                            <h3 className="text-lg font-semibold text-white">Redirected to Other Agencies</h3>
+                                            <p className="text-xs text-white/40 mt-0.5">
+                                                Reports not filed here · last {redirects.days} days
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-5 sm:gap-6">
+                                            <div className="text-right">
+                                                <div className="text-2xl font-bold text-amber-300">{redirects.total}</div>
+                                                <div className="text-[11px] text-white/40 uppercase tracking-wide">Total</div>
+                                            </div>
+                                            <div className="text-right">
+                                                <div className="text-2xl font-bold text-white/70">{redirects.road_based}</div>
+                                                <div className="text-[11px] text-white/40 uppercase tracking-wide">By road</div>
+                                            </div>
+                                            <div className="text-right">
+                                                <div className="text-2xl font-bold text-white/70">{redirects.category}</div>
+                                                <div className="text-[11px] text-white/40 uppercase tracking-wide">By service</div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                        {[
+                                            { title: 'Agency', rows: redirects.by_jurisdiction },
+                                            { title: 'Road', rows: redirects.by_road },
+                                            { title: 'Service', rows: redirects.by_service },
+                                        ].map(group => (
+                                            <div key={group.title} className="rounded-xl bg-white/[0.03] border border-white/10 p-3.5">
+                                                <p className="text-[11px] uppercase tracking-wider text-white/35 mb-2.5">{group.title}</p>
+                                                {group.rows.length === 0 ? (
+                                                    <p className="text-xs text-white/30">None</p>
+                                                ) : (
+                                                    <ul className="space-y-1.5">
+                                                        {group.rows.slice(0, 6).map(row => (
+                                                            <li key={row.label} className="flex items-baseline justify-between gap-3 text-sm">
+                                                                <span className="text-white/70 truncate">{row.label}</span>
+                                                                <span className="text-white font-medium tabular-nums shrink-0">{row.count}</span>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <p className="text-[11px] text-white/35 mt-3.5 leading-relaxed">
+                                        These were never filed as requests, so they are not in any queue or export.
+                                        A road appearing often is either worth raising with that agency, or a sign its
+                                        routing rule is wrong.
+                                    </p>
+                                </div>
+                            )}
+
                             {slaPerf && slaPerf.categories.length > 0 && (
                                 <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
                                     <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
