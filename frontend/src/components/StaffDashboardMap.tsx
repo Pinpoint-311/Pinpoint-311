@@ -14,6 +14,8 @@ import {
     createMap,
     extractFeatures,
     legacyMapProviderConfig,
+    el,
+    popupRoot,
 } from '../maps';
 
 interface StaffDashboardMapProps {
@@ -371,37 +373,48 @@ export default function StaffDashboardMap({
                         }
                     }
 
-                    popup.setContent(`
-                        <div style="padding: 16px; max-width: 300px; font-family: system-ui, -apple-system, sans-serif;">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                                <span style="font-size: 12px; color: #6366f1; font-family: monospace; font-weight: 600;">${request.service_request_id}</span>
-                                <span style="font-size: 11px; padding: 4px 10px; border-radius: 9999px; background: ${STATUS_COLORS[request.status as keyof typeof STATUS_COLORS]}; color: white; font-weight: 600; text-transform: uppercase;">
-                                    ${statusText}
-                                </span>
-                            </div>
-                            <h3 style="margin: 0 0 8px 0; font-size: 16px; font-weight: 700; color: #1f2937;">${translatedServiceName}</h3>
-                            <p style="margin: 0 0 12px 0; font-size: 13px; color: #4b5563; line-height: 1.5;">${translatedDescription}${request.description.length > 120 ? '...' : ''}</p>
-                            ${request.address ? `<p style="margin: 0 0 16px 0; font-size: 12px; color: #6b7280; display: flex; align-items: center; gap: 6px;">📍 ${request.address}</p>` : ''}
-                            <button 
-                                onclick="window.staffDashboardSelectRequest('${request.service_request_id}')"
-                                style="width: 100%; padding: 10px 16px; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; border: none; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; transition: transform 0.1s;"
-                                onmouseover="this.style.transform='scale(1.02)'"
-                                onmouseout="this.style.transform='scale(1)'"
-                            >
-                                ${viewDetailsText} →
-                            </button>
-                        </div>
-                    `);
+                    popup.setContent(popupRoot('padding: 16px; max-width: 300px;', [
+                        el('div', {
+                            style: 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;',
+                            children: [
+                                el('span', {
+                                    style: 'font-size: 12px; color: #6366f1; font-family: monospace; font-weight: 600;',
+                                    text: request.service_request_id,
+                                }),
+                                el('span', {
+                                    style: `font-size: 11px; padding: 4px 10px; border-radius: 9999px; background: ${STATUS_COLORS[request.status as keyof typeof STATUS_COLORS]}; color: white; font-weight: 600; text-transform: uppercase;`,
+                                    text: statusText,
+                                }),
+                            ],
+                        }),
+                        el('h3', {
+                            style: 'margin: 0 0 8px 0; font-size: 16px; font-weight: 700; color: #1f2937;',
+                            text: translatedServiceName,
+                        }),
+                        el('p', {
+                            style: 'margin: 0 0 12px 0; font-size: 13px; color: #4b5563; line-height: 1.5;',
+                            text: translatedDescription + (request.description.length > 120 ? '...' : ''),
+                        }),
+                        request.address ? el('p', {
+                            style: 'margin: 0 0 16px 0; font-size: 12px; color: #6b7280;',
+                            text: `\u{1F4CD} ${request.address}`,
+                        }) : null,
+                        el('button', {
+                            style: 'width: 100%; padding: 10px 16px; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; border: none; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer;',
+                            text: `${viewDetailsText} \u2192`,
+                            // A real listener, not an onclick attribute reaching
+                            // for a window global -- which was both an injection
+                            // surface and a leak of internals onto the page.
+                            onClick: () => {
+                                popupRef.current?.close();
+                                onRequestSelect(request.service_request_id);
+                            },
+                        }),
+                    ]));
                     popup.openAt(marker);
                 }
             },
         }));
-
-        // Set up global callback for info window button
-        (window as any).staffDashboardSelectRequest = (requestId: string) => {
-            popupRef.current?.close();
-            onRequestSelect(requestId);
-        };
 
         // Bulk replace: the layer's clustering is rebuilt from the new set.
         requestLayer.setMarkers(markers);
@@ -457,20 +470,37 @@ export default function StaffDashboardMap({
                             const popup = popupRef.current;
                             if (!popup) return;
 
-                            const propsHtml = Object.entries(props)
-                                .filter(([k]) => k !== 'name')
-                                .map(([k, v]) => `<p style="margin: 6px 0; font-size: 13px; color: #e5e7eb;"><span style="color: #9ca3af;">${k}:</span> ${v}</p>`)
-                                .join('');
-
-                            popup.setContent(`
-                                <div style="padding: 16px; font-family: system-ui, -apple-system, sans-serif; background: #1f2937; border-radius: 12px; min-width: 180px;">
-                                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.1);">
-                                        <span style="width: 14px; height: 14px; border-radius: 50%; background: ${layer.fill_color}; box-shadow: 0 0 8px ${layer.fill_color}80;"></span>
-                                        <h4 style="margin: 0; color: #f9fafb; font-size: 15px; font-weight: 600;">${props.name || layer.name}</h4>
-                                    </div>
-                                    ${propsHtml || '<p style="color: #9ca3af; font-size: 13px; margin: 0;">No additional properties</p>'}
-                                </div>
-                            `);
+                            popup.setContent(popupRoot(
+                                'padding: 16px; background: #1f2937; border-radius: 12px; min-width: 180px;',
+                                [
+                                    el('div', {
+                                        style: 'display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.1);',
+                                        children: [
+                                            el('span', {
+                                                style: `width: 14px; height: 14px; border-radius: 50%; background: ${layer.fill_color}; box-shadow: 0 0 8px ${layer.fill_color}80;`,
+                                            }),
+                                            el('h4', {
+                                                style: 'margin: 0; color: #f9fafb; font-size: 15px; font-weight: 600;',
+                                                text: String(props.name || layer.name),
+                                            }),
+                                        ],
+                                    }),
+                                    // Keys and values both come from an uploaded
+                                    // GeoJSON, so both are set as text.
+                                    ...Object.entries(props)
+                                        .filter(([k]) => k !== 'name')
+                                        .map(([k, v]) => el('p', {
+                                            style: 'margin: 6px 0; font-size: 13px; color: #e5e7eb;',
+                                            children: [
+                                                el('span', { style: 'color: #9ca3af;', text: `${k}:` }),
+                                                ` ${v}`,
+                                            ],
+                                        })),
+                                    Object.keys(props).filter(k => k !== 'name').length === 0
+                                        ? el('p', { style: 'color: #9ca3af; font-size: 13px; margin: 0;', text: 'No additional properties' })
+                                        : null,
+                                ],
+                            ));
                             popup.openAt(marker);
                         },
                     });

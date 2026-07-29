@@ -1,12 +1,26 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MapPin, Users, FileText, AlertTriangle, Eye } from 'lucide-react';
-import { HeatmapData, HotspotData } from '../types';
-import { loadGoogleMaps } from '../utils/googleMaps';
+import { HeatmapData, HeatmapPoint, HotspotData } from '../types';
+import {
+    CanvasOverlayHandle,
+    MapProviderId,
+    MapRenderer,
+    MarkerLayer,
+    MarkerOptions,
+    PopupHandle,
+    boundsOfPoints,
+    createMap,
+    el,
+    legacyMapProviderConfig,
+    popupRoot,
+} from '../maps';
 
 interface SpatialBiasHeatmapProps {
     heatmapData: HeatmapData | null;
     hotspots: HotspotData[];
     apiKey: string;
+    /** Overrides the configured provider; defaults to the town's setting. */
+    provider?: MapProviderId;
     defaultCenter?: { lat: number; lng: number };
     isLoading?: boolean;
 }
@@ -44,6 +58,8 @@ const GRADIENTS: Record<HeatmapMode, string[]> = {
     ],
 };
 
+const HEATMAP_OPACITY = 0.85;
+
 // Build a 256-entry RGBA lookup table from gradient stops.
 function buildPalette(stops: string[]): Uint8ClampedArray {
     const c = document.createElement('canvas');
@@ -57,107 +73,175 @@ function buildPalette(stops: string[]): Uint8ClampedArray {
     return g.getImageData(0, 0, 256, 1).data;
 }
 
+function intensityOf(point: HeatmapPoint): number {
+    return Math.max(0.08, Math.min(1, point.weight || 0.5));
+}
+
 /**
- * Canvas heatmap rendered as a Google Maps OverlayView.
+ * Canvas heatmap draw pass.
  *
  * Replaces google.maps.visualization.HeatmapLayer, which was removed from the
  * Maps JavaScript API in v3.65. Uses the well-known intensity-accumulation
  * technique (radial alpha gradients per point → colorize the alpha channel
  * through a gradient palette), so it needs no deprecated library and no extra
- * dependency, and keeps the same look.
+ * dependency, and keeps the same look. The renderer owns the canvas and the
+ * projection; all this needs is `view.project` in canvas-local pixels.
  */
-function createHeatmapOverlay(
-    map: google.maps.Map,
-    getPoints: () => { lat: number; lng: number; weight: number }[],
-    getGradient: () => string[],
+function drawHeatmap(
+    ctx: CanvasRenderingContext2D,
+    view: { width: number; height: number; project(p: { lat: number; lng: number }): { x: number; y: number } },
+    points: HeatmapPoint[],
+    gradient: string[],
     radius: number,
-    opacity: number,
-) {
-    class HeatmapOverlay extends google.maps.OverlayView {
-        private canvas: HTMLCanvasElement | null = null;
+): void {
+    const { width, height } = view;
+    if (!points.length) return;
 
-        onAdd() {
-            const canvas = document.createElement('canvas');
-            canvas.style.position = 'absolute';
-            canvas.style.pointerEvents = 'none';
-            this.canvas = canvas;
-            this.getPanes()!.overlayLayer.appendChild(canvas);
-        }
+    // Pass 1: accumulate intensity as grayscale alpha.
+    for (const p of points) {
+        const { x, y } = view.project(p);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        if (x < -radius || x > width + radius || y < -radius || y > height + radius) continue;
+        const a = intensityOf(p);
+        const grad = ctx.createRadialGradient(x, y, 0, x, y, radius);
+        grad.addColorStop(0, `rgba(0,0,0,${a})`);
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+    }
 
-        onRemove() {
-            this.canvas?.parentNode?.removeChild(this.canvas);
-            this.canvas = null;
-        }
+    // Pass 2: map the accumulated alpha through the color palette.
+    const palette = buildPalette(gradient);
+    const img = ctx.getImageData(0, 0, width, height);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+        const alpha = d[i + 3];
+        if (alpha === 0) continue;
+        const off = alpha * 4;
+        d[i] = palette[off];
+        d[i + 1] = palette[off + 1];
+        d[i + 2] = palette[off + 2];
+        d[i + 3] = Math.round(Math.min(255, alpha) * HEATMAP_OPACITY);
+    }
+    ctx.putImageData(img, 0, 0);
+}
 
-        redraw() {
-            this.draw();
-        }
+// Grid cell for the marker fallback, ~150 m at mid latitudes.
+const FALLBACK_CELL_DEGREES = 0.0015;
+const FALLBACK_MAX_MARKERS = 400;
 
-        draw() {
-            const proj = this.getProjection();
-            const canvas = this.canvas;
-            if (!proj || !canvas) return;
-            const bounds = map.getBounds();
-            if (!bounds) return;
+/**
+ * Density as graduated markers, for providers with no pixel-projection hook
+ * (Apple MapKit JS). Points are summed onto a coarse grid first: a heat canvas
+ * copes with tens of thousands of blobs, one DOM marker per report does not.
+ */
+function fallbackDensityMarkers(points: HeatmapPoint[], gradient: string[]): MarkerOptions[] {
+    const cells = new Map<string, { lat: number; lng: number; weight: number; n: number }>();
 
-            // Position the canvas over the current viewport in the pane's
-            // (div-pixel) coordinate space — the same space fromLatLngToDivPixel
-            // returns, so points line up exactly.
-            const ne = proj.fromLatLngToDivPixel(bounds.getNorthEast());
-            const sw = proj.fromLatLngToDivPixel(bounds.getSouthWest());
-            if (!ne || !sw) return;
-            const left = Math.min(ne.x, sw.x);
-            const top = Math.min(ne.y, sw.y);
-            const width = Math.max(1, Math.round(Math.abs(ne.x - sw.x)));
-            const height = Math.max(1, Math.round(Math.abs(ne.y - sw.y)));
-
-            canvas.style.left = `${left}px`;
-            canvas.style.top = `${top}px`;
-            canvas.width = width;
-            canvas.height = height;
-
-            const ctx = canvas.getContext('2d');
-            if (!ctx) return;
-            ctx.clearRect(0, 0, width, height);
-
-            const points = getPoints();
-            if (!points.length) return;
-
-            // Pass 1: accumulate intensity as grayscale alpha.
-            for (const p of points) {
-                const px = proj.fromLatLngToDivPixel(new google.maps.LatLng(p.lat, p.lng));
-                if (!px) continue;
-                const x = px.x - left;
-                const y = px.y - top;
-                if (x < -radius || x > width + radius || y < -radius || y > height + radius) continue;
-                const a = Math.max(0.08, Math.min(1, p.weight || 0.5));
-                const grad = ctx.createRadialGradient(x, y, 0, x, y, radius);
-                grad.addColorStop(0, `rgba(0,0,0,${a})`);
-                grad.addColorStop(1, 'rgba(0,0,0,0)');
-                ctx.fillStyle = grad;
-                ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
-            }
-
-            // Pass 2: map the accumulated alpha through the color palette.
-            const palette = buildPalette(getGradient());
-            const img = ctx.getImageData(0, 0, width, height);
-            const d = img.data;
-            for (let i = 0; i < d.length; i += 4) {
-                const alpha = d[i + 3];
-                if (alpha === 0) continue;
-                const off = alpha * 4;
-                d[i] = palette[off];
-                d[i + 1] = palette[off + 1];
-                d[i + 2] = palette[off + 2];
-                d[i + 3] = Math.round(Math.min(255, alpha) * opacity);
-            }
-            ctx.putImageData(img, 0, 0);
+    for (const p of points) {
+        const row = Math.round(p.lat / FALLBACK_CELL_DEGREES);
+        const col = Math.round(p.lng / FALLBACK_CELL_DEGREES);
+        const key = `${row}:${col}`;
+        const cell = cells.get(key);
+        if (cell) {
+            cell.lat += p.lat;
+            cell.lng += p.lng;
+            cell.weight += intensityOf(p);
+            cell.n += 1;
+        } else {
+            cells.set(key, { lat: p.lat, lng: p.lng, weight: intensityOf(p), n: 1 });
         }
     }
 
-    const overlay = new HeatmapOverlay();
-    overlay.setMap(map);
-    return overlay as google.maps.OverlayView & { redraw: () => void };
+    const ranked = [...cells.values()]
+        .sort((a, b) => b.weight - a.weight)
+        .slice(0, FALLBACK_MAX_MARKERS);
+    if (!ranked.length) return [];
+
+    const heaviest = ranked[0].weight;
+    const palette = buildPalette(gradient);
+
+    return ranked.map(cell => {
+        // Square-root so a cell twice as hot reads as twice the *area*, which is
+        // how a graduated symbol is meant to be read.
+        const t = Math.sqrt(cell.weight / heaviest);
+        const off = Math.min(255, Math.round(t * 255)) * 4;
+        return {
+            position: { lat: cell.lat / cell.n, lng: cell.lng / cell.n },
+            icon: {
+                type: 'circle',
+                radius: 6 + t * 16,
+                fillColor: `rgb(${palette[off]}, ${palette[off + 1]}, ${palette[off + 2]})`,
+                fillOpacity: HEATMAP_OPACITY * 0.7,
+                strokeWidth: 0,
+            },
+            title: `${cell.n} report${cell.n === 1 ? '' : 's'} in this area`,
+            zIndex: Math.round(t * 100),
+        };
+    });
+}
+
+const BIAS_FILL = { high: '#ef4444', moderate: '#f59e0b', low: '#22c55e' } as const;
+const BIAS_STROKE = { high: '#fca5a5', moderate: '#fcd34d', low: '#86efac' } as const;
+
+// Google's style array. Deliberately routed through vendorOptions rather than
+// modelled generically: MapLibre wants a style URL and Esri a basemap id, so
+// there is nothing honest to abstract here.
+const DARK_MAP_STYLE = [
+    { elementType: 'geometry', stylers: [{ color: '#1a1a2e' }] },
+    { elementType: 'labels.text.stroke', stylers: [{ color: '#1a1a2e' }] },
+    { elementType: 'labels.text.fill', stylers: [{ color: '#8b8ba7' }] },
+    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2a2a4a' }] },
+    { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#6b6b8a' }] },
+    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0e0e1a' }] },
+    { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+    { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+];
+
+const STAT_BOX = 'background: rgba(255,255,255,0.05); padding: 8px; border-radius: 6px; text-align: center;';
+
+/** Hotspot popup as DOM. Every untrusted value is set as text, never markup. */
+function hotspotPopup(hs: HotspotData): HTMLElement {
+    const reporters = hs.unique_reporters || 1;
+    const ratio = hs.count / reporters;
+    const level = ratio > 4 ? 'high' : ratio > 2 ? 'moderate' : 'low';
+    const biased = ratio > 2;
+
+    const stat = (value: number, label: string) => el('div', {
+        style: STAT_BOX,
+        children: [
+            el('div', { style: 'font-size: 20px; font-weight: 700;', text: value }),
+            el('div', { style: 'font-size: 10px; color: #9ca3af;', text: label }),
+        ],
+    });
+
+    return popupRoot('min-width: 220px;', [
+            el('h4', {
+                style: 'margin: 0 0 8px 0; font-size: 14px; font-weight: 600;',
+                text: hs.sample_address || 'Cluster',
+            }),
+            el('div', {
+                style: 'display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;',
+                children: [stat(hs.count, 'Reports'), stat(reporters, 'Reporters')],
+            }),
+            el('div', {
+                style: 'font-size: 12px; margin-bottom: 6px;',
+                children: [
+                    el('span', {
+                        style: `color: ${biased ? BIAS_FILL[level] : '#22c55e'}; font-weight: 600;`,
+                        text: biased ? `${level.toUpperCase()} BIAS` : 'BALANCED',
+                    }),
+                    ` (${ratio.toFixed(1)} reports/reporter)`,
+                ],
+            }),
+            (hs.top_categories || []).length > 0 && el('div', {
+                style: 'margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px;',
+                children: (hs.top_categories || []).map(c => el('span', {
+                    style: 'background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-size: 10px;',
+                    text: c,
+                })),
+            }),
+    ]);
 }
 
 export default function SpatialBiasHeatmap({
@@ -168,169 +252,142 @@ export default function SpatialBiasHeatmap({
     isLoading: externalLoading,
 }: SpatialBiasHeatmapProps) {
     const mapRef = useRef<HTMLDivElement>(null);
-    const mapInstanceRef = useRef<google.maps.Map | null>(null);
-    const heatmapOverlayRef = useRef<(google.maps.OverlayView & { redraw: () => void }) | null>(null);
-    const biasMarkersRef = useRef<google.maps.Marker[]>([]);
-    const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
+    const rendererRef = useRef<MapRenderer | null>(null);
+    const overlayRef = useRef<CanvasOverlayHandle | null>(null);
+    const fallbackLayerRef = useRef<MarkerLayer | null>(null);
+    const hotspotLayerRef = useRef<MarkerLayer | null>(null);
+    const popupRef = useRef<PopupHandle | null>(null);
+
+    // Read inside the overlay's draw callback, which the renderer may invoke on
+    // any frame. Refs rather than state so a redraw never closes over stale data.
+    const pointsRef = useRef<HeatmapPoint[]>([]);
+    const gradientRef = useRef<string[]>(GRADIENTS.reports);
+    const radiusRef = useRef(25);
 
     const [mapReady, setMapReady] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [mode, setMode] = useState<HeatmapMode>('reports');
     const [showHotspotOverlay, setShowHotspotOverlay] = useState(true);
+    // False on providers with no pixel-projection hook (Apple MapKit). Drives
+    // the graduated-marker fallback and the note shown under the map, so the
+    // degradation is visible rather than silently different.
+    const [canDrawHeat, setCanDrawHeat] = useState(true);
 
-    // Load Google Maps (core only — no deprecated visualization library).
     useEffect(() => {
-        if (!apiKey) {
-            setIsLoading(false);
-            return;
-        }
-        loadGoogleMaps(apiKey)
-            .then(() => setTimeout(() => initMap(), 100))
-            .catch(() => setIsLoading(false));
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [apiKey]);
+        let cancelled = false;
+        const container = mapRef.current;
+        if (!container) return;
 
-    const initMap = useCallback(() => {
-        if (!mapRef.current || !window.google?.maps) return;
+        const config = legacyMapProviderConfig(apiKey);
+        if (!config) { setIsLoading(false); return; }
 
-        const center = defaultCenter || { lat: 40.3573, lng: -74.6672 }; // Default to NJ
-
-        const mapOptions: google.maps.MapOptions = {
-            center,
+        createMap(container, config, {
+            center: defaultCenter || { lat: 40.3573, lng: -74.6672 },
             zoom: 13,
-            mapTypeId: 'roadmap',
-            mapTypeControl: true,
-            streetViewControl: false,
-            fullscreenControl: true,
-            zoomControl: true,
-            styles: [
-                { elementType: 'geometry', stylers: [{ color: '#1a1a2e' }] },
-                { elementType: 'labels.text.stroke', stylers: [{ color: '#1a1a2e' }] },
-                { elementType: 'labels.text.fill', stylers: [{ color: '#8b8ba7' }] },
-                { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2a2a4a' }] },
-                { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#6b6b8a' }] },
-                { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0e0e1a' }] },
-                { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-                { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-            ],
+            controls: {
+                baseMapSwitcher: { enabled: true, position: 'top-left' },
+                zoom: { enabled: true },
+                fullscreen: { enabled: true },
+                streetView: { enabled: false },
+            },
+            // Google-only dark styling. Non-portable by definition, which is why
+            // it goes through vendorOptions rather than pretending to be generic.
+            vendorOptions: { styles: DARK_MAP_STYLE },
+        })
+            .then(renderer => {
+                if (cancelled) { renderer.destroy(); return; }
+                rendererRef.current = renderer;
+                popupRef.current = renderer.createPopup();
+                setCanDrawHeat(renderer.capabilities.canvasOverlay);
+                setIsLoading(false);
+                setMapReady(true);
+            })
+            .catch(() => !cancelled && setIsLoading(false));
+
+        return () => {
+            cancelled = true;
+            rendererRef.current?.destroy();
+            rendererRef.current = null;
+            overlayRef.current = null;
+            fallbackLayerRef.current = null;
+            hotspotLayerRef.current = null;
+            popupRef.current = null;
         };
+    }, [apiKey, defaultCenter]);
 
-        if (window.google.maps.MapTypeControlStyle) {
-            mapOptions.mapTypeControlOptions = {
-                style: window.google.maps.MapTypeControlStyle.HORIZONTAL_BAR,
-                position: window.google.maps.ControlPosition.TOP_LEFT,
-            };
-        }
-
-        const map = new window.google.maps.Map(mapRef.current, mapOptions);
-        mapInstanceRef.current = map;
-        infoWindowRef.current = new window.google.maps.InfoWindow();
-        setIsLoading(false);
-        setMapReady(true);
-    }, [defaultCenter]);
-
-    // Render / refresh the custom canvas heatmap when mode or data changes.
+    // Heat layer. Uses the canvas overlay where the provider has one, and
+    // graduated markers where it does not.
     useEffect(() => {
-        if (!mapInstanceRef.current || !mapReady || !window.google?.maps) return;
+        const renderer = rendererRef.current;
+        if (!renderer || !mapReady) return;
 
-        const map = mapInstanceRef.current;
         const points = (mode === 'reporters' ? heatmapData?.reporter_points : heatmapData?.report_points) || [];
+        pointsRef.current = points;
+        gradientRef.current = GRADIENTS[mode];
+        radiusRef.current = mode === 'reporters' ? 30 : 25;
 
-        // Recreate the overlay for the current mode/data (avoids stale closures).
-        if (heatmapOverlayRef.current) {
-            heatmapOverlayRef.current.setMap(null);
-            heatmapOverlayRef.current = null;
-        }
+        overlayRef.current?.remove();
+        overlayRef.current = null;
+        fallbackLayerRef.current?.remove();
+        fallbackLayerRef.current = null;
+
         if (!points.length) return;
 
-        const radius = mode === 'reporters' ? 30 : 25;
-        heatmapOverlayRef.current = createHeatmapOverlay(
-            map,
-            () => points,
-            () => GRADIENTS[mode],
-            radius,
-            0.85,
-        );
+        if (renderer.capabilities.canvasOverlay) {
+            overlayRef.current = renderer.addCanvasOverlay({
+                draw: (ctx, view) =>
+                    drawHeatmap(ctx, view, pointsRef.current, gradientRef.current, radiusRef.current),
+            });
+        }
+        if (!overlayRef.current) {
+            const layer = renderer.createMarkerLayer();
+            layer.setMarkers(fallbackDensityMarkers(points, GRADIENTS[mode]));
+            fallbackLayerRef.current = layer;
+        }
 
-        // Auto-fit bounds to the data.
-        const bounds = new window.google.maps.LatLngBounds();
-        points.forEach(p => bounds.extend(new window.google.maps.LatLng(p.lat, p.lng)));
-        map.fitBounds(bounds, 50);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        const bounds = boundsOfPoints(points);
+        if (bounds) renderer.fitBounds(bounds, { padding: 50 });
     }, [mode, heatmapData, mapReady]);
 
-    // Hotspot bias markers overlay
+    // Hotspot cluster markers, drawn above the heat.
     useEffect(() => {
-        if (!mapInstanceRef.current || !mapReady || !window.google?.maps) return;
+        const renderer = rendererRef.current;
+        if (!renderer || !mapReady) return;
 
-        const map = mapInstanceRef.current;
+        hotspotLayerRef.current?.remove();
+        hotspotLayerRef.current = null;
+        if (!showHotspotOverlay || !hotspots?.length) return;
 
-        // Clear old markers
-        biasMarkersRef.current.forEach(m => m.setMap(null));
-        biasMarkersRef.current = [];
-
-        if (!showHotspotOverlay || !hotspots || hotspots.length === 0) return;
-
-        hotspots.forEach((hs) => {
+        const layer = renderer.createMarkerLayer();
+        layer.setMarkers(hotspots.map(hs => {
             const reporters = hs.unique_reporters || 1;
             const ratio = hs.count / reporters;
-            // ratio > 2 means on average each reporter filed 2+ reports — potential bias
-            const isBiased = ratio > 2;
-            const biasLevel = ratio > 4 ? 'high' : ratio > 2 ? 'moderate' : 'low';
-
-            const fillColor = biasLevel === 'high' ? '#ef4444' : biasLevel === 'moderate' ? '#f59e0b' : '#22c55e';
-            const strokeColor = biasLevel === 'high' ? '#fca5a5' : biasLevel === 'moderate' ? '#fcd34d' : '#86efac';
-
-            const marker = new window.google.maps.Marker({
+            const level = ratio > 4 ? 'high' : ratio > 2 ? 'moderate' : 'low';
+            return {
                 position: { lat: hs.lat, lng: hs.lng },
-                map,
                 icon: {
-                    path: window.google.maps.SymbolPath.CIRCLE,
-                    fillColor,
+                    type: 'circle' as const,
+                    radius: Math.min(8 + hs.count, 20),
+                    fillColor: BIAS_FILL[level],
                     fillOpacity: 0.9,
-                    strokeColor,
-                    strokeWeight: 2,
-                    scale: Math.min(8 + hs.count, 20),
+                    strokeColor: BIAS_STROKE[level],
+                    strokeWidth: 2,
                 },
                 title: `${hs.count} reports / ${reporters} reporters`,
                 zIndex: 100,
-            });
+                onClick: (_event, marker) => {
+                    const popup = popupRef.current;
+                    if (!popup) return;
+                    // Built as DOM, not an HTML string: sample_address and the
+                    // category names are resident- and import-supplied and were
+                    // previously concatenated straight into markup.
+                    popup.setContent(hotspotPopup(hs));
+                    popup.openAt(marker);
+                },
+            };
+        }));
 
-            marker.addListener('click', () => {
-                if (!infoWindowRef.current) return;
-
-                const biasLabel = isBiased
-                    ? `<span style="color: ${fillColor}; font-weight: 600;">${biasLevel.toUpperCase()} BIAS</span> (${ratio.toFixed(1)} reports/reporter)`
-                    : `<span style="color: #22c55e; font-weight: 600;">BALANCED</span> (${ratio.toFixed(1)} reports/reporter)`;
-
-                const catsHtml = (hs.top_categories || [])
-                    .map(c => `<span style="background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-size: 10px;">${c}</span>`)
-                    .join(' ');
-
-                infoWindowRef.current!.setContent(`
-                    <div style="padding: 12px; font-family: system-ui, -apple-system, sans-serif; background: #1f2937; border-radius: 8px; min-width: 220px; color: white;">
-                        <h4 style="margin: 0 0 8px 0; font-size: 14px; font-weight: 600;">
-                            ${hs.sample_address || 'Cluster'}
-                        </h4>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
-                            <div style="background: rgba(255,255,255,0.05); padding: 8px; border-radius: 6px; text-align: center;">
-                                <div style="font-size: 20px; font-weight: 700;">${hs.count}</div>
-                                <div style="font-size: 10px; color: #9ca3af;">Reports</div>
-                            </div>
-                            <div style="background: rgba(255,255,255,0.05); padding: 8px; border-radius: 6px; text-align: center;">
-                                <div style="font-size: 20px; font-weight: 700;">${reporters}</div>
-                                <div style="font-size: 10px; color: #9ca3af;">Reporters</div>
-                            </div>
-                        </div>
-                        <div style="font-size: 12px; margin-bottom: 6px;">${biasLabel}</div>
-                        ${catsHtml ? `<div style="margin-top: 6px;">${catsHtml}</div>` : ''}
-                    </div>
-                `);
-                infoWindowRef.current!.open(map, marker);
-            });
-
-            biasMarkersRef.current.push(marker);
-        });
+        hotspotLayerRef.current = layer;
     }, [hotspots, showHotspotOverlay, mapReady]);
 
     if (!apiKey) {
@@ -379,6 +436,17 @@ export default function SpatialBiasHeatmap({
                 <p className="text-xs text-white/40 mb-4">
                     Compare report density vs unique reporters to detect over-reporting bias
                 </p>
+
+                {/* Say so when the heat surface is unavailable rather than quietly
+                    rendering something different. Apple MapKit exposes no
+                    pixel-projection hook, so density falls back to graduated
+                    markers there -- readable, but not the same picture. */}
+                {mapReady && !canDrawHeat && (
+                    <p className="text-[11px] text-amber-300/70 -mt-3 mb-4" role="status">
+                        This map provider can&apos;t draw a heat surface, so density is shown as
+                        graduated circles instead.
+                    </p>
+                )}
 
                 {/* Summary stats */}
                 <div className="grid grid-cols-3 gap-2 mb-4">

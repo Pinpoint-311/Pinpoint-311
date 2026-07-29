@@ -1,13 +1,17 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MapPin, Layers, ChevronDown, ChevronRight, X } from 'lucide-react';
-import { MarkerClusterer } from '@googlemaps/markerclusterer';
-import { loadGoogleMaps } from '../utils/googleMaps';
-
-declare global {
-    interface Window {
-        google: typeof google;
-    }
-}
+import {
+    MapProviderId,
+    MapRenderer,
+    MarkerLayer,
+    MarkerOptions,
+    PopupHandle,
+    boundsOfGeoJson,
+    createMap,
+    el,
+    legacyMapProviderConfig,
+    popupRoot,
+} from '../maps';
 
 // Flexible request type that works with both PublicServiceRequest and ServiceRequest
 interface MapRequest {
@@ -26,6 +30,8 @@ interface MapRequest {
 interface ResidentMapViewProps {
     apiKey: string;
     mapId?: string | null;
+    /** Overrides the configured provider; defaults to the town's setting. */
+    provider?: MapProviderId;
     requests: MapRequest[];
     townshipBoundary?: object | null;
     defaultCenter?: { lat: number; lng: number };
@@ -49,6 +55,7 @@ const STATUS_LABELS = {
 export default function ResidentMapView({
     apiKey,
     mapId,
+    provider,
     requests,
     townshipBoundary,
     defaultCenter = { lat: 40.3573, lng: -74.6672 },
@@ -56,10 +63,9 @@ export default function ResidentMapView({
     onRequestSelect,
 }: ResidentMapViewProps) {
     const mapRef = useRef<HTMLDivElement>(null);
-    const mapInstanceRef = useRef<google.maps.Map | null>(null);
-    const markersRef = useRef<google.maps.Marker[]>([]);
-    const clustererRef = useRef<MarkerClusterer | null>(null);
-    const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
+    const mapInstanceRef = useRef<MapRenderer | null>(null);
+    const requestLayerRef = useRef<MarkerLayer | null>(null);
+    const popupRef = useRef<PopupHandle | null>(null);
 
     // Filter state
     const [statusFilters, setStatusFilters] = useState({
@@ -103,93 +109,117 @@ export default function ResidentMapView({
         setDepartmentFilters(newFilters);
     }, [requests.map(r => r.assigned_department_name).join(',')]);
 
-    // Load Google Maps script
+    // Load the configured map provider and attach the map
     useEffect(() => {
         if (!apiKey) {
             setIsLoading(false);
             return;
         }
 
-        loadGoogleMaps(apiKey).then(() => initMap()).catch(() => setIsLoading(false));
+        let isMounted = true;
+
+        (async () => {
+            if (!mapRef.current) return;
+            try {
+                const map = await createMap(
+                    mapRef.current,
+                    legacyMapProviderConfig(apiKey, mapId, provider),
+                    {
+                        center: defaultCenter,
+                        zoom: defaultZoom,
+                        baseMapType: 'roadmap',
+                        // Tilt/heading only take effect on providers rendering a
+                        // vector basemap, which is what styleId selects.
+                        tilt: mapId ? 45 : undefined,
+                        heading: mapId ? 0 : undefined,
+                        styleId: mapId,
+                        controls: {
+                            baseMapSwitcher: {
+                                enabled: true,
+                                position: 'top-left',
+                                types: ['roadmap', 'satellite', 'hybrid'],
+                            },
+                            streetView: { enabled: false },
+                            fullscreen: { enabled: true },
+                            zoom: { enabled: true, position: 'right-bottom' },
+                            rotate: { enabled: !!mapId },
+                        },
+                        // Google-only styling; other providers carry POI visibility
+                        // in their own style document.
+                        vendorOptions: {
+                            styles: [
+                                { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+                            ],
+                        },
+                    },
+                );
+
+                if (!isMounted) {
+                    map.destroy();
+                    return;
+                }
+
+                mapInstanceRef.current = map;
+                popupRef.current = map.createPopup();
+                requestLayerRef.current = map.createMarkerLayer({
+                    cluster: {
+                        style: (count) => ({
+                            icon: {
+                                type: 'circle',
+                                radius: 16 + Math.min(count, 50) / 5,
+                                fillColor: '#4f46e5',  // Was #6366f1, darker for WCAG AA contrast
+                                fillOpacity: 0.95,
+                                strokeColor: '#ffffff',
+                                strokeWidth: 2,
+                            },
+                            label: {
+                                text: String(count),
+                                color: '#ffffff',
+                                fontSize: '11px',
+                                fontWeight: '700',
+                            },
+                            zIndex: 1000 + count,
+                        }),
+                    },
+                });
+
+                // Render township boundary and fit to it
+                if (townshipBoundary) {
+                    renderBoundaryAndFit(map, townshipBoundary);
+                }
+
+                setIsLoading(false);
+                setMapReady(true);
+            } catch (e) {
+                console.error('Failed to initialize map:', e);
+                if (isMounted) setIsLoading(false);
+            }
+        })();
 
         return () => {
-            markersRef.current.forEach(m => m.setMap(null));
-            markersRef.current = [];
-            if (clustererRef.current) {
-                clustererRef.current.clearMarkers();
-            }
+            isMounted = false;
+            requestLayerRef.current = null;
+            popupRef.current = null;
+            mapInstanceRef.current?.destroy();
+            mapInstanceRef.current = null;
         };
-    }, [apiKey]);
+    }, [apiKey, mapId, provider]);
 
-    const initMap = useCallback(() => {
-        if (!mapRef.current || !window.google) return;
-
-        const mapOptions: google.maps.MapOptions = {
-            center: defaultCenter,
-            zoom: defaultZoom,
-            mapTypeId: 'roadmap',
-            mapTypeControl: true,
-            mapTypeControlOptions: {
-                style: window.google.maps.MapTypeControlStyle.HORIZONTAL_BAR,
-                position: window.google.maps.ControlPosition.TOP_LEFT,
-                mapTypeIds: ['roadmap', 'satellite', 'hybrid'],
-            },
-            streetViewControl: false,
-            fullscreenControl: true,
-            zoomControl: true,
-            zoomControlOptions: {
-                position: window.google.maps.ControlPosition.RIGHT_BOTTOM,
-            },
-            styles: [
-                { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-            ],
-        };
-
-        // Enable 45° tilt and rotation if Map ID is configured (vector maps)
-        if (mapId) {
-            (mapOptions as any).mapId = mapId;
-            mapOptions.tilt = 45;
-            mapOptions.heading = 0;
-            (mapOptions as any).rotateControl = true;
-        }
-
-        const map = new window.google.maps.Map(mapRef.current, mapOptions);
-
-        mapInstanceRef.current = map;
-        infoWindowRef.current = new window.google.maps.InfoWindow();
-
-        // Render township boundary and fit to it
-        if (townshipBoundary) {
-            renderBoundaryAndFit(map, townshipBoundary);
-        }
-
-        setIsLoading(false);
-        setMapReady(true);
-    }, [defaultCenter, defaultZoom, townshipBoundary]);
-
-    const renderBoundaryAndFit = (map: google.maps.Map, boundary: any) => {
+    const renderBoundaryAndFit = (map: MapRenderer, boundary: object) => {
         try {
-            const dataLayer = new window.google.maps.Data();
-            dataLayer.addGeoJson(boundary);
-            dataLayer.setStyle({
-                fillColor: '#6366f1',
-                fillOpacity: 0.05,
-                strokeColor: '#6366f1',
-                strokeWeight: 2,
-                strokeOpacity: 0.6,
+            map.addGeoJsonLayer({
+                data: boundary,
+                style: {
+                    fillColor: '#6366f1',
+                    fillOpacity: 0.05,
+                    strokeColor: '#6366f1',
+                    strokeWidth: 2,
+                    strokeOpacity: 0.6,
+                },
             });
-            dataLayer.setMap(map);
 
-            const bounds = new window.google.maps.LatLngBounds();
-            dataLayer.forEach((feature) => {
-                const geometry = feature.getGeometry();
-                if (geometry) {
-                    geometry.forEachLatLng((latlng) => {
-                        bounds.extend(latlng);
-                    });
-                }
-            });
-            map.fitBounds(bounds);
+            const bounds = boundsOfGeoJson(boundary);
+            if (bounds) map.fitBounds(bounds);
         } catch (e) {
             console.error('Error rendering boundary:', e);
         }
@@ -197,20 +227,13 @@ export default function ResidentMapView({
 
     // Update markers when filters or requests change
     useEffect(() => {
-        if (!mapInstanceRef.current || !window.google) return;
+        if (!mapInstanceRef.current) return;
         updateMarkers();
     }, [requests, statusFilters, categoryFilters, departmentFilters, mapReady]);
 
     const updateMarkers = () => {
-        const map = mapInstanceRef.current;
-        if (!map) return;
-
-        // Clear existing markers
-        markersRef.current.forEach(m => m.setMap(null));
-        markersRef.current = [];
-        if (clustererRef.current) {
-            clustererRef.current.clearMarkers();
-        }
+        const requestLayer = requestLayerRef.current;
+        if (!requestLayer) return;
 
         // Filter requests
         const filteredRequests = requests.filter(r => {
@@ -223,94 +246,71 @@ export default function ResidentMapView({
         });
 
         // Create markers
-        const markers = filteredRequests.map(request => {
-            const marker = new window.google.maps.Marker({
-                position: { lat: request.lat!, lng: request.long! },
-                icon: {
-                    path: window.google.maps.SymbolPath.CIRCLE,
-                    fillColor: STATUS_COLORS[request.status as keyof typeof STATUS_COLORS] || '#6366f1',
-                    fillOpacity: 1,
-                    strokeColor: '#ffffff',
-                    strokeWeight: 2,
-                    scale: 9,
-                },
-                title: request.service_name,
-            });
-
-            marker.addListener('click', () => {
-                if (infoWindowRef.current) {
-                    const statusColor = STATUS_COLORS[request.status as keyof typeof STATUS_COLORS];
-                    const statusLabel = STATUS_LABELS[request.status as keyof typeof STATUS_LABELS] || request.status;
-
-                    infoWindowRef.current.setContent(`
-                        <div style="padding: 16px; max-width: 300px; font-family: system-ui, -apple-system, sans-serif;">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                                <span style="font-size: 12px; color: #6366f1; font-family: monospace; font-weight: 600;">#${request.service_request_id.slice(-8)}</span>
-                                <span style="font-size: 11px; padding: 4px 10px; border-radius: 9999px; background: ${statusColor}; color: white; font-weight: 600;">
-                                    ${statusLabel}
-                                </span>
-                            </div>
-                            <h3 style="margin: 0 0 8px 0; font-size: 16px; font-weight: 700; color: #1f2937;">${request.service_name}</h3>
-                            <p style="margin: 0 0 12px 0; font-size: 13px; color: #4b5563; line-height: 1.5;">${request.description?.substring(0, 100) || 'No description'}${(request.description?.length || 0) > 100 ? '...' : ''}</p>
-                            ${request.address ? `<p style="margin: 0 0 12px 0; font-size: 12px; color: #6b7280;">📍 ${request.address}</p>` : ''}
-                            <p style="margin: 0; font-size: 11px; color: #9ca3af;">Reported ${new Date(request.requested_datetime).toLocaleDateString()}</p>
-                            ${onRequestSelect ? `
-                                <button 
-                                    onclick="window.residentMapSelectRequest('${request.service_request_id}')"
-                                    style="width: 100%; margin-top: 12px; padding: 10px 16px; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; border: none; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer;"
-                                >
-                                    View Details
-                                </button>
-                            ` : ''}
-                        </div>
-                    `);
-                    infoWindowRef.current.open(map, marker);
-                }
-            });
-
-            return marker;
-        });
-
-        // Set up global callback
-        if (onRequestSelect) {
-            (window as any).residentMapSelectRequest = (requestId: string) => {
-                const request = requests.find(r => r.service_request_id === requestId);
-                if (request && onRequestSelect) {
-                    infoWindowRef.current?.close();
-                    onRequestSelect(request);
-                }
-            };
-        }
-
-        markersRef.current = markers;
-
-        // Create clusterer
-        clustererRef.current = new MarkerClusterer({
-            map,
-            markers,
-            renderer: {
-                render: ({ count, position }) => {
-                    return new window.google.maps.Marker({
-                        position,
-                        icon: {
-                            path: window.google.maps.SymbolPath.CIRCLE,
-                            fillColor: '#4f46e5',  // Was #6366f1, darker for WCAG AA contrast
-                            fillOpacity: 0.95,
-                            strokeColor: '#ffffff',
-                            strokeWeight: 2,
-                            scale: 16 + Math.min(count, 50) / 5,
-                        },
-                        label: {
-                            text: String(count),
-                            color: '#ffffff',
-                            fontSize: '11px',
-                            fontWeight: '700',
-                        },
-                        zIndex: 1000 + count,
-                    });
-                },
+        const markers: MarkerOptions[] = filteredRequests.map(request => ({
+            position: { lat: request.lat!, lng: request.long! },
+            icon: {
+                type: 'circle',
+                radius: 9,
+                fillColor: STATUS_COLORS[request.status as keyof typeof STATUS_COLORS] || '#6366f1',
+                fillOpacity: 1,
+                strokeColor: '#ffffff',
+                strokeWidth: 2,
             },
-        });
+            title: request.service_name,
+            onClick: (_e, marker) => {
+                const popup = popupRef.current;
+                if (!popup) return;
+
+                const statusColor = STATUS_COLORS[request.status as keyof typeof STATUS_COLORS];
+                const statusLabel = STATUS_LABELS[request.status as keyof typeof STATUS_LABELS] || request.status;
+                const description = request.description?.substring(0, 100) || 'No description';
+                const truncated = (request.description?.length || 0) > 100;
+
+                popup.setContent(popupRoot('padding: 16px; max-width: 300px;', [
+                    el('div', {
+                        style: 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;',
+                        children: [
+                            el('span', {
+                                style: 'font-size: 12px; color: #6366f1; font-family: monospace; font-weight: 600;',
+                                text: `#${request.service_request_id.slice(-8)}`,
+                            }),
+                            el('span', {
+                                style: `font-size: 11px; padding: 4px 10px; border-radius: 9999px; background: ${statusColor}; color: white; font-weight: 600;`,
+                                text: statusLabel,
+                            }),
+                        ],
+                    }),
+                    el('h3', {
+                        style: 'margin: 0 0 8px 0; font-size: 16px; font-weight: 700; color: #1f2937;',
+                        text: request.service_name,
+                    }),
+                    el('p', {
+                        style: 'margin: 0 0 12px 0; font-size: 13px; color: #4b5563; line-height: 1.5;',
+                        text: truncated ? `${description}...` : description,
+                    }),
+                    request.address && el('p', {
+                        style: 'margin: 0 0 12px 0; font-size: 12px; color: #6b7280;',
+                        text: `📍 ${request.address}`,
+                    }),
+                    el('p', {
+                        style: 'margin: 0; font-size: 11px; color: #9ca3af;',
+                        text: `Reported ${new Date(request.requested_datetime).toLocaleDateString()}`,
+                    }),
+                    onRequestSelect && el('button', {
+                        style: 'width: 100%; margin-top: 12px; padding: 10px 16px; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; border: none; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer;',
+                        text: 'View Details',
+                        onClick: () => {
+                            popup.close();
+                            onRequestSelect(request);
+                        },
+                    }),
+                ]));
+                popup.openAt(marker);
+            },
+        }));
+
+        // Bulk replace: the layer's clustering is rebuilt from the new set.
+        requestLayer.setMarkers(markers);
     };
 
     // Count requests by status
