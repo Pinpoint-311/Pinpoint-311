@@ -181,3 +181,165 @@ async def road_status(
         "consecutive_failures": status.consecutive_failures,
         "last_error": status.last_error,
     }
+
+
+@router.get("/roads/geometry")
+async def road_geometry(
+    names: str = Query("", description="Comma-separated road names"),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_staff),
+):
+    """GeoJSON for the roads a clerk has selected, so they can see what a rule
+    covers before saving it.
+
+    Returns one feature per segment rather than merging them. A clerk needs to
+    switch an individual piece off -- the data lumps a service spur or a stretch
+    the town actually maintains under the same name -- and that is impossible if
+    the geometry arrives already dissolved.
+    """
+    from app.services.road_matching import normalize_road_name
+
+    wanted = [n.strip() for n in names.split(",") if n.strip()]
+    if not wanted:
+        return {"type": "FeatureCollection", "features": []}
+
+    normalized = [normalize_road_name(n) for n in wanted]
+    normalized = [n for n in normalized if n]
+    if not normalized:
+        return {"type": "FeatureCollection", "features": []}
+
+    try:
+        rows = (
+            await db.execute(
+                select(
+                    RoadSegment.id,
+                    RoadSegment.source_feature_id,
+                    RoadSegment.name,
+                    RoadSegment.ref,
+                    func.ST_AsGeoJSON(RoadSegment.geom).label("geojson"),
+                ).where(
+                    RoadSegment.name_norm.in_(normalized) | RoadSegment.ref_norm.in_(normalized)
+                ).limit(5000)
+            )
+        ).all()
+    except Exception as exc:
+        logger.info("road geometry unavailable: %s", exc)
+        return {"type": "FeatureCollection", "features": [], "available": False}
+
+    import json as _json
+
+    return {
+        "type": "FeatureCollection",
+        "available": True,
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": _json.loads(row.geojson),
+                "properties": {
+                    "segment_id": row.id,
+                    "feature_id": row.source_feature_id,
+                    "name": row.name,
+                    "ref": row.ref,
+                },
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.post("/roads/corridor-check")
+async def corridor_check(
+    payload: ConfigCheckRequest,
+    corridor_m: int = Query(20, ge=3, le=100),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_staff),
+):
+    """Find corridors that run alongside each other at the chosen width.
+
+    Roads crossing is normal -- every intersection overlaps -- so only sustained
+    parallel overlap is reported. Computed in PostGIS by intersecting buffered
+    geometries and measuring the length of the result, which is what separates
+    a junction (a small patch) from a frontage road (a long ribbon).
+    """
+    from sqlalchemy import text
+
+    from app.services.road_geometry import parallel_overlap_flags
+    from app.services.road_matching import _as_list, normalize_road_name
+
+    config = payload.routing_config or {}
+    names: List[str] = []
+    for jurisdiction in config.get("jurisdictions") or []:
+        if isinstance(jurisdiction, dict):
+            names.extend(_as_list(jurisdiction.get("roads")))
+    names.extend(_as_list(config.get("exclusion_list")))
+    normalized = sorted({n for n in (normalize_road_name(x) for x in names) if n})
+
+    if len(normalized) < 2:
+        return {"issues": [], "corridor_metres": corridor_m}
+
+    # Pairwise, on the buffered union of each road. Only listed roads are
+    # considered, so this stays a handful of geometries however large the town.
+    sql = text("""
+        WITH roads AS (
+            SELECT name_norm, ST_Union(geom::geography::geometry) AS geom
+            FROM road_segments
+            WHERE name_norm = ANY(:names)
+            GROUP BY name_norm
+        )
+        SELECT a.name_norm AS road_a, b.name_norm AS road_b,
+               ST_Length(
+                   ST_Intersection(
+                       ST_Buffer(a.geom::geography, :radius)::geometry,
+                       ST_Buffer(b.geom::geography, :radius)::geometry
+                   )::geography
+               ) AS overlap_length_m
+        FROM roads a JOIN roads b ON a.name_norm < b.name_norm
+        WHERE ST_Intersects(
+            ST_Buffer(a.geom::geography, :radius)::geometry,
+            ST_Buffer(b.geom::geography, :radius)::geometry
+        )
+    """)
+
+    try:
+        rows = (await db.execute(sql, {"names": normalized, "radius": corridor_m})).mappings().all()
+    except Exception as exc:
+        # No PostGIS, no road table, or a geometry error. The clerk can still
+        # save -- this check is advisory, not a gate.
+        logger.info("corridor overlap check unavailable: %s", exc)
+        return {"issues": [], "corridor_metres": corridor_m, "available": False}
+
+    flags = parallel_overlap_flags([dict(r) for r in rows], corridor_m=corridor_m)
+    return {
+        "available": True,
+        "corridor_metres": corridor_m,
+        "issues": [
+            {"severity": f.severity, "kind": f.kind, "message": f.message, "roads": f.roads}
+            for f in flags
+        ],
+    }
+
+
+class CorridorWidthRequest(BaseModel):
+    corridor_metres: int
+
+
+@router.put("/roads/corridor-width")
+async def set_corridor_width(
+    payload: CorridorWidthRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """How far from a centreline still counts as being on that road.
+
+    Per town because a dense borough with 8 m rights-of-way and a rural township
+    with wide shoulders want different numbers, and because it has to absorb
+    disagreement between the road data and whatever basemap the resident sees.
+    """
+    width = max(3, min(100, payload.corridor_metres))
+    status = (await db.execute(select(RoadDataStatus).limit(1))).scalar_one_or_none()
+    if status is None:
+        status = RoadDataStatus()
+        db.add(status)
+    status.corridor_metres = width
+    await db.commit()
+    return {"corridor_metres": width}
