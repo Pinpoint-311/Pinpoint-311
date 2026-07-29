@@ -193,11 +193,26 @@ async def get_maps_config(db: AsyncSession = Depends(get_db)):
     from app.services import map_provider as mp
     from app.services.secret_manager import get_secret as _get_secret
 
-    modules = (settings.modules if settings else None) or {}
-    render_provider = mp.normalize_provider(modules.get("map_provider"))
-    geocode_provider = mp.geocoder_for(render_provider, modules.get("geocode_provider"))
+    # Selection lives in Secret Manager beside every other capability's choice,
+    # rather than in the modules blob, so switching a map works the same way as
+    # switching an AI or translation provider.
+    render_provider = mp.normalize_provider(await _get_secret(mp.MAP_PROVIDER_KEY))
+    geocode_provider = mp.geocoder_for(
+        render_provider, await _get_secret(mp.GEOCODE_PROVIDER_KEY)
+    )
     credentials = await mp.resolve_credentials(render_provider, _get_secret)
     missing = mp.missing_requirements(render_provider, credentials)
+
+    # Apple is the one provider that cannot be authenticated with a static key:
+    # MapKit JS wants an ES256-signed JWT, and the signing key must never leave
+    # the server. Mint a short-lived token instead.
+    if render_provider == "apple":
+        from app.services.apple_mapkit import get_token
+
+        token = await get_token(_get_secret)
+        credentials["token"] = token
+        if not token:
+            missing = sorted(set(missing) | {"token"})
 
     return {
         # Legacy fields. The frontend still reads these until every component

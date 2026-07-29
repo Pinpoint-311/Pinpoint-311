@@ -62,6 +62,9 @@ class RoadMatch:
     segment_id: int
     source_feature_id: str
     highway_class: Optional[str]
+    # 0..1 along the segment, from ST_LineLocatePoint. None when the query could
+    # not supply it, which must never be treated as "outside the trim".
+    fraction_along: Optional[float] = None
 
     @property
     def label(self) -> str:
@@ -90,6 +93,12 @@ def nearest_roads_query(lat: float, lng: float, radius_m: float, limit: int = 8)
             RoadSegment.source_feature_id,
             RoadSegment.highway_class,
             distance.label("distance_m"),
+            # Where along this segment the pin fell. Needed to honour a trim,
+            # and cheap enough to always compute -- it is one pass over a line
+            # the index has already located.
+            func.ST_LineLocatePoint(
+                func.ST_LineMerge(RoadSegment.geom), point
+            ).label("fraction_along"),
         )
         .where(func.ST_DWithin(cast(RoadSegment.geom, Geography), cast(point, Geography), radius_m))
         .order_by(RoadSegment.geom.op("<->")(point))
@@ -116,6 +125,9 @@ async def nearest_roads(
             segment_id=row.id,
             source_feature_id=row.source_feature_id,
             highway_class=row.highway_class,
+            fraction_along=(
+                float(row.fraction_along) if row.fraction_along is not None else None
+            ),
         )
         for row in rows
     ]
@@ -156,9 +168,12 @@ def _matching_jurisdiction(
     jurisdictions: Sequence[Dict[str, Any]],
     road: RoadMatch,
     excluded: Optional[set] = None,
+    trims: Optional[Dict[str, "Trim"]] = None,
 ) -> Optional[Tuple[Dict[str, Any], str]]:
     if excluded and road.source_feature_id in excluded:
         return None  # switched off in the coverage map
+    if trims and not within_trim(road.fraction_along, trims.get(road.source_feature_id)):
+        return None  # past the point the clerk dragged the rule back to
     for jurisdiction in jurisdictions:
         for entry in _as_list(jurisdiction.get("roads")):
             if road_matches(entry, road.name or "") or (road.ref and road_matches(entry, road.ref)):
@@ -197,6 +212,7 @@ def choose_road(
     # can still be the nearest road, and the town is still responsible for it.
     # It just cannot be claimed by a jurisdiction.
     excluded = excluded_feature_ids(config)
+    trims = parse_trims(config)
 
     ordered = sorted(candidates, key=lambda r: r.distance_m)
     municipal = _municipal_entries(config)
@@ -217,11 +233,11 @@ def choose_road(
         # Being wrong this way costs a reassignment; being wrong the other way
         # turns a resident away with no recourse.
         for road in tied:
-            if _matching_jurisdiction(jurisdictions, road, excluded) is None:
+            if _matching_jurisdiction(jurisdictions, road, excluded, trims) is None:
                 return road, None
 
     for road in tied:
-        claim = _matching_jurisdiction(jurisdictions, road, excluded)
+        claim = _matching_jurisdiction(jurisdictions, road, excluded, trims)
         if claim is not None:
             return road, claim
 
@@ -377,3 +393,75 @@ def parallel_overlap_flags(
             roads=[str(a), str(b)],
         ))
     return flags
+
+
+# ---- trimming a rule along a road -------------------------------------------
+
+@dataclass
+class Trim:
+    """How much of a segment a rule actually covers, as fractions of its length.
+
+    The road data does not break where jurisdiction does, and it does not break
+    where reality does either -- a publisher may run one segment straight
+    through a boundary, or split it somewhere arbitrary. Switching whole
+    segments on and off can only ever approximate the truth to whatever
+    granularity the publisher happened to choose.
+
+    Fractions rather than coordinates so a refresh that re-cuts the geometry
+    keeps the intent: "the first 40% of this segment" survives a re-draw of the
+    line, where a stored point would end up off it.
+    """
+
+    start: float = 0.0
+    end: float = 1.0
+
+    def __post_init__(self) -> None:
+        self.start = min(max(float(self.start), 0.0), 1.0)
+        self.end = min(max(float(self.end), 0.0), 1.0)
+        if self.end < self.start:
+            self.start, self.end = self.end, self.start
+
+    @property
+    def covers_everything(self) -> bool:
+        return self.start <= 0.0 and self.end >= 1.0
+
+    @property
+    def is_empty(self) -> bool:
+        # A zero-length trim covers nothing; treat it as "not trimmed" rather
+        # than as a rule that can never match, which would be invisible.
+        return self.end - self.start < 1e-6
+
+
+def parse_trims(config: Dict[str, Any]) -> Dict[str, Trim]:
+    """Per-segment trims from a routing config, keyed by publisher feature id."""
+    raw = config.get("segment_trims")
+    if not isinstance(raw, dict):
+        return {}
+    trims: Dict[str, Trim] = {}
+    for feature_id, value in raw.items():
+        try:
+            if isinstance(value, dict):
+                trim = Trim(value.get("start", 0.0), value.get("end", 1.0))
+            elif isinstance(value, (list, tuple)) and len(value) == 2:
+                trim = Trim(value[0], value[1])
+            else:
+                continue
+        except (TypeError, ValueError):
+            continue  # a malformed trim must not disable the whole rule
+        if not trim.covers_everything and not trim.is_empty:
+            trims[str(feature_id)] = trim
+    return trims
+
+
+def within_trim(fraction_along: Optional[float], trim: Optional[Trim]) -> bool:
+    """Is a point at this position along a segment inside the trimmed part?
+
+    An unknown position passes. The alternative is dropping a match because a
+    measurement was unavailable, which turns a data gap into a resident being
+    handled by the wrong agency -- and in the blocking direction, turned away.
+    """
+    if trim is None:
+        return True
+    if fraction_along is None:
+        return True
+    return trim.start <= fraction_along <= trim.end

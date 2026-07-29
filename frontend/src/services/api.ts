@@ -562,7 +562,7 @@ class ApiClient {
     }
 
     // Service providers (AI / translation / identity)
-    async getProviderCatalog(capability: 'ai' | 'translation' | 'identity'): Promise<ProviderCatalog> {
+    async getProviderCatalog(capability: 'ai' | 'translation' | 'identity' | 'maps'): Promise<ProviderCatalog> {
         return this.request<ProviderCatalog>(`/system/${capability}/catalog`);
     }
 

@@ -108,6 +108,15 @@ async def test_unknown_provider_resolves_the_default_s_credentials():
     assert "apiKey" in creds
 
 
+def test_every_credential_field_has_setup_help():
+    """A clerk reading "ArcGIS API key" with no further instruction has to go
+    and find out what that is. Every field says where to get it."""
+    for provider, spec in mp.MAP_CATALOG.items():
+        help_text = spec.get("field_help", {})
+        for field in spec["credential_fields"]:
+            assert help_text.get(field["key"]), f"{provider}.{field['key']} has no help"
+
+
 def test_a_provider_with_no_required_secrets_is_never_blocked():
     """missing_requirements must return empty rather than inventing a
     requirement, or such a provider could never be selected."""
@@ -119,11 +128,23 @@ def test_a_provider_missing_its_key_is_reported():
     assert mp.missing_requirements("esri", {"apiKey": "k"}) == []
 
 
-def test_apple_wants_a_signed_token_not_a_static_key():
-    """MapKit JS authenticates with a short-lived JWT the server signs; the
-    private key must never reach the browser."""
-    assert mp.PROVIDERS["apple"]["required"] == ["token"]
-    assert "apiKey" not in mp.PROVIDERS["apple"]["secrets"]
+def test_apple_wants_a_signing_key_not_a_static_api_key():
+    """MapKit JS authenticates with a short-lived JWT the server signs, so the
+    town supplies a team id, a key id and a .p8 -- never an API key."""
+    keys = {f["key"] for f in mp.MAP_CATALOG["apple"]["credential_fields"]}
+    assert keys == {"APPLE_MAPKIT_TEAM_ID", "APPLE_MAPKIT_KEY_ID", "APPLE_MAPKIT_PRIVATE_KEY"}
+
+
+@pytest.mark.asyncio
+async def test_the_apple_private_key_is_never_sent_to_a_browser():
+    """It signs tokens for the whole developer team and Apple lets you download
+    it once. Only the signed token may leave the server."""
+    async def fake_get_secret(name):
+        return f"value-{name}"
+
+    creds = await mp.resolve_credentials("apple", fake_get_secret)
+    assert not any("PRIVATE" in str(v).upper() for v in creds.values())
+    assert "APPLE_MAPKIT_PRIVATE_KEY" not in creds
 
 
 # ---- the admin catalog -----------------------------------------------------
@@ -136,7 +157,7 @@ def test_catalog_puts_the_recommended_provider_first():
 
 def test_catalog_covers_every_provider_and_says_what_each_needs():
     catalog = mp.catalog()
-    assert {e["id"] for e in catalog} == set(mp.PROVIDERS)
+    assert {e["id"] for e in catalog} == set(mp.MAP_CATALOG)
     for entry in catalog:
         assert entry["label"] and entry["setup"]
         assert isinstance(entry["requires"], list)

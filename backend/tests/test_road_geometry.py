@@ -261,3 +261,67 @@ def test_a_malformed_exclusion_list_is_ignored():
     for junk in ("not a list", 5, None, {}):
         config = {"jurisdictions": [COUNTY], "excluded_segments": junk}
         assert choose_road([road("Cranbury Rd", 3.0)], config)[1] is not None
+
+
+# ---- trimming a rule along a road -------------------------------------------
+
+def road_at(name, distance, fraction, *, segment_id=1):
+    return RoadMatch(
+        name=name, ref=None, distance_m=distance, segment_id=segment_id,
+        source_feature_id=str(segment_id), highway_class="secondary",
+        fraction_along=fraction,
+    )
+
+
+TRIMMED = {"jurisdictions": [COUNTY], "segment_trims": {"1": {"start": 0.0, "end": 0.4}}}
+
+
+def test_a_pin_inside_the_trim_still_blocks():
+    result = choose_road([road_at("Cranbury Rd", 3.0, 0.2)], TRIMMED)
+    assert result[1] is not None and result[1][0]["name"] == "Middlesex County"
+
+
+def test_a_pin_past_the_trim_is_the_towns():
+    """The clerk dragged the rule back because the data ran the segment straight
+    through the point where responsibility actually changes."""
+    result = choose_road([road_at("Cranbury Rd", 3.0, 0.8)], TRIMMED)
+    assert result[0].name == "Cranbury Rd"
+    assert result[1] is None
+
+
+def test_an_untrimmed_segment_of_the_same_road_is_unaffected():
+    """Trimming one segment must not quietly narrow the whole rule."""
+    result = choose_road([road_at("Cranbury Rd", 3.0, 0.9, segment_id=2)], TRIMMED)
+    assert result[1] is not None
+
+
+def test_an_unmeasurable_position_does_not_block_the_match():
+    """A missing measurement is a data gap, not evidence the pin is outside the
+    trim. Treating it as outside would hand the resident to the wrong agency."""
+    result = choose_road([road_at("Cranbury Rd", 3.0, None)], TRIMMED)
+    assert result[1] is not None
+
+
+@pytest.mark.parametrize("junk", ["nope", 5, None, {"1": "bad"}, {"1": [1]}])
+def test_a_malformed_trim_never_disables_a_rule(junk):
+    config = {"jurisdictions": [COUNTY], "segment_trims": junk}
+    assert choose_road([road_at("Cranbury Rd", 3.0, 0.5)], config)[1] is not None
+
+
+def test_trim_endpoints_are_clamped_and_ordered():
+    """Dragging past either end, or dragging the handles across each other, is
+    normal and must not produce a rule that matches nothing."""
+    t = rg.Trim(1.4, -0.3)
+    assert (t.start, t.end) == (0.0, 1.0)
+    assert rg.Trim(0.8, 0.2).start == 0.2
+
+
+def test_a_full_length_trim_is_not_stored():
+    """It is the default; keeping it would grow the config for no effect."""
+    assert rg.parse_trims({"segment_trims": {"1": {"start": 0, "end": 1}}}) == {}
+
+
+def test_a_zero_length_trim_is_ignored_rather_than_matching_nothing():
+    """Dragging both handles together should not silently create a rule that can
+    never fire -- that is the invisible-misconfiguration failure again."""
+    assert rg.parse_trims({"segment_trims": {"1": {"start": 0.5, "end": 0.5}}}) == {}
