@@ -96,6 +96,9 @@ services:
       - ./backend:/app
       - .:/project
       - uploads_data:/project/uploads
+      # Pre-migration pg_dumps land here. Local-only and pruned to the newest
+      # three: each is an unencrypted copy of the whole resident database.
+      - migration_backups:/backups
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       DATABASE_URL: postgresql+asyncpg://${DB_USER:-township}:${DB_PASSWORD:?Set DB_PASSWORD}@db/${DB_NAME:-township_db}
@@ -146,6 +149,10 @@ services:
     command: celery -A app.core.celery_app worker --beat --loglevel=info
     volumes:
       - ./backend:/app
+      # The worker shares the entrypoint, so it can be the container that wins
+      # the advisory lock and performs the migration. It needs somewhere to put
+      # the pre-migration dump, or it would refuse to start.
+      - migration_backups:/backups
     environment:
       DATABASE_URL: postgresql+asyncpg://${DB_USER:-township}:${DB_PASSWORD:?Set DB_PASSWORD}@db/${DB_NAME:-township_db}
       REDIS_URL: redis://redis:6379/0
@@ -240,6 +247,7 @@ services:
 
 volumes:
   postgres_data:
+  migration_backups:
   caddy_data:
   caddy_config:
   uploads_data:
