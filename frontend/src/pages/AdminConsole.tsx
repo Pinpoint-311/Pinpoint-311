@@ -83,6 +83,7 @@ import { api, MapLayer } from '../services/api';
 import { User, ServiceDefinition, SystemSettings, SystemSecret, Department } from '../types';
 import { usePageNavigation } from '../hooks/usePageNavigation';
 import OperationsPanel from '../components/OperationsPanel';
+import RoadListInput from '../components/RoadListInput';
 import SetupIntegrationsPage from '../components/SetupIntegrationsPage';
 import AuditLogViewer from '../components/AuditLogViewer';
 import VersionSwitcher from '../components/VersionSwitcher';
@@ -452,6 +453,39 @@ export default function AdminConsole() {
             custom_questions: [] as { id: string; label: string; type: string; options: string[]; required: boolean; placeholder: string }[],
         },
     });
+
+    // Conflicts in the road rules, checked live. The one that matters most is a
+    // road matching nothing: a typo produces a rule that fires never, and until
+    // now there was no indication of it anywhere.
+    const [routingIssues, setRoutingIssues] = useState<{
+        severity: 'error' | 'warning' | 'info'; kind: string; message: string; roads: string[];
+    }[]>([]);
+    const [routingCanSave, setRoutingCanSave] = useState(true);
+
+    useEffect(() => {
+        if (serviceRouting.routing_mode !== 'road_based') {
+            setRoutingIssues([]);
+            setRoutingCanSave(true);
+            return;
+        }
+        const split = (v: string) => v.split(',').map(r => r.trim()).filter(Boolean);
+        const timer = setTimeout(() => {
+            api.checkRoutingConfig({
+                default_handler: serviceRouting.routing_config.default_handler,
+                exclusion_list: split(serviceRouting.routing_config.exclusion_list),
+                inclusion_list: split(serviceRouting.routing_config.inclusion_list),
+            })
+                .then(result => { setRoutingIssues(result.issues); setRoutingCanSave(result.can_save); })
+                // A check that cannot run must not lock a clerk out of saving.
+                .catch(() => { setRoutingIssues([]); setRoutingCanSave(true); });
+        }, 350);
+        return () => clearTimeout(timer);
+    }, [
+        serviceRouting.routing_mode,
+        serviceRouting.routing_config.default_handler,
+        serviceRouting.routing_config.exclusion_list,
+        serviceRouting.routing_config.inclusion_list,
+    ]);
 
     // Department management state
     const [showDepartmentModal, setShowDepartmentModal] = useState(false);
@@ -876,6 +910,15 @@ export default function AdminConsole() {
         e.preventDefault();
         if (demoGuard()) return;
         if (!editingService) return;
+        // A road assigned to two agencies would route to whichever was checked
+        // first, silently. Refuse rather than save something ambiguous.
+        if (!routingCanSave) {
+            await dialog.alert({
+                title: 'Fix the routing conflicts',
+                message: 'A road is assigned to more than one agency. Reports on it would route unpredictably.',
+            });
+            return;
+        }
 
         try {
             const config: Record<string, any> = {};
@@ -3511,39 +3554,52 @@ export default function AdminConsole() {
 
                             {/* Conditional Road Lists */}
                             {serviceRouting.routing_config.default_handler === 'township' ? (
-                                <div className="space-y-2">
-                                    <label className="block text-sm font-medium text-red-300">
-                                        Exclusion List (Roads handled by Third Party)
-                                    </label>
-                                    <textarea
-                                        rows={3}
-                                        placeholder="County Rd 1, Route 206, State Hwy 27..."
-                                        value={serviceRouting.routing_config.exclusion_list}
-                                        onChange={(e) => setServiceRouting(p => ({
-                                            ...p,
-                                            routing_config: { ...p.routing_config, exclusion_list: e.target.value }
-                                        }))}
-                                        className="w-full rounded-lg bg-white/10 border border-white/20 text-white px-3 py-2"
-                                    />
-                                    <p className="text-xs text-white/40">These roads will redirect to third party</p>
-                                </div>
+                                <RoadListInput
+                                    id="routing-exclusion-list"
+                                    label="Roads handled by another agency"
+                                    tone="danger"
+                                    hint="Reports on these roads are redirected instead of filed."
+                                    value={serviceRouting.routing_config.exclusion_list}
+                                    onChange={(value) => setServiceRouting(p => ({
+                                        ...p,
+                                        routing_config: { ...p.routing_config, exclusion_list: value }
+                                    }))}
+                                />
                             ) : (
-                                <div className="space-y-2">
-                                    <label className="block text-sm font-medium text-green-300">
-                                        Inclusion List (Roads we handle)
-                                    </label>
-                                    <textarea
-                                        rows={3}
-                                        placeholder="Main St, Oak Ave, Elm Rd..."
-                                        value={serviceRouting.routing_config.inclusion_list}
-                                        onChange={(e) => setServiceRouting(p => ({
-                                            ...p,
-                                            routing_config: { ...p.routing_config, inclusion_list: e.target.value }
-                                        }))}
-                                        className="w-full rounded-lg bg-white/10 border border-white/20 text-white px-3 py-2"
-                                    />
-                                    <p className="text-xs text-white/40">Only these roads will be processed by township</p>
-                                </div>
+                                <RoadListInput
+                                    id="routing-inclusion-list"
+                                    label="Roads this town maintains"
+                                    tone="success"
+                                    hint="These always stay with the town, even where another agency claims the road."
+                                    value={serviceRouting.routing_config.inclusion_list}
+                                    onChange={(value) => setServiceRouting(p => ({
+                                        ...p,
+                                        routing_config: { ...p.routing_config, inclusion_list: value }
+                                    }))}
+                                />
+                            )}
+
+                            {routingIssues.length > 0 && (
+                                <ul className="space-y-2" aria-label="Routing configuration issues">
+                                    {routingIssues.map((issue, index) => {
+                                        const tone = issue.severity === 'error'
+                                            ? 'bg-red-500/10 border-red-500/30 text-red-200'
+                                            : issue.severity === 'warning'
+                                                ? 'bg-amber-500/10 border-amber-500/30 text-amber-200'
+                                                : 'bg-white/[0.04] border-white/10 text-white/60';
+                                        const Icon = issue.severity === 'info' ? Info : AlertTriangle;
+                                        return (
+                                            <li
+                                                key={`${issue.kind}-${index}`}
+                                                className={`flex items-start gap-2.5 rounded-xl border px-3.5 py-2.5 text-sm ${tone}`}
+                                                role={issue.severity === 'error' ? 'alert' : 'status'}
+                                            >
+                                                <Icon className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
+                                                <span className="leading-relaxed">{issue.message}</span>
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
                             )}
 
                             {/* Third Party Redirect Message */}
