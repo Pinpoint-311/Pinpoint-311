@@ -583,13 +583,19 @@ a:focus-visible {
     content: "⚠ ";
 }
 
-/* Link underlines for accessibility */
-a:not(.skip-link):not([class*="btn"]):not([class*="button"]) {
+/* Link underlines for accessibility.
+ *
+ * `.brand-link` opts out. The rule exists so a link inside a paragraph is
+ * distinguishable without relying on colour, which is the right default -- but
+ * the "Powered by <logo>" credit is a wordmark, not prose. The underline drew
+ * under the words and stopped at the image, which read as a rendering fault
+ * rather than a link. Its target is unambiguous from the logo itself. */
+a:not(.skip-link):not(.brand-link):not([class*="btn"]):not([class*="button"]) {
     text-decoration: underline;
     text-underline-offset: 2px;
 }
 
-a:not(.skip-link):not([class*="btn"]):not([class*="button"]):hover {
+a:not(.skip-link):not(.brand-link):not([class*="btn"]):not([class*="button"]):hover {
     text-decoration-thickness: 2px;
 }
 

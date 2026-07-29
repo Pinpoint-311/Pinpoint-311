@@ -1243,7 +1243,7 @@ export default function AdminConsole() {
                             href="https://pinpoint311.org"
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="group mt-3 pt-3 border-t border-white/5 flex items-center justify-center gap-2"
+                            className="brand-link group mt-3 pt-3 border-t border-white/5 flex items-center justify-center gap-2"
                         >
                             <span className="text-[10px] uppercase tracking-wider text-white/25 group-hover:text-white/45 transition-colors">
                                 Powered by
