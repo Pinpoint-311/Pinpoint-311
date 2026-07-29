@@ -177,23 +177,23 @@ def test_entry_without_a_url_falls_back():
 # ---- runtime validation state ----------------------------------------------
 
 def test_every_registry_entry_has_been_called_for_real():
-    """The registry was assembled from search-indexed directory pages, and half
-    of those candidates did not survive being called. Anything still in here
-    must have answered; anything that did not belongs in RUNTIME_FAILED or
-    RUNTIME_UNUSABLE, where it falls through to TIGER instead of degrading a
-    town to a broken source."""
+    """The registry began as search-indexed directory pages, which proved a
+    layer existed and nothing about whether it worked. Anything still here must
+    have answered; anything that did not belongs in one of the demotion maps,
+    where it falls through to TIGER instead of degrading a town."""
     import app.services.road_sources_registry as registry
 
     unverified = {
         code for code, entry in registry.STATE_ROAD_SOURCES.items()
-        if entry.get("confidence") != "runtime-verified"
+        if entry.get("verification_status") != "verified-live"
     }
     assert not unverified, f"unverified entries must be demoted, not shipped: {sorted(unverified)}"
 
 
 def test_every_entry_has_a_queryable_layer():
-    """A registry row with no layer id cannot be fetched; it would 404 on every
-    town in that state rather than falling back."""
+    """A row with no layer id cannot be fetched -- it would 404 on every town in
+    that state rather than falling back. One entry shipped marked verified with
+    no URL at all, which is where this check comes from."""
     import app.services.road_sources_registry as registry
 
     for code, entry in registry.STATE_ROAD_SOURCES.items():
@@ -201,20 +201,67 @@ def test_every_entry_has_a_queryable_layer():
         assert entry.get("layer_id") is not None, f"{code} has no layer id"
 
 
-def test_demoted_states_fall_back_to_tiger():
-    """The states whose services were dead or unusable must resolve to the
-    national default, not to a broken endpoint."""
+def test_every_entry_records_what_it_returned():
+    """The count is the evidence. Without it "verified" is just a word."""
     import app.services.road_sources_registry as registry
 
-    for code in list(registry.RUNTIME_FAILED) + list(registry.RUNTIME_UNUSABLE):
+    for code, entry in registry.STATE_ROAD_SOURCES.items():
+        assert (entry.get("verified_feature_count") or 0) > 0, f"{code} has no feature count"
+
+
+def test_demoted_states_fall_back_to_tiger():
+    import app.services.road_sources_registry as registry
+
+    demoted = list(registry.RUNTIME_FAILED) + list(registry.RUNTIME_PARTIAL_COVERAGE)
+    for code in demoted:
         assert rs.resolve_source(code) is registry.STATE_ROAD_SOURCES["DEFAULT"], code
 
 
+def test_a_demoted_state_is_not_also_shipped():
+    """Belt and braces: removing the entry is what makes the fallback happen."""
+    import app.services.road_sources_registry as registry
+
+    shipped = set(registry.STATE_ROAD_SOURCES)
+    assert not shipped & set(registry.RUNTIME_FAILED)
+    assert not shipped & set(registry.RUNTIME_PARTIAL_COVERAGE)
+
+
+def test_no_entry_is_implausibly_sparse_for_its_state():
+    """A state-routes-only layer is worse than no data: nearest-road resolution
+    needs every road in town, and with only highways present a pin on a
+    residential street resolves to the nearest highway and blocks the resident.
+
+    Hawaii shipped 2,075 features for the whole state and Georgia 1.3 per square
+    mile against neighbouring North Carolina's 18.6. The floor here is
+    deliberately loose -- it is a smoke alarm for obviously-partial layers, not a
+    judgement about genuinely empty states."""
+    import app.services.road_sources_registry as registry
+
+    # Land area in square miles, for the states currently shipped.
+    AREA = {
+        "CA": 155779, "DC": 61, "DE": 1949, "IA": 55857, "IN": 35826, "LA": 43204,
+        "MA": 7800, "MD": 9707, "MI": 56539, "MN": 79627, "MS": 46923, "NC": 48618,
+        "NJ": 7354, "NM": 121298, "ND": 69001, "NY": 47126, "OR": 95988, "PA": 44743,
+        "SD": 75811, "TX": 261232, "UT": 82170, "VT": 9217, "WA": 66456, "WV": 24038,
+    }
+    MIN_PER_SQ_MILE = 1.0
+
+    sparse = []
+    for code, area in AREA.items():
+        entry = registry.STATE_ROAD_SOURCES.get(code)
+        if not entry:
+            continue
+        density = (entry.get("verified_feature_count") or 0) / area
+        if density < MIN_PER_SQ_MILE:
+            sparse.append(f"{code} ({density:.1f}/sq mi)")
+    assert not sparse, f"probably state-routes-only, not a full network: {sparse}"
+
+
 def test_the_national_fallback_is_itself_verified():
-    """DEFAULT is the source for most of the country. A wrong layer here breaks
-    every state without its own entry, rather than one."""
+    """DEFAULT is the source for the 27 states without their own entry. A wrong
+    layer here breaks most of the country rather than one state."""
     import app.services.road_sources_registry as registry
 
     default = registry.STATE_ROAD_SOURCES["DEFAULT"]
-    assert default["confidence"] == "runtime-verified"
-    assert default.get("runtime_feature_count", 0) > 1_000_000
+    assert default["verification_status"] == "verified-live"
+    assert default["verified_feature_count"] > 1_000_000
