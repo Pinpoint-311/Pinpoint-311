@@ -34,6 +34,29 @@ const CAPS: { key: Capability; title: string; blurb: string; icon: typeof Sparkl
     { key: 'maps', title: 'Maps Provider', blurb: 'Draws the map residents drop a pin on, and looks up addresses. Google is the simplest to set up; Esri suits a town whose county already publishes its own basemap.', icon: MapIcon },
 ];
 
+/** A numbered section heading inside a provider card.
+ *
+ * Configuring a provider is a short ordered task -- pick one, pick a model,
+ * paste the credentials, save -- and the card used to present those as four
+ * visually identical blocks. Numbering them makes the order legible at a glance
+ * and gives someone following the setup guide something to match against. */
+function Step({ n, children, aside }: { n: number; children: React.ReactNode; aside?: React.ReactNode }) {
+    return (
+        <div className="flex items-center justify-between gap-3 mb-2.5">
+            <div className="flex items-center gap-2 min-w-0">
+                <span
+                    className="shrink-0 w-5 h-5 rounded-full bg-white/10 border border-white/15 text-[10px] font-bold text-white/70 flex items-center justify-center tabular-nums"
+                    aria-hidden="true"
+                >
+                    {n}
+                </span>
+                <span className="text-[11px] uppercase tracking-wider text-white/60 font-semibold truncate">{children}</span>
+            </div>
+            {aside}
+        </div>
+    );
+}
+
 export interface CapStatus { providerName?: string; onDefault?: boolean; verified?: boolean | null }
 
 function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus }: {
@@ -221,186 +244,189 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 actually has to fill in were one click away from being missed,
                 and left the card looking finished when nothing was set. */}
             <div id={`prov-${cap}`} className="mt-4 pt-4 border-t border-white/10 space-y-5">
-                            {/* Provider picker — segmented tiles */}
-                            <div>
-                                <label className="text-[11px] uppercase tracking-wider text-white/60 mb-2 block font-semibold">Provider</label>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label={`${title} provider`}>
-                                    {catalog.providers.map(p => {
-                                        const isSel = p.provider === selected;
-                                        const isCurrent = p.provider === catalog.current_provider;
-                                        const isDefault = catalog.default_provider ? p.provider === catalog.default_provider : false;
-                                        return (
-                                            <button
-                                                key={p.provider}
-                                                role="radio"
-                                                aria-checked={isSel}
-                                                onClick={() => { setSelected(p.provider); setResult(null); setModel(p.default_model || ''); }}
-                                                className={`relative text-left rounded-xl px-3 py-2.5 border transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${isSel
-                                                    ? 'bg-gradient-to-br from-primary-500/25 to-primary-700/15 border-primary-400/50 shadow-lg shadow-primary-900/30'
-                                                    : 'bg-white/[0.03] border-white/10 hover:bg-white/[0.06] hover:border-white/20'}`}
-                                            >
-                                                <div className="flex items-center justify-between gap-2">
-                                                    <span className={`text-sm font-medium truncate ${isSel ? 'text-white' : 'text-white/70'}`}>{p.name}</span>
-                                                    {isSel && (
-                                                        <span className="shrink-0 w-4 h-4 rounded-full bg-primary-400 flex items-center justify-center">
-                                                            <Check className="w-3 h-3 text-primary-950" strokeWidth={3} />
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <div className="flex items-center gap-1.5 mt-1">
-                                                    {isCurrent && (
-                                                        <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-300/90">In use</span>
-                                                    )}
-                                                    {isDefault && !isCurrent && (
-                                                        <span className="text-[10px] font-semibold uppercase tracking-wide text-primary-300/90">Recommended</span>
-                                                    )}
-                                                </div>
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                                {(active?.description || active?.boundary) && (
-                                    <div className="mt-2.5 rounded-lg bg-white/[0.03] border border-white/10 px-3 py-2 space-y-1">
-                                        {active?.description && <p className="text-white/55 text-xs leading-relaxed">{active.description}</p>}
-                                        {active?.boundary && (
-                                            <p className="text-white/60 text-[11px] flex items-center gap-1.5">
-                                                <ShieldCheck className="w-3 h-3 text-primary-300/70 shrink-0" aria-hidden="true" />
-                                                Compliance boundary: {active.boundary}
-                                            </p>
+                {/* Provider picker — segmented tiles */}
+                <div>
+                    <Step n={1}>Provider</Step>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2" role="radiogroup" aria-label={`${title} provider`}>
+                        {catalog.providers.map(p => {
+                            const isSel = p.provider === selected;
+                            const isCurrent = p.provider === catalog.current_provider;
+                            const isDefault = catalog.default_provider ? p.provider === catalog.default_provider : false;
+                            return (
+                                <button
+                                    key={p.provider}
+                                    role="radio"
+                                    aria-checked={isSel}
+                                    onClick={() => { setSelected(p.provider); setResult(null); setModel(p.default_model || ''); }}
+                                    className={`relative text-left rounded-xl px-3 py-2.5 border transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${isSel
+                                        ? 'bg-gradient-to-br from-primary-500/25 to-primary-700/15 border-primary-400/50 shadow-lg shadow-primary-900/30'
+                                        : 'bg-white/[0.03] border-white/10 hover:bg-white/[0.06] hover:border-white/20'}`}
+                                >
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className={`text-sm font-medium truncate ${isSel ? 'text-white' : 'text-white/70'}`}>{p.name}</span>
+                                        {isSel && (
+                                            <span className="shrink-0 w-4 h-4 rounded-full bg-primary-400 flex items-center justify-center">
+                                                <Check className="w-3 h-3 text-primary-950" strokeWidth={3} />
+                                            </span>
                                         )}
                                     </div>
-                                )}
-                            </div>
-
-                            {/* Switching identity forces a re-login */}
-                            {cap === 'identity' && selected !== catalog.current_provider && (
-                                <div className="rounded-lg bg-amber-500/10 border border-amber-400/25 px-3 py-2 text-[11px] text-amber-200 flex items-start gap-2">
-                                    <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
-                                    Switching sign-in providers signs everyone out — staff will sign in again through {active?.name || 'the new provider'} next time.
-                                </div>
-                            )}
-
-                            {/* AI model dropdown — with live discovery */}
-                            {cap === 'ai' && active && (() => {
-                                const models = liveModels ?? active.models ?? [];
-                                const source = modelsMeta?.source ?? active.models_source;
-                                const fetchedAt = modelsMeta?.fetched_at ?? active.models_fetched_at;
-                                const isStale = staleOverride !== null
-                                    ? staleOverride
-                                    : (selected === catalog.current_provider && catalog.current_model_available === false);
-                                if (models.length === 0) return null;
-                                return (
-                                    <div>
-                                        <div className="flex items-center justify-between gap-2 mb-2">
-                                            <label className="text-[11px] uppercase tracking-wider text-white/60 font-semibold">Model</label>
-                                            <button
-                                                type="button"
-                                                onClick={handleRefreshModels}
-                                                disabled={refreshingModels}
-                                                className="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-white transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 rounded"
-                                            >
-                                                <RefreshCw className={`w-3 h-3 ${refreshingModels ? 'animate-spin' : ''}`} aria-hidden="true" />
-                                                {refreshingModels ? 'Checking…' : 'Refresh from provider'}
-                                            </button>
+                                    {(isCurrent || isDefault) && (
+                                        <div className="flex items-center gap-1.5 mt-1">
+                                            {isCurrent ? (
+                                                <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-300/90">In use</span>
+                                            ) : (
+                                                <span className="text-[10px] font-semibold uppercase tracking-wide text-primary-300/90">Recommended</span>
+                                            )}
                                         </div>
-                                        {/* Tiles, not a <select>. The model list is short, the
-                                            choice is consequential, and a dropdown hides every
-                                            option but one -- including the "new" markers that
-                                            live discovery just added. Same control as the
-                                            provider picker above, so the page has one idiom. */}
-                                        {(() => {
-                                            const chosen = model || active.default_model || models[0].id;
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
+                    {(active?.description || active?.boundary) && (
+                        <div className="mt-2.5 rounded-lg bg-white/[0.03] border border-white/10 px-3 py-2 space-y-1">
+                            {active?.description && <p className="text-white/55 text-xs leading-relaxed">{active.description}</p>}
+                            {active?.boundary && (
+                                <p className="text-white/60 text-[11px] flex items-center gap-1.5">
+                                    <ShieldCheck className="w-3 h-3 text-primary-300/70 shrink-0" aria-hidden="true" />
+                                    Compliance boundary: {active.boundary}
+                                </p>
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                {/* Switching identity forces a re-login */}
+                {cap === 'identity' && selected !== catalog.current_provider && (
+                    <div className="rounded-lg bg-amber-500/10 border border-amber-400/25 px-3 py-2 text-[11px] text-amber-200 flex items-start gap-2">
+                        <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+                        Switching sign-in providers signs everyone out — staff will sign in again through {active?.name || 'the new provider'} next time.
+                    </div>
+                )}
+
+                {/* AI model dropdown — with live discovery */}
+                {cap === 'ai' && active && (() => {
+                    const models = liveModels ?? active.models ?? [];
+                    const source = modelsMeta?.source ?? active.models_source;
+                    const fetchedAt = modelsMeta?.fetched_at ?? active.models_fetched_at;
+                    const isStale = staleOverride !== null
+                        ? staleOverride
+                        : (selected === catalog.current_provider && catalog.current_model_available === false);
+                    if (models.length === 0) return null;
+                    return (
+                        <div>
+                            <Step n={2} aside={
+                                <button
+                                    type="button"
+                                    onClick={handleRefreshModels}
+                                    disabled={refreshingModels}
+                                    className="shrink-0 inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-white transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 rounded"
+                                >
+                                    <RefreshCw className={`w-3 h-3 ${refreshingModels ? 'animate-spin' : ''}`} aria-hidden="true" />
+                                    {refreshingModels ? 'Checking…' : 'Refresh from provider'}
+                                </button>
+                            }>Model</Step>
+                            {/* Tiles, not a <select>. The model list is short, the
+                                choice is consequential, and a dropdown hides every
+                                option but one -- including the "new" markers that
+                                live discovery just added. Same control as the
+                                provider picker above, so the page has one idiom. */}
+                            {(() => {
+                                const chosen = model || active.default_model || models[0].id;
+                                return (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2" role="radiogroup" aria-label="AI model">
+                                        {models.map(m => {
+                                            const isSel = m.id === chosen;
                                             return (
-                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="AI model">
-                                                    {models.map(m => {
-                                                        const isSel = m.id === chosen;
-                                                        return (
-                                                            <button
-                                                                key={m.id}
-                                                                type="button"
-                                                                role="radio"
-                                                                aria-checked={isSel}
-                                                                onClick={() => setModel(m.id)}
-                                                                className={`relative text-left rounded-xl px-3 py-2.5 border transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${isSel
-                                                                    ? 'bg-gradient-to-br from-primary-500/25 to-primary-700/15 border-primary-400/50 shadow-lg shadow-primary-900/30'
-                                                                    : 'bg-white/[0.03] border-white/10 hover:bg-white/[0.06] hover:border-white/20'}`}
-                                                            >
-                                                                <div className="flex items-center justify-between gap-2">
-                                                                    <span className={`text-sm font-medium truncate ${isSel ? 'text-white' : 'text-white/70'}`}>{m.label}</span>
-                                                                    {isSel && (
-                                                                        <span className="shrink-0 w-4 h-4 rounded-full bg-primary-400 flex items-center justify-center">
-                                                                            <Check className="w-3 h-3 text-primary-950" strokeWidth={3} />
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                                {m.discovered && (
-                                                                    <span className="text-[10px] font-semibold uppercase tracking-wide text-primary-300/90 mt-1 inline-block">New</span>
-                                                                )}
-                                                            </button>
-                                                        );
-                                                    })}
-                                                </div>
+                                                <button
+                                                    key={m.id}
+                                                    type="button"
+                                                    role="radio"
+                                                    aria-checked={isSel}
+                                                    onClick={() => setModel(m.id)}
+                                                    className={`relative text-left rounded-xl px-3 py-2.5 border transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${isSel
+                                                        ? 'bg-gradient-to-br from-primary-500/25 to-primary-700/15 border-primary-400/50 shadow-lg shadow-primary-900/30'
+                                                        : 'bg-white/[0.03] border-white/10 hover:bg-white/[0.06] hover:border-white/20'}`}
+                                                >
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <span className={`text-sm font-medium truncate ${isSel ? 'text-white' : 'text-white/70'}`}>{m.label}</span>
+                                                        {isSel && (
+                                                            <span className="shrink-0 w-4 h-4 rounded-full bg-primary-400 flex items-center justify-center">
+                                                                <Check className="w-3 h-3 text-primary-950" strokeWidth={3} />
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    {m.discovered && (
+                                                        <span className="text-[10px] font-semibold uppercase tracking-wide text-primary-300/90 mt-1 inline-block">New</span>
+                                                    )}
+                                                </button>
                                             );
-                                        })()}
-                                        <p className="text-[10px] text-white/40 mt-1.5">
-                                            {source === 'live'
-                                                ? `Live from ${active.name}${fetchedAt ? ` · updated ${agoLabel(fetchedAt)}` : ''}`
-                                                : 'Built-in list — press “Refresh from provider” to pull the current models'}
-                                        </p>
-                                        {isStale && (
-                                            <div className="mt-2 rounded-lg bg-amber-500/10 border border-amber-400/30 px-3 py-2 text-[11px] text-amber-200 flex items-start gap-2">
-                                                <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
-                                                The model you’re using ({catalog.current_model}) is no longer offered by {active.name}. Pick a current one above and save.
-                                            </div>
-                                        )}
+                                        })}
                                     </div>
                                 );
                             })()}
-
-                            {/* Credential/config fields */}
-                            {active && active.credential_fields.length > 0 && (
-                                <div className="space-y-3">
-                                    {active.credential_fields.map(f => {
-                                        const alreadySet = !!(catalog.configured?.[selected] && selected === catalog.current_provider);
-                                        return (
-                                            <SecretField
-                                                key={f.key}
-                                                label={f.label}
-                                                secret={f.secret}
-                                                value={values[f.key] || ''}
-                                                onChange={(v) => setValues(p => ({ ...p, [f.key]: v }))}
-                                                placeholder={`Enter ${f.label.toLowerCase()}`}
-                                                help={active.field_help?.[f.key]}
-                                                savedHint={alreadySet}
-                                            />
-                                        );
-                                    })}
+                            <p className="text-[10px] text-white/40 mt-1.5">
+                                {source === 'live'
+                                    ? `Live from ${active.name}${fetchedAt ? ` · updated ${agoLabel(fetchedAt)}` : ''}`
+                                    : 'Built-in list — press “Refresh from provider” to pull the current models'}
+                            </p>
+                            {isStale && (
+                                <div className="mt-2 rounded-lg bg-amber-500/10 border border-amber-400/30 px-3 py-2 text-[11px] text-amber-200 flex items-start gap-2">
+                                    <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+                                    The model you’re using ({catalog.current_model}) is no longer offered by {active.name}. Pick a current one above and save.
                                 </div>
                             )}
+                        </div>
+                    );
+                })()}
 
-                            <div className="flex flex-wrap items-center gap-2.5 pt-1">
-                                <button
-                                    onClick={handleSave}
-                                    disabled={busy !== null}
-                                    className="shimmer-sweep inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-primary-400 to-primary-600 hover:from-primary-300 hover:to-primary-500 border border-primary-300/40 shadow-lg shadow-primary-900/60 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-                                >
-                                    {busy === 'save'
-                                        ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</>
-                                        : <><Sparkles className="w-4 h-4" /> Save &amp; Test</>}
-                                </button>
-                                <button
-                                    onClick={handleTest}
-                                    disabled={busy !== null}
-                                    className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-sm font-medium text-white/90 hover:text-white bg-white/10 hover:bg-white/[0.16] border border-white/25 hover:border-white/35 shadow-sm transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
-                                >
-                                    {busy === 'test' ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Testing…</> : 'Test connection'}
-                                </button>
-                                {cap === 'identity' && (
-                                    <span className="text-white/60 text-[11px] ml-auto hidden sm:block">Auth0 default · Entra / Okta supported</span>
-                                )}
-                            </div>
+                {/* Credential/config fields */}
+                {active && active.credential_fields.length > 0 && (
+                    <div>
+                    <Step n={cap === 'ai' ? 3 : 2}>Credentials</Step>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
+                        {active.credential_fields.map(f => {
+                            const alreadySet = !!(catalog.configured?.[selected] && selected === catalog.current_provider);
+                            return (
+                                <SecretField
+                                    key={f.key}
+                                    label={f.label}
+                                    secret={f.secret}
+                                    value={values[f.key] || ''}
+                                    onChange={(v) => setValues(p => ({ ...p, [f.key]: v }))}
+                                    placeholder={`Enter ${f.label.toLowerCase()}`}
+                                    help={active.field_help?.[f.key]}
+                                    savedHint={alreadySet}
+                                />
+                            );
+                        })}
+                    </div>
+                    </div>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2.5 pt-1 border-t border-white/5 mt-1">
+                    <button
+                        onClick={handleSave}
+                        disabled={busy !== null}
+                        className="shimmer-sweep inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-primary-400 to-primary-600 hover:from-primary-300 hover:to-primary-500 border border-primary-300/40 shadow-lg shadow-primary-900/60 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                    >
+                        {busy === 'save'
+                            ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</>
+                            : <><Sparkles className="w-4 h-4" /> Save &amp; Test</>}
+                    </button>
+                    <button
+                        onClick={handleTest}
+                        disabled={busy !== null}
+                        className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-sm font-medium text-white/90 hover:text-white bg-white/10 hover:bg-white/[0.16] border border-white/25 hover:border-white/35 shadow-sm transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                    >
+                        {busy === 'test' ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Testing…</> : 'Test connection'}
+                    </button>
+                    {cap === 'identity' && (
+                        <span className="text-white/60 text-[11px] ml-auto hidden sm:block">Auth0 by default · Entra, Okta and any OIDC provider also supported</span>
+                    )}
+                </div>
             </div>
-            </div>
+        </div>
         </motion.div>
     );
 }
@@ -638,7 +664,13 @@ export default function ServiceProviders() {
 
             <CloudEnvironment onApplied={() => setReloadToken(t => t + 1)} />
 
-            <div className="relative grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {/* One card per row. Three columns worked when these were collapsed
+                summaries, but the configuration is always open now -- provider
+                tiles, credential fields and the model picker all need real
+                width, and at a third of the page they were squeezed into
+                unusable slivers. The connector cards this matches are
+                full-width for the same reason. */}
+            <div className="relative grid grid-cols-1 gap-4">
                 {CAPS.map((c, i) => (
                     <CapabilityCard key={c.key} cap={c.key} title={c.title} blurb={c.blurb} icon={c.icon} delay={i * 0.08}
                         recheckToken={recheckToken} reloadToken={reloadToken} onStatus={onStatus} />
