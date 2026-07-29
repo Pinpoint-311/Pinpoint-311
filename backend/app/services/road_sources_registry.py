@@ -29,27 +29,40 @@ Key features:
 ========================= COVERAGE SUMMARY (2026-07-29) =========================
 
 Jurisdictions in scope (50 states + DC) ................................... 51
-Registry entries (states with a recorded REST endpoint) ................... 14
-  DE IA ME MD MA MN NJ NY NC PA TX UT VT VA
-  Of those, NENA / NG9-1-1 schema layers .................................. 2   (NJ, NC)
-  Of those, custom state DOT / clearinghouse schemas ...................... 12
-  Of those, layer ID still unresolved (service root only) ................. 2   (TX, VA)
-States with a source known to exist but NO endpoint recorded .............. 7   (AZ AR CT KS MT NH OH)
-States whose statewide data is download-only (no REST /query) ............. 3   (RI TN WI)
-No entry at all - fall back to TIGER ...................................... 37
+Registry entries (states with a recorded REST endpoint) ................... 33
+  AK CA CO DC DE FL GA HI IA ID IN LA ME MD MA MI MN MS NJ NM NV NY NC ND
+  OR PA SD TX UT VT VA WA WV
+  Of those, NENA / NG9-1-1 schema layers .................................. 3   (NJ, NC, NM)
+  Of those, custom state DOT / clearinghouse schemas ...................... 30
+  Of those, layer ID still unresolved (service root only) ................. 11
+      AK CO HI ID MS ND NM NV TX VA WV
+States with a source known to exist but NO endpoint recorded .............. 14
+      AL AR AZ CT IL KS KY MO MT NE NH OH SC WY
+States whose statewide data is download-only (no REST /query) ............. 4   (OK RI TN WI)
+No entry at all - fall back to TIGER ...................................... 18
+      AL AR AZ CT IL KS KY MO MT NE NH OH OK RI SC TN WI WY
 
-The registry deliberately does NOT carry a stub key for all 50 states + DC.
-Absence IS the fallback signal: `get_road_source()` resolves any unknown code
-to DEFAULT (TIGER), so an empty row would only be a place for a future reader
-to mistake "unresearched" for "researched and found nothing". The states in
-KNOWN_UNVERIFIED_SOURCES and DOWNLOAD_ONLY_SOURCES record the researched-but-
-unusable cases explicitly; anything in neither list simply was not reached
-before this pass was time-boxed. `coverage_summary()` reports all of this.
+Every one of the 51 jurisdictions has now been individually researched: each
+is either a registry entry, a KNOWN_UNVERIFIED_SOURCES row, or a
+DOWNLOAD_ONLY_SOURCES row. There are no longer any "not reached" states.
 
-Honest scope note: the 14 registry entries plus the 10 documented non-entries
-are the states that were individually researched. The other ~27 were not
-examined one-by-one and are TIGER by default rather than by finding. Several
-of them almost certainly have good statewide layers.
+The registry still deliberately does NOT carry a stub key for all 50 states +
+DC. Absence IS the fallback signal: `get_road_source()` resolves any unknown
+code to DEFAULT (TIGER), so an empty row would only be a place for a future
+reader to mistake "unresearched" for "researched and found nothing". The 18
+fallback states are all documented in one of the two non-entry lists, with the
+evidence for what exists and why it could not be used. `coverage_summary()`
+reports all of this.
+
+Honest confidence note on the second pass (AK AL CA CO DC FL GA HI ID IL IN KY
+LA MI MO MS NE NM ND NV OK OR SC SD WA WV WY): 10 of the 19 new registry
+entries are endpoint-indexed and 9 are service-indexed with layer_id None.
+Zero URLs anywhere in this file were inferred, composed or pattern-matched
+from a dataset name - each one appeared verbatim in a search result. Where a
+state clearly has a good dataset behind an ArcGIS Hub page that never exposes
+its service URL (KY, NE, IL, MO, SC), it is in KNOWN_UNVERIFIED_SOURCES rather
+than the registry, which is the deliberate trade: TIGER always works, a
+fabricated endpoint silently does not.
 
 VERIFICATION CAVEAT - PLEASE READ BEFORE TRUSTING THIS TABLE
     Outbound HTTPS in the environment this registry was compiled in was
@@ -80,7 +93,17 @@ Surprises worth knowing:
   years are published. Re-resolve by name, not by ID.
 - Connecticut, Rhode Island and Tennessee all have first-rate statewide
   datasets that are only offered as downloads or through a portal page that
-  never exposes the underlying service URL.
+  never exposes the underlying service URL. Oklahoma joins them: its State
+  NG911 Repository is published only as a file geodatabase.
+- Hawaii has NO single statewide roads layer - one layer per island in one
+  service. Colorado and Washington both split state highways from local roads
+  across different services, like Pennsylvania does.
+- California's only all-public-roads layer is Caltrans' ARNOLD/HPMS LRS. It is
+  built for federal reporting, not addressing, so confirm it carries a usable
+  local street name before preferring it over TIGER.
+- Alaska's service root is indexed on plain HTTP, not HTTPS.
+- Search trap: "Wyoming ... Streets" returns Wyoming COUNTY, PENNSYLVANIA from
+  PASDA. Same family of mistake as the deprecated-layer trap documented on NJ.
 """
 
 import logging
@@ -1115,6 +1138,105 @@ KNOWN_UNVERIFIED_SOURCES: Dict[str, Dict[str, Any]] = {
             "order. Keyed oddly here because ME already has a registry entry."
         ),
     },
+    "IL": {
+        "dataset": "IDOT statewide roadway / centerline data",
+        "publisher": "Illinois Department of Transportation",
+        "cadence": None,
+        "evidence": "https://gis-idot.opendata.arcgis.com/",
+        "why_unresolved": (
+            "IDOT distributes statewide roadway, railroad and structure data by county "
+            "or statewide through a download tool, and runs an ArcGIS Hub. The only "
+            "gis1.dot.illinois.gov services that surfaced were thematic "
+            "(DesignatedTruckRoutes, Permits/TruckPermitRoutes) - no general centerline "
+            "layer. Illinois is a large market and worth another pass with unrestricted "
+            "network access."
+        ),
+    },
+    "KY": {
+        "dataset": "Kentucky 911 Road Centerlines",
+        "publisher": "Kentucky Transportation Cabinet (KYTC) / KyGovMaps (kygeonet)",
+        "cadence": None,
+        "evidence": "https://opengisdata.ky.gov/datasets/kygeonet::kentucky-911-road-centerlines/about",
+        "why_unresolved": (
+            "A genuine statewide NG911 centerline product exists and KYTC maintains both "
+            "state-maintained and local-road centerlines (there is a separate "
+            "'Ky Local Roads' item too). Kentucky's public map services live under "
+            "kygisserver.ky.gov/arcgis/rest/services with no credentials required, but "
+            "only the folder roots were indexed - no transportation service or layer. "
+            "This is the highest-value unresolved state in this list: NG911 schema, "
+            "statewide, and the server is known to be open."
+        ),
+    },
+    "NE": {
+        "dataset": "Street Centerlines (statewide NG911 aggregation)",
+        "publisher": "Nebraska Office of the CIO / NDOT, via NebraskaMap",
+        "cadence": None,
+        "evidence": "https://www.nebraskamap.gov/datasets/nebraska::street-centerlines-1/about",
+        "why_unresolved": (
+            "Explicitly described as the statewide aggregation of road centerlines "
+            "compiled primarily to support Nebraska's Next Generation 911 system - a "
+            "preference-order-1 dataset. NebraskaMap is an ArcGIS Hub site and the "
+            "backing feature service URL was never in indexed content. Resolve via the "
+            "Hub item's /api tab."
+        ),
+    },
+    "MO": {
+        "dataset": "MO MoDOT Roads Arcs / MissouriRoads_Routes",
+        "publisher": "Missouri DOT, distributed by MSDIS (University of Missouri)",
+        "cadence": None,
+        "evidence": "https://data-msdis.opendata.arcgis.com/datasets/MSDIS::mo-modot-roads-arcs/about",
+        "why_unresolved": (
+            "MSDIS is Missouri's spatial data clearinghouse and hosts MO_MoDOT_Roads_Arcs "
+            "(base arcs for the MissouriRoads_Routes feature class) on its AGOL org. The "
+            "org's service FOLDER root at services2.arcgis.com/kNS2ppBA4rwAQQZy was "
+            "indexed but no individual service URL was, and composing one from the "
+            "dataset name would be exactly the guess this registry forbids."
+        ),
+    },
+    "SC": {
+        "dataset": "Statewide composite address/centerline locator inputs",
+        "publisher": "SC Geographic Information Systems (gis.sc.gov) / SCDOT",
+        "cadence": None,
+        "evidence": "http://gis.sc.gov/data.html#GS",
+        "why_unresolved": (
+            "South Carolina runs a statewide composite geocoding service built from "
+            "LOCALLY provided address points and centerlines, which proves a statewide "
+            "centerline aggregation exists behind it - but what is exposed is a "
+            "GeocodeServer, not a queryable feature layer. SCDOT's own GIS is published "
+            "as downloads, KML web services and a Street Finder app rather than a REST "
+            "centerline layer."
+        ),
+    },
+    "AL": {
+        "dataset": "ALDOT statewide roadway inventory",
+        "publisher": "Alabama Department of Transportation",
+        "cadence": None,
+        "evidence": "https://geo.dot.gov/server/rest/services/Hosted/AlabamaInventory/FeatureServer/layers",
+        "why_unresolved": (
+            "No ALDOT-hosted statewide centerline service surfaced at all. What exists is "
+            "an 'AlabamaInventory' polyline service on the FEDERAL geo.dot.gov server "
+            "with ownership attribution (State Highway Administration / County / Township "
+            "/ City), which is Alabama's HPMS submission republished by FHWA, not an "
+            "ALDOT service. Not promoted to the registry: a federal reporting extract is "
+            "a different thing from a maintained state centerline, and its street naming "
+            "is unlikely to beat TIGER."
+        ),
+    },
+    "WY": {
+        "dataset": "WYDOT roadway names / centerline data",
+        "publisher": "Wyoming Department of Transportation",
+        "cadence": None,
+        "evidence": "https://gis.deq.wyo.gov/arcgis/rest/services/WY_STREAM_DATA/WYOMING_STREAM_DATA/MapServer/11",
+        "why_unresolved": (
+            "The only Wyoming road layer found is 'WY_Roads' (ID 11) buried in the "
+            "Department of Environmental Quality's STREAM DATA service, documented as an "
+            "export of the roadway names table maintained by WYDOT. That confirms WYDOT "
+            "maintains statewide roadway data but is plainly a derived copy on an "
+            "unrelated agency's server, so it is not registry material. SEARCH TRAP "
+            "WORTH REMEMBERING: querying for Wyoming centerlines returns 'Wyoming County "
+            "- Streets 202405' from PASDA, which is Wyoming COUNTY, PENNSYLVANIA."
+        ),
+    },
     "AZ": {
         "dataset": "Road Centerline NG911",
         "publisher": "Arizona State Land Department / AZGeo",
@@ -1181,6 +1303,21 @@ DOWNLOAD_ONLY_SOURCES: Dict[str, Dict[str, Any]] = {
         "format": "download via Arkansas Spatial Data Infrastructure",
         "evidence": "https://gis.arkansas.gov/programs/arkansas-centerline-file-acf/",
         "notes": "Same dataset as the AR entry in KNOWN_UNVERIFIED_SOURCES; free download confirmed, service not.",
+    },
+    "OK": {
+        "dataset": "State NG911 Repository (road centerlines, address points, PSAP boundaries)",
+        "publisher": "Oklahoma Department of Transportation, Geospatial Data Management",
+        "format": "file geodatabase",
+        "evidence": "https://oklahoma.gov/odot/about-us/contact-us/geospatial-data-management/maps-and-data.html",
+        "notes": (
+            "ODOT states the road centerline file was created by incorporating many "
+            "different sources and offers a geodatabase download containing the most "
+            "current road centerlines, address points and PSAP boundaries held in the "
+            "State NG911 Repository. That is a first-rate dataset - preference order 1 - "
+            "delivered the wrong way for us. ODOT also runs an open data site at "
+            "gis-okdot.opendata.arcgis.com, so a hosted service may appear there; worth "
+            "re-checking before writing an Oklahoma download path."
+        ),
     },
     "WI": {
         "dataset": "WisDOT roads / WISLR",

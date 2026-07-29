@@ -30,6 +30,7 @@ def generate_request_id() -> str:
     return f"REQ-{timestamp}-{unique}"
 
 
+from app.services import road_blocking
 from app.core.config import get_settings
 import redis.asyncio as redis
 import json
@@ -662,6 +663,27 @@ async def create_request(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="One of your photos appears to contain explicit or graphic content and "
                    "can't be submitted. Please remove it and try again.",
+        )
+
+    # Jurisdiction check. This used to live only in the resident portal's
+    # JavaScript, so a report POSTed straight at this endpoint ignored road
+    # rules entirely. Evaluating here means every intake path agrees, and the
+    # redirect is recorded so the town can count how often it happens.
+    decision = await road_blocking.evaluate(db, service, request_data.lat, request_data.long)
+    if decision.blocked:
+        await road_blocking.record(db, decision, service, request_data.lat, request_data.long)
+        logger.info(
+            "[CREATE REQUEST] redirected to %s (%s)", decision.jurisdiction, decision.block_type
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "redirected",
+                "jurisdiction": decision.jurisdiction,
+                "message": decision.message,
+                "contacts": decision.contacts,
+                "road": decision.road_name,
+            },
         )
 
     # Auto-assignment based on service routing config
