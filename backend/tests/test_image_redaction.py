@@ -290,3 +290,234 @@ def test_azure_read_words_are_parsed():
 ])
 def test_plate_parsers_tolerate_junk(parse, args):
     assert parse(*args) == []
+
+
+# ---- the free plate detector: cascade AND text ------------------------------
+#
+# The design question was which failure to accept. The cascade fires on any
+# bright rectangle (road signs, house plaques, the back of a truck); Tesseract
+# fires on any short alphanumeric string (house numbers, bus routes). They are
+# wrong about different things, so the intersection is much stronger than
+# either, and the road-sign case is what the AND exists to kill.
+
+from app.services.image_redaction import (  # noqa: E402
+    CASCADE_ONLY_CONFIDENCE,
+    PLATE_BOTH_CONFIDENCE,
+    combine_plate_signals,
+    google_features,
+)
+
+PLATE_REGION = Box(0.38, 0.58, 0.52, 0.65, "plate")
+FAR_AWAY = Box(0.05, 0.05, 0.15, 0.09, "plate")
+
+
+def test_a_region_with_plate_text_inside_it_is_the_strong_case():
+    inside = Box(0.40, 0.60, 0.50, 0.635, "plate")
+    boxes = combine_plate_signals([PLATE_REGION], [("ABC1234", inside, 0.92)])
+    assert len(boxes) == 1
+    assert boxes[0].confidence == PLATE_BOTH_CONFIDENCE
+    # The region box is kept, not the tighter text box: it covers the whole
+    # plate rather than just the characters.
+    assert boxes[0].left == pytest.approx(PLATE_REGION.left)
+
+
+def test_a_cascade_region_with_no_plate_text_is_dropped():
+    """The road sign. This is the entire reason for requiring both signals --
+    the cascade alone would smear every rectangular sign in the photo."""
+    sign_text = Box(0.40, 0.60, 0.50, 0.635, "plate")
+    assert combine_plate_signals([PLATE_REGION], [("STOP", sign_text, 0.99)]) == []
+    assert CASCADE_ONLY_CONFIDENCE == 0.0
+
+
+def test_a_cascade_region_with_no_text_at_all_is_dropped():
+    assert combine_plate_signals([PLATE_REGION], []) == []
+
+
+def test_plate_text_with_no_cascade_region_is_still_taken():
+    """Recall matters: the cascade misses angled and shadowed plates badly, so
+    the text heuristic alone is allowed to fire -- at its own lower score."""
+    boxes = combine_plate_signals([], [("ABC1234", WIDE, 0.95)])
+    assert len(boxes) == 1
+    assert boxes[0].confidence < PLATE_BOTH_CONFIDENCE
+
+
+def test_text_inside_a_region_is_not_also_emitted_separately():
+    """Otherwise the same plate is counted twice and blurred twice."""
+    inside = Box(0.40, 0.60, 0.50, 0.635, "plate")
+    assert len(combine_plate_signals([PLATE_REGION], [("ABC1234", inside, 0.92)])) == 1
+
+
+def test_plate_text_elsewhere_in_the_frame_is_not_absorbed_by_a_region():
+    """Two vehicles. The region confirms one; the other must survive on text."""
+    inside = Box(0.40, 0.60, 0.50, 0.635, "plate")
+    # A genuinely separate box -- WIDE sits inside PLATE_REGION, so using it
+    # here tested absorption rather than survival.
+    other_vehicle = Box(0.70, 0.60, 0.82, 0.635, "plate")
+    boxes = combine_plate_signals([PLATE_REGION], [("ABC1234", inside, 0.92),
+                                                   ("XYZ890", other_vehicle, 0.93)])
+    assert len(boxes) == 2
+
+
+def test_low_ocr_confidence_cannot_confirm_a_region():
+    inside = Box(0.40, 0.60, 0.50, 0.635, "plate")
+    assert combine_plate_signals([PLATE_REGION], [("ABC1234", inside, 0.0)]) == []
+
+
+def test_no_signals_at_all_yields_nothing():
+    assert combine_plate_signals([], []) == []
+
+
+# ---- folding the Vision call ------------------------------------------------
+
+def test_safesearch_rides_along_with_the_detection_features():
+    """Vision bills per feature but charges one round trip for the batch, so
+    moderation and redaction must not issue two separate annotate calls."""
+    types = [f["type"] for f in google_features(True, True, safesearch=True)]
+    assert types == ["SAFE_SEARCH_DETECTION", "FACE_DETECTION", "TEXT_DETECTION"]
+
+
+def test_only_the_requested_features_are_asked_for():
+    """Each feature is billed, so plates being off must not silently pay for
+    TEXT_DETECTION."""
+    assert [f["type"] for f in google_features(True, False)] == ["FACE_DETECTION"]
+    assert [f["type"] for f in google_features(False, True)] == ["TEXT_DETECTION"]
+    assert google_features(False, False) == []
+
+
+def test_the_moderation_half_reads_out_of_the_shared_response():
+    """The folded call has to yield the same verdict the standalone SafeSearch
+    call did, or folding changed behaviour."""
+    from app.services.cloud_moderation import safesearch_from_payload
+    payload = {"responses": [{"safeSearchAnnotation": {"adult": "VERY_LIKELY"},
+                              "faceAnnotations": []}]}
+    assert safesearch_from_payload(payload).should_block
+
+
+def test_a_response_with_no_safesearch_block_is_unflagged():
+    from app.services.cloud_moderation import safesearch_from_payload
+    assert not safesearch_from_payload({}).flagged
+    assert not safesearch_from_payload({"responses": [{}]}).flagged
+
+
+# ---- provider dispatch ------------------------------------------------------
+#
+# Folding Google's two calls into one is only safe if AWS and Azure, which
+# genuinely cannot be folded (Rekognition's DetectModerationLabels/DetectFaces/
+# DetectText are three APIs, as are Azure's Content Safety / Face / Vision
+# resources), still take the sequential path and behave identically.
+
+import app.services.image_redaction as ir  # noqa: E402
+
+
+@pytest.fixture
+def spy(monkeypatch):
+    calls = {"vision": 0, "screen_images": 0, "redact_media": 0}
+
+    async def fake_screen_images(media):
+        calls["screen_images"] += 1
+        from app.services.content_moderation import ModerationResult
+        return ModerationResult()
+
+    async def fake_redact_media(media):
+        calls["redact_media"] += 1
+        return ir.BatchResult(media=list(media or []), faces=1)
+
+    async def fake_annotate(raw, features):
+        calls["vision"] += 1
+        calls["features"] = [f["type"] for f in features]
+        return {"responses": [{"safeSearchAnnotation": {}, "faceAnnotations": []}]}
+
+    import app.services.content_moderation as cm
+    monkeypatch.setattr(cm, "screen_images", fake_screen_images)
+    monkeypatch.setattr(ir, "redact_media", fake_redact_media)
+    monkeypatch.setattr("app.services.cloud_moderation.vision_annotate", fake_annotate)
+    monkeypatch.setattr(ir, "image_size", lambda raw: (800, 600))
+    monkeypatch.setattr(ir, "strip_exif", lambda raw: b"stripped")
+    return calls
+
+
+def _configure(monkeypatch, provider, faces=True, plates=False):
+    async def fake_settings():
+        return (provider, faces, plates)
+    monkeypatch.setattr(ir, "settings", fake_settings)
+
+
+PHOTO = "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+
+
+@pytest.mark.asyncio
+async def test_google_screens_and_redacts_in_one_call(spy, monkeypatch):
+    _configure(monkeypatch, "google")
+    await ir.screen_and_redact([PHOTO])
+    assert spy["vision"] == 1, "moderation and redaction must share one annotate call"
+    assert spy["screen_images"] == 0, "the separate moderation call must not also fire"
+    assert spy["features"] == ["SAFE_SEARCH_DETECTION", "FACE_DETECTION"]
+
+
+@pytest.mark.parametrize("provider", ["aws", "azure"])
+@pytest.mark.asyncio
+async def test_aws_and_azure_keep_the_sequential_path(spy, monkeypatch, provider):
+    _configure(monkeypatch, provider)
+    verdict, batch = await ir.screen_and_redact([PHOTO])
+    assert spy["screen_images"] == 1
+    assert spy["redact_media"] == 1
+    assert spy["vision"] == 0, "non-Google providers must not touch Vision"
+    assert batch.faces == 1
+
+
+@pytest.mark.asyncio
+async def test_redaction_off_still_moderates(spy, monkeypatch):
+    """Turning the blur off must not turn image moderation off with it."""
+    _configure(monkeypatch, "google", faces=False, plates=False)
+    await ir.screen_and_redact([PHOTO])
+    assert spy["screen_images"] == 1
+    assert spy["vision"] == 0
+
+
+@pytest.mark.asyncio
+async def test_no_provider_still_moderates(spy, monkeypatch):
+    _configure(monkeypatch, None)
+    await ir.screen_and_redact([PHOTO])
+    assert spy["screen_images"] == 1
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_photo_blocks_and_is_not_blurred(monkeypatch, spy):
+    """Blurring an image the caller is about to reject is wasted work, and the
+    verdict must survive the fold."""
+    async def explicit(raw, features):
+        return {"responses": [{"safeSearchAnnotation": {"adult": "VERY_LIKELY"}}]}
+    monkeypatch.setattr("app.services.cloud_moderation.vision_annotate", explicit)
+    _configure(monkeypatch, "google")
+    verdict, batch = await ir.screen_and_redact([PHOTO])
+    assert verdict.should_block
+    assert batch.media == [PHOTO]
+
+
+@pytest.mark.asyncio
+async def test_a_vision_outage_fails_open_rather_than_dropping_the_photo(monkeypatch, spy):
+    async def boom(raw, features):
+        raise RuntimeError("vision down")
+    monkeypatch.setattr("app.services.cloud_moderation.vision_annotate", boom)
+    _configure(monkeypatch, "google")
+    verdict, batch = await ir.screen_and_redact([PHOTO])
+    assert not verdict.should_block
+    assert batch.media == [PHOTO]
+    assert "provider-error" in batch.skipped
+
+
+@pytest.mark.asyncio
+async def test_exif_is_stripped_even_when_no_face_is_found(monkeypatch, spy):
+    """The unconditional half: GPS to a few metres is on almost every phone
+    photo, and removing it needs no detection at all."""
+    _configure(monkeypatch, "google")
+    _, batch = await ir.screen_and_redact([PHOTO])
+    assert batch.media[0] != PHOTO
+    assert batch.media[0].startswith("data:image/jpeg;base64,")
+
+
+@pytest.mark.asyncio
+async def test_photos_past_the_limit_are_carried_through_not_dropped(monkeypatch, spy):
+    _configure(monkeypatch, "google")
+    _, batch = await ir.screen_and_redact([PHOTO] * 5)
+    assert len(batch.media) == 5

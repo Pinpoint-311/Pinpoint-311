@@ -649,7 +649,7 @@ async def create_request(
     # when configured; images use the cloud image moderator when configured.
     # Mild profanity is allowed through (flagged later for staff) so legitimate
     # angry reports still go through.
-    from app.services.content_moderation import screen_text, screen_images
+    from app.services.content_moderation import screen_text
     if (await screen_text(request_data.description or "")).should_block:
         logger.info("[CREATE REQUEST] blocked: explicit/abusive description")
         raise HTTPException(
@@ -657,22 +657,26 @@ async def create_request(
             detail="Your report contains explicit or abusive language and can't be submitted. "
                    "Please describe the issue without offensive content and try again.",
         )
-    if (await screen_images(request_data.media_urls or [])).should_block:
+
+    # Screening and redaction are one step because they are one question asked
+    # of the same bytes: Vision answers SafeSearch, faces and text as features of
+    # a single annotate call, so folding them halves the round trips a resident
+    # waits through. AWS and Azure expose these as separate APIs and fall back to
+    # running the two passes in sequence, with identical behaviour either way.
+    #
+    # The blur is destructive and happens before anything is written -- see
+    # image_redaction -- so no unredacted copy exists to leak through the
+    # Open311 API, the research export or an OPRA response. The EXIF block goes
+    # too, which is the larger privacy win and costs nothing.
+    from app.services import image_redaction
+    verdict, redacted = await image_redaction.screen_and_redact(request_data.media_urls)
+    if verdict.should_block:
         logger.info("[CREATE REQUEST] blocked: explicit image")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="One of your photos appears to contain explicit or graphic content and "
                    "can't be submitted. Please remove it and try again.",
         )
-
-    # Blur faces and (optionally) licence plates out of the photos, and strip
-    # the EXIF block, before anything is written. Destructive on purpose: the
-    # original is never stored, so there is no unredacted copy to leak through
-    # the Open311 API, the research export or an OPRA response. Fails open --
-    # an undetectable photo is stored as submitted rather than the report being
-    # refused for the town's misconfiguration.
-    from app.services import image_redaction
-    redacted = await image_redaction.redact_media(request_data.media_urls)
     request_data.media_urls = redacted.media
     if redacted.changed:
         logger.info("[CREATE REQUEST] redacted %d face(s), %d plate(s)",
@@ -1056,6 +1060,10 @@ async def create_manual_intake(
     # Same redaction as a resident submission. A photo emailed in or attached
     # by a clerk from a phone call is no less likely to have a bystander in it,
     # and it goes to exactly the same public places.
+    #
+    # Redaction only, not the moderation screen: this path never image-moderated
+    # and adding it here would start rejecting a clerk's own submissions on a
+    # SafeSearch score, which is the wrong party to second-guess.
     from app.services import image_redaction
     intake_redacted = await image_redaction.redact_media(intake_data.media_urls)
     intake_data.media_urls = intake_redacted.media
