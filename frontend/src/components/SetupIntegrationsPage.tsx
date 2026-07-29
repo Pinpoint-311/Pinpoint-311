@@ -105,7 +105,13 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         || (isConfigured('OKTA_ISSUER') && isConfigured('OKTA_CLIENT_ID') && isConfigured('OKTA_CLIENT_SECRET'))
         || (isConfigured('OIDC_ISSUER') && isConfigured('OIDC_CLIENT_ID') && isConfigured('OIDC_CLIENT_SECRET'));
     const smsProviderFromSecrets = secrets.find(s => s.key_name === 'SMS_PROVIDER')?.key_value;
-    const smtpConfigured = isConfigured('SMTP_HOST') && isConfigured('SMTP_FROM_EMAIL');
+    // Email is provider-pluggable too (EMAIL_PROVIDER = smtp | ses | acs), so
+    // checking only the SMTP pair marked a town running SES or Azure
+    // Communication Services as unconfigured. Same bug as sign-in and maps.
+    const smtpConfigured =
+        (isConfigured('SMTP_HOST') && isConfigured('SMTP_FROM_EMAIL'))
+        || (isConfigured('AWS_REGION') && (isConfigured('SES_FROM_EMAIL') || isConfigured('SMTP_FROM_EMAIL')))
+        || (isConfigured('ACS_ENDPOINT') && isConfigured('ACS_ACCESS_KEY'));
 
     // Sync local SMS provider state with secrets (only if user hasn't modified)
     useEffect(() => {
@@ -115,7 +121,15 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     }, [smsProviderFromSecrets]);
     const sentryConfigured = isConfigured('SENTRY_DSN');
     const gcpConfigured = isConfigured('GOOGLE_CLOUD_PROJECT');
-    const mapsConfigured = isConfigured('GOOGLE_MAPS_API_KEY');
+    // Same trap as sign-in: maps is a pluggable capability with four providers,
+    // so checking only Google's key left a town running Esri or Apple showing
+    // "map provider: not configured" forever.
+    const mapsConfigured =
+        isConfigured('GOOGLE_MAPS_API_KEY')
+        || isConfigured('ARCGIS_API_KEY')
+        || isConfigured('AZURE_MAPS_KEY')
+        || (isConfigured('APPLE_MAPKIT_TEAM_ID') && isConfigured('APPLE_MAPKIT_KEY_ID')
+            && isConfigured('APPLE_MAPKIT_PRIVATE_KEY'));
     const smsConfigured = !!(localSmsProvider && localSmsProvider !== 'none');
     const backupConfigured = isConfigured('BACKUP_S3_BUCKET') && isConfigured('BACKUP_S3_ACCESS_KEY') && isConfigured('BACKUP_S3_SECRET_KEY') && isConfigured('BACKUP_ENCRYPTION_KEY');
 
@@ -124,9 +138,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     // counting them would leave progress permanently "incomplete".
     const setupSteps = [
         { label: 'Staff sign-in', done: !!signInConfigured, required: true },
-        { label: 'Email (SMTP)', done: !!smtpConfigured, required: false },
+        { label: 'Email', done: !!smtpConfigured, required: false },
         ...(managedMode ? [] : [{ label: 'Google Cloud', done: !!gcpConfigured, required: false }]),
-        { label: 'Map provider', done: !!mapsConfigured, required: false },
+        { label: 'Map provider', done: !!mapsConfigured, required: true },
         { label: 'SMS Alerts', done: smsConfigured, required: false },
         ...(managedMode ? [] : [{ label: 'DB Backups', done: !!backupConfigured, required: false }]),
     ];
@@ -287,6 +301,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
                                 {/* ── 1. Staff sign-in (always required) ── */}
                                 <Guide tone="orange" icon={Key} title="Staff sign-in (required)" done={signInConfigured}>
+                                    <p className="text-xs text-white/45 -mt-1 mb-1">Staff have to sign in through an identity provider — that part is required. These steps walk through <strong className="text-white/70">Auth0</strong>, which is the quickest if you don't already have one; Entra ID, Okta and any OIDC provider work too (step 7).</p>
                                     <InstructionStep num={1}>Create the tenant. Go to <a href="https://auth0.com" target="_blank" rel="noopener noreferrer" className="text-orange-300 underline underline-offset-2">auth0.com</a> and sign up (or sign in to your org's tenant). Pick a region that matches your data-residency needs — this can't be changed later.</InstructionStep>
                                     <InstructionStep num={2}>Create the application. In the left menu go to <strong className="text-white/90">Applications → Applications → Create Application</strong>, name it <em className="text-white/60">"{`{township} 311`}"</em>, choose <strong className="text-white/90">Regular Web Application</strong>, and click Create. (Skip the "quickstart" tech picker.)</InstructionStep>
                                     <InstructionStep num={3}>Set the URLs. Open the app's <strong className="text-white/90">Settings</strong> tab and scroll to <strong className="text-white/90">Application URIs</strong>. Set all three to your site:
@@ -301,9 +316,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                         <span className="block mt-1.5 text-white/45 text-xs">Click <strong className="text-white/70">Save Changes</strong> at the bottom.</span>
                                     </InstructionStep>
                                     <InstructionStep num={4}>Turn on MFA. Go to <strong className="text-white/90">Security → Multi-factor Auth</strong>, enable a factor (<strong className="text-white/90">One-Time Password</strong> or <strong className="text-white/90">WebAuthn / passkeys</strong>), then under <strong className="text-white/90">Define Policies</strong> set it to <strong className="text-white/90">Always</strong> so every staff login is protected.</InstructionStep>
-                                    <InstructionStep num={5}>Copy the credentials into Pinpoint. Back on the app's <strong className="text-white/90">Settings</strong> tab, copy the <strong className="text-white/90">Domain</strong>, <strong className="text-white/90">Client ID</strong>, and <strong className="text-white/90">Client Secret</strong> into the Sign-in card below, then press <strong className="text-white/90">Save &amp; Test</strong>. A green check confirms the round-trip works.</InstructionStep>
+                                    <InstructionStep num={5}>Copy the credentials into Pinpoint. Back on the app's <strong className="text-white/90">Settings</strong> tab, copy the <strong className="text-white/90">Domain</strong>, <strong className="text-white/90">Client ID</strong>, and <strong className="text-white/90">Client Secret</strong> into the <strong className="text-white/90">Staff Sign-In</strong> card in <strong className="text-white/90">Service Providers</strong> at the bottom of this page, then press <strong className="text-white/90">Save &amp; Test</strong>. A green check confirms the round-trip works.</InstructionStep>
                                     <InstructionStep num={6}>Add your first staff member. In Auth0 <strong className="text-white/90">User Management → Users → Create User</strong> (or invite via your directory). After they sign in once, promote them in Pinpoint under <strong className="text-white/90">User Management</strong> (set role to Admin/Staff and assign a department).</InstructionStep>
-                                    <InstructionStep num={7}><em className="text-white/50">Prefer your own IdP?</em> In <strong className="text-white/90">Service Providers → Staff Sign-In</strong> you can switch to <strong className="text-white/90">Microsoft Entra ID</strong>, <strong className="text-white/90">Okta</strong>, or generic <strong className="text-white/90">OIDC</strong> — the same callback URL applies, and the recommended option for {cloudLabel} is highlighted there.</InstructionStep>
+                                    <InstructionStep num={7}><em className="text-white/50">Already have an identity provider?</em> The same <strong className="text-white/90">Staff Sign-In</strong> card offers <strong className="text-white/90">Microsoft Entra ID</strong>, <strong className="text-white/90">Okta</strong> and generic <strong className="text-white/90">OIDC</strong> — pick one there instead and skip steps 1-4. The callback URL above is the same either way, and the recommended option for {cloudLabel} is marked on the card.</InstructionStep>
                                 </Guide>
 
                                 {/* ── 2. Cloud foundation (only if a cloud-backed feature is wanted) ── */}
@@ -376,7 +391,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
                                 {/* ── Email ── */}
                                 <Guide show={wants('email')} tone="violet" icon={Mail} title="Email notifications" done={smtpConfigured}>
-                                    <InstructionStep num={1}><strong className="text-white/90">Any cloud — SMTP:</strong> use SendGrid, Gmail App Passwords, or your org relay. Host <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">smtp.sendgrid.net</code> / <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">587</code>, then fill the Email card below.</InstructionStep>
+                                    <InstructionStep num={1}><strong className="text-white/90">Any cloud — SMTP:</strong> use SendGrid, Gmail App Passwords, or your org relay. Host <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">smtp.sendgrid.net</code> / <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">587</code>, then fill the <strong className="text-white/90">Email (SMTP)</strong> card below.</InstructionStep>
                                     {setupCloud === 'azure' && <InstructionStep num={2}><strong className="text-white/90">Or native Azure:</strong> create an <strong className="text-white/90">Azure Communication Services</strong> resource, connect an email domain, and use its connection string (provider "acs").</InstructionStep>}
                                     {setupCloud === 'aws' && <InstructionStep num={2}><strong className="text-white/90">Or native AWS:</strong> verify a sender/domain in <strong className="text-white/90">Amazon SES</strong> and use SES (provider "ses") with your region + credentials.</InstructionStep>}
                                 </Guide>
@@ -404,7 +419,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     <InstructionStep num={2}>Create the key: <strong className="text-white/90">APIs &amp; Services → Credentials → Create Credentials → API key</strong>. Copy it.</InstructionStep>
                                     <InstructionStep num={3}>Restrict the key (recommended). Edit it → <strong className="text-white/90">Application restrictions → Websites</strong> and add your domain <code className="bg-black/30 px-1.5 py-0.5 rounded text-blue-300 text-xs break-all">{window.location.origin}/*</code>
                                         <button onClick={() => copyToClipboard(`${window.location.origin}/*`, 'mapsref')} aria-label="Copy to clipboard" className="ml-1 inline-flex text-white/40 hover:text-white/70 transition-colors">{copyFeedback === 'mapsref' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}</button>. Under <strong className="text-white/90">API restrictions</strong> limit it to the three APIs above. (If the map shows a grey "can't load" box, the domain restriction or a missing API is almost always why.)</InstructionStep>
-                                    <InstructionStep num={4}>Paste the key into the <strong className="text-white/90">Maps Provider</strong> card under Service Providers and save. Optionally add a <strong className="text-white/90">Map ID</strong> (Google Cloud → Map Management) for custom styling. Reload the resident portal — the address box should now autocomplete and drop a pin.</InstructionStep>
+                                    <InstructionStep num={4}>Paste the key into the <strong className="text-white/90">Maps Provider</strong> card in <strong className="text-white/90">Service Providers</strong> at the bottom of this page and press <strong className="text-white/90">Save &amp; Test</strong>. Optionally add a <strong className="text-white/90">Map ID</strong> (Google Cloud → Map Management) for custom styling. Reload the resident portal — the address box should now autocomplete and drop a pin.</InstructionStep>
                                 </Guide>
 
                                 {/* ── GovTech connector ── */}
@@ -432,8 +447,8 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
 
             {/* Required Integrations */}
-            <CollapsibleSection title="Required Integrations" icon={Shield} accent="primary" subtitle="Sign-in, database, and maps" defaultOpen={true}>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <CollapsibleSection title="Database" icon={Shield} accent="primary" subtitle="Connection status — set from DATABASE_URL, not here" defaultOpen={true}>
+                <div className="grid grid-cols-1 gap-4">
                     {/* The Auth0 card that used to live here has been removed.
                         Sign-in is a pluggable capability with four providers
                         (Auth0, Entra, Okta, and generic OIDC for anything else),
