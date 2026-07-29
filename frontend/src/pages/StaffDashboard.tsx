@@ -45,6 +45,7 @@ import {
     FlaskConical,
     LockKeyhole,
     Home,
+    FlagTriangleRight,
 } from 'lucide-react';
 import { Button, Card, Modal, Input, Textarea, Select, StatusBadge, Badge } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
@@ -2055,9 +2056,7 @@ export default function StaffDashboard() {
                                                     }`}
                                                 aria-label={selectedRequest.flagged === true ? 'Remove legal hold' : 'Place on legal hold'}
                                             >
-                                                <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9" />
-                                                </svg>
+                                                <FlagTriangleRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" aria-hidden="true" />
                                                 <span className="hidden sm:inline">{selectedRequest.flagged === true ? 'Under Legal Hold (Click to Remove)' : 'Place on Legal Hold'}</span>
                                                 <span className="sm:hidden">{selectedRequest.flagged === true ? 'Legal Hold ✓' : 'Legal Hold'}</span>
                                             </button>

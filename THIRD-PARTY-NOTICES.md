@@ -26,20 +26,13 @@ React component cannot be used, or because the icon predates the project's
 standardization on Lucide. Those paths are third-party creative work and are
 attributed here.
 
-### Heroicons — MIT License
+### Heroicons — MIT License (no longer used)
 
-Copyright (c) Tailwind Labs, Inc.
-https://github.com/tailwindlabs/heroicons
-
-Outline path data used inline in:
-
-- `frontend/src/components/ErrorBoundary.tsx` (v2 `exclamation-triangle`)
-- `frontend/src/components/TrackRequests.tsx` (v1 `users`, `user-circle`)
-- `frontend/src/components/AutoTranslate.tsx` (v1 `refresh`, `translate`)
-- `frontend/src/pages/StaffDashboard.tsx` (v1 `flag`)
-
-Heroicons is not currently declared in `frontend/package.json`; only these
-individual paths are used.
+Six Heroicons outline paths were previously inlined in `ErrorBoundary.tsx`,
+`TrackRequests.tsx`, `AutoTranslate.tsx` and `StaffDashboard.tsx`, from a set
+that was never a declared dependency. They have been replaced with the
+equivalent `lucide-react` components. No Heroicons artwork remains in this
+repository; the entry is retained so the history is legible.
 
 ### Lucide — ISC License, and Feather Icons — MIT License
 
@@ -192,7 +185,45 @@ here as a matter of civic-data practice.
 
 ---
 
-## 7. Scope of this file
+## 7. How these obligations are satisfied
+
+Notices are generated into the artifacts at build time rather than maintained
+by hand, so they describe the build that actually shipped and cannot silently
+fall out of date.
+
+**Frontend** — `frontend/scripts/generate-licenses.mjs` runs as the npm
+`prebuild` step, so every `npm run build` (local or in Docker) regenerates
+`public/third-party-licenses.txt` from the installed production tree: every
+package, its version, its declared license, and the verbatim text of the
+LICENSE file it ships. Vite copies it into `dist/`, and nginx serves it at
+**`/third-party-licenses.txt`**. The generated file is deliberately not
+committed — committing it would let it drift from the tree it describes.
+
+**Backend** — `backend/scripts/generate_licenses.py` runs in the Dockerfile
+after `pip install`, writing **`/app/THIRD-PARTY-LICENSES.txt`** inside the
+image from the installed environment. It flags psycopg2-binary and certifi
+specifically, with their upstream source locations, and identifies the Debian
+base layer and where its source is published.
+
+Both images also carry `org.opencontainers.image.source` and
+`org.opencontainers.image.licenses` labels, so a recipient holding only an
+image can find the project and its license without external context.
+
+### Written offer for corresponding source
+
+Every third-party component in these images is an unmodified upstream release.
+Corresponding source for each is available from the locations named in the
+generated files above — PyPI and the projects' own repositories for Python
+distributions, npm for JavaScript packages, https://sources.debian.org for the
+Debian base layer, and https://gitlab.alpinelinux.org/alpine/aports for the
+Alpine base layer. Pinpoint 311's own source is at
+https://github.com/Pinpoint-311/Pinpoint-311 under the MIT License.
+
+No component has been modified, statically linked, or made unreplaceable.
+
+---
+
+## 8. Scope of this file
 
 This lists third-party work that is embedded in, or carries obligations for,
 this repository. It is not a substitute for the full dependency inventory in

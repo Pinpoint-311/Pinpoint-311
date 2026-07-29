@@ -1,4 +1,5 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
+import { AlertTriangle } from 'lucide-react';
 
 interface Props {
     children: ReactNode;
@@ -42,9 +43,7 @@ export default class ErrorBoundary extends Component<Props, State> {
                 <div className="min-h-screen flex items-center justify-center p-6" style={{ background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #1e1b4b 100%)' }}>
                     <div className="max-w-md w-full text-center">
                         <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-red-500/20 border border-red-500/30 flex items-center justify-center">
-                            <svg className="w-8 h-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
-                            </svg>
+                            <AlertTriangle className="w-8 h-8 text-red-400" strokeWidth={2} aria-hidden="true" />
                         </div>
                         <h1 className="text-2xl font-bold text-white mb-2">Something went wrong</h1>
                         <p className="text-white/60 mb-6">An unexpected error occurred. This has been automatically reported.</p>
