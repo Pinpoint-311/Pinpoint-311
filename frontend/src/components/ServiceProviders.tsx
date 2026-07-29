@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     Sparkles, Languages, KeyRound, CheckCircle, AlertCircle,
     ChevronDown, Loader2, Check, ShieldCheck, RefreshCw,
-    Cloud, MapPin, Lock, Info,
+    Cloud, MapPin, Lock, Info, Map as MapIcon,
 } from 'lucide-react';
 
 import { Select, CollapsibleSection } from './ui';
@@ -22,12 +22,16 @@ function agoLabel(epochSeconds?: number | null): string {
     return `${Math.round(hrs / 24)}d ago`;
 }
 
-type Capability = 'ai' | 'translation' | 'identity';
+type Capability = 'ai' | 'translation' | 'identity' | 'maps';
 
 const CAPS: { key: Capability; title: string; blurb: string; icon: typeof Sparkles }[] = [
     { key: 'ai', title: 'AI Provider', blurb: 'Where AI triage & the analytics assistant run. Each town brings its own key and pays only for what it uses.', icon: Sparkles },
     { key: 'translation', title: 'Translation Provider', blurb: 'Powers end-to-end translation across 100+ languages.', icon: Languages },
     { key: 'identity', title: 'Staff Sign-In (Identity)', blurb: 'The identity provider that authenticates staff and admins.', icon: KeyRound },
+    // Maps is a capability like the rest, so switching one works the same way
+    // as switching an AI or translation provider -- same card, same save, same
+    // test button. A separate picker elsewhere would be a second thing to learn.
+    { key: 'maps', title: 'Maps Provider', blurb: 'Draws the map residents drop a pin on, and looks up addresses. Google is the simplest to set up; Esri suits a town whose county already publishes its own basemap.', icon: MapIcon },
 ];
 
 export interface CapStatus { providerName?: string; onDefault?: boolean; verified?: boolean | null }
