@@ -43,3 +43,11 @@ vaderSentiment==3.3.2
 # image_redaction degrades to storing the photo as submitted.
 Pillow==11.1.0
 opencv-python-headless==4.11.0.86
+
+# The free plate detector. Tesseract is Apache 2.0, which is what makes it
+# usable here -- OpenALPR and every off-the-shelf Ultralytics YOLO plate model
+# are AGPL-3.0, and that clause would attach to every town that self-hosts and
+# exposes this over a network. pytesseract needs the `tesseract-ocr` system
+# binary (installed in the Dockerfile); without it the plate text signal simply
+# turns off and face redaction is unaffected.
+pytesseract==0.3.13

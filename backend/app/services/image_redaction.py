@@ -48,6 +48,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from app.services.content_moderation import ModerationResult
+
 logger = logging.getLogger(__name__)
 
 REDACTION_PROVIDER_KEY = "REDACTION_PROVIDER"
@@ -671,38 +673,37 @@ async def detect(provider: str, raw: bytes, width: int, height: int,
 
 # ---- Google Vision --------------------------------------------------------
 
-async def _google_detect(raw: bytes, width: int, height: int,
-                         faces: bool, plates: bool) -> List[Box]:
-    import httpx
-
-    from app.services.cloud_moderation import _google_token_and_project
-
-    features = []
+def google_features(faces: bool, plates: bool, safesearch: bool = False) -> List[Dict[str, Any]]:
+    """The feature list for one Vision annotate call."""
+    features: List[Dict[str, Any]] = []
+    if safesearch:
+        features.append({"type": "SAFE_SEARCH_DETECTION"})
     if faces:
         features.append({"type": "FACE_DETECTION", "maxResults": 50})
     if plates:
         features.append({"type": "TEXT_DETECTION"})
-    if not features:
-        return []
+    return features
 
-    token, _ = await _google_token_and_project()
-    if not token:
-        return []
 
-    body = {"requests": [{"image": {"content": base64.b64encode(raw).decode("ascii")},
-                          "features": features}]}
-    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=6.0)) as client:
-        resp = await client.post("https://vision.googleapis.com/v1/images:annotate",
-                                 headers={"Authorization": f"Bearer {token}"}, json=body)
-        resp.raise_for_status()
-        payload = resp.json()
-
+def boxes_from_vision(payload: Dict[str, Any], width: int, height: int,
+                      faces: bool, plates: bool) -> List[Box]:
+    """Both detection kinds out of one shared annotate response."""
     out: List[Box] = []
     if faces:
         out += google_faces(payload, width, height)
     if plates:
         out += google_text_plates(payload, width, height)
     return out
+
+
+async def _google_detect(raw: bytes, width: int, height: int,
+                         faces: bool, plates: bool) -> List[Box]:
+    from app.services.cloud_moderation import vision_annotate
+
+    features = google_features(faces, plates)
+    if not features:
+        return []
+    return boxes_from_vision(await vision_annotate(raw, features), width, height, faces, plates)
 
 
 # ---- AWS Rekognition ------------------------------------------------------
@@ -803,6 +804,100 @@ async def _azure_detect(raw: bytes, width: int, height: int,
 # some deployments, and because a town with no cloud account at all should still
 # be able to turn something on.
 
+# Confidence for a plate both signals agree on, and for one that only the text
+# heuristic found. A cascade hit alone is not enough to blur -- see
+# combine_plate_signals.
+PLATE_BOTH_CONFIDENCE = 0.9
+CASCADE_ONLY_CONFIDENCE = 0.0
+
+
+def combine_plate_signals(cascade: Sequence[Box],
+                          words: Sequence[Tuple[str, Box, float]]) -> List[Box]:
+    """Require a plate-shaped region *and* plate-shaped text inside it.
+
+    Choosing the free plate detector came down to which failure to accept.
+
+    The Haar cascade alone fires on any bright rectangle with dark structure
+    inside: road signs, house-number plaques, mailboxes, the back of a truck. On
+    a streetscape photo that is unusable -- it smears the context that made the
+    report actionable.
+
+    Tesseract alone (Apache 2.0, and the only OCR engine with a licence that can
+    ship inside an MIT product without dragging AGPL in behind it -- which is
+    what disqualifies OpenALPR and every Ultralytics YOLO plate model) fires on
+    any short alphanumeric string. House numbers, bus routes, phone numbers on a
+    contractor's van.
+
+    The two are wrong about different things, so the intersection is much
+    stronger than either: a region that is plate-shaped *and* contains
+    plate-shaped text is very rarely anything else. That is the accepted
+    detection, at high confidence.
+
+    A plate-like word with no cascade region around it is still taken, on the
+    text heuristic alone, because the cascade misses angled and shadowed plates
+    badly and recall matters. A cascade region with no plate-like text inside it
+    is dropped outright -- that is the road-sign case, and it is the whole reason
+    for the AND.
+    """
+    out: List[Box] = []
+    scored = [(text, box, ocr) for text, box, ocr in words
+              if plate_like(text, box) * max(0.0, min(1.0, ocr)) > 0]
+
+    for region in cascade:
+        inside = [(t, b, c) for t, b, c in scored if _overlap(region, b) >= 0.5]
+        if inside:
+            out.append(Box(region.left, region.top, region.right, region.bottom,
+                           "plate", PLATE_BOTH_CONFIDENCE))
+
+    for text, box, ocr in scored:
+        if any(_overlap(region, box) >= 0.5 for region in cascade):
+            continue  # already covered by the region box, which is the better shape
+        score = plate_like(text, box) * max(0.0, min(1.0, ocr))
+        if score >= PLATE_MIN_CONFIDENCE:
+            out.append(Box(box.left, box.top, box.right, box.bottom, "plate", score))
+
+    return out
+
+
+def _tesseract_words(image, width: int, height: int) -> List[Tuple[str, Box, float]]:
+    """OCR one image into (text, fractional box, confidence) triples.
+
+    Returns [] rather than raising when Tesseract is not installed -- it is a
+    system binary, not a pip package, so a deployment can perfectly well be
+    missing it, and that must degrade to "no plates found" rather than breaking
+    intake.
+    """
+    try:
+        import pytesseract
+    except Exception:
+        return []
+    try:
+        data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+    except Exception:
+        # Almost always the binary being absent from PATH.
+        logger.info("[Redaction] tesseract unavailable; plate text signal off")
+        return []
+
+    words: List[Tuple[str, Box, float]] = []
+    for i, text in enumerate(data.get("text", [])):
+        if not (text or "").strip():
+            continue
+        try:
+            conf = float(data["conf"][i])
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+        if conf < 0:            # Tesseract uses -1 for non-word rows
+            continue
+        left, top = data["left"][i], data["top"][i]
+        w, h = data["width"][i], data["height"][i]
+        if w <= 0 or h <= 0:
+            continue
+        box = Box(left / width, top / height,
+                  (left + w) / width, (top + h) / height, "plate", 0.0).clamped()
+        words.append((text, box, conf / 100.0))
+    return words
+
+
 def _cascade(name: str):
     import cv2
     path = cv2.data.haarcascades + name
@@ -847,11 +942,23 @@ def _detect_local_sync(raw: bytes, faces: bool, plates: bool) -> List[Box]:
         # a three-quarter view that both happen to catch.
         run(_cascade("haarcascade_frontalface_default.xml"), "face", (24, 24), 0.6)
         run(_cascade("haarcascade_profileface.xml"), "face", (24, 24), 0.5)
+
     if plates:
-        # Reported as 0.6 rather than a measured score -- a cascade has no
-        # confidence output, and pretending otherwise would put a fabricated
-        # number in the audit log.
-        run(_cascade("haarcascade_russian_plate_number.xml"), "plate", (40, 14), 0.6)
+        # The cascade proposes plate-shaped regions and Tesseract confirms there
+        # is plate-shaped text in them. Neither alone is usable; see
+        # combine_plate_signals for why the AND is the whole design.
+        regions: List[Box] = []
+        classifier = _cascade("haarcascade_russian_plate_number.xml")
+        if classifier is not None:
+            for (x, y, w, h) in classifier.detectMultiScale(
+                grey, scaleFactor=1.1, minNeighbors=5, minSize=(40, 14)
+            ):
+                regions.append(Box(x / small_w, y / small_h,
+                                   (x + w) / small_w, (y + h) / small_h,
+                                   "plate", 0.0).clamped())
+        # OCR the equalised grey image: Tesseract does markedly better on high
+        # contrast than on a raw colour photo, and it is already computed.
+        out += combine_plate_signals(regions, _tesseract_words(grey, small_w, small_h))
 
     return out
 
@@ -950,3 +1057,113 @@ async def redact_media(media: Optional[List[str]]) -> BatchResult:
     # so this function cannot silently drop a photo.
     out.media.extend(m for m in (media or [])[len(items):])
     return out
+
+
+async def _google_screen_and_redact_one(media: str, faces: bool, plates: bool):
+    """SafeSearch and the detections for one photo, in a single Vision call.
+
+    This is the whole point of the combined path. Moderation and redaction both
+    need Vision to look at the same bytes, and asking twice doubles the round
+    trips a resident waits through for no benefit -- Vision bills per feature,
+    not per request, so the batched call costs exactly the same.
+    """
+    from app.services.cloud_moderation import safesearch_from_payload, vision_annotate
+
+    decoded = _decode(media)
+    if not decoded:
+        return ModerationResult(), RedactionResult(media, skipped_reason="not-inline-image")
+    raw, mime = decoded
+
+    width, height = image_size(raw)
+    if width <= 0 or height <= 0:
+        return ModerationResult(), RedactionResult(media, skipped_reason="unreadable-image")
+
+    try:
+        payload = await vision_annotate(raw, google_features(faces, plates, safesearch=True))
+    except Exception as exc:
+        from app.core.sanitize import sanitize_for_log
+        logger.info("[Redaction] vision unavailable: %s", sanitize_for_log(str(exc)))
+        return ModerationResult(), RedactionResult(media, skipped_reason="provider-error")
+
+    verdict = safesearch_from_payload(payload)
+    found = boxes_from_vision(payload, width, height, faces, plates)
+
+    # An image about to be rejected as explicit is not worth blurring; the
+    # caller raises before anything is stored.
+    if verdict.should_block:
+        return verdict, RedactionResult(media, skipped_reason="blocked")
+
+    if not found:
+        cleaned = strip_exif(raw)
+        if cleaned is not None:
+            return verdict, RedactionResult(_encode(cleaned, "image/jpeg"),
+                                            skipped_reason="no-detections")
+        return verdict, RedactionResult(media, skipped_reason="no-detections")
+
+    boxes = merge_boxes([b.padded(FACE_PADDING if b.kind == "face" else PLATE_PADDING)
+                         for b in found])
+    blurred = blur_regions(raw, boxes)
+    if blurred is None:
+        return verdict, RedactionResult(media, skipped_reason="blur-failed")
+
+    return verdict, RedactionResult(
+        _encode(blurred, "image/jpeg" if mime == "image/png" else mime),
+        faces=sum(1 for b in boxes if b.kind == "face"),
+        plates=sum(1 for b in boxes if b.kind == "plate"),
+        changed=True,
+    )
+
+
+async def screen_and_redact(media: Optional[List[str]]) -> Tuple[ModerationResult, BatchResult]:
+    """The single photo-intake entry point: moderate and redact together.
+
+    Google is folded into one request per photo because Vision does SafeSearch,
+    faces and text as features of the same annotate call. AWS and Azure cannot
+    be folded -- Rekognition's DetectModerationLabels, DetectFaces and DetectText
+    are three separate APIs, as are Azure's Content Safety, Face and Vision
+    resources -- so those providers run the existing screen-then-redact pair
+    unchanged. Same behaviour on every provider, one fewer round trip on the one
+    that supports it.
+
+    Returns the strongest moderation verdict across the photos alongside the
+    redacted media. The caller must check `should_block` and raise *before*
+    using the media, because a blocked submission is never stored.
+    """
+    from app.services.content_moderation import screen_images
+
+    items = [m for m in (media or []) if isinstance(m, str)][:MAX_IMAGES]
+    provider, faces, plates = await settings()
+
+    # Either half being off means there is nothing to share, so take the plain
+    # path for whichever half is still on.
+    if not items or not provider or not (faces or plates):
+        return await screen_images(media or []), BatchResult(media=list(media or []))
+
+    if provider != "google":
+        return await screen_images(media or []), await redact_media(media)
+
+    results = await asyncio.gather(
+        *(_google_screen_and_redact_one(m, faces, plates) for m in items),
+        return_exceptions=True,
+    )
+
+    rank = {"none": 0, "mild": 1, "severe": 2}
+    strongest = ModerationResult()
+    out = BatchResult()
+    for original, result in zip(items, results):
+        if isinstance(result, Exception) or not isinstance(result, tuple):
+            logger.warning("[Redaction] image failed", exc_info=isinstance(result, Exception))
+            out.media.append(original)
+            out.skipped.append("error")
+            continue
+        verdict, redaction = result
+        if rank[verdict.severity] > rank[strongest.severity]:
+            strongest = verdict
+        out.media.append(redaction.media)
+        out.faces += redaction.faces
+        out.plates += redaction.plates
+        if not redaction.changed and redaction.skipped_reason not in ("", "no-detections", "blocked"):
+            out.skipped.append(redaction.skipped_reason)
+
+    out.media.extend(m for m in (media or [])[len(items):])
+    return strongest, out
