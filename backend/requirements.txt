@@ -34,3 +34,12 @@ better-profanity==0.7.0
 # rule-based model (MIT, pure Python, no model download) that handles negation
 # and intensifiers. Optional: research exports fall back to a keyword scorer.
 vaderSentiment==3.3.2
+
+# Face / licence-plate redaction of resident photos, applied destructively at
+# intake. Pillow does the blur and the re-encode (which also drops the EXIF GPS
+# block a phone attaches). opencv-python-headless is the offline, no-cost
+# detector -- headless because the GUI build pulls in X11 for imshow() that a
+# container will never call. Both are optional at runtime: without them
+# image_redaction degrades to storing the photo as submitted.
+Pillow==11.1.0
+opencv-python-headless==4.11.0.86
