@@ -22,6 +22,12 @@ from sqlalchemy import delete, func, select, text
 
 from app.core.celery_app import celery_app
 from app.models import RoadDataStatus, RoadSegment
+from app.services.road_alerts import (
+    broken_rules,
+    build_alerts,
+    configured_roads,
+    diff_road_names,
+)
 from app.services.road_sources import (
     fetch_segments,
     fetch_source_updated_at,
@@ -142,15 +148,27 @@ async def seed_roads_for_boundary(db, *, force: bool = False) -> Dict[str, Any]:
         status.last_error = str(exc)[:500]
         await db.commit()
         logger.warning("road fetch failed for %s: %s", entry.get("name"), exc)
+        await _report(db, township, changes=None, status=status)
         return {"ok": False, "reason": str(exc), "failures": status.consecutive_failures}
 
     existing = (await db.execute(select(func.count(RoadSegment.id)))).scalar() or 0
+    # Snapshot before the swap: the digest diffs names, and after the delete
+    # there is nothing left to compare against.
+    previous_names = [
+        row[0] for row in (await db.execute(select(RoadSegment.name))).all()
+    ]
+
     ok, refusal = should_swap(existing, len(result.segments))
     if not ok:
         status.consecutive_failures = (status.consecutive_failures or 0) + 1
         status.last_error = refusal
         await db.commit()
         logger.warning("refusing road swap: %s", refusal)
+        await _report(
+            db, township,
+            changes=diff_road_names(previous_names, [s.name for s in result.segments]),
+            status=status,
+        )
         return {"ok": False, "reason": refusal}
 
     # Swap. Deleting and reinserting inside one transaction means a failure
@@ -176,6 +194,12 @@ async def seed_roads_for_boundary(db, *, force: bool = False) -> Dict[str, Any]:
     if result.source_updated_at:
         status.source_updated_at = result.source_updated_at
     await db.commit()
+
+    await _report(
+        db, township,
+        changes=diff_road_names(previous_names, [s.name for s in result.segments]),
+        status=status,
+    )
 
     logger.info("seeded %s roads for %s from %s", len(result.segments), township, result.source_name)
     return {
@@ -224,3 +248,61 @@ def refresh_roads_monthly() -> Dict[str, Any]:
             return await seed_roads_for_boundary(db)
 
     return asyncio.run(run())
+
+
+async def _report(db, township: str, *, changes, status) -> None:
+    """Email admins, but only when there is a decision to make or something is
+    broken. Never raises -- a failure to send must not roll back a good refresh.
+
+    A rule whose road has vanished is checked here rather than in the alert
+    module because it needs the service configs, which only the caller has.
+    """
+    try:
+        from sqlalchemy import select as _select
+
+        from app.models import ServiceDefinition, User
+        from app.services.notifications import notification_service
+        from app.tasks.service_requests import configure_notifications
+
+        names = [row[0] for row in (await db.execute(_select(RoadSegment.name))).all()]
+        configs = [
+            row[0] for row in (
+                await db.execute(_select(ServiceDefinition.routing_config))
+            ).all() if row[0]
+        ]
+        newly_broken = broken_rules(configured_roads(configs), names)
+
+        alerts = build_alerts(
+            changes=changes,
+            consecutive_failures=status.consecutive_failures or 0,
+            last_error=status.last_error,
+            newly_broken_rules=newly_broken,
+            township=township,
+        )
+        if not alerts:
+            return
+
+        admins = [
+            a for a in (
+                await db.execute(
+                    _select(User).where(User.role == "admin", User.is_active.is_(True))
+                )
+            ).scalars().all() if a.email
+        ]
+        if not admins:
+            logger.info("road alerts raised but no admin has an email address")
+            return
+
+        await configure_notifications(db)
+        for alert in alerts:
+            for admin in admins:
+                try:
+                    notification_service.send_email(
+                        to=admin.email,
+                        subject=alert.subject,
+                        body_html=f"<p>{alert.body}</p>".replace("\n\n", "</p><p>"),
+                    )
+                except Exception as exc:
+                    logger.warning("could not email road alert to %s: %s", admin.email, exc)
+    except Exception as exc:
+        logger.warning("road alert reporting failed: %s", exc)
