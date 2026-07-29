@@ -77,6 +77,17 @@ async def get_translation_catalog(_: User = Depends(get_current_admin)):
     return {"current_provider": current.strip().lower(), "default_provider": "google", "providers": catalog_for_api()}
 
 
+@router.get("/maps/catalog")
+async def get_maps_catalog(_: User = Depends(get_current_admin)):
+    """Map provider catalog. Maps is a capability like AI or translation, so it
+    uses the same catalog/save/test endpoints and the same card in the UI --
+    a town switches its map the way it switches anything else."""
+    from app.services.map_provider import MAP_PROVIDER_KEY, catalog_for_api, normalize_provider
+    from app.services.secret_manager import get_secret
+    current = normalize_provider(await get_secret(MAP_PROVIDER_KEY))
+    return {"current_provider": current, "default_provider": "google", "providers": catalog_for_api()}
+
+
 @router.get("/ai/catalog")
 async def get_ai_catalog(
     db: AsyncSession = Depends(get_db),
@@ -163,6 +174,7 @@ _PROVIDER_SELECT_KEY = {
     "ai": "AI_PROVIDER",
     "translation": "TRANSLATION_PROVIDER",
     "identity": "IDENTITY_PROVIDER",
+    "maps": "MAP_PROVIDER",
 }
 
 
@@ -208,6 +220,9 @@ def _capability_catalog(capability: str) -> Dict:
     if capability == "identity":
         from app.services.identity import IDENTITY_CATALOG
         return IDENTITY_CATALOG
+    if capability == "maps":
+        from app.services.map_provider import MAP_CATALOG
+        return MAP_CATALOG
     return {}
 
 
