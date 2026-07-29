@@ -20,7 +20,9 @@ type FactoryLoader = () => Promise<MapProviderFactory>;
 
 const LOADERS: Partial<Record<MapProviderId, FactoryLoader>> = {
     google: async () => (await import('./providers/google')).googleMapProvider,
-    // maplibre / esri / apple / azure land here as they are written (Track B2+).
+    maplibre: async () => (await import('./providers/maplibre')).maplibreMapProvider,
+    esri: async () => (await import('./providers/esri')).esriMapProvider,
+    // apple / azure land here once their adapters are written.
 };
 
 const cache = new Map<MapProviderId, Promise<MapProviderFactory>>();
