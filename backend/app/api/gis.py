@@ -1,3 +1,5 @@
+from app.tasks.road_data import seed_roads_for_boundary
+import asyncio
 """
 GIS and Geocoding API endpoints
 """
@@ -502,6 +504,14 @@ async def save_township_boundary(
         
         settings.township_boundary = boundary_data
         await db.commit()
+        
+        # Trigger background road seeding for this boundary
+        try:
+            from app.tasks.road_data import seed_roads
+            seed_roads.delay(force=True)
+        except Exception as seed_err:
+            logger.warning("Failed to trigger async seed_roads task: %s", seed_err)
+
         
         return {"status": "success", "message": "Township boundary saved successfully"}
         

@@ -247,10 +247,8 @@ export default function LocationPicker({
                     }
 
                     // Fit map to boundary bounds (if no existing pin location)
-                    if (!value?.lat && !value?.lng) {
-                        const boundaryBounds = boundsOfGeoJson(townshipBoundary);
-                        if (boundaryBounds) map.fitBounds(boundaryBounds);
-                    }
+                    const boundaryBounds = boundsOfGeoJson(townshipBoundary);
+                    if (boundaryBounds) map.fitBounds(boundaryBounds);
                 }
 
                 // Render custom layers (parks, storm drains, utilities, etc.)
