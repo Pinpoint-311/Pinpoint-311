@@ -343,3 +343,14 @@ async def set_corridor_width(
     status.corridor_metres = width
     await db.commit()
     return {"corridor_metres": width}
+
+
+@router.post("/roads/seed")
+async def trigger_road_seed(
+    force: bool = Query(True, description="Force re-download even if unchanged"),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    from app.tasks.road_data import seed_roads_for_boundary
+    result = await seed_roads_for_boundary(db, force=force)
+    return result

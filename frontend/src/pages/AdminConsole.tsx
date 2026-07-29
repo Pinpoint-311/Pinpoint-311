@@ -791,6 +791,7 @@ export default function AdminConsole() {
             const centerLat = parseFloat(selectedOsmResult.lat);
             const centerLng = parseFloat(selectedOsmResult.lon);
             await api.saveTownshipBoundary(geojson, selectedOsmResult.display_name, centerLat, centerLng);
+            try { await api.seedRoads(true); } catch (e) { console.warn("Road seed failed:", e); }
 
             setTownshipBoundary(geojson);
             setSelectedOsmResult(null);
@@ -2318,6 +2319,7 @@ export default function AdminConsole() {
                                                             const geojson = JSON.parse(text);
                                                             if (!geojson.type) throw new Error('Invalid GeoJSON format');
                                                             await api.saveTownshipBoundary(geojson, file.name);
+                                                            try { await api.seedRoads(true); } catch (e) { console.warn("Road seed failed:", e); }
                                                             setTownshipBoundary(geojson);
                                                             setSelectedOsmResult(null);
                                                             setSaveMessage('GeoJSON boundary uploaded successfully!');

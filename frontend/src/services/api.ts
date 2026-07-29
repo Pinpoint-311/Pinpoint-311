@@ -682,6 +682,18 @@ class ApiClient {
         return this.request(`/gis/osm/boundary/${osmId}`);
     }
 
+    
+    async seedRoads(force: boolean = true): Promise<{
+        ok: boolean;
+        segments?: number;
+        source?: string;
+        reason?: string;
+    }> {
+        return this.request(, {
+            method: "POST",
+        });
+    }
+
     async saveTownshipBoundary(geojsonData: object, name?: string, centerLat?: number, centerLng?: number): Promise<{
         status: string;
         message: string;
