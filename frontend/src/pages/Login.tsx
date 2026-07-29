@@ -223,7 +223,7 @@ export default function Login() {
                                     href="https://pinpoint311.org"
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="text-primary-400/50 hover:text-primary-300 transition-colors inline-flex items-center gap-1"
+                                    className="brand-link text-primary-400/50 hover:text-primary-300 transition-colors inline-flex items-center gap-1"
                                     data-no-translate
                                 >
                                     Pinpoint 311
