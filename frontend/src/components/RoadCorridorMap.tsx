@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Loader2, MapPin, RotateCcw } from 'lucide-react';
+import { AlertTriangle, Loader2, MapPin, RotateCcw, X } from 'lucide-react';
 
 import { api } from '../services/api';
 import {
     GeoFeature,
     GeoJsonLayerHandle,
+    LatLng,
     MapRenderer,
+    MarkerLayer,
     VectorStyle,
     boundsOfGeoJson,
     createMap,
+    fractionAlongLine,
     legacyMapProviderConfig,
+    pointAtFraction,
 } from '../maps';
 
 /**
@@ -29,12 +33,17 @@ import {
  * changes on every refresh.
  */
 
+export interface SegmentTrim { start: number; end: number }
+
 interface RoadCorridorMapProps {
     /** Road names currently in the rule, comma-separated as routing_config stores them. */
     roads: string;
     /** Feature ids the clerk has switched off. */
     excludedFeatureIds: string[];
     onExcludedChange: (ids: string[]) => void;
+    /** Partial coverage, keyed by feature id, as fractions of segment length. */
+    trims: Record<string, SegmentTrim>;
+    onTrimsChange: (trims: Record<string, SegmentTrim>) => void;
     corridorMetres: number;
     onCorridorMetresChange: (metres: number) => void;
     apiKey?: string | null;
@@ -45,6 +54,7 @@ const EXCLUDED = '#64748b';
 
 export default function RoadCorridorMap({
     roads, excludedFeatureIds, onExcludedChange,
+    trims, onTrimsChange,
     corridorMetres, onCorridorMetresChange, apiKey,
 }: RoadCorridorMapProps) {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -53,6 +63,15 @@ export default function RoadCorridorMap({
     // Read inside the style callback, which the renderer may call at any time.
     // A ref rather than state so a redraw never closes over a stale set.
     const excludedRef = useRef(new Set(excludedFeatureIds));
+    const handleLayerRef = useRef<MarkerLayer | null>(null);
+    // The clicked stretch, and its vertices, so handles can be placed along it.
+    const [selected, setSelected] = useState<{ id: string; name: string; path: LatLng[] } | null>(null);
+    // feature id -> vertices, kept from the fetch. GeoFeature deliberately does
+    // not carry raw coordinates (it is provider-neutral), so the click handler
+    // looks the path up here rather than reaching into vendor geometry.
+    const pathsRef = useRef<Map<string, LatLng[]>>(new Map());
+    const trimsRef = useRef(trims);
+    useEffect(() => { trimsRef.current = trims; }, [trims]);
 
     const [ready, setReady] = useState(false);
     const [loading, setLoading] = useState(false);
@@ -135,6 +154,12 @@ export default function RoadCorridorMap({
                 if (cancelled || !rendererRef.current) return;
                 setUnavailable(collection.available === false);
                 setSegmentCount(collection.features.length);
+                pathsRef.current = new Map(
+                    collection.features.map(f => [
+                        String(f.properties.feature_id),
+                        (f.geometry.coordinates || []).map(([lng, lat]) => ({ lat, lng })),
+                    ]),
+                );
                 if (!collection.features.length) return;
 
                 layerRef.current = rendererRef.current.addGeoJsonLayer({
@@ -142,7 +167,15 @@ export default function RoadCorridorMap({
                     style: styleFor,
                     onFeatureClick: feature => {
                         const id = feature.properties?.feature_id;
-                        if (id) toggleSegment(String(id));
+                        if (!id) return;
+                        // Select rather than toggle: with trimming there is more
+                        // than one thing a clerk might want to do to a stretch,
+                        // so the click opens the choice instead of making it.
+                        setSelected({
+                            id: String(id),
+                            name: String(feature.properties?.name || 'this stretch'),
+                            path: pathsRef.current.get(String(id)) || [],
+                        });
                     },
                 });
 
@@ -158,7 +191,58 @@ export default function RoadCorridorMap({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [roadKey, ready, styleFor, toggleSegment]);
 
+    // Draggable handles at the trim boundaries of the selected stretch.
+    useEffect(() => {
+        const renderer = rendererRef.current;
+        handleLayerRef.current?.remove();
+        handleLayerRef.current = null;
+        if (!renderer || !ready || !selected || selected.path.length < 2) return;
+
+        const trim = trims[selected.id] || { start: 0, end: 1 };
+        const layer = renderer.createMarkerLayer();
+
+        const commit = (which: 'start' | 'end') => (position: LatLng) => {
+            const fraction = fractionAlongLine(selected.path, position);
+            const current = trimsRef.current[selected.id] || { start: 0, end: 1 };
+            const next = { ...current, [which]: fraction };
+            // Dragging the handles across each other is a normal thing to do
+            // and should mean "the other way round", not an empty rule.
+            const ordered = next.start <= next.end
+                ? next
+                : { start: next.end, end: next.start };
+
+            const updated = { ...trimsRef.current };
+            if (ordered.start <= 0.001 && ordered.end >= 0.999) delete updated[selected.id];
+            else updated[selected.id] = ordered;
+            onTrimsChange(updated);
+        };
+
+        const markers = (['start', 'end'] as const).flatMap(which => {
+            const position = pointAtFraction(selected.path, trim[which]);
+            return position ? [{
+                position,
+                draggable: true,
+                icon: {
+                    type: 'circle' as const,
+                    radius: 8,
+                    fillColor: '#fbbf24',
+                    fillOpacity: 1,
+                    strokeColor: '#78350f',
+                    strokeWidth: 2,
+                },
+                title: which === 'start' ? 'Drag: where this rule starts' : 'Drag: where this rule ends',
+                zIndex: 200,
+                onDragEnd: commit(which),
+            }] : [];
+        });
+
+        layer.setMarkers(markers);
+        handleLayerRef.current = layer;
+    }, [selected, trims, ready, onTrimsChange]);
+
     const excludedCount = excludedFeatureIds.length;
+    const selectedExcluded = selected ? excludedFeatureIds.includes(selected.id) : false;
+    const selectedTrim = selected ? trims[selected.id] : undefined;
 
     return (
         <div className="space-y-3">
@@ -202,6 +286,61 @@ export default function RoadCorridorMap({
                     </div>
                 )}
             </div>
+
+            {selected && (
+                <div className="rounded-xl border border-amber-400/25 bg-amber-500/[0.07] px-3.5 py-3 space-y-2.5">
+                    <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                            <p className="text-sm font-medium text-white truncate">{selected.name}</p>
+                            <p className="text-[11px] text-white/45 mt-0.5">
+                                {selectedExcluded
+                                    ? 'Switched off — this stretch is not covered by the rule.'
+                                    : selectedTrim
+                                        ? `Covered from ${Math.round(selectedTrim.start * 100)}% to ${Math.round(selectedTrim.end * 100)}% along. Drag the amber handles to adjust.`
+                                        : 'Fully covered. Drag the amber handles to cover only part of it.'}
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setSelected(null)}
+                            aria-label="Close stretch options"
+                            className="p-1 rounded hover:bg-white/10 text-white/40 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400"
+                        >
+                            <X className="w-4 h-4" aria-hidden="true" />
+                        </button>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                        <button
+                            type="button"
+                            onClick={() => toggleSegment(selected.id)}
+                            className="rounded-lg px-2.5 py-1.5 text-xs bg-white/5 hover:bg-white/10 border border-white/10 text-white/75 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400"
+                        >
+                            {selectedExcluded ? 'Include this stretch' : 'Switch this stretch off'}
+                        </button>
+                        {selectedTrim && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    const next = { ...trimsRef.current };
+                                    delete next[selected.id];
+                                    onTrimsChange(next);
+                                }}
+                                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs bg-white/5 hover:bg-white/10 border border-white/10 text-white/60 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400"
+                            >
+                                <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+                                Cover all of it
+                            </button>
+                        )}
+                    </div>
+
+                    <p className="text-[11px] text-white/40 leading-relaxed">
+                        Trimming is for where the road data splits in the wrong place — the
+                        boundaries in the data are wherever the publisher happened to cut them,
+                        not where responsibility actually changes.
+                    </p>
+                </div>
+            )}
 
             {/* Corridor width. A number, not a map interaction, because the fix
                 for a corridor that is too wide is almost always this and not
