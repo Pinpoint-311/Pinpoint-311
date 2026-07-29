@@ -60,7 +60,8 @@ export default function RoadCorridorMap({
 }: RoadCorridorMapProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const rendererRef = useRef<MapRenderer | null>(null);
-    const layerRef = useRef<GeoJsonLayerHandle | null>(null);
+    const bufferLayerRef = useRef<GeoJsonLayerHandle | null>(null);
+    const centerlineLayerRef = useRef<GeoJsonLayerHandle | null>(null);
     // Read inside the style callback, which the renderer may call at any time.
     // A ref rather than state so a redraw never closes over a stale set.
     const excludedRef = useRef(new Set(excludedFeatureIds));
@@ -127,7 +128,8 @@ export default function RoadCorridorMap({
             cancelled = true;
             rendererRef.current?.destroy();
             rendererRef.current = null;
-            layerRef.current = null;
+            bufferLayerRef.current = null;
+            centerlineLayerRef.current = null;
         };
     }, [apiKey]);
 
@@ -147,8 +149,9 @@ export default function RoadCorridorMap({
     /** Re-evaluate the existing layer rather than refetching: the geometry has
      *  not changed, only which pieces count. */
     const restyle = useCallback(() => {
-        layerRef.current?.setStyle(styleFor);
-    }, [styleFor]);
+        bufferLayerRef.current?.setStyle(bufferStyleFor);
+        centerlineLayerRef.current?.setStyle(centerlineStyleFor);
+    }, [bufferStyleFor, centerlineStyleFor]);
 
     // Live update map buffer stroke whenever slider moves
     useEffect(() => {
@@ -168,8 +171,10 @@ export default function RoadCorridorMap({
         const renderer = rendererRef.current;
         if (!renderer || !ready) return;
 
-        layerRef.current?.remove();
-        layerRef.current = null;
+        bufferLayerRef.current?.remove();
+        centerlineLayerRef.current?.remove();
+        bufferLayerRef.current = null;
+            centerlineLayerRef.current = null;
         setSegmentCount(0);
 
         if (!roadList.length) return;
@@ -189,15 +194,17 @@ export default function RoadCorridorMap({
                 );
                 if (!collection.features.length) return;
 
-                layerRef.current = rendererRef.current.addGeoJsonLayer({
+                bufferLayerRef.current = rendererRef.current.addGeoJsonLayer({
                     data: collection,
-                    style: styleFor,
+                    style: bufferStyleFor,
+                });
+
+                centerlineLayerRef.current = rendererRef.current.addGeoJsonLayer({
+                    data: collection,
+                    style: centerlineStyleFor,
                     onFeatureClick: feature => {
                         const id = feature.properties?.feature_id;
                         if (!id) return;
-                        // Select rather than toggle: with trimming there is more
-                        // than one thing a clerk might want to do to a stretch,
-                        // so the click opens the choice instead of making it.
                         setSelected({
                             id: String(id),
                             name: String(feature.properties?.name || 'this stretch'),
