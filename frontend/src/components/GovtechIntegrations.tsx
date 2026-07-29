@@ -5,20 +5,19 @@ import {
     Plug, Trash2, Copy, Check, Mail, ClipboardList, Loader2, ArrowLeft,
     ChevronDown, ChevronUp, PartyPopper, Sparkles, Search,
     ArrowUpRight, ArrowDownLeft, MessageSquare, Image as ImageIcon, MapPin, ClipboardCheck,
-    ShieldCheck,
 } from 'lucide-react';
 
-import { Button, Modal, CollapsibleSection } from './ui';
+import { Button, Modal } from './ui';
 import SecretField from './SecretField';
 import {
     api, IntegrationPlatform, IntegrationConfig, IntegrationSyncLog, IntegrationTestResult,
 } from '../services/api';
 
 const MODE_LABELS: Record<string, { label: string; className: string }> = {
+    sandbox: { label: 'No account needed — try it now', className: 'bg-violet-500/20 text-violet-300 border-violet-500/30' },
     public_api: { label: 'Works with your account login', className: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
     open311: { label: 'Works with a standard address + key', className: 'bg-sky-500/20 text-sky-300 border-sky-500/30' },
     partner_api: { label: 'Vendor sends you the details', className: 'bg-amber-500/20 text-amber-300 border-amber-500/30' },
-    generic: { label: 'Configure it yourself — not vendor-certified', className: 'bg-white/10 text-white/70 border-white/20' },
 };
 
 // Capability chips make each connector's real breadth visible at a glance —
@@ -50,10 +49,6 @@ export default function GovtechIntegrations() {
     const [copied, setCopied] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [query, setQuery] = useState('');
-    // Which connector cards are expanded. With 11 platforms, showing every card
-    // fully expanded is a wall — collapse to a compact row and open on demand.
-    const [openCards, setOpenCards] = useState<Set<string>>(new Set());
-    const initialized = useRef(false);
 
     // Wizard state
     const [wizard, setWizard] = useState<IntegrationPlatform | null>(null);
@@ -78,24 +73,6 @@ export default function GovtechIntegrations() {
     }, []);
 
     useEffect(() => { load(); }, [load]);
-
-    // Once configs first load, auto-expand the connected ones (the cards a clerk
-    // actually manages); leave the rest collapsed. Only runs once so it never
-    // fights a manual toggle.
-    useEffect(() => {
-        if (initialized.current || configs.length === 0) return;
-        initialized.current = true;
-        const connected = configs.filter(c => c.enabled).map(c => c.platform);
-        if (connected.length) setOpenCards(new Set(connected));
-    }, [configs]);
-
-    const toggleCard = (platform: string) => {
-        setOpenCards(prev => {
-            const next = new Set(prev);
-            next.has(platform) ? next.delete(platform) : next.add(platform);
-            return next;
-        });
-    };
 
     const configFor = (platform: string) => configs.find(c => c.platform === platform);
 
@@ -312,23 +289,27 @@ export default function GovtechIntegrations() {
     // ---------- UI ----------
 
     return (
-        <>
-        <CollapsibleSection
-            title="Connect Your Other Town Systems"
-            icon={Landmark}
-            subtitle={`${visibleCatalog.length || catalog.length} platforms available — Accela, Tyler, CivicPlus, Open311, or a generic connector for anything else`}
-            defaultOpen={true}
-            badge={connectedCount > 0 ? (
-                <span className="inline-flex items-center gap-2 rounded-full bg-emerald-500/15 border border-emerald-400/30 pl-2.5 pr-3 py-1 text-[11px] font-semibold text-emerald-200 whitespace-nowrap">
-                    <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400 shrink-0" aria-hidden="true" />
-                    {connectedCount} connected
-                </span>
-            ) : undefined}
-        >
-            <p className="text-white/60 text-sm max-w-2xl leading-relaxed mb-4">
-                Full two-way connectors for the platforms your town already runs. Reports, photos, comments,
-                and status updates flow between them automatically — no double entry.
-            </p>
+        <div className="relative">
+            {/* Aurora glow behind the header for depth */}
+            <div className="aurora-glow w-72 h-40 -top-10 -left-6" aria-hidden="true" />
+
+            <div className="relative mb-5">
+                <div className="inline-flex items-center gap-1.5 rounded-full bg-primary-500/15 border border-primary-400/25 px-2.5 py-1 mb-3">
+                    <Landmark className="w-3 h-3 text-primary-300" aria-hidden="true" />
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-primary-200">Platform connectors</span>
+                    {connectedCount > 0 && (
+                        <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-emerald-500/20 border border-emerald-400/30 px-1.5 text-[10px] font-semibold text-emerald-200">
+                            <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400" aria-hidden="true" />
+                            {connectedCount} connected
+                        </span>
+                    )}
+                </div>
+                <h2 className="text-2xl font-bold text-gradient tracking-tight">Connect Your Other Town Systems</h2>
+                <p className="text-white/50 text-sm mt-1.5 max-w-2xl leading-relaxed">
+                    Full two-way connectors for the platforms your town already runs. Reports, photos, comments,
+                    and status updates flow between them automatically — <span className="text-white/70">no double entry</span>.
+                </p>
+            </div>
 
             {error && (
                 <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
@@ -356,7 +337,7 @@ export default function GovtechIntegrations() {
                 </div>
             )}
 
-            <div className="relative space-y-2.5">
+            <div className="relative grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {visibleCatalog.map((platform, idx) => {
                     const existing = configFor(platform.platform);
                     const mode = MODE_LABELS[platform.integration_mode] || MODE_LABELS.partner_api;
@@ -364,27 +345,19 @@ export default function GovtechIntegrations() {
                     const platformLogs = logs[platform.platform];
                     const isWorking = existing?.enabled && existing.last_sync_status !== 'error';
                     const needsAttention = existing?.enabled && existing.last_sync_status === 'error';
-                    const isOpen = openCards.has(platform.platform);
 
                     return (
                         <motion.div
                             key={platform.platform}
                             initial={{ opacity: 0, y: 14 }}
                             animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: Math.min(idx, 8) * 0.03, duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                            className={`relative rounded-xl border p-4 transition-colors ${needsAttention
-                                ? 'border-amber-500/40 bg-amber-500/[0.04]'
-                                : existing?.enabled
-                                    ? 'border-primary-400/30 bg-primary-500/[0.06]'
-                                    : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.05]'}`}
+                            transition={{ delay: idx * 0.05, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+                            className={`premium-card p-5 ${needsAttention ? 'ring-1 ring-amber-500/40' : ''}`}
                         >
-                            <button
-                                type="button"
-                                onClick={() => toggleCard(platform.platform)}
-                                aria-expanded={isOpen}
-                                aria-controls={`conn-body-${platform.platform}`}
-                                className="relative w-full flex items-center justify-between gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 rounded-xl"
-                            >
+                            {isWorking && (
+                                <div className="absolute -inset-px rounded-[20px] bg-gradient-to-br from-primary-500/10 via-transparent to-primary-500/5 pointer-events-none" aria-hidden="true" />
+                            )}
+                            <div className="relative flex items-start justify-between gap-3">
                                 <div className="flex items-center gap-3.5 min-w-0">
                                     <div className="relative shrink-0">
                                         {existing?.enabled && (
@@ -398,11 +371,11 @@ export default function GovtechIntegrations() {
                                         </div>
                                     </div>
                                     <div className="min-w-0">
-                                        <h3 className="font-semibold text-white tracking-tight">{platform.name}</h3>
-                                        <p className="text-white/60 text-xs truncate">{platform.category}</p>
+                                        <h3 className="font-semibold text-white tracking-tight truncate">{platform.name}</h3>
+                                        <p className="text-white/45 text-xs truncate">{platform.category}</p>
                                     </div>
                                 </div>
-                                <div className="shrink-0 flex items-center gap-2">
+                                <div className="shrink-0">
                                     {isWorking ? (
                                         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-200 border border-emerald-400/30">
                                             <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400" aria-hidden="true" /> Connected
@@ -416,47 +389,31 @@ export default function GovtechIntegrations() {
                                             Turned off
                                         </span>
                                     ) : (
-                                        <span className="text-white/60 text-xs">Not connected</span>
+                                        <span className="text-white/30 text-xs">Not connected</span>
                                     )}
-                                    <motion.span animate={{ rotate: isOpen ? 180 : 0 }} transition={{ duration: 0.3 }} aria-hidden="true" className="text-white/60">
-                                        <ChevronDown className="w-4 h-4" />
-                                    </motion.span>
                                 </div>
-                            </button>
+                            </div>
 
-                            {/* Collapsed preview: quiet mode label so the row stays calm */}
-                            {!isOpen && (
-                                <p className="relative text-[11px] text-white/60 mt-1.5 ml-[3.75rem]">{mode.label}</p>
-                            )}
-
-                            <div id={`conn-body-${platform.platform}`} className={isOpen ? 'block' : 'hidden'}>
                             <span className={`relative inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border mt-3 ${mode.className}`}>
                                 {mode.label}
                             </span>
 
-                            <p className="relative text-white/60 text-xs mt-2 leading-relaxed">{platform.plain_summary || platform.description}</p>
+                            <p className="relative text-white/50 text-xs mt-2 leading-relaxed">{platform.plain_summary || platform.description}</p>
 
                             {/* Capability chips — what actually flows with this connector */}
                             <div className="relative flex flex-wrap gap-1.5 mt-3">
                                 {CAPABILITY_CHIPS.filter(c => platform.capabilities.includes(c.key)).map(c => (
-                                    <span key={c.key} className="inline-flex items-center gap-1 rounded-md bg-white/[0.04] border border-white/10 px-1.5 py-0.5 text-[10px] text-white/75">
+                                    <span key={c.key} className="inline-flex items-center gap-1 rounded-md bg-white/[0.04] border border-white/10 px-1.5 py-0.5 text-[10px] text-white/55">
                                         <c.icon className="w-2.5 h-2.5 text-primary-300/80" aria-hidden="true" /> {c.label}
                                     </span>
                                 ))}
                             </div>
 
                             {existing?.last_sync_at && (
-                                <p className={`relative text-[11px] mt-2 ${existing.last_sync_status === 'error' ? 'text-amber-300' : 'text-white/60'}`}>
+                                <p className={`relative text-[11px] mt-2 ${existing.last_sync_status === 'error' ? 'text-amber-300' : 'text-white/40'}`}>
                                     {existing.last_sync_status === 'error'
                                         ? 'The last update check hit a problem — press "Check connection" for a plain-language explanation.'
                                         : `Last checked ${new Date(existing.last_sync_at).toLocaleString()} — all good.`}
-                                </p>
-                            )}
-
-                            {existing?.credentials_vaulted && (
-                                <p className="relative text-[11px] mt-2 flex items-center gap-1.5 text-emerald-300/80">
-                                    <ShieldCheck className="w-3 h-3 shrink-0" aria-hidden="true" />
-                                    Credentials stored in your Secret Manager — not in this app's database.
                                 </p>
                             )}
 
@@ -471,10 +428,12 @@ export default function GovtechIntegrations() {
                             <div className="relative flex flex-wrap items-center gap-2 mt-4">
                                 {!existing ? (
                                     <button
-                                        className="shimmer-sweep inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold text-white bg-gradient-to-r from-primary-400 to-primary-600 hover:from-primary-300 hover:to-primary-500 border border-primary-300/40 shadow-lg shadow-primary-900/60 transition-all hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                                        className="shimmer-sweep inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-900/40 transition-all hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
                                         onClick={() => openWizard(platform, 'intro')}
                                     >
-                                        <Plug className="w-4 h-4" /> Set up — about 10 minutes
+                                        {platform.platform === 'sandbox'
+                                            ? <><Sparkles className="w-4 h-4" /> Try it — 2 minutes</>
+                                            : <><Plug className="w-4 h-4" /> Set up — about 10 minutes</>}
                                     </button>
                                 ) : (
                                     <>
@@ -497,19 +456,21 @@ export default function GovtechIntegrations() {
                                         <Button size="sm" variant="ghost" className="text-xs" onClick={() => toggleLogs(existing)} rightIcon={logsOpen === platform.platform ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}>
                                             Activity
                                         </Button>
-                                        <label className="flex items-center gap-2 ml-auto text-[11px] text-white/60 cursor-pointer select-none">
+                                        <label className="flex items-center gap-1.5 ml-auto text-[11px] text-white/50 cursor-pointer select-none">
                                             {existing.enabled ? 'On' : 'Off'}
                                             <button
                                                 onClick={() => handleToggle(existing)}
                                                 disabled={busy !== null}
+                                                className={`relative inline-flex items-center rounded-full transition-colors duration-300 shrink-0 ${existing.enabled ? 'bg-primary-500 shadow-lg shadow-primary-900/40' : 'bg-slate-600'}`}
+                                                style={{ width: 40, height: 22, padding: 0 }}
                                                 role="switch"
                                                 aria-checked={existing.enabled}
                                                 aria-label={`Turn ${platform.name} connection ${existing.enabled ? 'off' : 'on'}`}
-                                                className={`relative inline-flex h-[18px] w-[30px] shrink-0 items-center rounded-full transition-colors duration-300 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${existing.enabled ? 'bg-primary-500' : 'bg-white/20'}`}
                                             >
                                                 <span
+                                                    className={`inline-block rounded-full bg-white shadow-md transition-transform duration-300 ${existing.enabled ? 'translate-x-[22px]' : 'translate-x-1'}`}
+                                                    style={{ width: 14, height: 14 }}
                                                     aria-hidden="true"
-                                                    className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform duration-300 ${existing.enabled ? 'translate-x-[14px]' : 'translate-x-0.5'}`}
                                                 />
                                             </button>
                                         </label>
@@ -520,7 +481,7 @@ export default function GovtechIntegrations() {
                             {logsOpen === platform.platform && platformLogs && (
                                 <div className="relative mt-3 rounded-lg border border-white/10 divide-y divide-white/5 max-h-48 overflow-y-auto">
                                     {platformLogs.length === 0 && (
-                                        <p className="text-white/60 text-xs px-3 py-2">Nothing has synced yet. Activity will show up here once reports start flowing.</p>
+                                        <p className="text-white/30 text-xs px-3 py-2">Nothing has synced yet. Activity will show up here once reports start flowing.</p>
                                     )}
                                     {platformLogs.map(entry => (
                                         <div key={entry.id} className="px-3 py-2 flex items-start gap-2">
@@ -529,21 +490,19 @@ export default function GovtechIntegrations() {
                                                 : <AlertCircle className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />}
                                             <div className="min-w-0">
                                                 <p className="text-white/70 text-xs">{entry.detail || entry.operation}</p>
-                                                <p className="text-white/60 text-[10px]">{entry.created_at ? new Date(entry.created_at).toLocaleString() : ''}</p>
+                                                <p className="text-white/30 text-[10px]">{entry.created_at ? new Date(entry.created_at).toLocaleString() : ''}</p>
                                             </div>
                                         </div>
                                     ))}
                                 </div>
                             )}
-                            </div>
                         </motion.div>
                     );
                 })}
             </div>
-        </CollapsibleSection>
 
-        {/* ---------- Setup wizard ---------- */}
-        {wizard && (
+            {/* ---------- Setup wizard ---------- */}
+            {wizard && (
                 <Modal
                     isOpen={true}
                     onClose={closeWizard}
@@ -591,7 +550,7 @@ export default function GovtechIntegrations() {
                                     >
                                         {copied === 'email' ? 'Copied — paste it into an email' : 'Copy this email'}
                                     </Button>
-                                    <p className="text-white/60 text-xs mt-2">
+                                    <p className="text-white/40 text-xs mt-2">
                                         You can close this window and come back once they reply — nothing is lost.
                                     </p>
                                 </div>
@@ -626,7 +585,7 @@ export default function GovtechIntegrations() {
                                 <div>
                                     <button
                                         onClick={() => setShowAdvanced(v => !v)}
-                                        className="text-white/60 text-xs hover:text-white/70 inline-flex items-center gap-1"
+                                        className="text-white/40 text-xs hover:text-white/70 inline-flex items-center gap-1"
                                     >
                                         {showAdvanced ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                                         Optional settings — most towns skip these
@@ -639,21 +598,13 @@ export default function GovtechIntegrations() {
                                 </div>
                             )}
 
-                            {(() => {
-                                const syncOptions = SYNC_CHOICES(wizard.name).filter(c => c.value === 'bidirectional'
-                                    ? wizard.capabilities.includes('push') && wizard.capabilities.includes('pull')
-                                    : wizard.capabilities.includes(c.value));
-                                // A single possible direction isn't a choice — don't ask. Just
-                                // pin it so the payload is correct and skip the redundant panel.
-                                if (syncOptions.length <= 1) {
-                                    if (syncOptions[0] && syncChoice !== syncOptions[0].value) setSyncChoice(syncOptions[0].value);
-                                    return null;
-                                }
-                                return (
                             <div className="rounded-xl bg-white/[0.04] border border-white/10 p-4">
                                 <h4 className="text-white font-semibold text-sm mb-3">How should the two systems work together?</h4>
                                 <div className="space-y-2" role="radiogroup" aria-label="Sync direction">
-                                    {syncOptions
+                                    {SYNC_CHOICES(wizard.name)
+                                        .filter(c => c.value === 'bidirectional'
+                                            ? wizard.capabilities.includes('push') && wizard.capabilities.includes('pull')
+                                            : wizard.capabilities.includes(c.value))
                                         .map(choice => {
                                             const isSel = syncChoice === choice.value;
                                             const recommended = choice.value === (wizard.recommended_sync_direction || 'bidirectional');
@@ -679,14 +630,12 @@ export default function GovtechIntegrations() {
                                                             </span>
                                                         )}
                                                     </span>
-                                                    <span className="block text-white/65 text-xs mt-0.5">{choice.help}</span>
+                                                    <span className="block text-white/45 text-xs mt-0.5">{choice.help}</span>
                                                 </button>
                                             );
                                         })}
                                 </div>
                             </div>
-                                );
-                            })()}
 
                             {requiredMissing(wizard).length > 0 && (
                                 <p className="text-amber-300/80 text-xs">
@@ -724,7 +673,7 @@ export default function GovtechIntegrations() {
                                 <div className="flex flex-col items-center py-8 text-center">
                                     <Loader2 className="w-8 h-8 text-indigo-300 animate-spin mb-3" />
                                     <p className="text-white/70 text-sm">Checking the connection to {wizard.name}…</p>
-                                    <p className="text-white/60 text-xs mt-1">This usually takes a few seconds.</p>
+                                    <p className="text-white/40 text-xs mt-1">This usually takes a few seconds.</p>
                                 </div>
                             )}
 
@@ -787,7 +736,7 @@ export default function GovtechIntegrations() {
                                             <code className="block mt-2 bg-black/30 rounded-lg px-3 py-2 text-[11px] text-white/50 break-all">{testResult.detail}</code>
                                         )}
                                     </div>
-                                    <p className="text-white/60 text-xs">
+                                    <p className="text-white/40 text-xs">
                                         Your entries are saved. You can fix them now, or close this window and try again later —
                                         the connection stays off until a check passes.
                                     </p>
@@ -805,6 +754,6 @@ export default function GovtechIntegrations() {
                     )}
                 </Modal>
             )}
-        </>
+        </div>
     );
 }

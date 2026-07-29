@@ -7,7 +7,7 @@ celery_app = Celery(
     "township_311",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.service_requests", "app.tasks.integrations", "app.tasks.road_data"]
+    include=["app.tasks.service_requests", "app.tasks.integrations"]
 )
 
 celery_app.conf.update(
@@ -21,24 +21,6 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     # Celery Beat Schedule
     beat_schedule={
-        # Proactive health scan: warn admins by email before something fails
-        # (disk/memory/connections/backup staleness), every 15 minutes.
-        "proactive-health-scan": {
-            "task": "app.tasks.service_requests.proactive_health_scan",
-            "schedule": 60 * 15,  # Every 15 minutes
-            "options": {"queue": "default"}
-        },
-        # Road centreline refresh. Fires daily but acts on one day a month --
-        # the day is derived from a hash of the township name so deployments
-        # spread across the month instead of all hitting a publisher on the 1st.
-        # Publishers republish about monthly (NJ's statewide NG911 layer does),
-        # and stale road data fails open, so lag costs a new street going
-        # unblocked briefly rather than a resident being turned away.
-        "monthly-road-refresh": {
-            "task": "app.tasks.road_data.refresh_roads_monthly",
-            "schedule": 60 * 60 * 24,  # checked daily, acts monthly
-            "options": {"queue": "default"}
-        },
         # Daily anchor of the audit hash-chain head (tamper-evidence beyond the DB)
         "daily-audit-anchor": {
             "task": "app.tasks.service_requests.anchor_audit_chain",
@@ -91,13 +73,6 @@ celery_app.conf.update(
         "weekly-staff-digest": {
             "task": "app.tasks.service_requests.send_weekly_digest",
             "schedule": 60 * 60 * 24 * 7,  # Every 7 days
-            "options": {"queue": "default"}
-        },
-        # Refresh the live AI model lists so the picker stays current and can
-        # flag a retired/deprecated model without anyone opening the admin UI.
-        "daily-ai-model-refresh": {
-            "task": "app.tasks.service_requests.refresh_ai_models",
-            "schedule": 60 * 60 * 24,  # Every 24 hours
             "options": {"queue": "default"}
         },
     }

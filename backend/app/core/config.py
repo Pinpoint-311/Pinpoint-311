@@ -2,18 +2,8 @@ from pydantic_settings import BaseSettings
 from functools import lru_cache
 from typing import Optional
 import logging
-import os
 
 logger = logging.getLogger(__name__)
-
-# Local/dev database default, assembled from parts so no credential-in-URL
-# literal ships in source (real deployments set DATABASE_URL). Override the
-# pieces via POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_HOST / POSTGRES_DB.
-_DB_USER = os.getenv("POSTGRES_USER", "township")
-_DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "township")
-_DB_HOST = os.getenv("POSTGRES_HOST", "db")
-_DB_NAME = os.getenv("POSTGRES_DB", "township_db")
-_DEFAULT_DATABASE_URL = f"postgresql+asyncpg://{_DB_USER}:{_DB_PASSWORD}@{_DB_HOST}/{_DB_NAME}"
 
 # Known-insecure placeholder values that must never be used outside local/dev.
 INSECURE_SECRET_KEYS = {
@@ -26,7 +16,7 @@ INSECURE_SECRET_KEYS = {
 
 class Settings(BaseSettings):
     # Database
-    database_url: str = _DEFAULT_DATABASE_URL
+    database_url: str = "postgresql+asyncpg://township:township@db/township_db"
     
     # Redis
     redis_url: str = "redis://redis:6379/0"
@@ -56,20 +46,11 @@ class Settings(BaseSettings):
     # Demo mode - single shared demo environment
     demo_mode: bool = False
 
-    # Managed (state-hosted) mode — orchestrator-driven deployment. Every
-    # managed-mode hook is additive and a no-op when this flag is off
-    # (docs/ORCHESTRATOR_PLAN.md Part A).
+    # Managed (state-hosted) mode: when true, this instance is run by an
+    # orchestrator/control plane. Platform-owned settings (infra, backups,
+    # domain) and the in-app self-update are locked; the panel manages them.
+    # Off = fully self-contained single-tenant behavior (unchanged default).
     managed_mode: bool = False
-    # Shared secret for the orchestrator's provisioning/telemetry API (A4/A5).
-    # The endpoints are inert unless this is set.
-    provisioning_token: Optional[str] = None
-
-    # Build/version stamp exposed on health for rollout gating (A3). Set via
-    # image build args / env by the orchestrator.
-    app_version: Optional[str] = None
-    git_sha: Optional[str] = None
-    # Oldest Alembic revision this build can run against (expand/contract rule).
-    min_db_revision: Optional[str] = None
 
     class Config:
         env_file = ".env"
