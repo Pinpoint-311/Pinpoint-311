@@ -931,6 +931,24 @@ export default function StaffDashboard() {
                                 <LogOut className="w-5 h-5 text-white/60" aria-hidden="true" />
                             </button>
                         </div>
+
+                        {/* Product credit — quiet, but present on every authenticated
+                            screen so the platform is identifiable to staff too. */}
+                        <a
+                            href="https://pinpoint311.org"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="group mt-3 pt-3 border-t border-white/5 flex items-center justify-center gap-2"
+                        >
+                            <span className="text-[10px] uppercase tracking-wider text-white/25 group-hover:text-white/45 transition-colors">
+                                Powered by
+                            </span>
+                            <img
+                                src="/pinpoint311_logo_dark_transparent.png"
+                                alt="Pinpoint 311"
+                                className="h-3.5 w-auto opacity-50 group-hover:opacity-90 transition-opacity"
+                            />
+                        </a>
                     </div>
                 </div>
             </aside>

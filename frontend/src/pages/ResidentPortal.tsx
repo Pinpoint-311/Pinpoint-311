@@ -1548,19 +1548,34 @@ export default function ResidentPortal() {
                     </div>
                 </div>
                 {/* Powered by Pinpoint 311 */}
-                <div className="max-w-6xl mx-auto mt-4 pt-4 border-t border-white/10 text-center">
-                    <p className="text-white/30 text-xs">
-                        {"Powered by"}{' '}
+                <div className="max-w-6xl mx-auto mt-5 pt-5 border-t border-white/10 flex flex-col items-center gap-2.5">
+                    <a
+                        href="https://pinpoint311.org"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="group inline-flex items-center gap-2.5"
+                        data-no-translate
+                    >
+                        <span className="text-white/45 text-sm group-hover:text-white/70 transition-colors">
+                            {"Powered by"}
+                        </span>
+                        <img
+                            src="/pinpoint311_logo_dark_transparent.png"
+                            alt="Pinpoint 311"
+                            className="h-6 sm:h-7 w-auto opacity-80 group-hover:opacity-100 transition-opacity"
+                        />
+                    </a>
+                    <p className="text-white/35 text-xs text-center">
+                        {"Free & Open Source Municipal Platform"}
+                        {/* Kept on its own line and plainly labelled: the sentence above is
+                            Pinpoint 311's own claim, this link is other people's licenses. */}
+                        <span className="text-white/20 mx-1.5">·</span>
                         <a
-                            href="https://pinpoint311.org"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-primary-400/70 hover:text-primary-300 transition-colors inline-flex items-center gap-1"
-                            data-no-translate
+                            href="/third-party-licenses.txt"
+                            className="text-white/40 hover:text-white/70 transition-colors"
                         >
-                            Pinpoint 311
+                            {"Third-Party Notices"}
                         </a>
-                        {' '}— {"Free & Open Source Municipal Platform"}
                     </p>
                 </div>
             </footer>
