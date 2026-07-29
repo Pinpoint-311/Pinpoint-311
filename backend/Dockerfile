@@ -7,7 +7,12 @@ LABEL org.opencontainers.image.title="Pinpoint 311 Backend" \
 
 WORKDIR /app
 
+# tesseract-ocr backs the free, offline licence-plate detector (Apache 2.0).
+# libGL/libglib are what opencv-python-headless still links against.
 RUN apt-get update && apt-get install -y \
+    tesseract-ocr \
+    libgl1 \
+    libglib2.0-0 \
     gcc \
     libpq-dev \
     postgresql-client \

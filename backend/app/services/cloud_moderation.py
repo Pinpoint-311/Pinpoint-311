@@ -278,20 +278,43 @@ async def _google_text(text: str) -> Optional[ModerationResult]:
         return google_text_severity(resp.json().get("moderationCategories", []))
 
 
-async def _google_image(raw: bytes) -> ModerationResult:
+async def vision_annotate(raw: bytes, features: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """One images:annotate call, however many features are asked for.
+
+    Vision bills per feature but charges one round trip for the batch, so
+    SafeSearch + face + text together cost three feature-units and one HTTPS
+    request rather than three. That matters because this runs on the resident's
+    latency budget while they wait for a submit button.
+
+    Returns {} when Google is not configured, so callers can treat "no
+    credentials" the same as "nothing detected".
+    """
     import httpx
     token, _ = await _google_token_and_project()
-    if not token:
-        return ModerationResult()
-    url = "https://vision.googleapis.com/v1/images:annotate"
+    if not token or not features:
+        return {}
     body = {"requests": [{"image": {"content": base64.b64encode(raw).decode("ascii")},
-                          "features": [{"type": "SAFE_SEARCH_DETECTION"}]}]}
-    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=6.0)) as client:
-        resp = await client.post(url, headers={"Authorization": f"Bearer {token}"}, json=body)
+                          "features": features}]}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=6.0)) as client:
+        resp = await client.post("https://vision.googleapis.com/v1/images:annotate",
+                                 headers={"Authorization": f"Bearer {token}"}, json=body)
         resp.raise_for_status()
-        responses = resp.json().get("responses", [])
-        annotation = (responses[0].get("safeSearchAnnotation", {}) if responses else {})
-        return google_safesearch_severity(annotation)
+        return resp.json()
+
+
+def safesearch_from_payload(payload: Dict[str, Any]) -> ModerationResult:
+    """Pull the SafeSearch verdict out of an annotate response.
+
+    Split from the request so the redaction path, which asks for SafeSearch and
+    the detection features in the same call, can read the moderation half of
+    that shared response without issuing a second one.
+    """
+    responses = (payload or {}).get("responses") or []
+    return google_safesearch_severity(responses[0].get("safeSearchAnnotation", {}) if responses else {})
+
+
+async def _google_image(raw: bytes) -> ModerationResult:
+    return safesearch_from_payload(await vision_annotate(raw, [{"type": "SAFE_SEARCH_DETECTION"}]))
 
 
 # ------------------------------ AWS ------------------------------------------
