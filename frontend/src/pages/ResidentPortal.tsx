@@ -29,7 +29,7 @@ import {
     AlertTriangle,
 } from 'lucide-react';
 import { Button, Input, Textarea, Card } from '../components/ui';
-import GoogleMapsLocationPicker from '../components/GoogleMapsLocationPicker';
+import LocationPicker from '../components/LocationPicker';
 import TrackRequests from '../components/TrackRequests';
 import LanguageSelector from '../components/LanguageSelector';
 import StaffDashboardMap from '../components/StaffDashboardMap';
@@ -1043,7 +1043,7 @@ export default function ResidentPortal() {
                                                         <label className="block text-sm font-medium text-white/70 mb-2">
                                                             {"Location / Address"}
                                                         </label>
-                                                        <GoogleMapsLocationPicker
+                                                        <LocationPicker
                                                             apiKey={mapsApiKey}
                                                             townshipBoundary={townshipBoundary}
                                                             customLayers={mapLayers.filter(layer => {

@@ -1,20 +1,26 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MapPin, Layers, Search, X, ChevronDown, ChevronRight, Users } from 'lucide-react';
-import { MarkerClusterer } from '@googlemaps/markerclusterer';
 import { ServiceRequest, ServiceDefinition, User, Department } from '../types';
 import { MapLayer } from '../services/api';
-import { loadGoogleMaps } from '../utils/googleMaps';
 import { useTranslation } from '../context/TranslationContext';
-
-declare global {
-    interface Window {
-        google: typeof google;
-    }
-}
+import {
+    GeoJsonLayerHandle,
+    MapProviderId,
+    MapRenderer,
+    MarkerLayer,
+    MarkerOptions,
+    PopupHandle,
+    boundsOfGeoJson,
+    createMap,
+    extractFeatures,
+    legacyMapProviderConfig,
+} from '../maps';
 
 interface StaffDashboardMapProps {
     apiKey: string;
     mapId?: string | null;
+    /** Overrides the configured provider; defaults to the town's setting. */
+    provider?: MapProviderId;
     requests: ServiceRequest[];
     services: ServiceDefinition[];
     departments: Department[];
@@ -36,6 +42,7 @@ const STATUS_COLORS = {
 export default function StaffDashboardMap({
     apiKey,
     mapId,
+    provider,
     requests,
     services,
     departments,
@@ -48,12 +55,13 @@ export default function StaffDashboardMap({
 }: StaffDashboardMapProps) {
     const { language } = useTranslation();
     const mapRef = useRef<HTMLDivElement>(null);
-    const mapInstanceRef = useRef<google.maps.Map | null>(null);
-    const markersRef = useRef<google.maps.Marker[]>([]);
-    const clustererRef = useRef<MarkerClusterer | null>(null);
-    const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
-    const layerDataRef = useRef<google.maps.Data[]>([]);
-    const layerMarkersRef = useRef<google.maps.Marker[]>([]);
+    const mapInstanceRef = useRef<MapRenderer | null>(null);
+    // Request pins cluster; layer asset pucks do not. Two layers, so clustering
+    // is a property of the set rather than something bolted on afterwards.
+    const requestLayerRef = useRef<MarkerLayer | null>(null);
+    const layerMarkerLayerRef = useRef<MarkerLayer | null>(null);
+    const popupRef = useRef<PopupHandle | null>(null);
+    const layerDataRef = useRef<GeoJsonLayerHandle[]>([]);
 
     // Filter state
     const [statusFilters, setStatusFilters] = useState({
@@ -129,102 +137,117 @@ export default function StaffDashboardMap({
         setStaffFilters(newFilters);
     }, [users]);
 
-    // Load Google Maps script
+    // Load the configured map provider and attach the map
     useEffect(() => {
         if (!apiKey) {
             setIsLoading(false);
             return;
         }
 
-        loadGoogleMaps(apiKey).then(() => initMap()).catch(() => setIsLoading(false));
+        let isMounted = true;
+
+        (async () => {
+            if (!mapRef.current) return;
+            try {
+                const map = await createMap(
+                    mapRef.current,
+                    legacyMapProviderConfig(apiKey, mapId, provider),
+                    {
+                        center: defaultCenter,
+                        zoom: defaultZoom,
+                        baseMapType: 'hybrid', // Satellite with labels
+                        // Tilt/heading only take effect on providers rendering a
+                        // vector basemap, which is what styleId selects.
+                        tilt: mapId ? 45 : undefined,
+                        heading: mapId ? 0 : undefined,
+                        styleId: mapId,
+                        controls: {
+                            baseMapSwitcher: {
+                                enabled: true,
+                                position: 'top-left',
+                                types: ['roadmap', 'satellite', 'hybrid'],
+                            },
+                            streetView: { enabled: false },
+                            fullscreen: { enabled: true },
+                            zoom: { enabled: true, position: 'left-bottom' },
+                            rotate: { enabled: !!mapId },
+                        },
+                    },
+                );
+
+                if (!isMounted) {
+                    map.destroy();
+                    return;
+                }
+
+                mapInstanceRef.current = map;
+                popupRef.current = map.createPopup();
+                requestLayerRef.current = map.createMarkerLayer({
+                    cluster: {
+                        style: (count) => ({
+                            icon: {
+                                type: 'circle',
+                                radius: 18 + Math.min(count, 50) / 4,
+                                fillColor: '#4f46e5',  // Was #6366f1, darker for WCAG AA contrast
+                                fillOpacity: 0.95,
+                                strokeColor: '#ffffff',
+                                strokeWidth: 3,
+                            },
+                            label: {
+                                text: String(count),
+                                color: '#ffffff',
+                                fontSize: '12px',
+                                fontWeight: '700',
+                            },
+                            zIndex: 1000 + count,
+                        }),
+                    },
+                });
+                layerMarkerLayerRef.current = map.createMarkerLayer();
+
+                // Track map type changes for panel styling
+                map.on('basemaptypechange', ({ type }) => setMapType(type || 'hybrid'));
+
+                // Render township boundary and fit to it
+                if (townshipBoundary) {
+                    renderBoundaryAndFit(map, townshipBoundary);
+                }
+
+                setIsLoading(false);
+                setMapReady(true);
+            } catch (e) {
+                console.error('Failed to initialize map:', e);
+                if (isMounted) setIsLoading(false);
+            }
+        })();
 
         return () => {
-            markersRef.current.forEach(m => m.setMap(null));
-            markersRef.current = [];
-            if (clustererRef.current) {
-                clustererRef.current.clearMarkers();
-            }
+            isMounted = false;
+            layerDataRef.current = [];
+            requestLayerRef.current = null;
+            layerMarkerLayerRef.current = null;
+            popupRef.current = null;
+            mapInstanceRef.current?.destroy();
+            mapInstanceRef.current = null;
         };
-    }, [apiKey]);
-
-    const initMap = useCallback(() => {
-        // Ensure Maps API is fully loaded (not just the script)
-        if (!mapRef.current || !window.google?.maps?.MapTypeControlStyle) {
-            // Retry after a short delay if API isn't fully ready
-            setTimeout(() => initMap(), 100);
-            return;
-        }
-
-        const mapOptions: google.maps.MapOptions = {
-            center: defaultCenter,
-            zoom: defaultZoom,
-            mapTypeId: 'hybrid', // Satellite with labels
-            mapTypeControl: true,
-            mapTypeControlOptions: {
-                style: window.google.maps.MapTypeControlStyle.HORIZONTAL_BAR,
-                position: window.google.maps.ControlPosition.TOP_LEFT,
-                mapTypeIds: ['roadmap', 'satellite', 'hybrid'],
-            },
-            streetViewControl: false,
-            fullscreenControl: true,
-            zoomControl: true,
-            zoomControlOptions: {
-                position: window.google.maps.ControlPosition.LEFT_BOTTOM,
-            },
-        };
-
-        // Enable 45° tilt and rotation if Map ID is configured (vector maps)
-        if (mapId) {
-            (mapOptions as any).mapId = mapId;
-            mapOptions.tilt = 45;
-            mapOptions.heading = 0;
-            (mapOptions as any).rotateControl = true;
-        }
-
-        const map = new window.google.maps.Map(mapRef.current, mapOptions);
-
-        mapInstanceRef.current = map;
-        infoWindowRef.current = new window.google.maps.InfoWindow();
-
-        // Track map type changes for panel styling
-        map.addListener('maptypeid_changed', () => {
-            setMapType(map.getMapTypeId() || 'hybrid');
-        });
-
-        // Render township boundary and fit to it
-        if (townshipBoundary) {
-            renderBoundaryAndFit(map, townshipBoundary);
-        }
-
-        setIsLoading(false);
-        setMapReady(true);
-    }, [defaultCenter, defaultZoom, townshipBoundary]);
+    }, [apiKey, mapId, provider]);
 
     // Render township boundary and fit map to it
-    const renderBoundaryAndFit = (map: google.maps.Map, boundary: any) => {
+    const renderBoundaryAndFit = (map: MapRenderer, boundary: object) => {
         try {
-            const dataLayer = new window.google.maps.Data();
-            dataLayer.addGeoJson(boundary);
-            dataLayer.setStyle({
-                fillColor: '#6366f1',
-                fillOpacity: 0.08,
-                strokeColor: '#818cf8',
-                strokeWeight: 3,
-                strokeOpacity: 0.8,
+            map.addGeoJsonLayer({
+                data: boundary,
+                style: {
+                    fillColor: '#6366f1',
+                    fillOpacity: 0.08,
+                    strokeColor: '#818cf8',
+                    strokeWidth: 3,
+                    strokeOpacity: 0.8,
+                },
             });
-            dataLayer.setMap(map);
 
-            // Fit bounds to the boundary
-            const bounds = new window.google.maps.LatLngBounds();
-            dataLayer.forEach((feature) => {
-                const geometry = feature.getGeometry();
-                if (geometry) {
-                    geometry.forEachLatLng((latlng) => {
-                        bounds.extend(latlng);
-                    });
-                }
-            });
-            map.fitBounds(bounds);
+            const bounds = boundsOfGeoJson(boundary);
+            if (bounds) map.fitBounds(bounds);
         } catch (e) {
             console.error('Error rendering boundary:', e);
         }
@@ -232,26 +255,20 @@ export default function StaffDashboardMap({
 
     // Update markers when filters or requests change
     useEffect(() => {
-        if (!mapInstanceRef.current || !window.google) return;
+        if (!mapInstanceRef.current) return;
         updateMarkers();
     }, [requests, statusFilters, categoryFilters, departmentFilters, staffFilters, assignmentFilter, priorityFilters, mapReady]);
 
     // Update GeoJSON layers when layer filters change
     useEffect(() => {
-        if (!mapInstanceRef.current || !window.google) return;
+        if (!mapInstanceRef.current) return;
         updateLayers();
     }, [mapLayers, layerFilters, mapReady]);
 
     const updateMarkers = () => {
         const map = mapInstanceRef.current;
-        if (!map) return;
-
-        // Clear existing markers
-        markersRef.current.forEach(m => m.setMap(null));
-        markersRef.current = [];
-        if (clustererRef.current) {
-            clustererRef.current.clearMarkers();
-        }
+        const requestLayer = requestLayerRef.current;
+        if (!map || !requestLayer) return;
 
         // Filter requests
         const filteredRequests = requests.filter(r => {
@@ -308,22 +325,20 @@ export default function StaffDashboardMap({
         });
 
         // Create markers
-        const markers = filteredRequests.map(request => {
-            const marker = new window.google.maps.Marker({
-                position: { lat: request.lat!, lng: request.long! },
-                icon: {
-                    path: window.google.maps.SymbolPath.CIRCLE,
-                    fillColor: STATUS_COLORS[request.status as keyof typeof STATUS_COLORS] || '#6366f1',
-                    fillOpacity: 1,
-                    strokeColor: '#ffffff',
-                    strokeWeight: 2,
-                    scale: 10,
-                },
-                title: request.service_name,
-            });
-
-            marker.addListener('click', async () => {
-                if (infoWindowRef.current) {
+        const markers: MarkerOptions[] = filteredRequests.map(request => ({
+            position: { lat: request.lat!, lng: request.long! },
+            icon: {
+                type: 'circle',
+                radius: 10,
+                fillColor: STATUS_COLORS[request.status as keyof typeof STATUS_COLORS] || '#6366f1',
+                fillOpacity: 1,
+                strokeColor: '#ffffff',
+                strokeWidth: 2,
+            },
+            title: request.service_name,
+            onClick: async (_e, marker) => {
+                const popup = popupRef.current;
+                if (popup) {
                     // Pre-translate all text content for the popup
                     const viewDetailsText = "View Full Details";
                     const statusText = request.status === 'in_progress' ? 'In Progress' : request.status === 'open' ? 'Open' : 'Closed';
@@ -356,7 +371,7 @@ export default function StaffDashboardMap({
                         }
                     }
 
-                    infoWindowRef.current.setContent(`
+                    popup.setContent(`
                         <div style="padding: 16px; max-width: 300px; font-family: system-ui, -apple-system, sans-serif;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                                 <span style="font-size: 12px; color: #6366f1; font-family: monospace; font-weight: 600;">${request.service_request_id}</span>
@@ -377,61 +392,31 @@ export default function StaffDashboardMap({
                             </button>
                         </div>
                     `);
-                    infoWindowRef.current.open(map, marker);
+                    popup.openAt(marker);
                 }
-            });
-
-            return marker;
-        });
+            },
+        }));
 
         // Set up global callback for info window button
         (window as any).staffDashboardSelectRequest = (requestId: string) => {
-            if (infoWindowRef.current) {
-                infoWindowRef.current.close();
-            }
+            popupRef.current?.close();
             onRequestSelect(requestId);
         };
 
-        markersRef.current = markers;
-
-        // Create clusterer
-        clustererRef.current = new MarkerClusterer({
-            map,
-            markers,
-            renderer: {
-                render: ({ count, position }) => {
-                    return new window.google.maps.Marker({
-                        position,
-                        icon: {
-                            path: window.google.maps.SymbolPath.CIRCLE,
-                            fillColor: '#4f46e5',  // Was #6366f1, darker for WCAG AA contrast
-                            fillOpacity: 0.95,
-                            strokeColor: '#ffffff',
-                            strokeWeight: 3,
-                            scale: 18 + Math.min(count, 50) / 4,
-                        },
-                        label: {
-                            text: String(count),
-                            color: '#ffffff',
-                            fontSize: '12px',
-                            fontWeight: '700',
-                        },
-                        zIndex: 1000 + count,
-                    });
-                },
-            },
-        });
+        // Bulk replace: the layer's clustering is rebuilt from the new set.
+        requestLayer.setMarkers(markers);
     };
 
     const updateLayers = () => {
         const map = mapInstanceRef.current;
-        if (!map) return;
+        const layerMarkers = layerMarkerLayerRef.current;
+        if (!map || !layerMarkers) return;
 
         // Clear existing layer data and markers
-        layerDataRef.current.forEach(d => d.setMap(null));
+        layerDataRef.current.forEach(d => d.remove());
         layerDataRef.current = [];
-        layerMarkersRef.current.forEach(m => m.setMap(null));
-        layerMarkersRef.current = [];
+        layerMarkers.clear();
+        const pointMarkers: MarkerOptions[] = [];
 
         // Render active layers
         mapLayers.forEach(layer => {
@@ -439,99 +424,64 @@ export default function StaffDashboardMap({
             if (layer.visible_on_map === false) return;
 
             try {
-                const geojson = layer.geojson as any;
-                if (!geojson) return;
+                if (!layer.geojson) return;
 
-                // Use Google Maps Data layer for proper GeoJSON support
-                const dataLayer = new window.google.maps.Data();
-
-                // Handle different GeoJSON formats
-                if (geojson.type === 'FeatureCollection') {
-                    dataLayer.addGeoJson(geojson);
-                } else if (geojson.type === 'Feature') {
-                    dataLayer.addGeoJson({ type: 'FeatureCollection', features: [geojson] });
-                } else if (geojson.type === 'Point' || geojson.type === 'Polygon' || geojson.type === 'MultiPolygon' || geojson.type === 'LineString') {
-                    // Raw geometry - wrap in feature
-                    dataLayer.addGeoJson({
-                        type: 'FeatureCollection',
-                        features: [{ type: 'Feature', geometry: geojson, properties: {} }]
-                    });
-                }
-
-                // Style the layer
-                dataLayer.setStyle((feature) => {
-                    const geomType = feature.getGeometry()?.getType();
-
-                    if (geomType === 'Point') {
-                        // For points, we'll create custom markers instead
-                        return { visible: false };
-                    }
-
-                    return {
+                // Points get bespoke markers, so the vector layer hides them.
+                layerDataRef.current.push(map.addGeoJsonLayer({
+                    data: layer.geojson,
+                    pointRendering: 'hidden',
+                    style: {
                         fillColor: layer.fill_color,
                         fillOpacity: layer.fill_opacity,
                         strokeColor: layer.stroke_color,
-                        strokeWeight: layer.stroke_width,
-                    };
-                });
+                        strokeWidth: layer.stroke_width,
+                    },
+                }));
 
-                // Handle point features with custom markers
-                dataLayer.forEach((feature) => {
-                    const geom = feature.getGeometry();
-                    if (geom && geom.getType() === 'Point') {
-                        const point = geom as google.maps.Data.Point;
-                        const latLng = point.get();
-                        const props = {};
-                        feature.forEachProperty((value, key) => {
-                            (props as any)[key] = value;
-                        });
+                extractFeatures(layer.geojson).forEach((feature) => {
+                    if (feature.geometryType !== 'Point' || !feature.position) return;
+                    const props = feature.properties as Record<string, any>;
 
-                        const marker = new window.google.maps.Marker({
-                            position: latLng,
-                            map,
-                            icon: {
-                                path: window.google.maps.SymbolPath.CIRCLE,
-                                fillColor: layer.fill_color,
-                                fillOpacity: 0.95,
-                                strokeColor: '#ffffff',
-                                strokeWeight: 2.5,
-                                scale: 10,
-                            },
-                            title: (props as any).name || layer.name,
-                        });
+                    pointMarkers.push({
+                        position: feature.position,
+                        icon: {
+                            type: 'circle',
+                            radius: 10,
+                            fillColor: layer.fill_color,
+                            fillOpacity: 0.95,
+                            strokeColor: '#ffffff',
+                            strokeWidth: 2.5,
+                        },
+                        title: props.name || layer.name,
+                        onClick: (_e, marker) => {
+                            const popup = popupRef.current;
+                            if (!popup) return;
 
-                        // Add click listener for point info
-                        marker.addListener('click', () => {
-                            if (infoWindowRef.current) {
-                                const propsHtml = Object.entries(props)
-                                    .filter(([k]) => k !== 'name')
-                                    .map(([k, v]) => `<p style="margin: 6px 0; font-size: 13px; color: #e5e7eb;"><span style="color: #9ca3af;">${k}:</span> ${v}</p>`)
-                                    .join('');
+                            const propsHtml = Object.entries(props)
+                                .filter(([k]) => k !== 'name')
+                                .map(([k, v]) => `<p style="margin: 6px 0; font-size: 13px; color: #e5e7eb;"><span style="color: #9ca3af;">${k}:</span> ${v}</p>`)
+                                .join('');
 
-                                infoWindowRef.current.setContent(`
-                                    <div style="padding: 16px; font-family: system-ui, -apple-system, sans-serif; background: #1f2937; border-radius: 12px; min-width: 180px;">
-                                        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.1);">
-                                            <span style="width: 14px; height: 14px; border-radius: 50%; background: ${layer.fill_color}; box-shadow: 0 0 8px ${layer.fill_color}80;"></span>
-                                            <h4 style="margin: 0; color: #f9fafb; font-size: 15px; font-weight: 600;">${(props as any).name || layer.name}</h4>
-                                        </div>
-                                        ${propsHtml || '<p style="color: #9ca3af; font-size: 13px; margin: 0;">No additional properties</p>'}
+                            popup.setContent(`
+                                <div style="padding: 16px; font-family: system-ui, -apple-system, sans-serif; background: #1f2937; border-radius: 12px; min-width: 180px;">
+                                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.1);">
+                                        <span style="width: 14px; height: 14px; border-radius: 50%; background: ${layer.fill_color}; box-shadow: 0 0 8px ${layer.fill_color}80;"></span>
+                                        <h4 style="margin: 0; color: #f9fafb; font-size: 15px; font-weight: 600;">${props.name || layer.name}</h4>
                                     </div>
-                                `);
-                                infoWindowRef.current.open(map, marker);
-                            }
-                        });
-
-                        layerMarkersRef.current.push(marker);
-                    }
+                                    ${propsHtml || '<p style="color: #9ca3af; font-size: 13px; margin: 0;">No additional properties</p>'}
+                                </div>
+                            `);
+                            popup.openAt(marker);
+                        },
+                    });
                 });
-
-                dataLayer.setMap(map);
-                layerDataRef.current.push(dataLayer);
 
             } catch (e) {
                 console.error('Error rendering layer:', layer.name, e);
             }
         });
+
+        layerMarkers.setMarkers(pointMarkers);
     };
 
     const toggleSection = (section: keyof typeof expandedSections) => {
