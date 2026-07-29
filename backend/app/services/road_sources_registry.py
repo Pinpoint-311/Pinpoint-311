@@ -165,6 +165,32 @@ CANDIDATE_NAME_FIELDS: List[str] = [
 #                  service root was; layer_id unresolved)
 #   notes        - anything the fetcher or a clerk needs to know
 
+# Runtime validation, 2026-07-29. Entries that answered and returned a plausible
+# statewide network are kept, with their observed feature count. These did not,
+# and were removed rather than annotated: an absent entry falls through to
+# Census TIGER, which is itself verified at 17.7M features nationally, while a
+# broken or partial one silently degrades a town.
+RUNTIME_FAILED = {
+    "AK": "no layer id and no queryable URL; service never answered",
+    "CO": "no layer id and no queryable URL; DNS does not resolve",
+    "FL": "service answered with invalid JSON",
+    "ME": "service not found (404)",
+    "ID": "marked verified-live but has no layer id and no URL -- the count came from somewhere other than a queryable layer, and the entry's own notes say the layer id is unconfirmed",
+}
+
+# These answered, but their feature counts are far too low to be a full road
+# network for the state -- they look like state-route-only layers. That is worse
+# than having no data at all: nearest-road resolution needs every road in town,
+# and with only highways present a pin on a residential street resolves to the
+# nearest highway and BLOCKS the resident. Density is roads per square mile,
+# compared against neighbouring states of similar development.
+RUNTIME_PARTIAL_COVERAGE = {
+    "HI": "2,075 features for the whole state -- roughly 0.3 per square mile. That is not a road network",
+    "GA": "74,140 features, 1.3 per square mile, against 18.6 in neighbouring NC. Consistent with the layer's own warning that it may be routed state highways only",
+    "VA": "74,242 features, 1.9 per square mile, against 14.8 in neighbouring MD",
+    "NV": "66,765 features, 0.6 per square mile; the Las Vegas metro alone should exceed that",
+}
+
 STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # ---- Reference entry -------------------------------------------------
     # New Jersey: the statewide NG9-1-1 centerline layer NJOGIS built with
@@ -301,26 +327,6 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     },
 
     # Maine: MaineDOT public road centerlines, derived from the METRANS LRS.
-    "ME": {
-        "name": "MaineDOT Public Roads",
-        "publisher": "Maine Department of Transportation / Maine GeoLibrary",
-        "service_url": "https://gis.maine.gov/arcgis/rest/services/dot/MaineDOT_OpenData/MapServer",
-        "layer_id": 52,
-        "url": "https://gis.maine.gov/arcgis/rest/services/dot/MaineDOT_OpenData/MapServer/52",
-        "schema": "custom",
-        "field_map": None,
-        "cadence": None,
-        "attribution": "Road centerlines: MaineDOT, Maine GeoLibrary",
-        "verified": "2026-07-29",
-        "evidence": "https://gis.maine.gov/arcgis/rest/services/dot/MaineDOT_OpenData/MapServer/52",
-        "confidence": "endpoint-indexed",
-        "notes": (
-            "Public road centerlines built on MaineDOT basemap linework managed in "
-            "METRANS (MaineDOT's LRS). Maine also has a separate NG911 road dataset "
-            "documented in the GeoLibrary catalog, but no REST endpoint for it could "
-            "be pinned - see KNOWN_UNVERIFIED_SOURCES."
-        ),
-    },
 
     # Vermont: VTrans is the steward of the E911 road centerline layer that the
     # VT E911 Board maintains as the authoritative road-name source.
@@ -408,60 +414,10 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
     # Georgia: GDOT's statewide LRS network. Georgia also has a strong NG911
     # program, but its road centerlines are provisioned per PSAP, not as one
     # public statewide service.
-    "GA": {
-        "verified_feature_count": 74140,
-        "verification_status": "verified-live",
-        "name": "GDOT Major Roads",
-        "publisher": "Georgia Department of Transportation",
-        "service_url": "https://maps.itos.uga.edu/arcgis/rest/services/FrameWork/Transportation/MapServer",
-        "layer_id": 12,
-        "url": "https://maps.itos.uga.edu/arcgis/rest/services/FrameWork/Transportation/MapServer/12",
-        "schema": "custom",
-        "field_map": None,
-        "cadence": None,
-        "attribution": "Road centerlines: Georgia Department of Transportation (GDOT)",
-        "verified": "2026-07-29",
-        "evidence": "https://egis.dot.ga.gov/arcgis/rest/services/GDOT_Network/MapServer/0",
-        "confidence": "endpoint-indexed",
-        "notes": (
-            "Layer 0 is named simply 'GDOT' and is documented as the statewide LRS "
-            "network. CHECK COVERAGE BEFORE TRUSTING IT for a city: an LRS network is "
-            "sometimes routed state highways only. If local streets are missing, the "
-            "next candidate is maps.itos.uga.edu/arcgis/rest/services/FrameWork/"
-            "Transportation/MapServer - but its indexed layer 12 is 'Major Roads', which "
-            "is explicitly NOT a full centerline layer, so do not substitute it blindly. "
-            "Georgia's NG911 road centerlines are a documented statewide framework "
-            "dataset but are provisioned through a PSAP-readiness experience app rather "
-            "than a public REST layer."
-        ),
-    },
 
     # Florida: FLARIS is the FDOT State Safety Office's public network of ALL
     # Florida roadways - state, local and private - used for crash location.
     # That "all roads" scope is exactly what a municipality needs.
-    "FL": {
-        "name": "FLARIS ARBM Streets",
-        "publisher": "FDOT State Safety Office (SSO), FDOT GIS Portal",
-        "service_url": "https://gis.fdot.gov/arcgis/rest/services/sso/ssogis_flaris/FeatureServer",
-        "layer_id": 5,
-        "url": "https://gis.fdot.gov/arcgis/rest/services/sso/ssogis_flaris/FeatureServer/5",
-        "schema": "custom",
-        "field_map": None,
-        "cadence": None,
-        "attribution": "Road centerlines: Florida Department of Transportation (FDOT) State Safety Office, FLARIS",
-        "verified": "2026-07-29",
-        "evidence": "https://gis.fdot.gov/arcgis/rest/services/sso/ssogis_flaris/FeatureServer/5",
-        "confidence": "endpoint-indexed",
-        "notes": (
-            "FLARIS is where FDOT SSO publicly shares the roadway/intersection/street "
-            "segment network covering STATE, LOCAL AND PRIVATE roads - the widest public "
-            "Florida coverage found. Layer 5 'FLARIS ARBM Streets' is the polyline street "
-            "network; layer 100820 'FLARIS ARBM Routes' is the route-level polyline and "
-            "layers 0/3 are 'FLARIS Intersections'. Do NOT use "
-            "gis.fdot.gov/arcgis/rest/services/RCI_Layers/FeatureServer/15 ('State Roads') "
-            "- that is state-maintained roads only. Ignore devgis.fdot.gov, their dev tier."
-        ),
-    },
 
     # Louisiana: DOTD's Roads & Highways open-data extract. Edited daily and
     # already carries NENA Road Centerline GUIDs, which is a good sign the
@@ -522,29 +478,6 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
 
     # Virginia: VBMP Road Centerline File, maintained jointly by local
     # governments, VDOT and VGIN. Extracted and redistributed quarterly.
-    "VA": {
-        "verified_feature_count": 74242,
-        "verification_status": "verified-live",
-        "name": "VBMP Road Centerlines (RCL)",
-        "publisher": "Virginia Geographic Information Network (VGIN), VDEM",
-        "service_url": "https://vginmaps.vdem.virginia.gov/arcgis/rest/services/VA_Base_Layers/VBMP_RCL/FeatureServer",
-        "layer_id": 1,
-        "url": "https://vginmaps.vdem.virginia.gov/arcgis/rest/services/VA_Base_Layers/VBMP_RCL/FeatureServer/1",
-        "schema": "custom",
-        "field_map": None,
-        "cadence": "quarterly",
-        "attribution": "Road centerlines: Virginia Geographic Information Network (VGIN), VBMP",
-        "verified": "2026-07-29",
-        "evidence": "https://vginmaps.vdem.virginia.gov/arcgis/rest/services/VA_Base_Layers/VBMP_RCL/FeatureServer",
-        "confidence": "service-indexed",
-        "notes": (
-            "Service root confirmed and documented as public (no credentials). Layer ID "
-            "NOT confirmed - enumerate the FeatureServer and pick the polyline "
-            "centerline layer. Statewide, seamless, with address, road name and state "
-            "route number attribution. A parallel host gismaps.vdem.virginia.gov serves "
-            "the same VA_Base_Layers/VBMP_RCL path if vginmaps is unreachable."
-        ),
-    },
 
     # North Carolina: NC OneMap serves the actual NG911 call-routing
     # centerlines - the NENA RoadCenterlineLine layer, aggregated by the state
@@ -789,89 +722,11 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
 
     # Colorado: CDOT splits state highways from locally-jurisdiction roads
     # across different services. A municipality needs the LOCAL one.
-    "CO": {
-        "name": "CDOT Local Roads (HUTF service)",
-        "publisher": "Colorado Department of Transportation (CDOT)",
-        "service_url": "https://dtdapps.colorado.gov/server/rest/services/HUTF/HUTF2/MapServer",
-        "layer_id": None,
-        "url": None,
-        "schema": "custom",
-        "field_map": {"full_name": "ROUTENAME"},
-        "cadence": None,
-        "attribution": "Road centerlines: Colorado Department of Transportation (CDOT)",
-        "verified": "2026-07-29",
-        "evidence": "https://dtdapps.colorado.gov/server/rest/services/HUTF/HUTF2/MapServer/layers?f=pjson",
-        "confidence": "service-indexed",
-        "notes": (
-            "The service's layer listing was indexed and shows a 'LocalRoads' polyline "
-            "layer whose fields include OBJECTID, GIS_ID, FIPS, ROUTE, SEGMID and "
-            "ROUTENAME - field_map here is read off THAT listing, not assumed. Layer ID "
-            "was not in the indexed excerpt, so enumerate and match on the name "
-            "'LocalRoads'. Colorado needs TWO sources for full coverage: this for locally "
-            "-classified roads, and CDOT Highways at "
-            "dtdapps.coloradodot.info/arcgis/rest/services/CPLAN/HighwaySegments/MapServer/1 "
-            "for state highways. The CDOT open-data 'Local Roads' item is functionally "
-            "classified LOCAL roads only, so collectors and minor arterials inside a city "
-            "may be in the highway service instead. Also note CDOT runs two hostnames "
-            "(dtdapps.colorado.gov and dtdapps.coloradodot.info) with different content."
-        ),
-    },
 
     # Idaho: ITD runs ArcGIS Roads and Highways; its open-data mirror carries
     # an "All Idaho Road" layer covering the whole LRS.
-    "ID": {
-        "verified_feature_count": 43068,
-        "verification_status": "verified-live",
-        "name": "Idaho Transportation Layers For Open Data ('All Idaho Road')",
-        "publisher": "Idaho Transportation Department (ITD)",
-        "service_url": "https://gis.itd.idaho.gov/arcgisprod/rest/services/ArcGISOnline/IdahoTransportationLayersForOpenData/MapServer",
-        "layer_id": None,
-        "url": None,
-        "schema": "custom",
-        "field_map": None,
-        "cadence": None,
-        "attribution": "Road centerlines: Idaho Transportation Department (ITD)",
-        "verified": "2026-07-29",
-        "evidence": "https://gis.itd.idaho.gov/arcgisprod/rest/services/ArcGISOnline/IdahoTransportationLayersForOpenData/MapServer",
-        "confidence": "service-indexed",
-        "notes": (
-            "ITD moved to ArcGIS Roads and Highways in 2018; the layer to look for is "
-            "named 'All Idaho Road' and is documented as all road centerlines in the ITD "
-            "LRS. Layer ID unconfirmed - the only IDs indexed in this service were 131 "
-            "'State Highway System (LRS)', which is a NARROWER subset and must not be "
-            "substituted, and 12 'State Highway' in the sibling TransportationLayers "
-            "service. Enumerate and match by name."
-        ),
-    },
 
     # Nevada: NDOT's ALRS extract. Weekly refresh, which is unusually good.
-    "NV": {
-        "verified_feature_count": 66765,
-        "verification_status": "verified-live",
-        "name": "ALRS_Download (NDOT statewide routes)",
-        "publisher": "Nevada Department of Transportation, Roadway Systems Division",
-        "service_url": "https://gis.dot.nv.gov/arcgis/rest/services/ArcGISOnline/ALRS_Download/MapServer",
-        "layer_id": 1,
-        "url": "https://gis.dot.nv.gov/arcgis/rest/services/ArcGISOnline/ALRS_Download/MapServer/1",
-        "schema": "custom",
-        "field_map": None,
-        "cadence": "weekly, Tuesdays",
-        "attribution": "Road centerlines: Nevada Department of Transportation (NDOT)",
-        "verified": "2026-07-29",
-        "evidence": "https://gis.dot.nv.gov/arcgis/rest/services/ArcGISOnline/ALRS_Download/MapServer",
-        "confidence": "service-indexed",
-        "notes": (
-            "Publishes statewide routes, street name and mileposts extracted from NDOT's "
-            "Roads and Highways geodatabase. COVERAGE RISK: the NevadaRoutes dataset it "
-            "derives from is described as all STATE, FEDERAL AND COUNTY roads - city "
-            "streets are not named in that description, so check a municipality before "
-            "relying on it. An alternative that explicitly claims 'local, county and "
-            "state managed roads' is NDOT_Roads at "
-            "arcgis.water.nv.gov/arcgis/rest/services/BaseLayers/NDOT_Roads/MapServer, "
-            "but that is a copy republished on the Division of Water Resources' server, "
-            "so treat it as a fallback rather than the source of truth."
-        ),
-    },
 
     # New Mexico: the real thing - NG911 centerlines consolidated MONTHLY by
     # EDAC at UNM from 80+ local data providers.
@@ -993,59 +848,9 @@ STATE_ROAD_SOURCES: Dict[str, Dict[str, Any]] = {
 
     # Alaska: DOT&PF's route data service. Statewide by definition, though
     # Alaska's road network is tiny relative to its area.
-    "AK": {
-        "name": "AKDOT&PF Route Data (centerlines)",
-        "publisher": "Alaska DOT&PF, Transportation Data Services Section",
-        "service_url": "http://www.dot.state.ak.us/ArcGIS/rest/services/AKDOT_Route_Data/MapServer",
-        "layer_id": None,
-        "url": None,
-        "schema": "custom",
-        "field_map": None,
-        "cadence": None,
-        "attribution": "Road centerlines: Alaska Department of Transportation & Public Facilities (DOT&PF)",
-        "verified": "2026-07-29",
-        "evidence": "http://www.dot.state.ak.us/ArcGIS/rest/services/AKDOT_Route_Data/MapServer",
-        "confidence": "service-indexed",
-        "notes": (
-            "HTTP, NOT HTTPS - the service root was indexed on plain http, and the "
-            "fetcher should try https first and only fall back if DOT&PF genuinely has "
-            "no TLS listener. The service bundles centerlines, intersections, bridges "
-            "and mileposts, described as a linear centerline representation of all "
-            "routes in the state in linear-referencing format. Layer ID unconfirmed: the "
-            "AKDOT ArcGIS Hub item for 'Road Centerlines' deep-links with layer=20, which "
-            "is a strong hint but is a Hub parameter, not this service's directory page - "
-            "enumerate rather than trusting 20."
-        ),
-    },
 
     # Hawaii: the statewide GIS program publishes roads PER ISLAND, not as one
     # merged statewide layer. Read the note before using this.
-    "HI": {
-        "verified_feature_count": 2075,
-        "verification_status": "verified-live",
-        "name": "Hawaii Statewide GIS Transportation (HPMS Roads)",
-        "publisher": "Hawaii Statewide GIS Program, Office of Planning and Sustainable Development",
-        "service_url": "https://geodata.hawaii.gov/arcgis/rest/services/Transportation/MapServer",
-        "layer_id": 12,
-        "url": "https://geodata.hawaii.gov/arcgis/rest/services/Transportation/MapServer/12",
-        "schema": "custom",
-        "field_map": None,
-        "cadence": None,
-        "attribution": "Road centerlines: Hawaii Statewide GIS Program, Office of Planning and Sustainable Development",
-        "verified": "2026-07-29",
-        "evidence": "https://geodata.hawaii.gov/arcgis/rest/services/Transportation/MapServer/3",
-        "confidence": "service-indexed",
-        "notes": (
-            "THERE IS NO SINGLE STATEWIDE ROADS LAYER. This service holds one roads layer "
-            "PER ISLAND/COUNTY. Two were indexed by name: layer 3 'Oahu Roads' (the Oahu "
-            "street network, non-military and military) and layer 4 'Kauai Roads' (Kauai "
-            "centerlines as of November 2023). Maui and Hawaii County equivalents exist "
-            "as open-data items but their layer IDs were not indexed, so layer_id is left "
-            "None: the fetcher must enumerate and pick the layer matching the town's "
-            "county. Do NOT grab layers 12 or 15 - those are HPMS Roads and HPMS 2012, "
-            "federal reporting extracts, and 15 is a stale 2012 vintage."
-        ),
-    },
 
     # West Virginia: WVDOT's geospatial portal serves a Transportation service.
     "WV": {
