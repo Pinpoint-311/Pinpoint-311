@@ -184,6 +184,25 @@ async def _run_schema_migrations():
         # Immutable/tamper-evident request audit log hash chain (added 2026-07-02)
         "ALTER TABLE request_audit_logs ADD COLUMN IF NOT EXISTS previous_hash VARCHAR(64)",
         "ALTER TABLE request_audit_logs ADD COLUMN IF NOT EXISTS entry_hash VARCHAR(64)",
+        # Road geometry for jurisdiction routing (added 2026-07-29). Road-based
+        # blocking used to substring-match configured road names against a
+        # reverse-geocoded address string, which attributed corner lots to the
+        # cross street and park driveways to the park's mailing address --
+        # wrongly turning residents away. These tables hold real centrelines so
+        # the decision can be "how far is this pin from that road" instead.
+        #
+        # The GIST index is on the geography CAST, not the geometry: that is
+        # what makes ST_DWithin's threshold true metres everywhere without
+        # picking a projected SRID per state. Without it the index is unused and
+        # every pin drop sequentially scans the town.
+        "CREATE INDEX IF NOT EXISTS ix_road_segments_geog ON road_segments USING GIST ((geom::geography))",
+        "CREATE INDEX IF NOT EXISTS ix_road_segments_name_norm ON road_segments (name_norm)",
+        "CREATE INDEX IF NOT EXISTS ix_road_segments_ref_norm ON road_segments (ref_norm)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_road_segment_source "
+        "ON road_segments (source_id, source_feature_id)",
+        # Statistics reads these three together when summarising redirects.
+        "CREATE INDEX IF NOT EXISTS ix_blocked_log_created ON blocked_request_log (created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_blocked_log_jurisdiction ON blocked_request_log (jurisdiction_name)",
         # PostGIS location geometry + auto-populate trigger (added 2026-07-11).
         # Every geospatial analytic (hotspot clustering, coverage/spread metrics,
         # AI nearby-context) reads service_requests.location. That column is only
