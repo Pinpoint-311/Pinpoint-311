@@ -202,16 +202,16 @@ async def seed_roads_for_boundary(db, *, force: bool = False) -> Dict[str, Any]:
     if not force:
         ok, refusal = should_swap(existing, len(result.segments))
         if not ok:
-        status.consecutive_failures = (status.consecutive_failures or 0) + 1
-        status.last_error = refusal
-        await db.commit()
-        logger.warning("refusing road swap: %s", refusal)
-        await _report(
-            db, township,
-            changes=diff_road_names(previous_names, [s.name for s in result.segments]),
-            status=status,
-        )
-        return {"ok": False, "reason": refusal}
+            status.consecutive_failures = (status.consecutive_failures or 0) + 1
+            status.last_error = refusal
+            await db.commit()
+            logger.warning("refusing road swap: %s", refusal)
+            await _report(
+                db, township,
+                changes=diff_road_names(previous_names, [s.name for s in result.segments]),
+                status=status,
+            )
+            return {"ok": False, "reason": refusal}
 
     # Swap. Deleting and reinserting inside one transaction means a failure
     # rolls back to the previous roads rather than leaving the table half-built.
