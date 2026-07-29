@@ -98,6 +98,54 @@ export default function LocationPicker({
     }, [value?.address]);
 
     // Backend first (it meters geocoding for the cost report), provider SDK second.
+    
+    // Re-center, fit bounds, and display boundary whenever townshipBoundary prop changes
+    useEffect(() => {
+        const map = mapRef.current;
+        if (!map || !townshipBoundary) return;
+
+        try {
+            const rings = firstPolygonRings(townshipBoundary);
+            if (rings.length > 0) {
+                map.addPolygon({
+                    paths: rings,
+                    style: {
+                        fillColor: "#6366f1",
+                        fillOpacity: 0.12,
+                        strokeColor: "#6366f1",
+                        strokeWidth: 3,
+                        strokeOpacity: 1,
+                        clickable: false,
+                    },
+                });
+            } else {
+                map.addGeoJsonLayer({
+                    data: townshipBoundary,
+                    style: {
+                        fillColor: "#6366f1",
+                        fillOpacity: 0.12,
+                        strokeColor: "#6366f1",
+                        strokeWidth: 3,
+                        strokeOpacity: 1,
+                        clickable: false,
+                    },
+                });
+            }
+        } catch (e) {
+            console.warn("Failed to add updated township boundary:", e);
+        }
+
+        const geojson = townshipBoundary as any;
+        if (geojson?.center?.lat && geojson?.center?.lng) {
+            map.panTo({ lat: geojson.center.lat, lng: geojson.center.lng });
+        }
+
+        const boundaryBounds = boundsOfGeoJson(townshipBoundary);
+        if (boundaryBounds) {
+            map.fitBounds(boundaryBounds);
+        }
+    }, [townshipBoundary]);
+
     const reverseGeocode = useCallback(async (lat: number, lng: number): Promise<string> => {
         try {
             const result = await geocoderRef.current?.reverseGeocode({ lat, lng });
