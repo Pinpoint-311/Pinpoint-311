@@ -82,9 +82,11 @@ def boundary_bbox(geojson: Dict[str, Any]) -> Optional[Tuple[float, float, float
             else:
                 for child in node:
                     walk(child)
+        elif isinstance(node, dict):
+            for v in node.values():
+                walk(v)
 
-    geometry = (geojson or {}).get("geometry", geojson) or {}
-    walk(geometry.get("coordinates"))
+    walk(geojson)
     if not coordinates:
         return None
     xs = [c[0] for c in coordinates]
@@ -92,7 +94,46 @@ def boundary_bbox(geojson: Dict[str, Any]) -> Optional[Tuple[float, float, float
     return min(xs), min(ys), max(xs), max(ys)
 
 
+STATE_NAME_MAP = {
+    "ALABAMA": "AL", "ALASKA": "AK", "ARIZONA": "AZ", "ARKANSAS": "AR", "CALIFORNIA": "CA",
+    "COLORADO": "CO", "CONNECTICUT": "CT", "DELAWARE": "DE", "FLORIDA": "FL", "GEORGIA": "GA",
+    "HAWAII": "HI", "IDAHO": "ID", "ILLINOIS": "IL", "INDIANA": "IN", "IOWA": "IA",
+    "KANSAS": "KS", "KENTUCKY": "KY", "LOUISIANA": "LA", "MAINE": "ME", "MARYLAND": "MD",
+    "MASSACHUSETTS": "MA", "MICHIGAN": "MI", "MINNESOTA": "MN", "MISSISSIPPI": "MS",
+    "MISSOURI": "MO", "MONTANA": "MT", "NEBRASKA": "NE", "NEVADA": "NV", "NEW HAMPSHIRE": "NH",
+    "NEW JERSEY": "NJ", "NEW MEXICO": "NM", "NEW YORK": "NY", "NORTH CAROLINA": "NC",
+    "NORTH DAKOTA": "ND", "OHIO": "OH", "OKLAHOMA": "OK", "OREGON": "OR", "PENNSYLVANIA": "PA",
+    "RHODE ISLAND": "RI", "SOUTH CAROLINA": "SC", "SOUTH DAKOTA": "SD", "TENNESSEE": "TN",
+    "TEXAS": "TX", "UTAH": "UT", "VERMONT": "VT", "VIRGINIA": "VA", "WASHINGTON": "WA",
+    "WEST VIRGINIA": "WV", "WISCONSIN": "WI", "WYOMING": "WY", "DISTRICT OF COLUMBIA": "DC"
+}
+
+def _resolve_state_code(boundary: Optional[Dict[str, Any]], settings_state: Optional[str]) -> Optional[str]:
+    if settings_state and len(settings_state.strip()) == 2:
+        return settings_state.strip().upper()
+    display = ""
+    if isinstance(boundary, dict):
+        if "features" in boundary and boundary["features"]:
+            props = boundary["features"][0].get("properties", {})
+            display = props.get("display_name") or props.get("name") or ""
+        display = display or boundary.get("display_name") or boundary.get("name") or ""
+    upper_disp = display.upper()
+    for sname, scode in STATE_NAME_MAP.items():
+        if sname in upper_disp:
+            return scode
+    return settings_state or "DEFAULT"
+
+
 async def _load_boundary_and_state(db) -> Tuple[Optional[Dict[str, Any]], Optional[str], str]:
+    from app.models import SystemSettings
+
+    row = (await db.execute(select(SystemSettings).limit(1))).scalar_one_or_none()
+    if not row:
+        return None, None, "pinpoint"
+    settings_boundary = getattr(row, "township_boundary", None)
+    raw_state = getattr(row, "state_code", None) or getattr(row, "state", None)
+    resolved_state = _resolve_state_code(settings_boundary, raw_state)
+    return settings_boundary, resolved_state, getattr(row, "township_name", "pinpoint") or "pinpoint" 
     from app.models import SystemSettings
 
     row = (await db.execute(select(SystemSettings).limit(1))).scalar_one_or_none()
