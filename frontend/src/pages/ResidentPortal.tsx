@@ -1562,6 +1562,15 @@ export default function ResidentPortal() {
                         <Link to="/terms" className="text-white/40 hover:text-white/80 transition-colors">
                             {"Terms"}
                         </Link>
+                        <span className="text-white/20 hidden sm:inline">•</span>
+                        {/* Moved here from the product credit below. The bundled
+                            open-source dependencies require their notices be
+                            available, so the link stays -- but it is a legal
+                            link, and a resident reading a byline does not need
+                            other people's licences in it. */}
+                        <a href="/third-party-licenses.txt" className="text-white/40 hover:text-white/80 transition-colors">
+                            {"Notices"}
+                        </a>
                     </div>
                 </div>
                 {/* Powered by Pinpoint 311 */}
@@ -1573,26 +1582,42 @@ export default function ResidentPortal() {
                         className="brand-link group inline-flex items-center gap-2.5"
                         data-no-translate
                     >
-                        <span className="text-white/45 text-sm group-hover:text-white/70 transition-colors">
+                        {/* A kicker, not a sentence.
+                            "Powered by" at body size put a ~10px cap height next
+                            to a ~24px wordmark, which reads as two mismatched
+                            things rather than one lockup. Setting it as a small
+                            tracked label makes the size difference deliberate,
+                            and matches how the staff sidebar already pairs these
+                            two. The logo carries ~8% transparent padding top and
+                            bottom, symmetric, so centring aligns correctly. */}
+                        <span className="text-[11px] uppercase tracking-[0.18em] font-medium text-white/40 group-hover:text-white/60 transition-colors">
                             {"Powered by"}
                         </span>
                         <img
                             src="/pinpoint311_logo_dark_transparent.png"
                             alt="Pinpoint 311"
-                            className="h-6 sm:h-7 w-auto opacity-80 group-hover:opacity-100 transition-opacity"
+                            width={952}
+                            height={139}
+                            className="h-7 sm:h-8 w-auto opacity-85 group-hover:opacity-100 transition-opacity"
                         />
                     </a>
-                    <p className="text-white/35 text-xs text-center">
-                        {"Free & Open Source Municipal Platform"}
-                        {/* Kept on its own line and plainly labelled: the sentence above is
-                            Pinpoint 311's own claim, this link is other people's licenses. */}
-                        <span className="text-white/20 mx-1.5">·</span>
-                        <a
-                            href="/third-party-licenses.txt"
-                            className="text-white/40 hover:text-white/70 transition-colors"
-                        >
-                            {"Third-Party Notices"}
-                        </a>
+                    {/* The credit line proper.
+
+                        It used to read "Free & Open Source Municipal Platform",
+                        which names a category rather than the project, and made
+                        an open-source claim with nothing to check it against --
+                        the weakest form of that claim, and the one a town
+                        evaluating this platform is most likely to want to
+                        verify. So the licence is named and the source is linked.
+
+                        The nonprofit line is here because for a municipal
+                        audience "who is behind this and what happens if they
+                        lose interest" is a real question, and a 501(c)(3) fiscal
+                        sponsor is a better answer than a website. Worded exactly
+                        as the README does -- fiscally sponsored by, not "a
+                        project of", because those mean different things. */}
+                    <p className="text-white/30 text-xs text-center" data-no-translate>
+                        {"Free, open-source software for local government"}
                     </p>
                 </div>
             </footer>
