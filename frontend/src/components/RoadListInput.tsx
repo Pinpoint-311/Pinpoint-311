@@ -51,6 +51,21 @@ export default function RoadListInput({
     const searchSeq = useRef(0);
 
     const accent = tone === 'danger' ? 'text-red-300' : 'text-emerald-300';
+    
+    // Verify roads in list against searchRoads API
+    useEffect(() => {
+        roads.forEach(road => {
+            const low = road.toLowerCase();
+            if (!knownNames.has(low)) {
+                api.searchRoads(road).then(res => {
+                    if (res.roads.some(r => r.name.toLowerCase() === low || r.name.toLowerCase().includes(low))) {
+                        setKnownNames(prev => new Set(prev).add(low));
+                    }
+                }).catch(() => {});
+            }
+        });
+    }, [roads]);
+
     const listboxId = `${id || 'roadlist'}-options`;
 
     // Pull a first page on mount purely to learn whether road data exists at
@@ -78,6 +93,11 @@ export default function RoadListInput({
                     if (seq !== searchSeq.current) return;
                     setOptions(result.roads);
                     setActiveIndex(result.roads.length ? 0 : -1);
+                    setKnownNames(prev => {
+                        const next = new Set(prev);
+                        result.roads.forEach(r => next.add(r.name.toLowerCase()));
+                        return next;
+                    });
                 })
                 .catch(() => seq === searchSeq.current && setOptions([]));
         }, 180);
@@ -106,8 +126,9 @@ export default function RoadListInput({
         inputRef.current?.focus();
     }, [roads, onChange]);
 
-    const removeRoad = (name: string) => {
-        onChange(roads.filter(r => r !== name).join(', '));
+    const removeRoadByIndex = (index: number) => {
+        const next = roads.filter((_, idx) => idx !== index);
+        onChange(next.join(', '));
     };
 
     const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -124,7 +145,7 @@ export default function RoadListInput({
         } else if (event.key === 'Escape') {
             setOpen(false);
         } else if (event.key === 'Backspace' && !query && roads.length) {
-            removeRoad(roads[roads.length - 1]);
+            removeRoadByIndex(roads.length - 1);
         }
     };
 
@@ -140,8 +161,8 @@ export default function RoadListInput({
             <div className="rounded-xl bg-white/[0.06] border border-white/15 focus-within:border-primary-400/60 focus-within:ring-1 focus-within:ring-primary-400/30 transition-colors px-2.5 py-2">
                 {roads.length > 0 && (
                     <ul className="flex flex-wrap gap-1.5 mb-2" aria-label={`${label} selections`}>
-                        {roads.map(name => (
-                            <li key={name}>
+                        {roads.map((name, index) => (
+                            <li key={`${name}-${index}`}>
                                 <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 border border-white/15 pl-2.5 pr-1 py-1 text-sm text-white">
                                     <SignpostBig className="w-3.5 h-3.5 text-white/40" aria-hidden="true" />
                                     {name}
@@ -153,7 +174,7 @@ export default function RoadListInput({
                                     )}
                                     <button
                                         type="button"
-                                        onClick={() => removeRoad(name)}
+                                        onClick={() => removeRoadByIndex(index)}
                                         aria-label={`Remove ${name}`}
                                         className="p-1 rounded hover:bg-white/15 text-white/50 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400"
                                     >
