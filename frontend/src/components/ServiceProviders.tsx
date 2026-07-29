@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
     Sparkles, Languages, KeyRound, CheckCircle, AlertCircle,
-    Loader2, Check, ShieldCheck, RefreshCw,
+    ChevronDown, Loader2, Check, ShieldCheck, RefreshCw,
     Cloud, MapPin, Lock, Info, Map as MapIcon,
 } from 'lucide-react';
 
@@ -75,6 +75,15 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const [liveModels, setLiveModels] = useState<ProviderModelSpec[] | null>(null);
     const [modelsMeta, setModelsMeta] = useState<{ source?: string; fetched_at?: number | null } | null>(null);
     const [staleOverride, setStaleOverride] = useState<boolean | null>(null);
+    /* Collapsed by default, expanded when something needs attention.
+     *
+     * I removed this disclosure earlier after reading "I don't like the drop down
+     * configuration options" as being about the collapse. It was about the
+     * <select> model picker, which is now tiles. Four always-open full-width
+     * cards made the page enormous, so the collapse comes back -- with the
+     * distinction that a card nobody has configured opens itself, so the fields
+     * you still have to fill in are never hidden. */
+    const [open, setOpen] = useState<boolean | null>(null);
 
     const load = useCallback(async () => {
         try {
@@ -100,12 +109,76 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [reloadToken]);
 
+    /* Declared here, above the early returns, and not further down with the
+       other handlers.
+       
+       The effect below is registered on every render -- hooks run before the
+       `if (error)` / `if (!catalog)` returns -- but a render that took one of
+       those returns never reached a `const handleTest` sitting after them. The
+       binding stayed in the temporal dead zone for that render's scope, so
+       pressing "Recheck all" while any card was still loading, or after one had
+       failed to load its catalog, threw "Cannot access 'handleTest' before
+       initialization" and took the whole page down with it. */
+    const handleTest = useCallback(async () => {
+        setBusy('test'); setResult(null);
+        try {
+            const t = await api.testProvider(cap);
+            setResult(t);
+            onStatus(cap, { verified: t.ok });
+        } catch (e: any) {
+            setResult({ ok: false, detail: e?.message || 'Test failed' });
+            onStatus(cap, { verified: false });
+        } finally {
+            setBusy(null);
+        }
+    }, [cap, onStatus]);
+
     // Parent "Recheck all" bumps this token — each card verifies its own live
     // connection and reports the result up for the summary.
     useEffect(() => {
         if (recheckToken > 0) handleTest();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [recheckToken]);
+
+    const discover = useCallback(async (provider: string) => {
+        setRefreshingModels(true);
+        try {
+            const r = await api.refreshAIModels(provider);
+            setLiveModels(r.models);
+            setModelsMeta({ source: r.source, fetched_at: r.fetched_at });
+            return r;
+        } finally {
+            setRefreshingModels(false);
+        }
+    }, []);
+
+    /* Pull the model list from the provider on first sight, not only when
+       someone presses the button.
+       
+       The catalog endpoint serves models out of a database cache, and that cache
+       is filled by a daily Celery task or by an explicit refresh. Neither has
+       happened on a new deployment, and the beat schedule is an interval rather
+       than a wall-clock time, so the first automatic run lands 24 hours after the
+       worker boots. Until then the picker showed the built-in list and reported
+       "curated" -- which is exactly the "it isn't fetching dynamically" this was
+       supposed to avoid.
+       
+       Guarded three ways: AI only, only when the provider's credentials are
+       actually present (there is nothing to ask otherwise), and once per mount
+       via the ref, so a failing provider cannot turn into a request loop. */
+    const autoDiscovered = useRef(false);
+    useEffect(() => {
+        if (cap !== 'ai' || autoDiscovered.current || !catalog) return;
+        const provider = catalog.current_provider;
+        const entry = catalog.providers.find(p => p.provider === provider);
+        const alreadyLive = entry?.models_source === 'live';
+        if (alreadyLive || !catalog.configured?.[provider]) return;
+        autoDiscovered.current = true;
+        discover(provider).catch(() => {
+            // Best-effort. The curated list stays and the button still works.
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [catalog, cap]);
 
     if (error) {
         return (
@@ -125,6 +198,9 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     // the same green treatment every other connector card uses, so "set up" and
     // "not set up" read identically across the whole page.
     const configured = !!catalog.configured?.[catalog.current_provider];
+    // null means "not touched yet", so an unconfigured card starts open and a
+    // configured one starts closed, without overriding a deliberate click.
+    const isOpen = open === null ? !configured : open;
 
     const handleSave = async () => {
         if (!active) return;
@@ -151,34 +227,15 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
         }
     };
 
-    const handleTest = async () => {
-        setBusy('test'); setResult(null);
-        try {
-            const t = await api.testProvider(cap);
-            setResult(t);
-            onStatus(cap, { verified: t.ok });
-        } catch (e: any) {
-            setResult({ ok: false, detail: e?.message || 'Test failed' });
-            onStatus(cap, { verified: false });
-        } finally {
-            setBusy(null);
-        }
-    };
-
     const handleRefreshModels = async () => {
-        setRefreshingModels(true);
         try {
-            const r = await api.refreshAIModels(selected);
-            setLiveModels(r.models);
-            setModelsMeta({ source: r.source, fetched_at: r.fetched_at });
+            const r = await discover(selected);
             // Staleness only meaningful for the currently-active provider.
             if (catalog && selected === catalog.current_provider) {
                 setStaleOverride(r.current_model_available === false);
             }
         } catch {
             // keep the existing list on failure — discovery is best-effort
-        } finally {
-            setRefreshingModels(false);
         }
     };
 
@@ -198,7 +255,13 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             <div className="relative">
                 {/* Header — same shape as every other connector card: a large
                     gradient icon tile, the name, and a status pill on the right. */}
-                <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
+                <button
+                    type="button"
+                    onClick={() => setOpen(v => (v === null ? configured : !v))}
+                    aria-expanded={isOpen}
+                    aria-controls={`prov-${cap}`}
+                    className="w-full flex items-start justify-between gap-4 flex-wrap text-left rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                >
                     <div className="flex items-center gap-4 min-w-0">
                         <div className={`w-14 h-14 shrink-0 rounded-2xl flex items-center justify-center transition-all duration-300 ${configured
                             ? 'bg-gradient-to-br from-green-400 to-emerald-500 shadow-lg shadow-green-500/30'
@@ -213,17 +276,27 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                             </p>
                         </div>
                     </div>
-                    {configured ? (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-green-500/20 to-emerald-500/20 text-green-300 border border-green-500/30 shadow-lg shadow-green-500/10">
-                            <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" />
-                            Configured
-                        </span>
-                    ) : (
-                        <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                            Not configured
-                        </span>
-                    )}
-                </div>
+                    <div className="flex items-center gap-2.5 shrink-0">
+                        {configured ? (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-green-500/20 to-emerald-500/20 text-green-300 border border-green-500/30 shadow-lg shadow-green-500/10">
+                                <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" />
+                                Configured
+                            </span>
+                        ) : (
+                            <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                Not configured
+                            </span>
+                        )}
+                        <motion.span
+                            animate={{ rotate: isOpen ? 180 : 0 }}
+                            transition={{ duration: 0.25 }}
+                            className="text-white/40"
+                            aria-hidden="true"
+                        >
+                            <ChevronDown className="w-4 h-4" />
+                        </motion.span>
+                    </div>
+                </button>
 
                 <p className="text-white/60 text-sm mb-4">{blurb}</p>
 
@@ -243,7 +316,17 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 "Configure" disclosure, which meant the fields a deployment
                 actually has to fill in were one click away from being missed,
                 and left the card looking finished when nothing was set. */}
-            <div id={`prov-${cap}`} className="mt-4 pt-4 border-t border-white/10 space-y-5">
+            <AnimatePresence initial={false}>
+            {isOpen && (
+            <motion.div
+                id={`prov-${cap}`}
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                className="overflow-hidden"
+            >
+            <div className="mt-4 pt-4 border-t border-white/10 space-y-5">
                 {/* Provider picker — segmented tiles */}
                 <div>
                     <Step n={1}>Provider</Step>
@@ -368,7 +451,9 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                             <p className="text-[10px] text-white/40 mt-1.5">
                                 {source === 'live'
                                     ? `Live from ${active.name}${fetchedAt ? ` · updated ${agoLabel(fetchedAt)}` : ''}`
-                                    : 'Built-in list — press “Refresh from provider” to pull the current models'}
+                                    : refreshingModels
+                                        ? `Checking ${active.name} for its current models…`
+                                        : 'Built-in list. It refreshes from the provider automatically once credentials are saved — or press “Refresh from provider”.'}
                             </p>
                             {isStale && (
                                 <div className="mt-2 rounded-lg bg-amber-500/10 border border-amber-400/30 px-3 py-2 text-[11px] text-amber-200 flex items-start gap-2">
@@ -426,7 +511,10 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                     )}
                 </div>
             </div>
-        </div>
+            </motion.div>
+            )}
+            </AnimatePresence>
+            </div>
         </motion.div>
     );
 }
