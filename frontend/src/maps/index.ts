@@ -6,6 +6,7 @@
 
 export * from './types';
 export * from './geo';
+export * from './popup';
 export { createMap, createGeocoder, chainGeocoders, loadMapProvider, availableMapProviders, isMapProviderId } from './registry';
 export { resolveMapProviderConfig, legacyMapProviderConfig, DEFAULT_MAP_PROVIDER } from './config';
 export { backendGeocodingProvider } from './providers/backend';

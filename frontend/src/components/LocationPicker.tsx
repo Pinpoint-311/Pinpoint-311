@@ -19,6 +19,8 @@ import {
     firstPolygonRings,
     isPointInGeoJson,
     legacyMapProviderConfig,
+    el,
+    popupRoot,
 } from '../maps';
 
 interface LocationPickerProps {
@@ -290,100 +292,66 @@ export default function LocationPicker({
                                             ? String(props.asset_type).replace(/_/g, ' ')
                                             : layer.layer_type || 'asset';
 
-                                        const propsHtml = Object.entries(props)
-                                            .filter(([key]) => key !== 'name') // Don't repeat name
-                                            .map(([key, val]) => `
-                                                <div style="display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid #e2e8f0;">
-                                                    <span style="color: #64748b; font-size: 12px; text-transform: capitalize;">${key.replace(/_/g, ' ')}</span>
-                                                    <span style="font-size: 12px; color: #334155; font-weight: 500; text-align: right;">${val}</span>
-                                                </div>
-                                            `).join('');
-
-                                        // The popup body is raw HTML, so its buttons reach
-                                        // back through globals rather than the provider's
-                                        // own close affordance (which is vendor markup).
-                                        const closeId = `closeAsset_${Date.now()}`;
-                                        (window as any)[closeId] = () => popup.close();
-
-                                        const callbackId = `selectAsset_${Date.now()}`;
-                                        (window as any)[callbackId] = () => {
-                                            if (markerRef.current) {
-                                                markerRef.current.setPosition(position);
-                                            }
+                                        const selectAsset = () => {
+                                            markerRef.current?.setPosition(position);
                                             map.panTo(position);
-
-                                            if (onAssetSelect) {
-                                                onAssetSelect({
-                                                    layerName: layer.name,
-                                                    properties: props,
-                                                    lat: position.lat,
-                                                    lng: position.lng,
-                                                });
-                                            }
-
+                                            onAssetSelect?.({
+                                                layerName: layer.name,
+                                                properties: props,
+                                                lat: position.lat,
+                                                lng: position.lng,
+                                            });
                                             reverseGeocode(position.lat, position.lng).then(address => {
                                                 onChange({ address, lat: position.lat, lng: position.lng });
                                             });
-
                                             popup.close();
                                         };
 
-                                        popup.setContent(`
-                                            <div style="
-                                                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                                                padding: 2px 4px 8px 8px;
-                                                min-width: 180px;
-                                                max-width: 260px;
-                                            ">
-                                                <div style="
-                                                    display: flex;
-                                                    justify-content: space-between;
-                                                    align-items: flex-start;
-                                                    gap: 8px;
-                                                    margin-bottom: 4px;
-                                                ">
-                                                    <div style="
-                                                        font-size: 14px;
-                                                        font-weight: 700;
-                                                        color: #0f172a;
-                                                        line-height: 1.2;
-                                                        flex: 1;
-                                                    ">${assetName}</div>
-                                                    <button
-                                                        onclick="${closeId}()"
-                                                        style="
-                                                            background: none;
-                                                            border: none;
-                                                            cursor: pointer;
-                                                            padding: 0;
-                                                            color: #94a3b8;
-                                                            font-size: 18px;
-                                                            line-height: 1;
-                                                        "
-                                                    >×</button>
-                                                </div>
-
-                                                ${propsHtml ? `<div style="margin-bottom: 6px; border-top: 1px solid #e2e8f0; padding-top: 4px;">${propsHtml}</div>` : ''}
-
-                                                <button
-                                                    onclick="${callbackId}()"
-                                                    style="
-                                                        width: 100%;
-                                                        padding: 6px 10px;
-                                                        background: #8b5cf6;
-                                                        color: white;
-                                                        border: none;
-                                                        border-radius: 6px;
-                                                        font-size: 12px;
-                                                        font-weight: 600;
-                                                        cursor: pointer;
-                                                        text-transform: capitalize;
-                                                    "
-                                                >
-                                                    📍 Select this ${assetType}
-                                                </button>
-                                            </div>
-                                        `);
+                                        // Built as DOM, not markup. Asset names and
+                                        // property values come from an uploaded GeoJSON,
+                                        // and the buttons are real listeners rather than
+                                        // onclick attributes reaching for generated window
+                                        // globals -- which leaked one per rendered feature.
+                                        popup.setContent(popupRoot('padding: 2px 4px 8px 8px; min-width: 180px; max-width: 260px;', [
+                                            el('div', {
+                                                style: 'display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 4px;',
+                                                children: [
+                                                    el('div', {
+                                                        style: 'font-size: 14px; font-weight: 700; color: #0f172a; line-height: 1.2; flex: 1;',
+                                                        text: String(assetName),
+                                                    }),
+                                                    el('button', {
+                                                        style: 'background: none; border: none; cursor: pointer; padding: 0; color: #94a3b8; font-size: 18px; line-height: 1;',
+                                                        text: '\u00D7',
+                                                        title: 'Close',
+                                                        onClick: () => popup.close(),
+                                                    }),
+                                                ],
+                                            }),
+                                            Object.keys(props).filter(k => k !== 'name').length > 0 && el('div', {
+                                                style: 'margin-bottom: 6px; border-top: 1px solid #e2e8f0; padding-top: 4px;',
+                                                children: Object.entries(props)
+                                                    .filter(([key]) => key !== 'name')
+                                                    .map(([key, val]) => el('div', {
+                                                        style: 'display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid #e2e8f0;',
+                                                        children: [
+                                                            el('span', {
+                                                                style: 'color: #64748b; font-size: 12px; text-transform: capitalize;',
+                                                                text: key.replace(/_/g, ' '),
+                                                            }),
+                                                            el('span', {
+                                                                style: 'font-size: 12px; color: #334155; font-weight: 500; text-align: right;',
+                                                                text: String(val),
+                                                            }),
+                                                        ],
+                                                    })),
+                                            }),
+                                            el('button', {
+                                                style: 'width: 100%; padding: 6px 10px; background: #8b5cf6; color: white; border: none; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; text-transform: capitalize;',
+                                                text: `\u{1F4CD} Select this ${assetType}`,
+                                                onClick: selectAsset,
+                                            }),
+                                        ]));
                                         popup.openAt(marker);
                                     },
                                 });
