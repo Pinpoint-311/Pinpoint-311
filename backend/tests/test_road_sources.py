@@ -172,3 +172,49 @@ def test_entry_without_a_url_falls_back():
     incomplete = {k for k, v in registry.STATE_ROAD_SOURCES.items() if not v.get("url")}
     for code in incomplete:
         assert rs.resolve_source(code) is registry.STATE_ROAD_SOURCES["DEFAULT"]
+
+
+# ---- runtime validation state ----------------------------------------------
+
+def test_every_registry_entry_has_been_called_for_real():
+    """The registry was assembled from search-indexed directory pages, and half
+    of those candidates did not survive being called. Anything still in here
+    must have answered; anything that did not belongs in RUNTIME_FAILED or
+    RUNTIME_UNUSABLE, where it falls through to TIGER instead of degrading a
+    town to a broken source."""
+    import app.services.road_sources_registry as registry
+
+    unverified = {
+        code for code, entry in registry.STATE_ROAD_SOURCES.items()
+        if entry.get("confidence") != "runtime-verified"
+    }
+    assert not unverified, f"unverified entries must be demoted, not shipped: {sorted(unverified)}"
+
+
+def test_every_entry_has_a_queryable_layer():
+    """A registry row with no layer id cannot be fetched; it would 404 on every
+    town in that state rather than falling back."""
+    import app.services.road_sources_registry as registry
+
+    for code, entry in registry.STATE_ROAD_SOURCES.items():
+        assert entry.get("url"), f"{code} has no layer URL"
+        assert entry.get("layer_id") is not None, f"{code} has no layer id"
+
+
+def test_demoted_states_fall_back_to_tiger():
+    """The states whose services were dead or unusable must resolve to the
+    national default, not to a broken endpoint."""
+    import app.services.road_sources_registry as registry
+
+    for code in list(registry.RUNTIME_FAILED) + list(registry.RUNTIME_UNUSABLE):
+        assert rs.resolve_source(code) is registry.STATE_ROAD_SOURCES["DEFAULT"], code
+
+
+def test_the_national_fallback_is_itself_verified():
+    """DEFAULT is the source for most of the country. A wrong layer here breaks
+    every state without its own entry, rather than one."""
+    import app.services.road_sources_registry as registry
+
+    default = registry.STATE_ROAD_SOURCES["DEFAULT"]
+    assert default["confidence"] == "runtime-verified"
+    assert default.get("runtime_feature_count", 0) > 1_000_000
