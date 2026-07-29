@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Phone, Mail, Footprints, Search, CheckCircle, Loader2, Sparkles,
-    ChevronDown, MapPin, User as UserIcon, X, AlertCircle, EyeOff,
+    ChevronDown, MapPin, User as UserIcon, X, AlertCircle, EyeOff, SignpostBig,
 } from 'lucide-react';
 
 import { Modal } from './ui';
@@ -115,6 +115,16 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
 
     const [saving, setSaving] = useState<'close' | 'another' | null>(null);
     const [error, setError] = useState<string | null>(null);
+    // A 409 from the server means this location belongs to another agency. A
+    // clerk on the phone can still choose to log it -- the caller is elderly,
+    // the town forwards these anyway, it is faster than explaining. Refusing
+    // outright would just move the work into a notepad. Residents get no such
+    // choice; staff exercising judgement is the point of the role.
+    const [redirect, setRedirect] = useState<{
+        jurisdiction: string | null; message: string; road: string | null;
+        contacts: { name?: string; phone?: string; url?: string }[];
+    } | null>(null);
+    const [overrideJurisdiction, setOverrideJurisdiction] = useState(false);
     const [lastLogged, setLastLogged] = useState<string | null>(null);
     const [sessionCount, setSessionCount] = useState(0);
 
@@ -135,6 +145,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
         setLat(null); setLng(null); setMatchedAsset(null); setMapKey(k => k + 1);
         setShowContact(false); setFirstName(''); setLastName(''); setEmail('');
         setHideFromPublic(false);
+        setRedirect(null); setOverrideJurisdiction(false);
         setError(null);
     };
 
@@ -143,6 +154,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
     useEffect(() => {
         if (isOpen) {
             setError(null); setLastLogged(null); setSessionCount(0);
+            setRedirect(null); setOverrideJurisdiction(false);
             const t = setTimeout(() => descRef.current?.focus(), 120);
             return () => clearTimeout(t);
         }
@@ -180,6 +192,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                 email: email.trim() || undefined,
                 phone: phone.trim() || undefined,
                 is_public: hideFromPublic ? false : undefined,
+                override_jurisdiction: overrideJurisdiction || undefined,
                 source,
             });
             onCreated(created);
@@ -192,7 +205,20 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                 onClose();
             }
         } catch (e: any) {
-            setError(e?.message || 'Could not log the request. Please try again.');
+            // The server returns the jurisdiction, the road and who to contact
+            // rather than a bare error, so the clerk can read it to the caller.
+            const detail = e?.detail ?? e?.body?.detail;
+            if (detail?.error === 'redirected') {
+                setRedirect({
+                    jurisdiction: detail.jurisdiction ?? null,
+                    message: detail.message ?? '',
+                    road: detail.road ?? null,
+                    contacts: detail.contacts ?? [],
+                });
+                setError(null);
+            } else {
+                setError(e?.message || 'Could not log the request. Please try again.');
+            }
         } finally {
             setSaving(null);
         }
@@ -431,6 +457,56 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                             </span>
                         </span>
                     </label>
+                )}
+
+                {redirect && (
+                    <div className="rounded-xl bg-gradient-to-br from-amber-500/[0.12] to-orange-500/[0.08] border border-amber-400/30 p-4 space-y-3">
+                        <div className="flex items-start gap-3">
+                            <div className="w-9 h-9 rounded-full bg-amber-500/20 flex items-center justify-center shrink-0">
+                                <SignpostBig className="w-4.5 h-4.5 text-amber-300" aria-hidden="true" />
+                            </div>
+                            <div className="min-w-0">
+                                <p className="text-sm font-semibold text-amber-200">
+                                    {redirect.jurisdiction
+                                        ? `${redirect.jurisdiction} maintains this location`
+                                        : 'Another agency maintains this location'}
+                                </p>
+                                {redirect.road && (
+                                    <p className="text-xs text-white/50 mt-0.5">
+                                        Detected road: <span className="text-white/75">{redirect.road}</span>
+                                    </p>
+                                )}
+                                {redirect.message && (
+                                    <p className="text-sm text-white/70 mt-2 leading-relaxed">{redirect.message}</p>
+                                )}
+                                {redirect.contacts.length > 0 && (
+                                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs">
+                                        {redirect.contacts.map((c, i) => (
+                                            <span key={i} className="text-white/60">
+                                                {c.name && <span className="text-white/80 font-medium">{c.name}</span>}
+                                                {c.phone && <> &middot; <a href={`tel:${c.phone}`} className="text-primary-300 hover:text-primary-200">{c.phone}</a></>}
+                                                {c.url && <> &middot; <a href={c.url} target="_blank" rel="noopener noreferrer" className="text-primary-300 hover:text-primary-200">Website</a></>}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                        <label className="flex items-start gap-3 cursor-pointer rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5">
+                            <input
+                                type="checkbox"
+                                checked={overrideJurisdiction}
+                                onChange={e => setOverrideJurisdiction(e.target.checked)}
+                                className="mt-0.5 w-4 h-4 rounded border-white/20 bg-white/10 text-primary-500 shrink-0"
+                            />
+                            <span className="min-w-0">
+                                <span className="block text-sm font-medium text-white">Log it anyway</span>
+                                <span className="block text-[11px] text-white/50 mt-0.5 leading-relaxed">
+                                    Records the report here so it is not lost. Your town still has to forward it.
+                                </span>
+                            </span>
+                        </label>
+                    </div>
                 )}
 
                 {error && (
