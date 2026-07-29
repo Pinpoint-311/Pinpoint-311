@@ -133,7 +133,7 @@ export default function RoadCorridorMap({
         };
     }, [apiKey]);
 
-    const styleFor = useCallback((feature: GeoFeature): VectorStyle => {
+    const bufferStyleFor, centerlineStyleFor = useCallback((feature: GeoFeature): VectorStyle => {
         const id = String(feature.properties?.feature_id ?? '');
         const off = excludedRef.current.has(id);
         return {
@@ -223,7 +223,7 @@ export default function RoadCorridorMap({
         // roadKey rather than the array so a re-render with equal contents does
         // not refetch the whole town's geometry.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [roadKey, ready, styleFor, toggleSegment]);
+    }, [roadKey, ready, bufferStyleFor, centerlineStyleFor, toggleSegment]);
 
     // Draggable handles at the trim boundaries of the selected stretch.
     useEffect(() => {
