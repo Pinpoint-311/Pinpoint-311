@@ -28,6 +28,53 @@ class BoundaryInfo:
     bounds: Dict[str, float]  # {north, south, east, west}
 
 
+def _extract_components(results: list) -> Dict[str, str]:
+    """Pull the road (and locality) out of a Google reverse-geocode response.
+
+    Road-based routing must compare against the road alone. Matching against
+    `formatted_address` puts the city, county and ZIP into the match surface,
+    so a configured road named "Union" or "Springfield" would match the town
+    name and block every report in the municipality.
+
+    Google orders results most-specific first, but the first result is the
+    nearest *address*, whose route can belong to the cross street on a corner
+    lot. Prefer a result explicitly typed as a route; fall back to the route
+    component of the nearest address.
+    """
+    components: Dict[str, str] = {}
+
+    def route_of(result: dict) -> Optional[str]:
+        for component in result.get("address_components", []):
+            if "route" in component.get("types", []):
+                return component.get("long_name") or component.get("short_name")
+        return None
+
+    for result in results:
+        if "route" in result.get("types", []):
+            road = route_of(result) or result.get("formatted_address", "").split(",")[0]
+            if road:
+                components["route"] = road
+                components["route_source"] = "route_result"
+                break
+    else:
+        for result in results:
+            road = route_of(result)
+            if road:
+                components["route"] = road
+                components["route_source"] = "address_component"
+                break
+
+    for result in results:
+        for component in result.get("address_components", []):
+            types = component.get("types", [])
+            if "locality" in types and "locality" not in components:
+                components["locality"] = component.get("long_name", "")
+            if "postal_code" in types and "postal_code" not in components:
+                components["postal_code"] = component.get("long_name", "")
+
+    return components
+
+
 class GeocodingService:
     """Service for geocoding addresses and reverse geocoding coordinates"""
     
@@ -110,7 +157,8 @@ class GeocodingService:
                 
                 if data.get("status") == "OK" and data.get("results"):
                     result = data["results"][0]
-                    
+                    components = _extract_components(data["results"])
+
                     # Track API usage for cost estimation
                     try:
                         from app.db.session import SessionLocal
@@ -128,7 +176,8 @@ class GeocodingService:
                         lat=lat,
                         lng=lng,
                         formatted_address=result["formatted_address"],
-                        place_id=result.get("place_id")
+                        place_id=result.get("place_id"),
+                        components=components,
                     )
         except Exception as e:
             logger.warning(f"Google reverse geocoding error: {e}")
