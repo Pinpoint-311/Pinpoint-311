@@ -38,6 +38,7 @@ export interface SegmentTrim { start: number; end: number }
 interface RoadCorridorMapProps {
     /** Road names currently in the rule, comma-separated as routing_config stores them. */
     roads: string;
+    townshipBoundary?: object | null;
     /** Feature ids the clerk has switched off. */
     excludedFeatureIds: string[];
     onExcludedChange: (ids: string[]) => void;
@@ -53,7 +54,7 @@ const INCLUDED = '#f87171';
 const EXCLUDED = '#64748b';
 
 export default function RoadCorridorMap({
-    roads, excludedFeatureIds, onExcludedChange,
+    roads, townshipBoundary, excludedFeatureIds, onExcludedChange,
     trims, onTrimsChange,
     corridorMetres, onCorridorMetresChange, apiKey,
 }: RoadCorridorMapProps) {
@@ -90,13 +91,34 @@ export default function RoadCorridorMap({
         if (!container || !config) return;
 
         createMap(container, config, {
-            center: { lat: 40.3573, lng: -74.6672 },
+            center: (townshipBoundary as any)?.center ? (townshipBoundary as any).center : { lat: 40.7312, lng: -74.2734 },
             zoom: 13,
             controls: { zoom: { enabled: true }, fullscreen: { enabled: true } },
         })
             .then(renderer => {
                 if (cancelled) { renderer.destroy(); return; }
                 rendererRef.current = renderer;
+
+                if (townshipBoundary) {
+                    try {
+                        renderer.addGeoJsonLayer({
+                            data: townshipBoundary,
+                            style: {
+                                fillColor: "#6366f1",
+                                fillOpacity: 0.08,
+                                strokeColor: "#6366f1",
+                                strokeWidth: 2,
+                                strokeOpacity: 0.8,
+                                clickable: false,
+                            },
+                        });
+                        const boundaryBounds = boundsOfGeoJson(townshipBoundary);
+                        if (boundaryBounds) renderer.fitBounds(boundaryBounds);
+                    } catch (e) {
+                        console.warn("Failed to add boundary to corridor map:", e);
+                    }
+                }
+
                 setReady(true);
             })
             .catch(() => !cancelled && setUnavailable(true));

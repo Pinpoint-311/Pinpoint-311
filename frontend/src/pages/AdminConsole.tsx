@@ -948,10 +948,23 @@ export default function AdminConsole() {
                 config.contacts = serviceRouting.routing_config.contacts;
             } else if (serviceRouting.routing_mode === 'road_based') {
                 config.default_handler = serviceRouting.routing_config.default_handler;
-                config.exclusion_list = serviceRouting.routing_config.exclusion_list
-                    .split(",").map((r: string) => r.trim()).filter(Boolean);
-                config.inclusion_list = serviceRouting.routing_config.inclusion_list
-                    .split(",").map((r: string) => r.trim()).filter(Boolean);
+                const rawEx = serviceRouting.routing_config.exclusion_list;
+                if (Array.isArray(rawEx)) {
+                    config.exclusion_list = rawEx;
+                } else if (typeof rawEx === "string") {
+                    config.exclusion_list = rawEx.split(",").map((r: string) => r.trim()).filter(Boolean);
+                } else {
+                    config.exclusion_list = [];
+                }
+
+                const rawIn = serviceRouting.routing_config.inclusion_list;
+                if (Array.isArray(rawIn)) {
+                    config.inclusion_list = rawIn;
+                } else if (typeof rawIn === "string") {
+                    config.inclusion_list = rawIn.split(",").map((r: string) => r.trim()).filter(Boolean);
+                } else {
+                    config.inclusion_list = [];
+                }
                 // Clerk corrections travel with the rule, keyed to publisher
                 // feature ids so a data refresh cannot orphan them.
                 config.excluded_segments = excludedSegments;
@@ -3605,9 +3618,10 @@ export default function AdminConsole() {
                             <RoadCorridorMap
                                 roads={
                                     serviceRouting.routing_config.default_handler === 'township'
-                                        ? serviceRouting.routing_config.exclusion_list
-                                        : serviceRouting.routing_config.inclusion_list
+                                        ? (typeof serviceRouting.routing_config.exclusion_list === 'string' ? serviceRouting.routing_config.exclusion_list : (Array.isArray(serviceRouting.routing_config.exclusion_list) ? (serviceRouting.routing_config.exclusion_list as string[]).join(', ') : ''))
+                                        : (typeof serviceRouting.routing_config.inclusion_list === 'string' ? serviceRouting.routing_config.inclusion_list : (Array.isArray(serviceRouting.routing_config.inclusion_list) ? (serviceRouting.routing_config.inclusion_list as string[]).join(', ') : ''))
                                 }
+                                townshipBoundary={townshipBoundary}
                                 excludedFeatureIds={excludedSegments}
                                 onExcludedChange={setExcludedSegments}
                                 trims={segmentTrims}
