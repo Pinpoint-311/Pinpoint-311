@@ -13,6 +13,7 @@ import {
 import { Card, Button, Input, Select, Badge, CollapsibleSection } from './ui';
 import { SystemSecret } from '../types';
 import { api } from '../services/api';
+import type { Capability } from '../services/api';
 import GovtechIntegrations from './GovtechIntegrations';
 import ServiceProviders from './ServiceProviders';
 
@@ -58,9 +59,16 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [setupCloud, setSetupCloud] = useState<'google' | 'azure' | 'aws'>('google');
     const [setupIdp, setSetupIdp] = useState<'auth0' | 'entra' | 'okta' | 'oidc'>('auth0');
     const [setupMaps, setSetupMaps] = useState<'google' | 'esri' | 'azure' | 'apple'>('google');
-    const [wantedFeatures, setWantedFeatures] = useState<Set<string>>(
-        new Set(['ai', 'secrets', 'email'])
-    );
+    /* Everything on, untick to hide.
+     *
+     * This started as opt-in with three ticked, which quietly set the default
+     * for every town that never touched it: a page that asks what you want,
+     * pre-answered "not much". A town that never opens this question should end
+     * up with the whole platform switched on, not the three we happened to
+     * pre-tick -- so the list below is every feature, and a town removes what
+     * it genuinely does not want. */
+    const ALL_FEATURES = ['ai', 'translation', 'moderation', 'email', 'sms', 'secrets', 'govtech', 'backups'];
+    const [wantedFeatures, setWantedFeatures] = useState<Set<string>>(new Set(ALL_FEATURES));
     const toggleFeature = (f: string) =>
         setWantedFeatures(prev => {
             const next = new Set(prev);
@@ -68,6 +76,23 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             return next;
         });
     const wants = (f: string) => wantedFeatures.has(f);
+
+    /* The setup questions are asked in feature terms ("AI triage", "Secret
+     * storage + PII encryption") and the provider cards are keyed by
+     * capability. This is the one mapping between them. `secrets` covers the
+     * KMS card because the same question is what a town answers about where
+     * keys and resident data are protected, and `moderation` covers photo
+     * redaction for the same reason -- both are about screening what gets
+     * stored. */
+    const FEATURE_TO_CAPABILITY: Record<string, Capability> = {
+        ai: 'ai', translation: 'translation', email: 'email',
+        sms: 'sms', secrets: 'kms', moderation: 'redaction',
+    };
+    const wantedCapabilities = new Set<Capability>(
+        Object.entries(FEATURE_TO_CAPABILITY)
+            .filter(([feature]) => wantedFeatures.has(feature))
+            .map(([, capability]) => capability),
+    );
 
     // Managed (state-hosted) mode: infrastructure cards are locked because the
     // state's orchestrator owns those keys (Google Cloud, Backups, domain).
@@ -708,7 +733,11 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 open above everything that actually needed attention. */}
 
             {/* 1 — Required + core capabilities: sign-in, maps, AI, translation */}
-            <div id="sec-providers"><ServiceProviders /></div>
+            {/* Only the capabilities the town asked for. The question above is
+                the single place that decides what this page shows, so answering
+                it once removes the steps and the inputs together rather than
+                leaving inputs for providers whose instructions are hidden. */}
+            <div id="sec-providers"><ServiceProviders show={wantedCapabilities} /></div>
 
             <CollapsibleSection id="sec-optional" title="Notifications & Extras" icon={Cloud} subtitle="Email, text messages, cloud services, error reporting, backups — none required to take reports" defaultOpen={false}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
