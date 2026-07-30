@@ -24,6 +24,9 @@ being wrong matters most, and a plausible wrong answer is worse here than none.
 So the lookup is a real point-in-polygon query against the Census TIGERweb state
 layer -- the same public service the road centrelines already come from, so it
 adds no new dependency and nothing to configure.
+
+Verified against the live service: a point in Montclair (-74.209, 40.825)
+returns one feature with STUSAB "NJ", NAME "New Jersey" and STATE "34".
 """
 
 from __future__ import annotations
@@ -145,23 +148,21 @@ async def state_from_coordinates(lon: float, lat: float, *, client=None) -> Opti
 def state_code_in(attributes: Dict[str, Any]) -> Optional[str]:
     """Find the state abbreviation in an ArcGIS attribute bag.
 
-    Deliberately not `attributes["STUSAB"]`.
+    Deliberately not `attributes["STUSAB"]`, even though STUSAB is confirmed to
+    be what this layer returns.
 
-    I could not reach the Census service from where this was written -- the
-    environment's egress policy refuses that host -- so the exact field name is
-    the one thing here I was unable to confirm. Census services variously call
-    it STUSAB and STUSPS, and a wrong guess would fail in the worst possible
-    way: the lookup returns None every time, the caller falls back to the name
-    match, uploaded boundaries keep getting the national road layer, and every
-    test still passes. That is precisely the bug this change exists to fix,
-    reintroduced one layer down.
+    Two reasons to keep the search. A named field is one string standing between
+    a working lookup and a silent failure -- if it ever changes, the lookup
+    returns None every time, the caller falls back to the name match, uploaded
+    boundaries quietly go back to the national road layer, and every test still
+    passes. And the same parser reads other Census services, which call it
+    STUSPS.
 
-    So this does not depend on knowing the name. It looks through the preferred
-    keys first, then any key at all, for a value that is a real USPS state
-    abbreviation. Validating against the known set is what makes the wide search
-    safe -- "OK" the state is a valid code, but it only reaches here as the
-    value of some attribute on a state polygon, and the preferred keys are
-    checked first anyway.
+    Validating against the known abbreviations is what makes the wide search
+    safe, and it is not theoretical: this layer also returns STATE "34", a FIPS
+    code, and LSADC "00". Both are two-character strings, STATE is in the
+    preferred-key list, and accepting any two-character value would return "34"
+    as the state.
     """
     if not isinstance(attributes, dict):
         return None

@@ -19,9 +19,10 @@ to no state and fell back to the national TIGER layer -- roads appeared, so it
 looked fine, but they were not the state's own NG911 centrelines, which are the
 ones that know the street names and recent subdivisions.
 
-The lookup is injected here rather than called for real. It is a network query
-against the Census state layer, and a test suite that needs the internet is a
-test suite that fails on a train.
+The lookup is injected here rather than called for real -- a test suite that
+needs the internet is a test suite that fails on a train. What the live service
+actually returns is pinned separately, as a recorded response, so the parser is
+checked against the real thing without the tests depending on reaching it.
 """
 
 from pathlib import Path
@@ -307,3 +308,60 @@ def test_the_query_asks_for_every_field():
     assert seen["inSR"] == "4326"
     assert seen["geometry"] == "-74.2,40.8"
     assert seen["f"] == "json"
+
+
+# The real response, recorded from the live service on 2026-07-30:
+#   GET .../TIGERweb/State_County/MapServer/0/query
+#       ?geometry=-74.209,40.825&geometryType=esriGeometryPoint&inSR=4326
+#       &spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json
+# Kept verbatim so the parser is tested against what the service sends rather
+# than against what I assumed it sends -- which is the distinction that had this
+# whole change resting on one unconfirmed field name.
+MONTCLAIR_STATE_RESPONSE = {
+    "features": [{
+        "attributes": {
+            "OBJECTID": 34, "STATE": "34", "GEOID": "34",
+            "BASENAME": "New Jersey", "NAME": "New Jersey", "STUSAB": "NJ",
+            "LSADC": "00", "MTFCC": "G4000", "FUNCSTAT": "A",
+            "AREALAND": 19047825962, "AREAWATER": 3543101968,
+            "CENTLAT": "+40.1072744", "CENTLON": "-074.6652012",
+            "INTPTLAT": "+40.1072744", "INTPTLON": "-074.6652012",
+            "OID": 27553700114373,
+        }
+    }]
+}
+
+
+def test_the_recorded_live_response_parses_to_new_jersey():
+    """Layer 0 of State_County is states, the point-intersects query works, and
+    the abbreviation is there. Confirmed against the service, then frozen."""
+    import asyncio
+
+    from app.services.boundary_geo import state_from_coordinates
+
+    class Recorded:
+        async def get(self, url, params=None): return self
+        def json(self): return MONTCLAIR_STATE_RESPONSE
+
+    assert asyncio.run(state_from_coordinates(-74.209, 40.825, client=Recorded())) == "NJ"
+
+
+def test_the_fips_code_in_the_same_response_is_not_mistaken_for_a_state():
+    """`STATE` is "34" here -- a FIPS code, two characters, and `STATE` is one
+    of the keys the parser checks first. Without validating against the real
+    abbreviations this returns "34" and every town gets the national layer."""
+    from app.services.boundary_geo import state_code_in
+
+    attributes = MONTCLAIR_STATE_RESPONSE["features"][0]["attributes"]
+    assert attributes["STATE"] == "34", "the recording no longer matches the service"
+    assert state_code_in(attributes) == "NJ"
+    assert state_code_in({"STATE": "34", "LSADC": "00"}) is None
+
+
+def test_the_response_still_resolves_if_the_abbreviation_field_disappears():
+    """Belt and braces: BASENAME and NAME both carry the full state name."""
+    from app.services.boundary_geo import state_code_in
+
+    attributes = dict(MONTCLAIR_STATE_RESPONSE["features"][0]["attributes"])
+    del attributes["STUSAB"]
+    assert state_code_in(attributes) == "NJ"
