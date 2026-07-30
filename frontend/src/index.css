@@ -147,6 +147,49 @@ body {
     /* Premium gradient-border card: a soft indigo ring drawn with a
        masked gradient so the border itself is a gradient, not a flat color.
        Deep layered shadow + a faint inner top highlight give real depth. */
+    /* The panel treatment from the Setup Progress tracker, which is the look
+     * this admin surface is meant to have throughout.
+     *
+     * It was written inline on that one block and nowhere else, so the six other
+     * panels on the setup page had each grown their own approximation --
+     * bg-white/5 with a flat border, no depth, no blur consistency. Naming it
+     * makes the good one the default instead of the exception.
+     *
+     * Deliberately not folded into .premium-card: that one is a lighter, more
+     * violet surface used for content cards, and collapsing the two would change
+     * every screen that already uses it. */
+    .setup-panel {
+        position: relative;
+        overflow: hidden;
+        border-radius: 1rem;
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        background: linear-gradient(135deg,
+            rgba(30, 41, 59, 0.80) 0%,
+            rgba(15, 23, 42, 0.90) 50%,
+            rgba(30, 41, 59, 0.80) 100%);
+        backdrop-filter: blur(24px);
+        -webkit-backdrop-filter: blur(24px);
+        transition: border-color 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    /* A single hairline of light along the top edge. This is most of what
+     * separates "a dark box" from glass. */
+    .setup-panel::before {
+        content: '';
+        position: absolute;
+        inset: 0 0 auto 0;
+        height: 1px;
+        background: linear-gradient(90deg,
+            transparent, rgba(255, 255, 255, 0.14) 20%,
+            rgba(255, 255, 255, 0.14) 80%, transparent);
+        pointer-events: none;
+    }
+
+    .setup-panel:hover {
+        border-color: rgba(255, 255, 255, 0.16);
+        box-shadow: 0 20px 50px -28px rgba(0, 0, 0, 0.7);
+    }
+
     .premium-card {
         position: relative;
         background:

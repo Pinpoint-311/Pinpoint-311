@@ -251,9 +251,9 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-            className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${configured
+            className={`relative overflow-hidden rounded-2xl border p-6 transition-all duration-300 ${configured
                 ? 'bg-gradient-to-br from-green-500/10 via-emerald-500/5 to-teal-500/10 border-green-500/30 shadow-lg shadow-green-500/10'
-                : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'}`}
+                : 'setup-panel border-transparent'}`}
         >
             {configured && (
                 <div className="absolute inset-0 bg-gradient-to-r from-green-500/5 via-transparent to-emerald-500/5 pointer-events-none" aria-hidden="true" />
