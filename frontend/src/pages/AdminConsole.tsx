@@ -333,7 +333,7 @@ function BubblyServiceCard({ service, onEdit, onDelete }: {
     );
 }
 
-function ServiceCategoriesTab({ services, setServices, loadTabData, setShowServiceModal, handleEditService, handleDeleteService }: {
+export function ServiceCategoriesTab({ services, setServices, loadTabData, setShowServiceModal, handleEditService, handleDeleteService }: {
     services: ServiceDefinition[];
     setServices: (s: ServiceDefinition[]) => void;
     loadTabData: () => void;
@@ -458,6 +458,157 @@ function ServiceCategoriesTab({ services, setServices, loadTabData, setShowServi
                 </SortableContext>
             </DndContext>
         </div>
+    );
+}
+
+
+
+/**
+ * The departments tab.
+ *
+ * Lifted out of AdminConsole's render so it can be mounted on its own -- which
+ * is what makes it possible to look at, rather than only to reason about. It is
+ * the same markup, with the values it used to close over passed in.
+ */
+export function DepartmentsTab({
+    departments, onAdd, onEdit, onDelete,
+}: {
+    departments: Department[];
+    onAdd: () => void;
+    onEdit: (dept: Department) => void;
+    onDelete: (id: number) => void;
+}) {
+    return (
+                            <div className="space-y-6">
+                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                    <div>
+                                        <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Departments</h1>
+                                        <p className="text-sm text-white/50 mt-1">The teams reports are assigned to, and where their notifications go</p>
+                                    </div>
+                                    <Button
+                                        leftIcon={<Plus className="w-4 h-4" />}
+                                        onClick={onAdd}
+                                        className="w-full sm:w-auto bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-500/25"
+                                    >
+                                        Add Department
+                                    </Button>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-500/10 to-blue-600/5 border border-blue-500/20 backdrop-blur-sm shadow-xl">
+                                        <div className="flex items-center gap-3.5">
+                                            <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center shrink-0">
+                                                <Building2 className="w-5 h-5 text-blue-400" />
+                                            </div>
+                                            <div>
+                                                <p className="text-2xl font-bold text-white">{departments.length}</p>
+                                                <p className="text-xs text-blue-300/70">Departments</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border border-emerald-500/20 backdrop-blur-sm shadow-xl">
+                                        <div className="flex items-center gap-3.5">
+                                            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center shrink-0">
+                                                <Mail className="w-5 h-5 text-emerald-400" />
+                                            </div>
+                                            <div>
+                                                <p className="text-2xl font-bold text-white">{departments.filter(d => d.routing_email).length}</p>
+                                                <p className="text-xs text-emerald-300/70">With routing email</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {/* A department with no email is not broken --
+                                        reports still route to it in the console --
+                                        but nobody is told, so it is worth counting. */}
+                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-500/10 to-amber-600/5 border border-amber-500/20 backdrop-blur-sm shadow-xl">
+                                        <div className="flex items-center gap-3.5">
+                                            <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                                                <AlertCircle className="w-5 h-5 text-amber-400" />
+                                            </div>
+                                            <div>
+                                                <p className="text-2xl font-bold text-white">{departments.filter(d => !d.routing_email).length}</p>
+                                                <p className="text-xs text-amber-300/70">No email set</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                                    {departments.map((dept) => (
+                                        /* Same card as a service category: the
+                                         * 3xl radius, the glow bar, the lift on
+                                         * hover, badges, and an action footer
+                                         * that is always visible. The previous
+                                         * version hid Edit and Delete behind
+                                         * hover, which put them out of reach of
+                                         * anyone using a keyboard and made the
+                                         * two pages read as unrelated. */
+                                        <div key={dept.id} className="group">
+                                            <div className="relative p-6 rounded-3xl bg-gradient-to-br from-white/[0.08] via-white/[0.03] to-indigo-950/30 border border-white/15 backdrop-blur-2xl shadow-[0_10px_30px_rgba(0,0,0,0.3)] hover:shadow-[0_20px_50px_rgba(99,102,241,0.2)] hover:border-primary-400/50 hover:-translate-y-1 transition-all duration-300">
+                                                <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-primary-400/40 to-transparent rounded-t-3xl" />
+
+                                                <div className="flex items-center gap-3 mb-4">
+                                                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary-500/25 via-indigo-500/20 to-purple-500/15 border border-white/20 shadow-inner flex items-center justify-center text-primary-300 shrink-0">
+                                                        <Building2 className="w-6 h-6" />
+                                                    </div>
+                                                    <h3 className="font-bold text-white text-lg tracking-tight group-hover:text-primary-200 transition-colors truncate">
+                                                        {dept.name}
+                                                    </h3>
+                                                </div>
+
+                                                <p className="text-xs text-white/65 leading-relaxed min-h-[32px] line-clamp-2">
+                                                    {dept.description || 'No description provided.'}
+                                                </p>
+
+                                                <div className="flex items-center gap-2 mt-4 flex-wrap">
+                                                    {dept.routing_email ? (
+                                                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-2xl text-xs font-medium bg-white/10 border border-white/15 text-white/90 max-w-full">
+                                                            <Mail className="w-3.5 h-3.5 text-white/40 shrink-0" aria-hidden="true" />
+                                                            <span className="font-mono truncate">{dept.routing_email}</span>
+                                                        </span>
+                                                    ) : (
+                                                        /* Not a failure -- reports still route to the
+                                                         * department in the console -- but nobody is
+                                                         * emailed, and that is worth saying on the card
+                                                         * rather than leaving to be discovered. */
+                                                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-2xl text-xs font-semibold bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30 shadow-md shadow-amber-950/40">
+                                                            <AlertCircle className="w-3.5 h-3.5" aria-hidden="true" />
+                                                            No routing email
+                                                        </span>
+                                                    )}
+                                                </div>
+
+                                                <div className="flex items-center justify-end gap-2.5 mt-5 pt-4 border-t border-white/10">
+                                                    <Button
+                                                        leftIcon={<Edit className="w-4 h-4" />}
+                                                        onClick={() => onEdit(dept)}
+                                                        className="rounded-2xl px-5"
+                                                    >
+                                                        Edit Department
+                                                    </Button>
+                                                    <button
+                                                        onClick={() => onDelete(dept.id)}
+                                                        className="p-2.5 rounded-2xl bg-white/5 hover:bg-red-500/20 border border-white/10 hover:border-red-500/30 text-white/40 hover:text-red-300 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
+                                                        aria-label={`Delete ${dept.name} department`}
+                                                    >
+                                                        <Trash2 className="w-4 h-4" aria-hidden="true" />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {departments.length === 0 && (
+                                    <div className="premium-card text-center py-10 px-6">
+                                        <Building2 className="w-12 h-12 mx-auto text-white/20 mb-3" />
+                                        <p className="text-white/60">No departments yet.</p>
+                                        <p className="text-white/40 text-sm mt-1">
+                                            Add one to organise staff and route reports to the right team.
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
     );
 }
 
@@ -2147,122 +2298,16 @@ export default function AdminConsole() {
                         )}
                         {/* Departments Tab */}
                         {currentTab === 'departments' && (
-                            /* Same shape as Service Categories: title with a
-                             * subtitle, a gradient action button, a row of stat
-                             * cards, then the grid. The two pages list the same
-                             * kind of thing and sat next to each other in the
-                             * sidebar looking unrelated. */
-                            <div className="space-y-6">
-                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                                    <div>
-                                        <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Departments</h1>
-                                        <p className="text-sm text-white/50 mt-1">The teams reports are assigned to, and where their notifications go</p>
-                                    </div>
-                                    <Button
-                                        leftIcon={<Plus className="w-4 h-4" />}
-                                        onClick={() => {
-                                            setEditingDepartment(null);
-                                            setNewDepartment({ name: '', description: '', routing_email: '' });
-                                            setShowDepartmentModal(true);
-                                        }}
-                                        className="w-full sm:w-auto bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-500/25"
-                                    >
-                                        Add Department
-                                    </Button>
-                                </div>
-
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-500/10 to-blue-600/5 border border-blue-500/20 backdrop-blur-sm shadow-xl">
-                                        <div className="flex items-center gap-3.5">
-                                            <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center shrink-0">
-                                                <Building2 className="w-5 h-5 text-blue-400" />
-                                            </div>
-                                            <div>
-                                                <p className="text-2xl font-bold text-white">{departments.length}</p>
-                                                <p className="text-xs text-blue-300/70">Departments</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border border-emerald-500/20 backdrop-blur-sm shadow-xl">
-                                        <div className="flex items-center gap-3.5">
-                                            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center shrink-0">
-                                                <Mail className="w-5 h-5 text-emerald-400" />
-                                            </div>
-                                            <div>
-                                                <p className="text-2xl font-bold text-white">{departments.filter(d => d.routing_email).length}</p>
-                                                <p className="text-xs text-emerald-300/70">With routing email</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    {/* A department with no email is not broken --
-                                        reports still route to it in the console --
-                                        but nobody is told, so it is worth counting. */}
-                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-500/10 to-amber-600/5 border border-amber-500/20 backdrop-blur-sm shadow-xl">
-                                        <div className="flex items-center gap-3.5">
-                                            <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
-                                                <AlertCircle className="w-5 h-5 text-amber-400" />
-                                            </div>
-                                            <div>
-                                                <p className="text-2xl font-bold text-white">{departments.filter(d => !d.routing_email).length}</p>
-                                                <p className="text-xs text-amber-300/70">No email set</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                                    {departments.map((dept) => (
-                                        <div key={dept.id} className="premium-card group relative p-5">
-                                            <div className="flex items-start gap-4">
-                                                <div className="setup-tile w-12 h-12 rounded-2xl flex items-center justify-center shrink-0">
-                                                    <Building2 className="w-6 h-6 text-white" />
-                                                </div>
-                                                <div className="min-w-0 flex-1">
-                                                    <h3 className="font-semibold text-white truncate">{dept.name}</h3>
-                                                    <p className="text-sm text-white/50 mt-1">{dept.description || 'No description'}</p>
-                                                    {dept.routing_email ? (
-                                                        <p className="text-xs text-white/40 mt-2 font-mono truncate">{dept.routing_email}</p>
-                                                    ) : (
-                                                        <p className="text-xs text-amber-300/70 mt-2 inline-flex items-center gap-1.5">
-                                                            <AlertCircle className="w-3 h-3 shrink-0" aria-hidden="true" />
-                                                            No routing email — nobody is notified
-                                                        </p>
-                                                    )}
-                                                </div>
-                                                {/* Visible on focus as well as hover: keyboard
-                                                    users never trigger hover, and these were the
-                                                    only way to edit a department. */}
-                                                <div className="flex gap-1 shrink-0">
-                                                    <button
-                                                        onClick={() => handleEditDepartment(dept)}
-                                                        className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-2 hover:bg-white/10 rounded-lg transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
-                                                        aria-label={`Edit ${dept.name} department`}
-                                                    >
-                                                        <Edit className="w-4 h-4 text-white/60" aria-hidden="true" />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleDeleteDepartment(dept.id)}
-                                                        className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-2 hover:bg-red-500/20 rounded-lg transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
-                                                        aria-label={`Delete ${dept.name} department`}
-                                                    >
-                                                        <Trash2 className="w-4 h-4 text-red-400" aria-hidden="true" />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                {departments.length === 0 && (
-                                    <div className="premium-card text-center py-10 px-6">
-                                        <Building2 className="w-12 h-12 mx-auto text-white/20 mb-3" />
-                                        <p className="text-white/60">No departments yet.</p>
-                                        <p className="text-white/40 text-sm mt-1">
-                                            Add one to organise staff and route reports to the right team.
-                                        </p>
-                                    </div>
-                                )}
-                            </div>
+                            <DepartmentsTab
+                                departments={departments}
+                                onAdd={() => {
+                                    setEditingDepartment(null);
+                                    setNewDepartment({ name: '', description: '', routing_email: '' });
+                                    setShowDepartmentModal(true);
+                                }}
+                                onEdit={handleEditDepartment}
+                                onDelete={handleDeleteDepartment}
+                            />
                         )}
 
                         {/* Services Tab */}
