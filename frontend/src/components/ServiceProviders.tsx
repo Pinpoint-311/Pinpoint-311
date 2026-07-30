@@ -9,6 +9,7 @@ import {
 import { CollapsibleSection } from './ui';
 import SecretField from './SecretField';
 import { api, ProviderCatalog, ProviderInfo, ProviderModelSpec, CloudProfileState } from '../services/api';
+import type { ConnectorHealth } from '../types';
 
 // Relative "updated Xh ago" from an epoch-seconds timestamp.
 function agoLabel(epochSeconds?: number | null): string {
@@ -57,11 +58,58 @@ function Step({ n, children, aside }: { n: number; children: React.ReactNode; as
     );
 }
 
+/** The live-state pill shown next to "Configured".
+ *
+ * Deliberately a second, separate badge. "Configured" is a fact about our own
+ * database -- the credentials are stored -- and "working" is a fact about
+ * someone else's service. Merging them into one badge forces the case where we
+ * genuinely do not know to pick a colour, and it always picks green, which is
+ * how a revoked key keeps a healthy tick for a month.
+ *
+ * So "unknown" is shown as unknown. It is not a failure and it is not success;
+ * it means nothing has called this connector yet.
+ */
+function HealthPill({ health }: { health?: ConnectorHealth }) {
+    if (!health || health.status === 'unknown') {
+        return (
+            <span
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-medium bg-white/[0.06] text-white/50 border border-white/12"
+                title="Nothing has used this connector yet, so we cannot say whether it works."
+            >
+                <span className="w-1.5 h-1.5 rounded-full bg-white/35" aria-hidden="true" />
+                Not used yet
+            </span>
+        );
+    }
+    const tone = {
+        working: 'bg-emerald-500/15 text-emerald-300 border-emerald-400/25',
+        stale: 'bg-white/[0.06] text-white/55 border-white/12',
+        failing: 'bg-amber-500/15 text-amber-300 border-amber-400/25',
+        down: 'bg-red-500/15 text-red-300 border-red-400/30',
+    }[health.status];
+    const dot = {
+        working: 'bg-emerald-400', stale: 'bg-white/40',
+        failing: 'bg-amber-400', down: 'bg-red-400',
+    }[health.status];
+    const label = {
+        working: 'Working', stale: 'No recent use',
+        failing: 'Last call failed', down: `Failing (${health.consecutive_failures})`,
+    }[health.status];
+    return (
+        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-medium border ${tone}`}
+              title={health.summary}>
+            <span className={`w-1.5 h-1.5 rounded-full ${dot}`} aria-hidden="true" />
+            {label}
+        </span>
+    );
+}
+
 export interface CapStatus { providerName?: string; onDefault?: boolean; verified?: boolean | null }
 
-function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus }: {
+function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus, health }: {
     cap: Capability; title: string; blurb: string; icon: typeof Sparkles; delay: number;
     recheckToken: number; reloadToken: number; onStatus: (cap: Capability, s: CapStatus) => void;
+    health?: ConnectorHealth;
 }) {
     const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
     const [selected, setSelected] = useState<string>('');
@@ -284,6 +332,11 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                         </div>
                     </div>
                     <div className="flex items-center gap-2.5 shrink-0">
+                        {/* Live state sits beside stored-credentials state, not
+                            instead of it. They answer different questions and a
+                            clerk needs both: "we have the key" and "the key
+                            works" diverge exactly when it matters. */}
+                        {configured && <HealthPill health={health} />}
                         {configured ? (
                             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-green-500/20 to-emerald-500/20 text-green-300 border border-green-500/30 shadow-lg shadow-green-500/10">
                                 <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" />
@@ -719,6 +772,25 @@ function CloudEnvironment({ onApplied }: { onApplied: () => void }) {
 
 export default function ServiceProviders() {
     const [recheckToken, setRecheckToken] = useState(0);
+    /* One request for the whole section rather than one per card: the endpoint
+     * returns every connector, and four parallel calls on page load for data
+     * that arrives together is wasteful.
+     *
+     * Refetched whenever a recheck runs, because a recheck is precisely the
+     * moment the answer changes. Failure is silent -- the pill degrades to
+     * "not used yet", which is honest: if we cannot read the health table, we
+     * do not know. */
+    const [health, setHealth] = useState<Record<string, ConnectorHealth>>({});
+    const loadHealth = useCallback(async () => {
+        try {
+            const report = await api.getConnectorHealth();
+            setHealth(Object.fromEntries(report.connectors.map(c => [c.connector, c])));
+        } catch {
+            setHealth({});
+        }
+    }, []);
+    useEffect(() => { loadHealth(); }, [loadHealth, recheckToken]);
+
     const [reloadToken, setReloadToken] = useState(0);
     const [statuses, setStatuses] = useState<Record<string, CapStatus>>({});
 
@@ -772,7 +844,8 @@ export default function ServiceProviders() {
             <div className="relative grid grid-cols-1 gap-4">
                 {CAPS.map((c, i) => (
                     <CapabilityCard key={c.key} cap={c.key} title={c.title} blurb={c.blurb} icon={c.icon} delay={i * 0.08}
-                        recheckToken={recheckToken} reloadToken={reloadToken} onStatus={onStatus} />
+                        recheckToken={recheckToken} reloadToken={reloadToken} onStatus={onStatus}
+                        health={health[c.key]} />
                 ))}
             </div>
         </CollapsibleSection>

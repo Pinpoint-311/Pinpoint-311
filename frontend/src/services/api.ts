@@ -12,6 +12,7 @@ import {
     AdvancedStatistics,
     UserCreate,
     UserUpdate,
+    ConnectorHealthReport,
     ServiceCreate,
     Department,
     RequestComment,
@@ -471,6 +472,12 @@ class ApiClient {
             method: 'POST',
             body: JSON.stringify(data),
         });
+    }
+
+    /** What each connector is actually doing, as opposed to whether its
+     *  credentials are stored. See /system/connectors/health. */
+    async getConnectorHealth(): Promise<ConnectorHealthReport> {
+        return this.request<ConnectorHealthReport>('/system/connectors/health');
     }
 
     async updateUser(id: number, data: UserUpdate): Promise<User> {
