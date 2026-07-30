@@ -3247,7 +3247,7 @@ export default function AdminConsole() {
             </Modal>
 
             {/* Add Service Modal */}
-            <Modal isOpen={showServiceModal} onClose={() => setShowServiceModal(false)} title="Add Service Category">
+            <Modal isOpen={showServiceModal} size="lg" panelClassName="bg-slate-950/95 border border-white/15 shadow-2xl backdrop-blur-2xl rounded-3xl" onClose={() => setShowServiceModal(false)} title="Add Service Category">
                 <form onSubmit={handleCreateService} className="space-y-4">
                     <Input
                         label="Service Name"
@@ -3277,6 +3277,9 @@ export default function AdminConsole() {
             {/* Service Routing Edit Modal */}
             <Modal
                 isOpen={showServiceEditModal}
+                size="xl"
+                panelClassName="bg-slate-950/95 border border-white/15 shadow-[0_0_80px_rgba(0,0,0,0.85)] backdrop-blur-2xl rounded-3xl overflow-hidden"
+                headerClassName="bg-slate-900/90 border-b border-white/10"
                 onClose={() => {
                     setShowServiceEditModal(false);
                     setEditingService(null);
