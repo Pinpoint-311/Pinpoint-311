@@ -445,3 +445,29 @@ export interface AuthState {
     isAuthenticated: boolean;
     isLoading: boolean;
 }
+
+
+/** One connector's live state.
+ *
+ * `status` has four values and the important one is "unknown": nothing has
+ * called this connector, so we do not know it works. Rendering that as either
+ * green or red is how a revoked key keeps a healthy badge, so the UI has to
+ * carry the distinction the backend went to the trouble of making.
+ */
+export interface ConnectorHealth {
+    connector: string;
+    provider: string | null;
+    status: 'working' | 'failing' | 'down' | 'stale' | 'unknown';
+    summary: string;
+    last_success_at: string | null;
+    last_error_at: string | null;
+    last_error: string | null;
+    consecutive_failures: number;
+    total_successes: number;
+    total_failures: number;
+}
+
+export interface ConnectorHealthReport {
+    connectors: ConnectorHealth[];
+    needs_attention: string[];
+}
