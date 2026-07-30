@@ -18,7 +18,6 @@ import {
     Camera,
     X,
     Phone,
-    ExternalLink,
     ClipboardList,
     Globe,
     Facebook,
@@ -30,6 +29,7 @@ import {
 } from 'lucide-react';
 import { Button, Input, Textarea, Card } from '../components/ui';
 import LocationPicker from '../components/LocationPicker';
+import RedirectNotice, { RedirectContact } from '../components/RedirectNotice';
 import TrackRequests from '../components/TrackRequests';
 import LanguageSelector from '../components/LanguageSelector';
 import StaffDashboardMap from '../components/StaffDashboardMap';
@@ -215,7 +215,10 @@ export default function ResidentPortal() {
     // rather than only quoting the town's configured sentence.
     const [blockJurisdiction, setBlockJurisdiction] = useState<string | null>(null);
     const [blockMessage, setBlockMessage] = useState('');
-    const [blockContacts, setBlockContacts] = useState<{ name: string; phone: string; url: string }[]>([]);
+    // Whether blockMessage is the backend's generated sentence rather than the
+    // clerk's own, so the notice can avoid restating its own heading.
+    const [blockMessageIsDefault, setBlockMessageIsDefault] = useState(false);
+    const [blockContacts, setBlockContacts] = useState<RedirectContact[]>([]);
 
     // Custom question answers
     const [customAnswers, setCustomAnswers] = useState<Record<string, string | string[]>>({});
@@ -312,8 +315,16 @@ export default function ResidentPortal() {
         // Check if third-party only service - block immediately
         if (service.routing_mode === 'third_party') {
             setIsBlocked(true);
-            setBlockMessage(service.routing_config?.message || 'This service is handled by a third party.');
+            setBlockMessage(service.routing_config?.message || '');
+            setBlockMessageIsDefault(!(service.routing_config?.message || '').trim());
             setBlockContacts(service.routing_config?.contacts || []);
+            // Same fallback the backend uses for this mode: no agency-name field
+            // exists, so the first contact's name is who the clerk named.
+            setBlockJurisdiction(
+                service.routing_config?.third_party_name
+                || service.routing_config?.contacts?.[0]?.name
+                || null,
+            );
         }
 
         setStep('form');
@@ -346,9 +357,17 @@ export default function ResidentPortal() {
             setDetectedRoad(result.detected_road);
             setIsBlocked(result.blocked);
             setBlockMessage(result.blocked ? result.message : '');
+            setBlockMessageIsDefault(Boolean(result.blocked && result.message_is_default));
             setBlockContacts(
                 result.blocked
-                    ? (result.contacts || []).map(c => ({ name: c.name || '', phone: c.phone || '', url: c.url || '' }))
+                    ? (result.contacts || []).map(c => ({
+                        name: c.name || '',
+                        phone: c.phone || '',
+                        // Collected in the routing modal and previously dropped here,
+                        // so an agency that only publishes an address was unreachable.
+                        email: (c as { email?: string }).email || '',
+                        url: c.url || '',
+                    }))
                     : [],
             );
             setBlockJurisdiction(result.blocked ? result.jurisdiction : null);
@@ -955,57 +974,18 @@ export default function ResidentPortal() {
                                     </div>
                                 </div>
 
-                                {/* Third-Party Service Blocking Notice - shown when entire service is third-party */}
+                                {/* Whole service handled elsewhere -- not about a location, so the
+                                    notice omits the road line. Same component as the road-based
+                                    redirect so a resident meets one design, not two. */}
                                 {isBlocked && selectedService.routing_mode === 'third_party' && (
-                                    <motion.div
-                                        initial={{ opacity: 0, y: 20 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        className="p-6 rounded-2xl bg-gradient-to-br from-amber-500/20 to-orange-500/20 border border-amber-500/30"
-                                    >
-                                        <div className="flex items-start gap-4">
-                                            <div className="w-12 h-12 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
-                                                <AlertCircle className="w-6 h-6 text-amber-400" />
-                                            </div>
-                                            <div className="flex-1">
-                                                <h3 className="text-lg font-semibold text-amber-300 mb-2">
-                                                    {"Third-Party Service"}
-                                                </h3>
-                                                <p className="text-white/70 mb-4">
-                                                    {blockMessage}
-                                                </p>
-
-                                                {blockContacts.length > 0 && (
-                                                    <div className="space-y-3 p-4 rounded-xl bg-white/5">
-                                                        <p className="text-sm text-white/50 font-medium">{"Please contact:"}</p>
-                                                        {blockContacts.map((contact, idx) => (
-                                                            <div key={idx} className="flex flex-wrap gap-4 text-sm">
-                                                                {contact.name && (
-                                                                    <span className="text-white font-semibold">{contact.name}</span>
-                                                                )}
-                                                                {contact.phone && (
-                                                                    <a href={`tel:${contact.phone}`} className="inline-flex items-center gap-2 text-primary-400 hover:text-primary-300 font-medium">
-                                                                        <Phone className="w-4 h-4" />
-                                                                        {contact.phone}
-                                                                    </a>
-                                                                )}
-                                                                {contact.url && (
-                                                                    <a
-                                                                        href={contact.url.startsWith('http') ? contact.url : `https://${contact.url}`}
-                                                                        target="_blank"
-                                                                        rel="noopener noreferrer"
-                                                                        className="inline-flex items-center gap-2 text-white hover:text-primary-200 font-medium underline"
-                                                                    >
-                                                                        <ExternalLink className="w-4 h-4" />
-                                                                        Visit Website
-                                                                    </a>
-                                                                )}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </motion.div>
+                                    <RedirectNotice
+                                        variant="service"
+                                        jurisdiction={blockJurisdiction}
+                                        message={blockMessage}
+                                        messageIsDefault={blockMessageIsDefault}
+                                        contacts={blockContacts}
+                                        serviceName={selectedService.service_name}
+                                    />
                                 )}
 
                                 {/* Form - only show if NOT blocked OR if road-based (need address first) */}
@@ -1105,68 +1085,19 @@ export default function ResidentPortal() {
                                                     </div>
                                                 )}
 
-                                                {/* Blocking Notice for Road-Based Services - shown after map */}
+                                                {/* This road belongs to someone else. detectedRoad is what
+                                                    decided it, and naming it is the only way a resident can
+                                                    spot a pin that landed one lane over and drag it back. */}
                                                 {isBlocked && (
-                                                    <motion.div
-                                                        initial={{ opacity: 0, scale: 0.95 }}
-                                                        animate={{ opacity: 1, scale: 1 }}
-                                                        className="p-6 rounded-2xl bg-gradient-to-br from-red-500/20 to-orange-500/20 border border-red-500/30"
-                                                    >
-                                                        <div className="flex items-start gap-4">
-                                                            <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0">
-                                                                <AlertCircle className="w-6 h-6 text-red-400" />
-                                                            </div>
-                                                            <div className="flex-1">
-                                                                <h3 className="text-lg font-semibold text-red-300 mb-2">
-                                                                    {blockJurisdiction
-                                                                        ? `${blockJurisdiction} maintains this location`
-                                                                        : 'This location is handled by another agency'}
-                                                                </h3>
-                                                                <p className="text-white/70 mb-2">
-                                                                    {blockMessage}
-                                                                </p>
-                                                                {/* Say which road decided this. A redirect with no
-                                                                    reason reads as the system being broken; naming the
-                                                                    road lets someone see it picked the wrong one and
-                                                                    move their pin. */}
-                                                                {detectedRoad && (
-                                                                    <p className="text-white/45 text-sm mb-4">
-                                                                        Your pin is on{' '}
-                                                                        <span className="text-white/70 font-medium">{detectedRoad.name}</span>.
-                                                                        If that is not the road you meant, move the pin and this will update.
-                                                                    </p>
-                                                                )}
-
-                                                                {blockContacts.length > 0 && (
-                                                                    <div className="space-y-2">
-                                                                        <p className="text-sm text-white/50 font-medium">Contact Information:</p>
-                                                                        {blockContacts.map((contact, idx) => (
-                                                                            <div key={idx} className="flex flex-wrap gap-3 text-sm">
-                                                                                {contact.name && (
-                                                                                    <span className="text-white font-medium">{contact.name}</span>
-                                                                                )}
-                                                                                {contact.phone && (
-                                                                                    <a href={`tel:${contact.phone}`} className="text-primary-400 hover:text-primary-300">
-                                                                                        📞 {contact.phone}
-                                                                                    </a>
-                                                                                )}
-                                                                                {contact.url && (
-                                                                                    <a
-                                                                                        href={contact.url.startsWith('http') ? contact.url : `https://${contact.url}`}
-                                                                                        target="_blank"
-                                                                                        rel="noopener noreferrer"
-                                                                                        className="text-white hover:text-primary-200 underline"
-                                                                                    >
-                                                                                        🔗 {"Visit Website"}
-                                                                                    </a>
-                                                                                )}
-                                                                            </div>
-                                                                        ))}
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    </motion.div>
+                                                    <RedirectNotice
+                                                        variant="road"
+                                                        jurisdiction={blockJurisdiction}
+                                                        message={blockMessage}
+                                                        messageIsDefault={blockMessageIsDefault}
+                                                        contacts={blockContacts}
+                                                        roadName={detectedRoad?.name}
+                                                        serviceName={selectedService.service_name}
+                                                    />
                                                 )}
 
                                                 {/* Photo Upload */}

@@ -37,6 +37,12 @@ class BlockDecision:
     message: str = ""
     contacts: List[Dict[str, str]] = None
     road_name: Optional[str] = None
+    # True when `message` is our generated sentence rather than something the
+    # clerk wrote. The string is still filled in, because API clients of the 409
+    # get only that field and a blank one explains nothing -- but the portal has
+    # a heading that already says the same thing, so it uses this to avoid
+    # printing "Cranbury Rd is maintained by County DPW" twice in a row.
+    message_is_default: bool = False
 
     def __post_init__(self) -> None:
         if self.contacts is None:
@@ -79,12 +85,25 @@ async def evaluate(
         config: Dict[str, Any] = service.routing_config or {}
 
         if mode == "third_party":
+            contacts = config.get("contacts") or []
+            # There is no separate agency-name field on this mode, only contacts,
+            # so fall back to the first contact's name. "Another agency" reads as
+            # the system not knowing, when the clerk did in fact say who.
+            first = contacts[0] if contacts and isinstance(contacts[0], dict) else {}
+            name = (
+                config.get("third_party_name")
+                or (first.get("name") or "").strip()
+                or "Another agency"
+            )
             return BlockDecision(
                 blocked=True,
                 block_type="category",
-                jurisdiction=config.get("third_party_name") or "Another agency",
-                message=config.get("message") or "This service is handled by another agency.",
-                contacts=config.get("contacts") or [],
+                jurisdiction=name,
+                # Never empty: API clients of the 409 get only this string, and a
+                # blank one tells a resident nothing about why they were stopped.
+                message=config.get("message") or f"This service is handled by {name}.",
+                message_is_default=not (config.get("message") or "").strip(),
+                contacts=contacts,
             )
 
         if mode != "road_based":
@@ -100,6 +119,7 @@ async def evaluate(
             block_type="road_based",
             jurisdiction=match.name,
             message=match.message or f"This road is maintained by {match.name}.",
+            message_is_default=not (match.message or "").strip(),
             contacts=match.contacts or [],
             road_name=match.matched_road,
         )
