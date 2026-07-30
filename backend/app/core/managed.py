@@ -13,20 +13,37 @@ from app.core.config import get_settings
 # The state owns infrastructure keys (injected by the orchestrator); the town
 # owns provider/integration/branding keys. Must stay in sync with the
 # orchestrator's secrets_policy module in the centralizedhosting repo.
-PLATFORM_MANAGED_KEYS = {
+#
+# Written out by hand originally, and Google-shaped as a result: it named the
+# GCP project, service account and KMS key path, and of Azure only the vault
+# URL. Every AWS infrastructure key was absent, as were Azure's credentials and
+# both provider selectors. On a state-hosted deployment running on AWS or Azure,
+# a town admin could therefore overwrite AWS_KMS_KEY_ID, KMS_PROVIDER or
+# SECRETS_PROVIDER and repoint the state's encryption and secret storage at
+# something of their own. That is a privilege boundary, not a preference.
+#
+# So the infrastructure half is no longer hand-listed. DB_REQUIRED_KEYS is
+# already the authoritative set of "credentials for the secret store, plus the
+# KMS selection and key path", derived from the readers and pinned by
+# test_secret_migration_safety. Anything that belongs to the platform's storage
+# arrangement belongs to the platform in managed mode, and the two cannot drift
+# apart again.
+# Set at import. secret_manager imports nothing from app at module level, so
+# there is no cycle -- and a plain frozenset is worth more than cleverness here:
+# an earlier draft used a lazily-resolving frozenset subclass, which answered
+# `in` correctly and returned empty for `set()` and iteration, because CPython
+# reads the underlying storage directly for those. A guard that is right only
+# for the operation you happened to test is worse than no guard.
+from app.services.secret_manager import DB_REQUIRED_KEYS
+
+PLATFORM_MANAGED_KEYS = frozenset({
     "SECRET_KEY",
     "DATABASE_URL",
     "DB_PASSWORD",
     "REDIS_URL",
     "PROVISIONING_TOKEN",
-    "GOOGLE_CLOUD_PROJECT",
-    "GCP_SERVICE_ACCOUNT_JSON",
-    "KMS_KEY_RING",
-    "KMS_KEY_ID",
-    "KMS_LOCATION",
-    "AZURE_KEYVAULT_URL",
     "DOMAIN",
-}
+}) | frozenset(DB_REQUIRED_KEYS)
 
 PLATFORM_MANAGED_PREFIXES = ("BACKUP_",)
 
