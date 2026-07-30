@@ -380,6 +380,21 @@ export default function AdminConsole() {
     const [currentTab, setCurrentTab] = useState<Tab>('branding');
     const [isLoading, setIsLoading] = useState(false);
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
+    const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+    /** Surface a failed action instead of only console.error-ing it.
+     *
+     * The API client puts the server's `detail` into Error.message, and that
+     * detail is usually the actionable sentence -- "Override must be at least
+     * 365 days (1 year)", "Unknown state code: ZZ", "managed by your state and
+     * can't be changed here". Losing it left the admin pressing a button that
+     * appeared to do nothing. */
+    const reportError = (context: string, err: unknown) => {
+        console.error(`${context}:`, err);
+        const detail = err instanceof Error ? err.message : String(err ?? '');
+        setErrorMessage(detail ? `${context}: ${detail}` : `${context}. Please try again.`);
+        setTimeout(() => setErrorMessage(null), 12000);
+    };
     const contentRef = useRef<HTMLDivElement>(null);
 
     // URL hashing, dynamic titles, and scroll-to-top
@@ -784,7 +799,7 @@ export default function AdminConsole() {
             setSaveMessage('Settings saved!');
             setTimeout(() => setSaveMessage(''), 3000);
         } catch (err) {
-            console.error('Failed to save branding:', err);
+            reportError('Could not save branding', err);
         } finally {
             setIsLoading(false);
         }
@@ -892,7 +907,7 @@ export default function AdminConsole() {
             await api.deleteUser(userId);
             loadTabData();
         } catch (err) {
-            console.error('Failed to delete user:', err);
+            reportError('Could not delete the user', err);
         }
     };
 
@@ -905,7 +920,7 @@ export default function AdminConsole() {
             setNewService({ service_code: '', service_name: '', description: '', icon: 'AlertCircle' });
             loadTabData();
         } catch (err) {
-            console.error('Failed to create service:', err);
+            reportError('Could not create the service category', err);
         }
     };
 
@@ -922,7 +937,7 @@ export default function AdminConsole() {
             await api.deleteService(serviceId);
             loadTabData();
         } catch (err) {
-            console.error('Failed to delete service:', err);
+            reportError('Could not delete the service category', err);
         }
     };
 
@@ -1116,7 +1131,7 @@ export default function AdminConsole() {
             setSaveMessage('Modules saved successfully');
             setTimeout(() => setSaveMessage(null), 3000);
         } catch (err) {
-            console.error('Failed to save modules:', err);
+            reportError('Could not save module settings', err);
         } finally {
             setIsLoading(false);
         }
@@ -1361,6 +1376,25 @@ export default function AdminConsole() {
                                 >
                                     <Check className="w-5 h-5" />
                                     {saveMessage}
+                                </motion.div>
+                            )}
+                            {/* Failures were logged to the browser console and
+                                nowhere else, so a rejected save was
+                                indistinguishable from a button that did nothing.
+                                The server almost always says exactly what is
+                                wrong -- "Override must be at least 365 days" --
+                                and that sentence never reached the person who
+                                could act on it. */}
+                            {errorMessage && (
+                                <motion.div
+                                    initial={{ opacity: 0, y: -20 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -20 }}
+                                    className="mb-6 flex items-start gap-3 p-4 rounded-xl bg-red-500/15 border border-red-500/30 text-red-200"
+                                    role="alert"
+                                >
+                                    <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" aria-hidden="true" />
+                                    <span className="min-w-0">{errorMessage}</span>
                                 </motion.div>
                             )}
                         </AnimatePresence>
@@ -2968,7 +3002,7 @@ export default function AdminConsole() {
                                                     setSaveMessage('Retention policy updated successfully');
                                                     setTimeout(() => setSaveMessage(null), 3000);
                                                 } catch (err) {
-                                                    console.error('Failed to update retention policy:', err);
+                                                    reportError('Could not apply the retention policy', err);
                                                 } finally {
                                                     setIsSavingRetention(false);
                                                 }
@@ -2992,7 +3026,7 @@ export default function AdminConsole() {
                                                         loadTabData();
                                                     }, 3000);
                                                 } catch (err) {
-                                                    console.error('Failed to run retention:', err);
+                                                    reportError('Could not start the retention task', err);
                                                 } finally {
                                                     setIsRunningRetention(false);
                                                 }

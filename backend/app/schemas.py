@@ -8,6 +8,12 @@ from enum import Enum
 class UserRole(str, Enum):
     admin = "admin"
     staff = "staff"
+    # The researcher role exists throughout the product -- get_current_researcher
+    # gates /research on it, the Research Portal module toggle advertises it, and
+    # the admin user editor offers it -- but it was missing from this enum, so
+    # saving anyone as a researcher returned 422 and the role could never be
+    # assigned to anybody. The whole Research Lab was admin-only in practice.
+    researcher = "researcher"
 
 
 class RequestStatus(str, Enum):
