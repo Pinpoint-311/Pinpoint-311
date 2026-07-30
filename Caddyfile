@@ -33,3 +33,13 @@
         Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://maps.googleapis.com https://*.gstatic.com https://translate.googleapis.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https: http:; connect-src 'self' https://maps.googleapis.com https://*.gstatic.com https://translate.googleapis.com https://api.open-meteo.com https://archive-api.open-meteo.com https://*.auth0.com https://fonts.googleapis.com wss:; frame-src 'self' https://www.google.com https://*.auth0.com; object-src 'none'; base-uri 'self'; form-action 'self'; worker-src 'self' blob:;"
     }
 }
+
+
+# Centralized Hosting Orchestrator Control Panel
+centraldemo.pinpoint311.org {
+    encode gzip
+    reverse_proxy orchestrator-panel-1:8100
+}
+
+# Provisioned Town Tenancies
+import /etc/caddy/tenants/*.caddy
