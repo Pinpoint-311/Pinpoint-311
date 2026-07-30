@@ -137,15 +137,36 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     // Setup progress calculation. In managed mode the platform-managed steps
     // (Google Cloud, DB Backups) are excluded — the state handles them, so
     // counting them would leave progress permanently "incomplete".
-    const setupSteps = [
-        { label: 'Staff sign-in', done: !!signInConfigured, required: true },
-        { label: 'Email', done: !!smtpConfigured, required: false },
-        ...(managedMode ? [] : [{ label: 'Google Cloud', done: !!gcpConfigured, required: false }]),
-        { label: 'Map provider', done: !!mapsConfigured, required: true },
-        { label: 'SMS Alerts', done: smsConfigured, required: false },
-        ...(managedMode ? [] : [{ label: 'DB Backups', done: !!backupConfigured, required: false }]),
+    const setupSteps: { label: string; done: boolean; required: boolean; anchor: string; note: string }[] = [
+        { label: 'Staff sign-in', done: !!signInConfigured, required: true, anchor: 'sec-providers', note: 'Clerks cannot log in' },
+        { label: 'Map provider', done: !!mapsConfigured, required: true, anchor: 'sec-providers', note: 'Residents cannot pick a location' },
+        { label: 'Email', done: !!smtpConfigured, required: false, anchor: 'sec-optional', note: 'No confirmations or status updates' },
+        { label: 'Text messages', done: smsConfigured, required: false, anchor: 'sec-optional', note: 'Email only' },
+        ...(managedMode ? [] : [{ label: 'Cloud services', done: !!gcpConfigured, required: false, anchor: 'sec-optional', note: 'AI triage and translation stay off' }]),
+        ...(managedMode ? [] : [{ label: 'Backups', done: !!backupConfigured, required: false, anchor: 'sec-optional', note: 'No off-server copy of your records' }]),
     ];
-    const completedCount = setupSteps.filter(s => s.done).length;
+
+    /* Required first, and counted separately.
+     *
+     * "5 of 6 configured" mixes two different questions: can this town take
+     * reports at all, and how much of the optional surface is switched on. A
+     * town with both required items done and nothing else is ready to go live,
+     * and a bar reading 33% told it the opposite. The headline now answers the
+     * first question and the count answers the second. */
+    const required = setupSteps.filter(s => s.required);
+    const optional = setupSteps.filter(s => !s.required);
+    const missingRequired = required.filter(s => !s.done);
+    const ready = missingRequired.length === 0;
+
+    const jumpTo = (anchor: string) => {
+        const el = document.getElementById(anchor);
+        if (!el) return;
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Move focus too, or a keyboard user is scrolled somewhere their cursor
+        // is not.
+        el.setAttribute('tabindex', '-1');
+        el.focus({ preventScroll: true });
+    };
 
     // Toggle helper for collapsible instruction panels
     const toggleGuide = (id: string) => setExpandedGuide(prev => prev === id ? null : id);
@@ -273,44 +294,92 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 animate={{ opacity: 1, y: 0 }}
                 className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-slate-800/80 via-slate-900/90 to-slate-800/80 backdrop-blur-xl p-5"
             >
-                <div className="flex items-center gap-3 mb-4">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                        <ListChecks className="w-5 h-5 text-white" />
+                <div className="flex items-start gap-3.5 mb-4">
+                    <div className={`w-11 h-11 shrink-0 rounded-xl flex items-center justify-center shadow-lg transition-colors ${ready
+                        ? 'bg-gradient-to-br from-emerald-500 to-teal-600 shadow-emerald-500/20'
+                        : 'bg-gradient-to-br from-amber-500 to-orange-600 shadow-amber-500/20'}`}>
+                        {ready ? <CheckCircle className="w-5 h-5 text-white" /> : <ListChecks className="w-5 h-5 text-white" />}
                     </div>
-                    <div>
-                        <h2 className="font-semibold text-white">Setup Progress</h2>
-                        <p className="text-white/50 text-xs">{completedCount} of {setupSteps.length} integrations configured</p>
+                    <div className="min-w-0">
+                        {/* The headline answers whether the town can go live, not
+                            how many boxes are ticked. Those are different
+                            questions and only one of them is urgent. */}
+                        <h2 className="font-semibold text-white leading-tight">
+                            {ready ? 'Ready to take reports' : 'Not ready yet'}
+                        </h2>
+                        <p className="text-white/50 text-xs mt-0.5">
+                            {ready
+                                ? optional.filter(s => s.done).length === optional.length
+                                    ? 'Everything is set up.'
+                                    : `Everything required is set up · ${optional.filter(s => s.done).length} of ${optional.length} optional extras on`
+                                : `${missingRequired.map(s => s.label).join(' and ')} still needed`}
+                        </p>
                     </div>
                 </div>
 
-                {/* Progress bar */}
+                {/* Progress reflects required completion. An optional extra
+                    being off is not incomplete setup. */}
                 <div className="h-2 rounded-full bg-white/10 mb-4 overflow-hidden">
                     <motion.div
-                        className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-cyan-400"
+                        className={`h-full rounded-full ${ready
+                            ? 'bg-gradient-to-r from-emerald-400 to-cyan-400'
+                            : 'bg-gradient-to-r from-amber-400 to-orange-400'}`}
                         initial={{ width: 0 }}
-                        animate={{ width: `${(completedCount / setupSteps.length) * 100}%` }}
+                        animate={{ width: `${(required.filter(s => s.done).length / Math.max(1, required.length)) * 100}%` }}
                         transition={{ duration: 0.8, ease: 'easeOut' }}
                     />
                 </div>
 
-                {/* Step chips */}
-                <div className="flex flex-wrap gap-2">
-                    {setupSteps.map(step => (
-                        <span
-                            key={step.label}
-                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${step.done
-                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                                : step.required
-                                    ? 'bg-amber-500/15 text-amber-300 border border-amber-500/25'
-                                    : 'bg-white/5 text-white/40 border border-white/10'
-                                }`}
-                        >
-                            {step.done ? <CheckCircle className="w-3.5 h-3.5" /> : step.required ? <AlertCircle className="w-3.5 h-3.5" /> : <div className="w-3.5 h-3.5 rounded-full border border-current" />}
-                            {step.label}
-                            {step.required && !step.done && <span className="text-[10px] opacity-70">required</span>}
-                        </span>
+                {/* Every item is a button. The chips were the right idea and
+                    dead ends -- a clerk reading "Map provider: not configured"
+                    had to then go find it on a very long page. */}
+                <div className="space-y-3">
+                    {[
+                        { heading: 'Required', items: required },
+                        { heading: 'Optional', items: optional },
+                    ].filter(g => g.items.length > 0).map(group => (
+                        <div key={group.heading}>
+                            <p className="text-[10px] uppercase tracking-wider text-white/35 font-semibold mb-1.5">{group.heading}</p>
+                            <div className="flex flex-wrap gap-2">
+                                {group.items.map(step => (
+                                    <button
+                                        key={step.label}
+                                        type="button"
+                                        onClick={() => jumpTo(step.anchor)}
+                                        title={step.done ? undefined : step.note}
+                                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${step.done
+                                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30'
+                                            : step.required
+                                                ? 'bg-amber-500/15 text-amber-300 border border-amber-500/25 hover:bg-amber-500/25'
+                                                : 'bg-white/5 text-white/45 border border-white/10 hover:bg-white/10 hover:text-white/70'}`}
+                                    >
+                                        {step.done
+                                            ? <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" />
+                                            : step.required
+                                                ? <AlertCircle className="w-3.5 h-3.5" aria-hidden="true" />
+                                                : <div className="w-3.5 h-3.5 rounded-full border border-current" aria-hidden="true" />}
+                                        {step.label}
+                                        <span className="sr-only">{step.done ? ' — configured' : ` — not configured. ${step.note}`}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
                     ))}
                 </div>
+
+                {/* What actually breaks, spelled out. "Not configured" is a
+                    state; this is the consequence, which is what decides whether
+                    it matters today. */}
+                {!ready && (
+                    <ul className="mt-4 pt-3.5 border-t border-white/10 space-y-1">
+                        {missingRequired.map(step => (
+                            <li key={step.label} className="text-xs text-amber-200/75 flex items-start gap-1.5">
+                                <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" aria-hidden="true" />
+                                <span><span className="font-medium">{step.label}:</span> {step.note}.</span>
+                            </li>
+                        ))}
+                    </ul>
+                )}
             </motion.div>
 
             {/* ── Setup Instructions (collapsible) ── */}
@@ -592,7 +661,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
 
             {/* Required Integrations */}
-            <CollapsibleSection title="Database" icon={Shield} accent="primary" subtitle="Connection status — set from DATABASE_URL, not here" defaultOpen={true}>
+            <CollapsibleSection id="sec-database" title="Database" icon={Shield} accent="primary" subtitle="Connection status — set from DATABASE_URL, not here" defaultOpen={true}>
                 <div className="grid grid-cols-1 gap-4">
                     {/* The Auth0 card that used to live here has been removed.
                         Sign-in is a pluggable capability with four providers
@@ -636,7 +705,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             </CollapsibleSection>
 
             {/* Optional Integrations */}
-            <CollapsibleSection title="Optional Integrations" icon={Cloud} subtitle="SMS, email, cloud services, monitoring, and backups" defaultOpen={false}>
+            <CollapsibleSection id="sec-optional" title="Optional Integrations" icon={Cloud} subtitle="SMS, email, cloud services, monitoring, and backups" defaultOpen={false}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* SMS Notifications - Premium Card */}
                     <motion.div
@@ -1508,7 +1577,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             )}
 
             {/* Pluggable service providers (AI / translation / identity) */}
-            <ServiceProviders />
+            <div id="sec-providers"><ServiceProviders /></div>
 
             {/* GovTech Platform Connections */}
             <GovtechIntegrations />
