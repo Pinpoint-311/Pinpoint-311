@@ -122,6 +122,8 @@ def test_an_agency_with_no_roads_is_skipped_not_promoted():
 def test_both_resolvers_read_the_config_identically():
     """The spatial resolver had its own copy of this parsing. A resident in the
     portal and the same report phoned in must not get different answers."""
-    from app.services import road_geometry
+    road_geometry = pytest.importorskip(
+        "app.services.road_geometry",  # needs geoalchemy2, absent in CI
+    )
 
     assert road_geometry._jurisdictions(CONFIG) == jurisdictions_from_config(CONFIG)
