@@ -281,3 +281,37 @@ export function fractionAlongLine(path: LatLng[], position: LatLng): number {
 
     return Math.min(Math.max(best.walked / total, 0), 1);
 }
+
+/**
+ * Extract a sub-polyline between start (0..1) and end (0..1) fractions.
+ * Used for live map rendering of trimmed road segments.
+ */
+export function subPathByFractions(path: LatLng[], start: number, end: number): LatLng[] {
+    if (path.length < 2) return path;
+    const startPoint = pointAtFraction(path, start);
+    const endPoint = pointAtFraction(path, end);
+    if (!startPoint || !endPoint) return path;
+
+    const s = Math.min(start, end);
+    const e = Math.max(start, end);
+    if (s <= 0.001 && e >= 0.999) return path;
+
+    const { lengths, total } = segmentLengths(path);
+    if (total === 0) return path;
+
+    const targetStart = s * total;
+    const targetEnd = e * total;
+
+    const sub: LatLng[] = [startPoint];
+    let walked = 0;
+
+    for (let i = 0; i < lengths.length; i++) {
+        const segStart = walked;
+        if (segStart > targetStart && segStart < targetEnd) {
+            sub.push(path[i]);
+        }
+        walked += lengths[i];
+    }
+    sub.push(endPoint);
+    return sub;
+}
