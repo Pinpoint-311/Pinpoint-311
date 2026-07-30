@@ -116,7 +116,6 @@ class DemoModeMiddleware(BaseHTTPMiddleware):
         "/api/research/",       # Research suite
         "/api/system/analytics-chat", # AI Analytics Advisor
         "/api/services/reorder",  # Service category reordering
-        "/api/system/client-errors",  # Frontend error reporting
         "/api/system/update",          # Admin code update (admin-auth protected)
     ]
     
@@ -476,11 +475,24 @@ async def log_client_error(error: ClientError):
         if not text: return text
         return re.sub(r'[\r\n]+', ' ', str(text))
 
-    client_error_logger.error(
+    # The stack goes in the same ERROR record, not a separate debug() call.
+    #
+    # It used to be logged at DEBUG, and nothing raises the level for this
+    # logger, so Python's default of WARNING discarded every stack trace that
+    # was ever submitted. What survived was one line naming a minified variable
+    # -- "Cannot access 'Z' before initialization" -- with nothing to locate it
+    # by. The report arrived and was useless, which is worse than not arriving,
+    # because the UI told the user it had been handled.
+    detail = (
         f"[CLIENT {sanitize(error.type)}] {sanitize(error.message)} | url={sanitize(error.url)} | "
         f"source={sanitize(error.source)}:{error.lineno}:{error.colno} | "
         f"ua={sanitize(error.userAgent)[:60] if error.userAgent else 'unknown'}"
     )
     if error.stack:
-        client_error_logger.debug(f"Stack: {sanitize(error.stack)[:500]}")
+        detail += f"\n  stack: {sanitize(error.stack)[:1500]}"
+    if error.componentStack:
+        # For a React boundary this is usually more useful than the JS stack:
+        # it names the component tree rather than minified frames.
+        detail += f"\n  components: {sanitize(error.componentStack)[:800]}"
+    client_error_logger.error(detail)
     return Response(status_code=204)
