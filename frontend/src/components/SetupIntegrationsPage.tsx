@@ -632,7 +632,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.1 }}
-                        className={`relative rounded-2xl border p-6 transition-all duration-300 ${localSmsProvider && localSmsProvider !== 'none'
+                        className={`relative rounded-3xl border p-6 transition-all duration-300 ${localSmsProvider && localSmsProvider !== 'none'
                             ? 'bg-gradient-to-br from-emerald-500/10 via-green-500/5 to-teal-500/10 border-emerald-500/30 shadow-lg shadow-emerald-500/10'
                             : 'setup-panel border-transparent'
                             }`}
@@ -648,7 +648,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 <div className="flex items-center gap-4">
                                     <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${localSmsProvider && localSmsProvider !== 'none'
                                         ? 'bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg shadow-emerald-500/30'
-                                        : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'
+                                        : 'setup-tile'
                                         }`}>
                                         <MessageSquare className="w-7 h-7 text-white" />
                                     </div>
@@ -829,7 +829,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.2 }}
-                        className={`relative rounded-2xl border p-6 transition-all duration-300 ${smtpConfigured
+                        className={`relative rounded-3xl border p-6 transition-all duration-300 ${smtpConfigured
                             ? 'bg-gradient-to-br from-violet-500/10 via-purple-500/5 to-fuchsia-500/10 border-violet-500/30 shadow-lg shadow-violet-500/10'
                             : 'setup-panel border-transparent'
                             }`}
@@ -843,7 +843,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 <div className="flex items-center gap-4">
                                     <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${smtpConfigured
                                         ? 'bg-gradient-to-br from-violet-400 to-purple-500 shadow-lg shadow-violet-500/30'
-                                        : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'
+                                        : 'setup-tile'
                                         }`}>
                                         <Mail className="w-7 h-7 text-white" />
                                     </div>
@@ -858,7 +858,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                         Configured
                                     </span>
                                 ) : (
-                                    <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                    <span className="inline-flex items-center px-3 py-1.5 rounded-2xl text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
                                         <AlertCircle className="w-3.5 h-3.5 mr-1" />
                                         Setup Required
                                     </span>
@@ -984,7 +984,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.3 }}
-                        className={`relative rounded-2xl border p-6 transition-all duration-300 ${gcpConfigured
+                        className={`relative rounded-3xl border p-6 transition-all duration-300 ${gcpConfigured
                             ? 'bg-gradient-to-br from-blue-500/10 via-cyan-500/5 to-sky-500/10 border-blue-500/30 shadow-lg shadow-blue-500/10'
                             : 'setup-panel border-transparent'
                             }`}
@@ -998,7 +998,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 <div className="flex items-center gap-4">
                                     <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${gcpConfigured
                                         ? 'bg-gradient-to-br from-blue-400 to-cyan-500 shadow-lg shadow-blue-500/30'
-                                        : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'
+                                        : 'setup-tile'
                                         }`}>
                                         <Cloud className="w-7 h-7 text-white" />
                                     </div>
@@ -1247,7 +1247,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.4 }}
-                        className={`relative rounded-2xl border p-6 transition-all duration-300 ${sentryConfigured
+                        className={`relative rounded-3xl border p-6 transition-all duration-300 ${sentryConfigured
                             ? 'bg-gradient-to-br from-rose-500/10 via-red-500/5 to-orange-500/10 border-rose-500/30 shadow-lg shadow-rose-500/10'
                             : 'setup-panel border-transparent'
                             }`}
@@ -1261,7 +1261,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 <div className="flex items-center gap-4">
                                     <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${sentryConfigured
                                         ? 'bg-gradient-to-br from-rose-400 to-orange-500 shadow-lg shadow-rose-500/30'
-                                        : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'
+                                        : 'setup-tile'
                                         }`}>
                                         <AlertTriangle className="w-7 h-7 text-white" />
                                     </div>
@@ -1339,7 +1339,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.5 }}
-                        className={`relative rounded-2xl border p-6 transition-all duration-300 ${backupConfigured
+                        className={`relative rounded-3xl border p-6 transition-all duration-300 ${backupConfigured
                             ? 'bg-gradient-to-br from-amber-500/10 via-yellow-500/5 to-orange-500/10 border-amber-500/30 shadow-lg shadow-amber-500/10'
                             : 'setup-panel border-transparent'
                             }`}
@@ -1353,7 +1353,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 <div className="flex items-center gap-4">
                                     <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${backupConfigured
                                         ? 'bg-gradient-to-br from-amber-400 to-orange-500 shadow-lg shadow-amber-500/30'
-                                        : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'
+                                        : 'setup-tile'
                                         }`}>
                                         <HardDrive className="w-7 h-7 text-white" />
                                     </div>

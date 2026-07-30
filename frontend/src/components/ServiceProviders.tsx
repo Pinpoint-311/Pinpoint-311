@@ -305,7 +305,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-            className={`relative overflow-hidden rounded-2xl border p-6 transition-all duration-300 ${configured
+            className={`relative overflow-hidden rounded-3xl border p-6 transition-all duration-300 ${configured
                 ? 'bg-gradient-to-br from-green-500/10 via-emerald-500/5 to-teal-500/10 border-green-500/30 shadow-lg shadow-green-500/10'
                 : 'setup-panel border-transparent'}`}
         >
@@ -326,7 +326,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                     <div className="flex items-center gap-4 min-w-0">
                         <div className={`w-14 h-14 shrink-0 rounded-2xl flex items-center justify-center transition-all duration-300 ${configured
                             ? 'bg-gradient-to-br from-green-400 to-emerald-500 shadow-lg shadow-green-500/30'
-                            : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'}`}>
+                            : 'setup-tile'}`}>
                             <Icon className="w-7 h-7 text-white" />
                         </div>
                         <div className="min-w-0">
@@ -344,7 +344,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                             works" diverge exactly when it matters. */}
                         {configured && <HealthPill health={health} />}
                         {configured ? (
-                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-green-500/20 to-emerald-500/20 text-green-300 border border-green-500/30 shadow-lg shadow-green-500/10">
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-2xl text-xs font-semibold bg-gradient-to-r from-green-500/20 to-emerald-500/20 text-green-300 border border-green-500/30 shadow-lg shadow-green-500/10">
                                 <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" />
                                 Configured
                             </span>
@@ -353,7 +353,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                 Status unknown
                             </span>
                         ) : (
-                            <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            <span className="inline-flex items-center px-3 py-1.5 rounded-2xl text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
                                 Not configured
                             </span>
                         )}
