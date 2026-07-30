@@ -105,6 +105,43 @@ async def _configured_map(providers: List[Dict[str, Any]]) -> Dict[str, bool]:
     return out
 
 
+@router.get("/connectors/health")
+async def connector_health_report(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """What each integration is actually doing, as opposed to whether its
+    credentials are stored.
+
+    Deliberately separate from the catalog endpoints. "Configured" is a fact
+    about our database and is always answerable; "working" is a fact about
+    someone else's service and is sometimes genuinely unknown. Merging them
+    into one field would force the unknown case to pick a side, and it always
+    picks green.
+    """
+    from app.services import connector_health as ch
+
+    healths = ch.worst_first(list((await ch.snapshot(db)).values()))
+    return {
+        "connectors": [
+            {
+                "connector": h.connector,
+                "provider": h.provider,
+                "status": h.status,
+                "summary": h.summary(),
+                "last_success_at": h.last_success_at.isoformat() if h.last_success_at else None,
+                "last_error_at": h.last_error_at.isoformat() if h.last_error_at else None,
+                "last_error": h.last_error,
+                "consecutive_failures": h.consecutive_failures,
+                "total_successes": h.total_successes,
+                "total_failures": h.total_failures,
+            }
+            for h in healths
+        ],
+        "needs_attention": [h.connector for h in healths if h.status in (ch.DOWN, ch.FAILING)],
+    }
+
+
 @router.get("/identity/catalog")
 async def get_identity_catalog(_: User = Depends(get_current_admin)):
     """Identity provider catalog for the admin UI (Auth0 / Entra / Okta / OIDC),
@@ -329,40 +366,59 @@ async def test_provider(
     _: User = Depends(get_current_admin),
 ):
     """Live connectivity check for the currently-configured provider of a
-    capability. Returns {ok, detail}."""
+    capability. Returns {ok, detail}.
+
+    The outcome is recorded, so a test is not just a moment on screen. That
+    matters in the failing direction especially: an admin who tests, sees red
+    and walks away leaves a record the setup page can keep showing, instead of
+    a green badge that only means credentials exist.
+    """
+    from app.services import connector_health
+
+    async def _remember(outcome: dict) -> dict:
+        try:
+            if outcome.get("ok"):
+                await connector_health.record_success(db, capability)
+            else:
+                await connector_health.record_failure(db, capability, outcome.get("detail", ""))
+        except Exception:
+            # Bookkeeping must never turn a passing test into a failing one.
+            pass
+        return outcome
+
     try:
         if capability == "ai":
             from app.services.ai import get_ai_provider
             provider = await get_ai_provider(db)
             if not provider:
-                return {"ok": False, "detail": "No AI provider is configured. Enter the required fields and save first."}
+                return await _remember({"ok": False, "detail": "No AI provider is configured. Enter the required fields and save first."})
             result = await provider.complete_json('Reply with {"priority_score": 5}. This is a connection test.')
             # A connection test verifies reachability + auth, not that the model
             # emits parseable JSON. Providers flag `_reachable` when the API
             # responded (200) even if a trivial prompt yielded no usable output.
             reachable = isinstance(result, dict) and ("_error" not in result or bool(result.get("_reachable")))
             if reachable:
-                return {"ok": True, "detail": f"{provider.provider}/{provider.model} reachable and authenticated"}
-            return {"ok": False, "detail": f"Call failed: {result.get('_error', 'unknown')[:200]}"}
+                return await _remember({"ok": True, "detail": f"{provider.provider}/{provider.model} reachable and authenticated"})
+            return await _remember({"ok": False, "detail": f"Call failed: {result.get('_error', 'unknown')[:200]}"})
         if capability == "translation":
             from app.services.translation_providers import get_translation_provider
             provider = await get_translation_provider()
             if not provider:
-                return {"ok": False, "detail": "No translation provider is configured."}
+                return await _remember({"ok": False, "detail": "No translation provider is configured."})
             out = await provider.translate(["hello"], "en", "es")
-            return {"ok": bool(out), "detail": f"Translated sample → {out[0]}" if out else "No translation returned"}
+            return await _remember({"ok": bool(out), "detail": f"Translated sample → {out[0]}" if out else "No translation returned"})
         if capability == "identity":
             from app.services.identity import resolve_identity_config, get_oidc_metadata
             cfg = await resolve_identity_config(db)
             if not cfg:
-                return {"ok": False, "detail": "No identity provider is configured."}
+                return await _remember({"ok": False, "detail": "No identity provider is configured."})
             meta = await get_oidc_metadata(cfg)
-            return {"ok": bool(meta.get("authorization_endpoint")), "detail": f"Discovered {cfg['provider']} endpoints at {cfg['issuer_base']}"}
+            return await _remember({"ok": bool(meta.get("authorization_endpoint")), "detail": f"Discovered {cfg['provider']} endpoints at {cfg['issuer_base']}"})
         raise HTTPException(status_code=400, detail=f"Test not supported for: {capability}")
     except HTTPException:
         raise
     except Exception as e:
-        return {"ok": False, "detail": f"Test failed: {str(e)[:200]}"}
+        return await _remember({"ok": False, "detail": f"Test failed: {str(e)[:200]}"})
 
 
 # ---- Cloud environment profile (hybrid one-choice front door) ----
