@@ -123,6 +123,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const [liveModels, setLiveModels] = useState<ProviderModelSpec[] | null>(null);
     const [modelsMeta, setModelsMeta] = useState<{ source?: string; fetched_at?: number | null } | null>(null);
     const [staleOverride, setStaleOverride] = useState<boolean | null>(null);
+    const [warnings, setWarnings] = useState<{ key: string; severity: string; message: string }[]>([]);
     /* Collapsed by default, expanded when something needs attention.
      *
      * I removed this disclosure earlier after reading "I don't like the drop down
@@ -268,7 +269,12 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 const v = (values[f.key] || '').trim();
                 if (v) settings[f.key] = v;
             });
-            await api.saveProvider(cap, { provider: selected, model: model || undefined, settings });
+            const saved = await api.saveProvider(cap, { provider: selected, model: model || undefined, settings });
+            // Shown even though the save succeeded. These are "that value does
+            // not look like what this field wants" -- most often the right
+            // credential in the wrong box, which the connection test below may
+            // not distinguish from a wrong key.
+            setWarnings(saved.warnings || []);
             setValues({});
             await load();
             // Immediately verify
@@ -364,6 +370,18 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
 
                 <p className="text-white/60 text-sm mb-4">{blurb}</p>
 
+            {warnings.length > 0 && (
+                <div className="mt-3 space-y-1.5">
+                    {warnings.map(w => (
+                        <div key={w.key} className={`rounded-xl px-3 py-2.5 text-xs border flex items-start gap-2 ${w.severity === 'error'
+                            ? 'bg-amber-500/10 border-amber-400/30 text-amber-100/90'
+                            : 'bg-white/[0.04] border-white/12 text-white/65'}`}>
+                            <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+                            <span><span className="font-semibold">{w.key}</span> — {w.message}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
             {result && (
                 <motion.div
                     initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
@@ -404,7 +422,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                     key={p.provider}
                                     role="radio"
                                     aria-checked={isSel}
-                                    onClick={() => { setSelected(p.provider); setResult(null); setModel(p.default_model || ''); }}
+                                    onClick={() => { setSelected(p.provider); setResult(null); setWarnings([]); setModel(p.default_model || ''); }}
                                     className={`relative text-left rounded-xl px-3 py-2.5 border transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${isSel
                                         ? 'bg-gradient-to-br from-primary-500/25 to-primary-700/15 border-primary-400/50 shadow-lg shadow-primary-900/30'
                                         : 'bg-white/[0.03] border-white/10 hover:bg-white/[0.06] hover:border-white/20'}`}
