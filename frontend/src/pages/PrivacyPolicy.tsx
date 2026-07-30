@@ -60,6 +60,14 @@ You have the right to:
 
 We implement appropriate technical and organizational measures to protect your personal information, including encryption of data in transit and at rest.
 
+## Administrator Registration with Pinpoint 311
+
+This section does not concern residents and no resident data is involved. It is here because the platform's privacy claim is that it makes no automatic calls to its maintainers, and the one voluntary exception belongs in the same document as the claim.
+
+The admin console offers municipal staff an optional form for sharing a contact address with Pinpoint 311, so that security advisories and release notes can reach this deployment. It is never filled in automatically and nothing is sent unless a member of staff completes it and presses Submit.
+
+If submitted, Pinpoint 311 stores what was entered — organization, contact name and email, and optionally a role, deployment URL, state or country, and how the deployment is being used — together with the two consent choices made on the form. It is used to send security advisories and release notes, and to offer help with the deployment. It is not sold, not used for advertising, and not shared with third parties. The deployment is listed publicly only if that box was ticked. To be removed from the list, or to have the record deleted, contact Pinpoint 311.
+
 ## Contact Us
 
 For privacy-related questions or concerns, please contact your municipal clerk or the department of administration.

@@ -7,7 +7,7 @@ import {
     ExternalLink, AlertTriangle, Database, BookOpen,
     ListChecks, HardDrive, MapPin,
     Sparkles, Languages, Lock, Image as ImageIcon, Landmark,
-    Clock, DollarSign,
+    Clock, DollarSign, Bell,
 } from 'lucide-react';
 
 import { Card, Button, Input, Badge, CollapsibleSection } from './ui';
@@ -17,6 +17,7 @@ import type { Capability } from '../services/api';
 import GovtechIntegrations from './GovtechIntegrations';
 import ServiceProviders from './ServiceProviders';
 import StorageStatusLine from './StorageStatusLine';
+import { openStayInformed } from './StayInformed';
 
 
 interface ModulesState {
@@ -379,6 +380,26 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                             {step.required && !step.done && <span className="text-[10px] opacity-70">required</span>}
                         </span>
                     ))}
+                </div>
+
+                {/* Below the chips and outside the count on purpose. This is the
+                  * one thing on this page that is not an integration and cannot
+                  * be "done" -- counting it would make the percentage a measure
+                  * of whether somebody gave us their email, which it is not. It
+                  * lives here so the form stays reachable after the prompt has
+                  * been dismissed, which is permanent. */}
+                <div className="mt-4 pt-3 border-t border-white/10 flex items-center gap-2 flex-wrap">
+                    <Bell className="w-3.5 h-3.5 text-white/35" />
+                    <span className="text-xs text-white/45">
+                        We have no way to reach you about security fixes — Pinpoint calls home about nothing.
+                    </span>
+                    <button
+                        type="button"
+                        onClick={openStayInformed}
+                        className="text-xs text-indigo-300 hover:text-indigo-200 underline underline-offset-2"
+                    >
+                        Share a contact (optional)
+                    </button>
                 </div>
             </motion.div>
 
