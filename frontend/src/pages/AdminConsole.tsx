@@ -3707,31 +3707,33 @@ export default function AdminConsole() {
                                 </div>
                             )}
 
-                            {/* Conditional Road Lists */}
-                            {serviceRouting.routing_config.default_handler === 'township' ? (
-                                <RoadListInput
-                                    id="routing-exclusion-list"
-                                    label="Roads handled by another agency"
-                                    tone="danger"
-                                    hint="Reports on these roads are redirected instead of filed."
-                                    value={serviceRouting.routing_config.exclusion_list}
-                                    onChange={(value) => setServiceRouting(p => ({
-                                        ...p,
-                                        routing_config: { ...p.routing_config, exclusion_list: value }
-                                    }))}
-                                />
-                            ) : (
-                                <RoadListInput
-                                    id="routing-inclusion-list"
-                                    label="Roads this town maintains"
-                                    tone="success"
-                                    hint="These always stay with the town, even where another agency claims the road."
-                                    value={serviceRouting.routing_config.inclusion_list}
-                                    onChange={(value) => setServiceRouting(p => ({
-                                        ...p,
-                                        routing_config: { ...p.routing_config, inclusion_list: value }
-                                    }))}
-                                />
+                            {/* Single RoadListInput Fallback if no multi-agency contacts added */}
+                            {(serviceRouting.routing_config.third_party_contacts || []).length === 0 && (
+                                serviceRouting.routing_config.default_handler === 'township' ? (
+                                    <RoadListInput
+                                        id="routing-exclusion-list"
+                                        label="Roads handled by another agency"
+                                        tone="danger"
+                                        hint="Reports on these roads are redirected instead of filed."
+                                        value={serviceRouting.routing_config.exclusion_list}
+                                        onChange={(value) => setServiceRouting(p => ({
+                                            ...p,
+                                            routing_config: { ...p.routing_config, exclusion_list: value }
+                                        }))}
+                                    />
+                                ) : (
+                                    <RoadListInput
+                                        id="routing-inclusion-list"
+                                        label="Roads this town maintains"
+                                        tone="success"
+                                        hint="These always stay with the town, even where another agency claims the road."
+                                        value={serviceRouting.routing_config.inclusion_list}
+                                        onChange={(value) => setServiceRouting(p => ({
+                                            ...p,
+                                            routing_config: { ...p.routing_config, inclusion_list: value }
+                                        }))}
+                                    />
+                                )
                             )}
 
                             <RoadCorridorMap
@@ -3894,85 +3896,30 @@ export default function AdminConsole() {
                                                 </div>
                                             </div>
 
-                                            {/* Dedicated Road Search & List for this Agency */}
-                                            <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/25 space-y-2.5">
-                                                <label className="block text-xs font-bold text-amber-300 flex items-center gap-1.5">
-                                                    <Route className="w-4 h-4 text-amber-400" /> Roads Managed By {agency.name || 'this Agency'}
-                                                </label>
-
-                                                {/* Search & Add Input */}
-                                                <div className="flex items-center gap-2">
-                                                    <input
-                                                        placeholder="Type road name (e.g. Route 27, US Highway 1) and press Enter..."
-                                                        value={agency.road_input || ''}
-                                                        onChange={(e) => {
-                                                            const updated = [...(serviceRouting.routing_config.third_party_contacts || [])];
-                                                            updated[idx] = { ...updated[idx], road_input: e.target.value };
-                                                            setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, third_party_contacts: updated } }));
-                                                        }}
-                                                        onKeyDown={(e) => {
-                                                            if (e.key === 'Enter') {
-                                                                e.preventDefault();
-                                                                const val = (agency.road_input || '').trim();
-                                                                if (!val) return;
-                                                                const updated = [...(serviceRouting.routing_config.third_party_contacts || [])];
-                                                                const currentRoads = Array.isArray(updated[idx].roads) ? updated[idx].roads : roadsList;
-                                                                if (!currentRoads.includes(val)) {
-                                                                    updated[idx].roads = [...currentRoads, val];
-                                                                    updated[idx].road_list = updated[idx].roads.join(', ');
-                                                                }
-                                                                updated[idx].road_input = '';
-                                                                setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, third_party_contacts: updated } }));
+                                            {/* Exact RoadListInput Component From Screenshot for this Agency */}
+                                            <div className="pt-2">
+                                                <RoadListInput
+                                                    id={`agency-roads-${idx}`}
+                                                    label={`Roads handled by ${agency.name || 'this agency'}`}
+                                                    tone="danger"
+                                                    hint={`Reports on these roads are redirected to ${agency.name || 'this agency'} instead of filed.`}
+                                                    value={agency.road_list || ''}
+                                                    onChange={(val) => {
+                                                        const updated = [...(serviceRouting.routing_config.third_party_contacts || [])];
+                                                        updated[idx] = { ...updated[idx], road_list: val };
+                                                        
+                                                        // Sync combined road lists into exclusion_list for GIS map matching
+                                                        const allRoads = updated.map((a: any) => a.road_list || '').filter(Boolean).join(', ');
+                                                        setServiceRouting(p => ({
+                                                            ...p,
+                                                            routing_config: {
+                                                                ...p.routing_config,
+                                                                third_party_contacts: updated,
+                                                                exclusion_list: allRoads || p.routing_config.exclusion_list
                                                             }
-                                                        }}
-                                                        className="w-full h-9 rounded-xl bg-slate-950/70 border border-amber-500/30 text-white px-3 text-xs focus:outline-none focus:border-amber-400 placeholder-white/40 font-mono"
-                                                    />
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            const val = (agency.road_input || '').trim();
-                                                            if (!val) return;
-                                                            const updated = [...(serviceRouting.routing_config.third_party_contacts || [])];
-                                                            const currentRoads = Array.isArray(updated[idx].roads) ? updated[idx].roads : roadsList;
-                                                            if (!currentRoads.includes(val)) {
-                                                                updated[idx].roads = [...currentRoads, val];
-                                                                updated[idx].road_list = updated[idx].roads.join(', ');
-                                                            }
-                                                            updated[idx].road_input = '';
-                                                            setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, third_party_contacts: updated } }));
-                                                        }}
-                                                        className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shrink-0 shadow-md transition-all"
-                                                    >
-                                                        + Add Road
-                                                    </button>
-                                                </div>
-
-                                                {/* Active Road Chips */}
-                                                {roadsList.length > 0 ? (
-                                                    <div className="flex flex-wrap gap-2 pt-1">
-                                                        {roadsList.map((road, rIdx) => (
-                                                            <span key={rIdx} className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-semibold bg-amber-500/20 text-amber-200 border border-amber-500/40 shadow-sm">
-                                                                {road}
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => {
-                                                                        const updated = [...(serviceRouting.routing_config.third_party_contacts || [])];
-                                                                        const newRoads = roadsList.filter((_, i) => i !== rIdx);
-                                                                        updated[idx].roads = newRoads;
-                                                                        updated[idx].road_list = newRoads.join(', ');
-                                                                        setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, third_party_contacts: updated } }));
-                                                                    }}
-                                                                    className="hover:text-red-300 p-0.5 rounded-full hover:bg-white/10 transition-colors"
-                                                                    title={`Remove ${road}`}
-                                                                >
-                                                                    <X className="w-3 h-3" />
-                                                                </button>
-                                                            </span>
-                                                        ))}
-                                                    </div>
-                                                ) : (
-                                                    <p className="text-[11px] text-white/40 italic">No roads added to {agency.name || 'this agency'} yet. Type a road name above to assign roads.</p>
-                                                )}
+                                                        }));
+                                                    }}
+                                                />
                                             </div>
                                         </div>
                                     );
