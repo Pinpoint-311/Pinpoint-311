@@ -189,7 +189,7 @@ export default function RoadCorridorMap({
             centerlineLayerRef.current = null;
         setSegmentCount(0);
 
-        if (!roadList.length) return;
+        if (!roadList || !roadList.length) return;
 
         let cancelled = false;
         setLoading(true);
@@ -197,14 +197,14 @@ export default function RoadCorridorMap({
             .then(collection => {
                 if (cancelled || !rendererRef.current) return;
                 setUnavailable(collection.available === false);
-                setSegmentCount(collection.features.length);
+                setSegmentCount((collection?.features || []).length);
                 pathsRef.current = new Map(
                     collection.features.map(f => [
                         String(f.properties.feature_id),
                         (f.geometry.coordinates || []).map(([lng, lat]) => ({ lat, lng })),
                     ]),
                 );
-                if (!collection.features.length) return;
+                if (!collection?.features?.length) return;
 
                 bufferLayerRef.current = rendererRef.current.addGeoJsonLayer({
                     data: collection,
@@ -242,7 +242,7 @@ export default function RoadCorridorMap({
         const renderer = rendererRef.current;
         handleLayerRef.current?.remove();
         handleLayerRef.current = null;
-        if (!renderer || !ready || !selected || selected.path.length < 2) return;
+        if (!renderer || !ready || !selected || (selected?.path || []).length < 2) return;
 
         const trim = trims[selected.id] || { start: 0, end: 1 };
         const layer = renderer.createMarkerLayer();
@@ -286,7 +286,7 @@ export default function RoadCorridorMap({
         handleLayerRef.current = layer;
     }, [selected, trims, ready, onTrimsChange]);
 
-    const excludedCount = excludedFeatureIds.length;
+    const excludedCount = (excludedFeatureIds || []).length;
     const selectedExcluded = selected ? excludedFeatureIds.includes(selected.id) : false;
     const selectedTrim = selected ? trims[selected.id] : undefined;
 

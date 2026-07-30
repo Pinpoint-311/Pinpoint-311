@@ -395,7 +395,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                     const isStale = staleOverride !== null
                         ? staleOverride
                         : (selected === catalog.current_provider && catalog.current_model_available === false);
-                    if (models.length === 0) return null;
+                    if (!models || models.length === 0) return null;
                     return (
                         <div>
                             <Step n={2} aside={
@@ -466,7 +466,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 })()}
 
                 {/* Credential/config fields */}
-                {active && active.credential_fields.length > 0 && (
+                {active && (active?.credential_fields || []).length > 0 && (
                     <div>
                     <Step n={cap === 'ai' ? 3 : 2}>Credentials</Step>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
@@ -673,7 +673,7 @@ function CloudEnvironment({ onApplied }: { onApplied: () => void }) {
                 </p>
             )}
 
-            {result && result.warnings.length > 0 && (
+            {result && (result?.warnings || []).length > 0 && (
                 <div className="mt-3 rounded-xl bg-amber-500/10 border border-amber-400/30 px-3 py-2.5 text-xs text-amber-200 space-y-1">
                     {result.warnings.map((w, i) => (
                         <p key={i} className="flex items-start gap-2"><AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {w}</p>
@@ -716,9 +716,9 @@ export default function ServiceProviders() {
     }, []);
 
     const loaded = CAPS.filter(c => statuses[c.key]);
-    const onDefaultCount = loaded.filter(c => statuses[c.key]?.onDefault).length;
-    const verifiedCount = loaded.filter(c => statuses[c.key]?.verified === true).length;
-    const failedCount = loaded.filter(c => statuses[c.key]?.verified === false).length;
+    const onDefaultCount = (loaded || []).filter(c => statuses[c.key]?.onDefault).length;
+    const verifiedCount = (loaded || []).filter(c => statuses[c.key]?.verified === true).length;
+    const failedCount = (loaded || []).filter(c => statuses[c.key]?.verified === false).length;
 
     return (
         <CollapsibleSection
@@ -740,7 +740,7 @@ export default function ServiceProviders() {
                 Choose which cloud powers each capability. Every option is pre-built — pick a provider, paste your key, and test.
                 Google &amp; Auth0 are the defaults, so you can leave these untouched and everything just works.
             </p>
-            {loaded.length > 0 && (
+            {(loaded || []).length > 0 && (
                 <div className="text-[11px] text-white/55 flex flex-wrap items-center gap-x-3 gap-y-0.5 mb-4">
                     <span>{onDefaultCount === loaded.length
                         ? 'All on recommended defaults'
