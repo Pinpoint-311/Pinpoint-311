@@ -477,6 +477,190 @@ async def save_provider(
     }
 
 
+# ---- live tests for the capabilities that had none ---------------------------
+#
+# `test_provider` validated eight capabilities and could test three. Pressing
+# Save & Test on maps, email, text messages, encryption or photo redaction
+# returned "A live test is not available for this capability" -- a button whose
+# whole job is to tell you whether something works, telling five of eight cards
+# that it cannot.
+#
+# Two of the five turned out to be the most valuable tests on the page, because
+# they check the two things that fail without saying so: which key is actually
+# encrypting resident data, and whether the photo detector can answer at all.
+#
+# The rest need a real network call. Where one exists that does not send
+# anything to a resident, it is made. Where it does not -- a generic HTTP SMS
+# gateway cannot be exercised without sending a text -- the response says so and
+# is deliberately NOT recorded as a connector failure, because "we cannot check
+# this from here" is not the same as "this is broken", and a red badge that
+# never goes green teaches people to ignore badges.
+
+
+def _unverifiable(detail: str) -> dict:
+    """A result that is shown but not written to connector health."""
+    return {"ok": False, "detail": detail, "recorded": False}
+
+
+async def _test_maps() -> dict:
+    """Geocode a known address. Reads only, costs a fraction of a cent."""
+    import httpx
+
+    from app.services.secret_manager import get_secret
+
+    provider = (await get_secret("MAPS_PROVIDER")) or "google"
+    sample = "1600 Pennsylvania Ave NW, Washington DC"
+
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        if provider == "google":
+            key = await get_secret("GOOGLE_MAPS_API_KEY")
+            if not key:
+                return {"ok": False, "detail": "No Google Maps API key is saved."}
+            r = await client.get("https://maps.googleapis.com/maps/api/geocode/json",
+                                 params={"address": sample, "key": key})
+            body = r.json()
+            status = body.get("status")
+            if status == "OK":
+                return {"ok": True, "detail": "Key accepted; a test address geocoded successfully."}
+            # Google's own words matter here: REQUEST_DENIED with "billing" is
+            # the single most common failure on this page and its remedy is
+            # nothing to do with the key.
+            return {"ok": False, "detail": f"Google returned {status}. {body.get('error_message', '')}".strip()}
+
+        if provider == "azure":
+            key = await get_secret("AZURE_MAPS_KEY")
+            if not key:
+                return {"ok": False, "detail": "No Azure Maps key is saved."}
+            r = await client.get("https://atlas.microsoft.com/search/address/json",
+                                 params={"api-version": "1.0", "subscription-key": key, "query": sample})
+            if r.status_code == 200:
+                return {"ok": True, "detail": "Key accepted; a test address geocoded successfully."}
+            return {"ok": False, "detail": f"Azure Maps returned HTTP {r.status_code}."}
+
+        if provider == "esri":
+            key = await get_secret("ARCGIS_API_KEY")
+            if not key:
+                return {"ok": False, "detail": "No ArcGIS API key is saved."}
+            locator = (await get_secret("ARCGIS_LOCATOR_URL")) or (
+                "https://geocode-api.arcgis.com/arcgis/rest/services/World/GeocodeServer")
+            r = await client.get(f"{locator.rstrip('/')}/findAddressCandidates",
+                                 params={"SingleLine": sample, "f": "json", "token": key})
+            body = r.json() if r.status_code == 200 else {}
+            if "error" in body:
+                return {"ok": False, "detail": f"ArcGIS: {body['error'].get('message', 'rejected the key')}"}
+            if r.status_code == 200:
+                return {"ok": True, "detail": "Key accepted; the locator answered."}
+            return {"ok": False, "detail": f"ArcGIS returned HTTP {r.status_code}."}
+
+        if provider == "apple":
+            return _unverifiable(
+                "Apple Maps credentials can only be checked by signing a token in the "
+                "browser, so there is nothing to test from here. Open the resident "
+                "portal and confirm the map draws.")
+
+    return _unverifiable(f"No live test is available for {provider}.")
+
+
+async def _test_delivery(capability: str) -> dict:
+    """Email and text messages, without sending anything to a resident."""
+    import httpx
+
+    from app.services.secret_manager import get_secret
+
+    if capability == "email":
+        provider = (await get_secret("EMAIL_PROVIDER")) or "smtp"
+        if provider == "smtp":
+            import asyncio
+            import smtplib
+            host = await get_secret("SMTP_HOST")
+            user = await get_secret("SMTP_USER")
+            password = await get_secret("SMTP_PASSWORD")
+            if not host:
+                return {"ok": False, "detail": "No SMTP host is saved."}
+            port = int((await get_secret("SMTP_PORT")) or 587)
+
+            def _connect():
+                # Connect and authenticate only. Nothing is sent, so this is
+                # safe to press repeatedly.
+                if port == 465:
+                    server = smtplib.SMTP_SSL(host, port, timeout=12)
+                else:
+                    server = smtplib.SMTP(host, port, timeout=12)
+                    server.starttls()
+                with server:
+                    if user and password:
+                        server.login(user, password)
+                return True
+
+            await asyncio.get_event_loop().run_in_executor(None, _connect)
+            return {"ok": True, "detail": f"Connected to {host}:{port} and signed in. Nothing was sent."}
+
+        if provider == "ses":
+            import asyncio
+            from app.services.cloud_moderation import _aws_kwargs
+            kwargs = await _aws_kwargs()
+            if not kwargs:
+                return {"ok": False, "detail": "No AWS region or credentials are saved."}
+
+            def _quota():
+                import boto3
+                return boto3.client("ses", **kwargs).get_send_quota()
+
+            quota = await asyncio.get_event_loop().run_in_executor(None, _quota)
+            sent, cap = quota.get("SentLast24Hours", 0), quota.get("Max24HourSend", 0)
+            if cap and cap <= 200:
+                # The sandbox cap. Everything looks fine and residents receive
+                # nothing, so it is worth saying rather than passing green.
+                return {"ok": False, "detail": (
+                    f"Credentials work, but the 24-hour cap is {int(cap)} — this account is still "
+                    f"in the SES sandbox and will not deliver to unverified addresses. "
+                    f"Request production access.")}
+            return {"ok": True, "detail": f"SES reachable. {int(sent)} of {int(cap)} sent in the last 24 hours."}
+
+        return _unverifiable(
+            "Azure Communication Services has no check that avoids sending a real "
+            "message. Save, then send yourself a test from a request.")
+
+    provider = (await get_secret("SMS_PROVIDER")) or "none"
+    if provider == "none":
+        return {"ok": True, "detail": "Text messages are switched off, as configured."}
+
+    if provider == "twilio":
+        sid = await get_secret("TWILIO_ACCOUNT_SID")
+        token = await get_secret("TWILIO_AUTH_TOKEN")
+        if not (sid and token):
+            return {"ok": False, "detail": "Account SID or auth token is missing."}
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            r = await client.get(f"https://api.twilio.com/2010-04-01/Accounts/{sid}.json",
+                                 auth=(sid, token))
+        if r.status_code == 200:
+            status = r.json().get("status", "active")
+            if status != "active":
+                return {"ok": False, "detail": f"Credentials work, but the Twilio account is {status}."}
+            return {"ok": True, "detail": "Twilio credentials accepted. Nothing was sent."}
+        if r.status_code == 401:
+            return {"ok": False, "detail": "Twilio rejected the Account SID or auth token."}
+        return {"ok": False, "detail": f"Twilio returned HTTP {r.status_code}."}
+
+    if provider == "sns":
+        import asyncio
+        from app.services.cloud_moderation import _aws_kwargs
+        kwargs = await _aws_kwargs()
+        if not kwargs:
+            return {"ok": False, "detail": "No AWS region or credentials are saved."}
+
+        def _attrs():
+            import boto3
+            return boto3.client("sns", **kwargs).get_sms_attributes()
+
+        await asyncio.get_event_loop().run_in_executor(None, _attrs)
+        return {"ok": True, "detail": "SNS reachable and authenticated. Nothing was sent."}
+
+    return _unverifiable(
+        f"There is no way to check {provider} without sending a real text message. "
+        f"Save, then send yourself one from a request to confirm delivery.")
+
+
 @router.post("/providers/{capability}/test")
 @_cost_limiter.limit("10/minute")  # live paid-API call — bound the cost
 async def test_provider(
@@ -546,6 +730,54 @@ async def test_provider(
                 return await _remember({"ok": False, "detail": "No identity provider is configured."})
             meta = await get_oidc_metadata(cfg)
             return await _remember({"ok": bool(meta.get("authorization_endpoint")), "detail": f"Discovered {cfg['provider']} endpoints at {cfg['issuer_base']}"})
+        if capability == "kms":
+            # The most valuable test on this page. A KMS that stops answering
+            # does not raise -- pii_crypto falls back to the application key and
+            # carries on -- so "is the key I selected the one encrypting
+            # resident data" is a question nothing else answers out loud.
+            from app.core import pii_crypto
+            from app.core.encryption import _kms_provider
+            selected = _kms_provider()
+            actual = pii_crypto.probe_backend()
+            if actual == selected:
+                label = {"google": "Google Cloud KMS", "azure": "Azure Key Vault",
+                         "aws": "AWS KMS", "local": "the application key"}.get(actual, actual)
+                return await _remember({"ok": True, "detail": f"Wrapped a test key with {label}."})
+            return await _remember({
+                "ok": False,
+                "detail": (
+                    f"Selected {selected}, but a test key was wrapped with "
+                    f"{actual}. Resident data is not being encrypted with the key "
+                    f"you chose — check the credentials and that the key still exists."
+                ),
+            })
+
+        if capability == "redaction":
+            # Also worth a real test: a detector with no credentials returns the
+            # same empty result as a photo with nobody in it.
+            from app.services.image_redaction import effective_provider, resolve_provider
+            selected = await resolve_provider()
+            if not selected:
+                return await _remember({"ok": True, "detail": "Photo redaction is switched off, as configured."})
+            actual, degraded_from = await effective_provider(selected)
+            if degraded_from == actual:
+                return await _remember({"ok": False, "detail": (
+                    "No detector is available, so photos would be stored without blurring. "
+                    "On-server detection needs no account — this usually means OpenCV is missing.")})
+            if degraded_from:
+                return await _remember({"ok": False, "detail": (
+                    f"{degraded_from} has no usable credentials, so blurring is falling back to "
+                    f"on-server detection. Photos are still redacted, less accurately.")})
+            return await _remember({"ok": True, "detail": f"{actual} is available and will blur faces and plates."})
+
+        if capability == "maps":
+            outcome = await _test_maps()
+            return await _remember(outcome) if outcome.get("recorded", True) else outcome
+
+        if capability in ("email", "sms"):
+            outcome = await _test_delivery(capability)
+            return await _remember(outcome) if outcome.get("recorded", True) else outcome
+
         raise HTTPException(status_code=400, detail="A live test is not available for this capability.")
     except HTTPException:
         raise
