@@ -11,6 +11,7 @@ import {
     Statistics,
     AdvancedStatistics,
     UserCreate,
+    UserUpdate,
     ServiceCreate,
     Department,
     RequestComment,
@@ -468,6 +469,13 @@ class ApiClient {
     async createUser(data: UserCreate): Promise<User> {
         return this.request<User>('/users/', {
             method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateUser(id: number, data: UserUpdate): Promise<User> {
+        return this.request<User>(`/users/${id}`, {
+            method: 'PUT',
             body: JSON.stringify(data),
         });
     }

@@ -19,6 +19,23 @@ export interface UserCreate {
     department_ids?: number[];
 }
 
+/** Everything an admin can change about an existing staff member.
+ *
+ * Username is deliberately absent: it is the identity the audit log and the
+ * identity provider key off, so renaming it would orphan history rather than
+ * correct it. Password has its own reset endpoint.
+ *
+ * Every field is optional and only what is sent gets changed, so editing a
+ * phone number cannot accidentally blank a role. */
+export interface UserUpdate {
+    email?: string;
+    full_name?: string;
+    role?: 'admin' | 'staff' | 'researcher';
+    is_active?: boolean;
+    phone?: string;
+    department_ids?: number[];
+}
+
 // Department types
 export interface Department {
     id: number;

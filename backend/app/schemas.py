@@ -67,6 +67,9 @@ class UserUpdate(BaseModel):
     role: Optional[UserRole] = None
     is_active: Optional[bool] = None
     department_ids: Optional[List[int]] = None
+    # A column on User, used for staff SMS alerts, that was missing here -- so
+    # a staff member's phone number could be set at creation and never changed.
+    phone: Optional[str] = None
 
 
 class DepartmentBrief(BaseModel):
