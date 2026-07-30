@@ -3799,9 +3799,20 @@ export default function AdminConsole() {
                                 <Route className="w-4 h-4" /> Road-Based Routing
                             </h4>
 
-                            {/* Default Handler */}
+                            {/* Default Handler.
+
+                                This used to offer a generic "Third party handles by
+                                default", which stored the literal string "third_party".
+                                The backend resolves this setting by matching it against
+                                the configured agencies' names, so it matched nothing and
+                                every road quietly stayed with the town -- the exact
+                                opposite of what was selected. Naming the agency makes the
+                                setting mean something, and with several agencies it is
+                                the only way to say which one gets an unlisted road. */}
                             <div className="space-y-2">
-                                <label className="block text-xs font-bold uppercase tracking-wider text-white/70">Default Handler</label>
+                                <label className="block text-xs font-bold uppercase tracking-wider text-white/70">
+                                    Who handles a road that is not listed below?
+                                </label>
                                 <select
                                     value={serviceRouting.routing_config.default_handler}
                                     onChange={(e) => setServiceRouting(p => ({
@@ -3809,11 +3820,35 @@ export default function AdminConsole() {
                                         routing_config: { ...p.routing_config, default_handler: e.target.value as any }
                                     }))}
                                     className="w-full h-11 rounded-2xl bg-white/[0.08] border border-white/20 text-white px-4 text-sm focus:outline-none focus:border-amber-400"
-                                    aria-label="Default handler"
+                                    aria-label="Who handles a road that is not listed"
                                 >
-                                    <option value="township">Municipality handles by default</option>
-                                    <option value="third_party">Third party handles by default</option>
+                                    <option value="township">The municipality (roads below are the exceptions)</option>
+                                    {(serviceRouting.routing_config.third_party_contacts || [])
+                                        .map(a => (a?.name || '').trim())
+                                        .filter(Boolean)
+                                        .map(name => (
+                                            <option key={name} value={name}>
+                                                {name} (the municipality keeps only its own roads)
+                                            </option>
+                                        ))}
+                                    {/* Keep a saved value selectable even if that agency was
+                                        since renamed, so opening the modal cannot silently
+                                        reset the setting to "municipality" on the next save. */}
+                                    {serviceRouting.routing_config.default_handler
+                                        && serviceRouting.routing_config.default_handler !== 'township'
+                                        && !(serviceRouting.routing_config.third_party_contacts || [])
+                                            .some(a => (a?.name || '').trim() === serviceRouting.routing_config.default_handler) && (
+                                            <option value={serviceRouting.routing_config.default_handler}>
+                                                {serviceRouting.routing_config.default_handler === 'third_party'
+                                                    ? 'A third party (not yet named — pick an agency above)'
+                                                    : `${serviceRouting.routing_config.default_handler} (no longer configured)`}
+                                            </option>
+                                        )}
                                 </select>
+                                <p className="text-xs text-white/45">
+                                    Pick an agency to invert the rule: they maintain everything
+                                    except the roads you list as the municipality's.
+                                </p>
                             </div>
 
                             {/* Municipality Department */}

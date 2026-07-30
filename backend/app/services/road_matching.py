@@ -262,6 +262,48 @@ def _legacy_jurisdictions(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     ]
 
 
+# Values meaning "the town keeps anything nobody else claimed".
+MUNICIPAL_DEFAULTS = {"", "municipality", "township", "town", "municipal"}
+# The generic literal the routing UI used to write, before it named the agency.
+GENERIC_THIRD_PARTY = {"third_party", "thirdparty", "third party", "3rd_party"}
+
+
+def default_jurisdiction(
+    config: Dict[str, Any], jurisdictions: Sequence[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """Who owns a road that no rule claims -- None meaning the municipality.
+
+    Normally the town is the default and the listed roads are the exceptions.
+    A town can invert that: an agency maintains everything and the town keeps
+    only the roads on its own list. That setting existed in the UI and did
+    nothing, because it was stored as the literal "third_party" and looked up
+    against the configured agencies' names, which never matched. Every road
+    fell back to the municipality.
+
+    It is resolved here, once, for both resolvers.
+
+    Ambiguity fails open. "third_party" does not say *which* agency when more
+    than one is configured, and guessing would redirect a resident to a phone
+    number for a road that agency does not maintain. Naming the agency in the
+    setting resolves it; check_config says so.
+    """
+    raw = config.get("default_handler")
+    handler = (raw or "").strip() if isinstance(raw, str) else ""
+    if handler.lower() in MUNICIPAL_DEFAULTS:
+        return None
+
+    real = [j for j in jurisdictions if isinstance(j, dict)]
+    for jurisdiction in real:
+        if handler in (jurisdiction.get("id"), jurisdiction.get("name")):
+            return jurisdiction
+
+    if handler.lower() in GENERIC_THIRD_PARTY:
+        return real[0] if len(real) == 1 else None
+
+    # Named something that is not configured -- a renamed or deleted agency.
+    return None
+
+
 def resolve_jurisdiction(
     config: Optional[Dict[str, Any]], detected_road: str
 ) -> Optional[JurisdictionMatch]:
@@ -303,23 +345,15 @@ def resolve_jurisdiction(
                     matched_entry=entry,
                 )
 
-    default_handler = config.get("default_handler") or "municipality"
-    if default_handler in ("municipality", "township", "", None):
+    # Nobody claimed this road by name. Under a third-party default that means
+    # it belongs to the default agency; normally it means the town.
+    fallback = default_jurisdiction(config, jurisdictions)
+    if fallback is None:
         return None
-
-    # Everything unlisted belongs to a named jurisdiction. Find it by name or id.
-    for jurisdiction in jurisdictions:
-        if not isinstance(jurisdiction, dict):
-            continue
-        if default_handler in (jurisdiction.get("id"), jurisdiction.get("name")):
-            return JurisdictionMatch(
-                name=jurisdiction.get("name") or "Another agency",
-                message=jurisdiction.get("message") or "",
-                contacts=jurisdiction.get("contacts") or [],
-                matched_road=detected_road,
-                matched_entry="(default -- road not listed as municipal)",
-            )
-
-    # A default handler was named but no such jurisdiction is configured. Treat
-    # the municipality as responsible rather than blocking on a broken config.
-    return None
+    return JurisdictionMatch(
+        name=fallback.get("name") or "Another agency",
+        message=fallback.get("message") or "",
+        contacts=fallback.get("contacts") or [],
+        matched_road=detected_road,
+        matched_entry="(default -- road not listed as municipal)",
+    )
