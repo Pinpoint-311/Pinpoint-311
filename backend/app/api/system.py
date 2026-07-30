@@ -354,7 +354,17 @@ async def save_provider(
             await _persist_secret(db, key, value)
     from app.services.secret_manager import clear_cache
     clear_cache()
-    return {"ok": True, "provider": provider_id}
+    # Shape findings are advisory and never block: a rule is a heuristic about
+    # someone else's format, and refusing a credential that would have worked is
+    # a worse failure than accepting one that will not -- the second is
+    # discoverable, the first is a dead end.
+    from app.services.credential_checks import inspect_settings
+    findings = inspect_settings(body.settings)
+    return {
+        "ok": True,
+        "provider": provider_id,
+        "warnings": [{"key": f.key, "severity": f.severity, "message": f.message} for f in findings],
+    }
 
 
 @router.post("/providers/{capability}/test")
@@ -418,7 +428,11 @@ async def test_provider(
     except HTTPException:
         raise
     except Exception as e:
-        return await _remember({"ok": False, "detail": f"Test failed: {str(e)[:200]}"})
+        # The provider's own words, plus a next step when we recognise the
+        # shape of the complaint. Never a replacement -- a clerk searching the
+        # web for their error needs the actual string.
+        from app.services.credential_checks import describe_failure
+        return await _remember({"ok": False, "detail": describe_failure(str(e)[:300])})
 
 
 # ---- Cloud environment profile (hybrid one-choice front door) ----

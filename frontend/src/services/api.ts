@@ -589,7 +589,13 @@ class ApiClient {
         });
     }
 
-    async saveProvider(capability: string, data: ProviderSave): Promise<{ ok: boolean; provider: string }> {
+    async saveProvider(capability: string, data: ProviderSave): Promise<{
+        ok: boolean;
+        provider: string;
+        /** Shape problems spotted in the pasted values. Advisory: the save has
+         *  already happened by the time these arrive. */
+        warnings?: { key: string; severity: 'error' | 'warn' | 'info'; message: string }[];
+    }> {
         return this.request(`/system/providers/${capability}/save`, {
             method: 'POST',
             body: JSON.stringify(data),
