@@ -1,0 +1,300 @@
+import type { Capability } from '../services/api';
+
+/**
+ * The setup guide, organised by the console you have to open.
+ *
+ * The guide used to have one section per capability, in a fixed order: staff
+ * sign-in, then maps, then AI, then translation, then key management. For a
+ * town on Azure that reads as Azure, Google, Azure, Azure, Azure -- five
+ * sections, four of which are the same portal, each repeating "create a
+ * resource in pinpoint311-rg" as though you had not just done it. A clerk
+ * following it top to bottom opens the Azure portal, leaves for Google, and
+ * comes back three times.
+ *
+ * So the unit is not a capability, it is a trip. Everything that lives behind
+ * one login gets folded into one task: the foundation steps once, then each
+ * thing to create while you are already in there. A town on Azure using Entra
+ * for sign-in and Azure Maps has a single Azure task covering sign-in, maps,
+ * AI, translation, Key Vault and Content Safety. A town on Azure using Google
+ * Maps has two tasks, because that genuinely is two logins.
+ *
+ * This file is the arithmetic and nothing else -- no JSX, no fetching -- so the
+ * grouping can be tested directly rather than through a rendered page.
+ */
+
+export type Cloud = 'google' | 'azure' | 'aws';
+export type Idp = 'auth0' | 'entra' | 'okta' | 'oidc';
+export type MapProvider = 'google' | 'esri' | 'azure' | 'apple';
+
+/** Who you sign in to. Two capabilities share a vendor iff they share a login. */
+export type Vendor =
+    | 'google' | 'azure' | 'aws'
+    | 'auth0' | 'okta' | 'oidc'
+    | 'esri' | 'apple'
+    | 'twilio' | 'smtp' | 'http'
+    | 'sentry' | 'storage' | 'local' | 'govtech';
+
+export const VENDOR_LABEL: Record<Vendor, string> = {
+    google: 'Google Cloud',
+    azure: 'Microsoft Azure',
+    aws: 'AWS',
+    auth0: 'Auth0',
+    okta: 'Okta',
+    oidc: 'Your OIDC provider',
+    esri: 'Esri / ArcGIS',
+    apple: 'Apple',
+    twilio: 'Twilio',
+    smtp: 'Your mail server',
+    http: 'Your SMS gateway',
+    sentry: 'Sentry',
+    storage: 'Your backup storage',
+    local: 'This server',
+    govtech: "Your town's other systems",
+};
+
+/* Entra is administered in the Azure portal, so a town on Azure that uses it
+ * for staff sign-in is not making a second trip. Getting this wrong in the
+ * other direction would be worse than not grouping at all: it would promise one
+ * login and then need two. */
+const IDP_VENDOR: Record<Idp, Vendor> = {
+    auth0: 'auth0', entra: 'azure', okta: 'okta', oidc: 'oidc',
+};
+const AI_VENDOR: Record<string, Vendor> = { vertex: 'google', azure: 'azure', bedrock: 'aws' };
+const EMAIL_VENDOR: Record<string, Vendor> = { smtp: 'smtp', ses: 'aws', acs: 'azure' };
+const SMS_VENDOR: Record<string, Vendor> = { twilio: 'twilio', sns: 'aws', acs: 'azure', http: 'http' };
+
+/** One thing to set up, inside one task. */
+export interface PlanItem {
+    /** Stable id, used for the "done" lookup and as a React key. */
+    id: string;
+    title: string;
+    /** What it does, in a sentence, for someone who did not pick it themselves. */
+    blurb: string;
+    /** The capability whose catalog holds its credentials, if it has one. */
+    cap?: Capability;
+    /** Which provider of that capability. */
+    provider?: string;
+    /** Settings with no capability card, entered as plain boxes. */
+    secrets?: { key: string; label: string; secret?: boolean; help?: string }[];
+    /** Alternatives offered inline, where the cloud answer does not decide it. */
+    choices?: { id: string; label: string }[];
+    /** Which questionnaire answer this item's provider comes from, so a picker
+     *  can write back to the right piece of state. */
+    choiceKey?: 'email' | 'sms' | 'redaction' | 'maps' | 'idp';
+    /** Required to take a report at all. */
+    required?: boolean;
+}
+
+export interface PlanTask {
+    id: string;
+    vendor: Vendor;
+    title: string;
+    /** Why this task exists, shown under the title. */
+    blurb: string;
+    /** Whether this task needs the cloud foundation walk (project, resource
+     *  group, IAM) before its items. Only the three clouds do. */
+    foundation: Cloud | null;
+    items: PlanItem[];
+    required: boolean;
+}
+
+export interface PlanInput {
+    cloud: Cloud;
+    idp: Idp;
+    maps: MapProvider;
+    aiProvider: string;
+    emailProvider: string;
+    smsProvider: string;
+    redactionProvider: string;
+    /** Feature ids ticked in the questionnaire. */
+    wanted: ReadonlySet<string>;
+}
+
+/* Order is the order a town should work in, not the order the code was
+ * written. Sign-in and maps are required, so whichever task carries them comes
+ * first; the cloud task is next because most optional features hang off it. */
+const VENDOR_ORDER: Vendor[] = [
+    'auth0', 'okta', 'oidc',            // sign-in, when it is its own vendor
+    'azure', 'google', 'aws',           // the clouds
+    'esri', 'apple',                    // maps, when it is its own vendor
+    'smtp', 'twilio', 'http',           // delivery, when it is its own vendor
+    'local', 'storage', 'govtech', 'sentry',
+];
+
+export function buildPlan(input: PlanInput): PlanTask[] {
+    const { cloud, idp, maps, wanted } = input;
+    const want = (f: string) => wanted.has(f);
+    const byVendor = new Map<Vendor, PlanItem[]>();
+    const add = (vendor: Vendor, item: PlanItem) => {
+        const list = byVendor.get(vendor) ?? [];
+        list.push(item);
+        byVendor.set(vendor, list);
+    };
+
+    // --- Required ---------------------------------------------------------
+
+    add(IDP_VENDOR[idp], {
+        id: 'identity',
+        title: 'Staff sign-in',
+        blurb: 'How your staff log in. Residents never sign in — only the people who work the reports.',
+        cap: 'identity', provider: idp, required: true,
+    });
+
+    add(maps as Vendor, {
+        id: 'maps',
+        title: 'Maps and address lookup',
+        blurb: 'The map residents drop a pin on, and the address box that finds their street.',
+        cap: 'maps', provider: maps, required: true,
+    });
+
+    // --- Optional, folded into whichever console owns them ----------------
+
+    if (want('ai')) {
+        add(AI_VENDOR[input.aiProvider] ?? cloud, {
+            id: 'ai',
+            title: 'AI triage',
+            blurb: 'Suggests a category and a department for each new report. A clerk still decides.',
+            cap: 'ai', provider: input.aiProvider,
+        });
+    }
+
+    if (want('translation')) {
+        add(cloud, {
+            id: 'translation',
+            title: 'Translation',
+            blurb: 'Lets residents file in their own language. Your staff carry on in English.',
+            cap: 'translation', provider: cloud,
+        });
+    }
+
+    if (want('secrets')) {
+        add(cloud, {
+            id: 'kms',
+            title: 'Key management and secret storage',
+            blurb: 'Keeps resident names, emails and phone numbers encrypted, using a key your cloud looks after.',
+            cap: 'kms', provider: cloud,
+        });
+    }
+
+    /* Screening and blurring, together.
+     *
+     * They were two sections and they should not have been. Both answer "what
+     * is safe to publish", both are configured in the same place, and a clerk
+     * reading two rose-coloured panels about photos three sections apart has to
+     * work out that one is about words and the other about faces. */
+    if (want('safety')) {
+        add((input.redactionProvider as Vendor) || cloud, {
+            id: 'safety',
+            title: 'Screening and blurring',
+            blurb: 'Screens what residents write, and blurs faces and number plates in the photos they send. Abusive text is always screened, with or without this.',
+            cap: 'redaction', provider: input.redactionProvider,
+            choiceKey: 'redaction',
+            choices: [
+                { id: 'local', label: 'On this server' },
+                { id: 'google', label: 'Google Cloud Vision' },
+                { id: 'azure', label: 'Azure Face + Vision' },
+                { id: 'aws', label: 'AWS Rekognition' },
+            ],
+            secrets: cloud === 'azure' ? [
+                { key: 'AZURE_CONTENT_SAFETY_ENDPOINT', label: 'Content Safety endpoint', help: 'Keys and Endpoint blade of an Azure AI Content Safety resource.' },
+                { key: 'AZURE_CONTENT_SAFETY_KEY', label: 'Content Safety key', secret: true, help: 'Either KEY 1 or KEY 2 — they are interchangeable.' },
+            ] : undefined,
+        });
+    }
+
+    if (want('email')) {
+        add(EMAIL_VENDOR[input.emailProvider] ?? 'smtp', {
+            id: 'email',
+            title: 'Email notifications',
+            blurb: 'Sends residents a confirmation when they file, and an update when the job is done.',
+            cap: 'email', provider: input.emailProvider,
+            choiceKey: 'email',
+            choices: [
+                { id: 'smtp', label: 'SMTP (your existing mail server)' },
+                { id: 'ses', label: 'Amazon SES' },
+                { id: 'acs', label: 'Azure Communication Services' },
+            ],
+        });
+    }
+
+    if (want('sms')) {
+        add(SMS_VENDOR[input.smsProvider] ?? 'twilio', {
+            id: 'sms',
+            title: 'Text message notifications',
+            blurb: 'The same updates by text, for residents who give a mobile number. Email on its own is fine too.',
+            cap: 'sms', provider: input.smsProvider,
+            choiceKey: 'sms',
+            choices: [
+                { id: 'twilio', label: 'Twilio' },
+                { id: 'sns', label: 'Amazon SNS' },
+                { id: 'acs', label: 'Azure Communication Services' },
+                { id: 'http', label: 'Other (HTTP gateway)' },
+            ],
+        });
+    }
+
+    if (want('backups')) {
+        add('storage', {
+            id: 'backups',
+            title: 'Automatic backups',
+            blurb: 'A nightly copy of everything, kept somewhere other than this server.',
+            secrets: [
+                { key: 'BACKUP_S3_BUCKET', label: 'Bucket name' },
+                { key: 'BACKUP_S3_ENDPOINT', label: 'Endpoint URL', help: 'Leave blank for AWS S3. Set it for Oracle, MinIO, Backblaze and the rest.' },
+                { key: 'BACKUP_S3_REGION', label: 'Region' },
+                { key: 'BACKUP_S3_ACCESS_KEY', label: 'Access key ID', secret: true },
+                { key: 'BACKUP_S3_SECRET_KEY', label: 'Secret access key', secret: true },
+            ],
+        });
+    }
+
+    if (want('govtech')) {
+        add('govtech', {
+            id: 'govtech',
+            title: 'Connecting a system the town already uses',
+            blurb: 'Sends reports into permitting or work-order software the town already runs, so staff are not typing things twice.',
+        });
+    }
+
+    if (want('errors')) {
+        add('sentry', {
+            id: 'errors',
+            title: 'Crash reporting',
+            blurb: 'Sends crash reports somewhere off this server, so they survive a restart.',
+            secrets: [{ key: 'SENTRY_DSN', label: 'Sentry DSN', secret: true, help: 'Project Settings → Client Keys (DSN).' }],
+        });
+    }
+
+    // --- Assemble ---------------------------------------------------------
+
+    const tasks: PlanTask[] = [];
+    for (const vendor of VENDOR_ORDER) {
+        const items = byVendor.get(vendor);
+        if (!items?.length) continue;
+        const isCloud = vendor === 'google' || vendor === 'azure' || vendor === 'aws';
+        tasks.push({
+            id: vendor,
+            vendor,
+            title: VENDOR_LABEL[vendor],
+            blurb: isCloud
+                ? `Everything here is in one place. Set the account up once, then add each piece while you are already signed in.`
+                : items.length > 1
+                    ? 'Both of these use the same login.'
+                    : items[0].blurb,
+            foundation: isCloud ? (vendor as Cloud) : null,
+            items,
+            required: items.some(i => i.required),
+        });
+    }
+
+    /* Whatever carries a required item goes first, whichever vendor it is. A
+     * town cannot take a report without sign-in and a map, and burying those
+     * under an optional cloud task would make the first thing on the page the
+     * wrong thing. */
+    return tasks.sort((a, b) => Number(b.required) - Number(a.required));
+}
+
+/** The first task not yet finished, which is where the wizard should be. */
+export function nextIncomplete(tasks: PlanTask[], done: (t: PlanTask) => boolean): PlanTask | undefined {
+    return tasks.find(t => !done(t));
+}
