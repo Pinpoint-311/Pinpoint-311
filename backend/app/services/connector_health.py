@@ -31,6 +31,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from app.core.sanitize import sanitize_for_log
+
 logger = logging.getLogger(__name__)
 
 # How long a success stays meaningful. Past this a connector is reported as
@@ -131,7 +133,6 @@ def clean_error(exc: Any) -> str:
     credential. Storing that would put a key in a table the admin UI renders
     and the support process copy-pastes out of.
     """
-    from app.core.sanitize import sanitize_for_log
 
     text = sanitize_for_log(str(exc)).strip()
     return text[:ERROR_MAX_CHARS] if text else "Unknown error"
@@ -168,7 +169,8 @@ async def record_success(db, connector: str, provider: Optional[str] = None) -> 
         row.total_successes = (row.total_successes or 0) + 1
         await db.commit()
     except Exception as exc:
-        logger.warning("[Health] could not record success for %s: %s", connector, exc)
+        logger.warning("[Health] could not record success for %s: %s",
+                       sanitize_for_log(connector), exc)
 
 
 async def record_failure(db, connector: str, error: Any,
@@ -185,7 +187,8 @@ async def record_failure(db, connector: str, error: Any,
         row.total_failures = (row.total_failures or 0) + 1
         await db.commit()
     except Exception as exc:
-        logger.warning("[Health] could not record failure for %s: %s", connector, exc)
+        logger.warning("[Health] could not record failure for %s: %s",
+                       sanitize_for_log(connector), exc)
 
 
 async def snapshot(db) -> Dict[str, Health]:

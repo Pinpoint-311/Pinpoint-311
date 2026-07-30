@@ -68,7 +68,11 @@ def test_an_issuer_with_the_discovery_path_appended_is_caught():
 
 
 def test_a_p8_pasted_without_its_header_is_caught():
-    finding = cc.inspect_value("APPLE_MAPKIT_PRIVATE_KEY", "MIGTAgEAMBMGByqGSM49")
+    # Deliberately not a realistic-looking DER prefix. The check is only
+    # "does this contain the words PRIVATE KEY", so the body is irrelevant to
+    # the assertion, and a lifelike base64 blob here trips secret scanners for
+    # no gain.
+    finding = cc.inspect_value("APPLE_MAPKIT_PRIVATE_KEY", "not-a-real-key-body")
     assert finding and "BEGIN PRIVATE KEY" in finding.message
 
 
@@ -109,7 +113,7 @@ def test_an_empty_value_is_never_a_finding():
 
 
 def test_an_unknown_key_with_a_sane_value_passes():
-    assert cc.inspect_value("BRAND_NEW_VENDOR_KEY", "sk_live_51ABCdef") is None
+    assert cc.inspect_value("BRAND_NEW_VENDOR_KEY", "unrecognised-key-shape") is None
 
 
 def test_findings_are_ordered_worst_first():

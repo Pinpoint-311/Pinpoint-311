@@ -22,6 +22,11 @@ from pathlib import Path
 
 import pytest
 
+# Guard on a submodule, not "alembic": backend/alembic/ is the migrations
+# directory, and with alembic uninstalled Python resolves that directory as a
+# namespace package, so importorskip("alembic") succeeds and the guard misses.
+pytest.importorskip("alembic.script")  # the chain checks read real revision scripts
+
 from app.db.migrate import (
     ADDITIVE,
     DESTRUCTIVE,

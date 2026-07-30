@@ -20,6 +20,8 @@ configured, and return None here.
 
 import pytest
 
+pytest.importorskip("jwt")  # app.services.identity signs with PyJWT
+
 
 def fake_store(monkeypatch, values: dict):
     """Point the secret manager at a dict."""

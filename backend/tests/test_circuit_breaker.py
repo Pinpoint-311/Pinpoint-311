@@ -161,6 +161,8 @@ def test_the_backoff_is_capped(b, clock):
         try:
             b.check("accela")
         except CircuitOpen:
+            # Expected on most iterations; this loop is driving the cooldown
+            # upward, and whether any single probe is admitted is not the point.
             pass
         b.record_failure("accela")
     assert b.retry_after("accela") <= MAX_COOLDOWN_SECONDS
