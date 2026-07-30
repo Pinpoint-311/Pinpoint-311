@@ -38,7 +38,15 @@ from sqlalchemy import cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import RoadSegment
-from app.services.road_matching import JurisdictionMatch, road_matches, _as_list
+from app.services.road_matching import (
+    GENERIC_THIRD_PARTY,
+    JurisdictionMatch,
+    MUNICIPAL_DEFAULTS,
+    default_jurisdiction,
+    jurisdictions_from_config,
+    road_matches,
+    _as_list,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -149,19 +157,10 @@ def _municipal_entries(config: Dict[str, Any]) -> List[str]:
 
 
 def _jurisdictions(config: Dict[str, Any]) -> List[Dict[str, Any]]:
-    jurisdictions = config.get("jurisdictions")
-    if isinstance(jurisdictions, list) and jurisdictions:
-        return [j for j in jurisdictions if isinstance(j, dict)]
-    # Pre-multi-jurisdiction config: one unnamed third party.
-    roads = _as_list(config.get("exclusion_list"))
-    if not roads:
-        return []
-    return [{
-        "name": config.get("third_party_name") or "Another agency",
-        "roads": roads,
-        "message": config.get("third_party_message") or "",
-        "contacts": config.get("third_party_contacts") or [],
-    }]
+    """Delegated so the spatial and address resolvers read one config the same
+    way. They had separate copies of this, and only one of them would have been
+    fixed."""
+    return jurisdictions_from_config(config)
 
 
 def _matching_jurisdiction(
@@ -218,6 +217,28 @@ def choose_road(
     municipal = _municipal_entries(config)
     jurisdictions = _jurisdictions(config)
 
+    # Who gets a road no rule names. Usually nobody -- the town. Under a
+    # third-party default it is that agency, which this resolver used to ignore
+    # entirely: the setting was only ever read on the address path, so the
+    # portal, which resolves by geometry, kept everything with the town.
+    fallback = default_jurisdiction(config, jurisdictions)
+    default_claim = (
+        (fallback, "(default -- road not listed as municipal)") if fallback else None
+    )
+
+    def claim_for(road: RoadMatch) -> Optional[Tuple[Dict[str, Any], str]]:
+        claim = _matching_jurisdiction(jurisdictions, road, excluded, trims)
+        if claim is not None:
+            return claim
+        # Switched off or trimmed back in the coverage map: the clerk did that
+        # deliberately, so the stretch stays with the town even when an agency
+        # is the default. Otherwise turning a stretch off would hand it away.
+        if road.source_feature_id in excluded:
+            return None
+        if trims and not within_trim(road.fraction_along, trims.get(road.source_feature_id)):
+            return None
+        return default_claim
+
     # A road the town explicitly claims wins even if it is not the nearest --
     # this is the town-maintained stretch of a county road.
     for road in ordered:
@@ -233,11 +254,11 @@ def choose_road(
         # Being wrong this way costs a reassignment; being wrong the other way
         # turns a resident away with no recourse.
         for road in tied:
-            if _matching_jurisdiction(jurisdictions, road, excluded, trims) is None:
+            if claim_for(road) is None:
                 return road, None
 
     for road in tied:
-        claim = _matching_jurisdiction(jurisdictions, road, excluded, trims)
+        claim = claim_for(road)
         if claim is not None:
             return road, claim
 
@@ -360,6 +381,36 @@ def check_config(config: Dict[str, Any], known_road_names: Sequence[str]) -> Lis
                     ),
                     roads=[entry],
                 ))
+
+    # A third-party default that cannot be resolved to an agency is the quietest
+    # possible failure: every road stays with the town, which is exactly what
+    # the setting was meant to stop, and nothing anywhere says so.
+    raw_default = config.get("default_handler")
+    handler = (raw_default or "").strip() if isinstance(raw_default, str) else ""
+    if handler and handler.lower() not in MUNICIPAL_DEFAULTS:
+        if default_jurisdiction(config, jurisdictions) is None:
+            if handler.lower() in GENERIC_THIRD_PARTY:
+                detail = (
+                    f"{len(jurisdictions)} agencies are configured, so \"a third party\" "
+                    "does not say which one handles a road none of them list. "
+                    "Choose the agency by name."
+                    if jurisdictions
+                    else "No agency is configured to hand those roads to. Add one."
+                )
+            else:
+                detail = (
+                    f"No configured agency is called \"{handler}\" -- it may have been "
+                    "renamed or removed. Choose the agency again."
+                )
+            issues.append(ConfigIssue(
+                severity="warning",
+                kind="default_handler_unresolved",
+                message=(
+                    "This service is set to send unlisted roads to another agency, but "
+                    f"that cannot be resolved, so every road stays with the town. {detail}"
+                ),
+                roads=[],
+            ))
 
     return issues
 

@@ -178,6 +178,72 @@ def _as_list(value: Any) -> List[str]:
     return []
 
 
+def _agency_contacts(agency: Dict[str, Any]) -> List[Dict[str, str]]:
+    """One agency card becomes one contact block.
+
+    The routing modal collects the contact details flat on the agency itself --
+    name, phone, email, url -- rather than as a nested list, so build the list
+    the rest of the pipeline expects. An explicit `contacts` list, if a config
+    has one, wins.
+    """
+    explicit = agency.get("contacts")
+    if isinstance(explicit, list) and explicit:
+        return [c for c in explicit if isinstance(c, dict)]
+    entry = {
+        key: str(agency.get(key) or "").strip()
+        for key in ("name", "phone", "email", "url")
+    }
+    return [entry] if any(entry.values()) else []
+
+
+def jurisdictions_from_config(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Every agency in a routing config, each owning only its own roads.
+
+    Three shapes, newest first. This is the single reader for all of them, so
+    that the spatial resolver and the address resolver cannot disagree about
+    who owns a road -- they did diverge before, and a resident reporting through
+    the portal could be told something different from one phoned in.
+
+      1. `jurisdictions`  -- the explicit multi-agency shape.
+      2. `third_party_contacts` where the entries carry roads -- what the
+         routing modal writes: one card per agency, each with its own road
+         list, message and contact details.
+      3. the pre-multi-jurisdiction shape -- one unnamed third party owning
+         `exclusion_list`.
+
+    Shape 2 previously fell through to shape 3, which read the *combined*
+    exclusion_list as one nameless agency's roads and handed back every
+    agency's contacts at once. A resident on a state highway was shown the
+    county's phone number alongside the state's, under the heading "Another
+    agency".
+    """
+    jurisdictions = config.get("jurisdictions")
+    if isinstance(jurisdictions, list) and jurisdictions:
+        return [j for j in jurisdictions if isinstance(j, dict)]
+
+    agencies = config.get("third_party_contacts")
+    if isinstance(agencies, list):
+        built: List[Dict[str, Any]] = []
+        for agency in agencies:
+            if not isinstance(agency, dict):
+                continue
+            # `roads` is the normalised array; `road_list` is the raw
+            # comma-separated string the input writes as the clerk types.
+            roads = _as_list(agency.get("roads")) or _as_list(agency.get("road_list"))
+            if not roads:
+                continue
+            built.append({
+                "name": agency.get("name") or "Another agency",
+                "roads": roads,
+                "message": agency.get("message") or "",
+                "contacts": _agency_contacts(agency),
+            })
+        if built:
+            return built
+
+    return _legacy_jurisdictions(config)
+
+
 def _legacy_jurisdictions(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Read the older single-third-party shape as one unnamed jurisdiction.
 
@@ -194,6 +260,48 @@ def _legacy_jurisdictions(config: Dict[str, Any]) -> List[Dict[str, Any]]:
             "contacts": config.get("third_party_contacts") or [],
         }
     ]
+
+
+# Values meaning "the town keeps anything nobody else claimed".
+MUNICIPAL_DEFAULTS = {"", "municipality", "township", "town", "municipal"}
+# The generic literal the routing UI used to write, before it named the agency.
+GENERIC_THIRD_PARTY = {"third_party", "thirdparty", "third party", "3rd_party"}
+
+
+def default_jurisdiction(
+    config: Dict[str, Any], jurisdictions: Sequence[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """Who owns a road that no rule claims -- None meaning the municipality.
+
+    Normally the town is the default and the listed roads are the exceptions.
+    A town can invert that: an agency maintains everything and the town keeps
+    only the roads on its own list. That setting existed in the UI and did
+    nothing, because it was stored as the literal "third_party" and looked up
+    against the configured agencies' names, which never matched. Every road
+    fell back to the municipality.
+
+    It is resolved here, once, for both resolvers.
+
+    Ambiguity fails open. "third_party" does not say *which* agency when more
+    than one is configured, and guessing would redirect a resident to a phone
+    number for a road that agency does not maintain. Naming the agency in the
+    setting resolves it; check_config says so.
+    """
+    raw = config.get("default_handler")
+    handler = (raw or "").strip() if isinstance(raw, str) else ""
+    if handler.lower() in MUNICIPAL_DEFAULTS:
+        return None
+
+    real = [j for j in jurisdictions if isinstance(j, dict)]
+    for jurisdiction in real:
+        if handler in (jurisdiction.get("id"), jurisdiction.get("name")):
+            return jurisdiction
+
+    if handler.lower() in GENERIC_THIRD_PARTY:
+        return real[0] if len(real) == 1 else None
+
+    # Named something that is not configured -- a renamed or deleted agency.
+    return None
 
 
 def resolve_jurisdiction(
@@ -222,9 +330,7 @@ def resolve_jurisdiction(
         if road_matches(entry, detected_road):
             return None
 
-    jurisdictions = config.get("jurisdictions")
-    if not isinstance(jurisdictions, list) or not jurisdictions:
-        jurisdictions = _legacy_jurisdictions(config)
+    jurisdictions = jurisdictions_from_config(config)
 
     for jurisdiction in jurisdictions:
         if not isinstance(jurisdiction, dict):
@@ -239,23 +345,15 @@ def resolve_jurisdiction(
                     matched_entry=entry,
                 )
 
-    default_handler = config.get("default_handler") or "municipality"
-    if default_handler in ("municipality", "township", "", None):
+    # Nobody claimed this road by name. Under a third-party default that means
+    # it belongs to the default agency; normally it means the town.
+    fallback = default_jurisdiction(config, jurisdictions)
+    if fallback is None:
         return None
-
-    # Everything unlisted belongs to a named jurisdiction. Find it by name or id.
-    for jurisdiction in jurisdictions:
-        if not isinstance(jurisdiction, dict):
-            continue
-        if default_handler in (jurisdiction.get("id"), jurisdiction.get("name")):
-            return JurisdictionMatch(
-                name=jurisdiction.get("name") or "Another agency",
-                message=jurisdiction.get("message") or "",
-                contacts=jurisdiction.get("contacts") or [],
-                matched_road=detected_road,
-                matched_entry="(default -- road not listed as municipal)",
-            )
-
-    # A default handler was named but no such jurisdiction is configured. Treat
-    # the municipality as responsible rather than blocking on a broken config.
-    return None
+    return JurisdictionMatch(
+        name=fallback.get("name") or "Another agency",
+        message=fallback.get("message") or "",
+        contacts=fallback.get("contacts") or [],
+        matched_road=detected_road,
+        matched_entry="(default -- road not listed as municipal)",
+    )

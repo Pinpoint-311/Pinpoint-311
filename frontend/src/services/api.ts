@@ -761,7 +761,9 @@ class ApiClient {
         block_type: string | null;
         jurisdiction: string | null;
         message: string;
-        contacts: { name?: string; phone?: string; url?: string }[];
+        /** True when `message` is the generated sentence, not the clerk's own. */
+        message_is_default?: boolean;
+        contacts: { name?: string; phone?: string; email?: string; url?: string }[];
         road: string | null;
         detected_road: { name: string; distance_m: number } | null;
     }> {
