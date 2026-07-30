@@ -235,56 +235,68 @@ function SortableServiceCard({ service, onEdit, onDelete }: {
         opacity: isDragging ? 0.85 : 1,
     };
 
+    const getModeBadge = (mode?: string) => {
+        if (mode === 'third_party') return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-purple-500/15 border border-purple-500/30 text-purple-300"><ExternalLink className="w-3 h-3" /> 3rd Party</span>;
+        if (mode === 'road_based') return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/15 border border-amber-500/30 text-amber-300"><GitFork className="w-3 h-3" /> Road-Based</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/15 border border-emerald-500/30 text-emerald-300"><Building2 className="w-3 h-3" /> Municipality</span>;
+    };
+
     return (
-        <div ref={setNodeRef} style={style} className={`group ${isDragging ? 'relative' : ''}`}>
-            <Card className={`relative ${isDragging ? 'ring-2 ring-primary-500/50 shadow-2xl shadow-primary-500/20' : ''}`}>
-                {/* Drag handle - top right corner */}
+        <div ref={setNodeRef} style={style} className={`group ${isDragging ? 'relative z-50' : ''}`}>
+            <div className={`relative p-5 rounded-2xl bg-gradient-to-br from-white/[0.06] to-white/[0.02] border border-white/10 hover:border-primary-500/40 backdrop-blur-xl shadow-xl hover:shadow-[0_0_30px_rgba(99,102,241,0.12)] transition-all duration-300 ${isDragging ? 'ring-2 ring-primary-500 shadow-2xl scale-[1.02]' : ''}`}>
+                {/* Drag handle */}
                 <button
                     {...attributes}
                     {...listeners}
-                    className="absolute top-3 right-3 p-1 rounded-md text-white/15 hover:text-white/50 hover:bg-white/5 cursor-grab active:cursor-grabbing transition-colors touch-none z-10"
+                    className="absolute top-4 right-4 p-1.5 rounded-lg text-white/20 hover:text-white/70 hover:bg-white/10 cursor-grab active:cursor-grabbing transition-colors touch-none z-10"
                     aria-label={`Drag to reorder ${service.service_name}`}
                 >
                     <GripVertical className="w-4 h-4" />
                 </button>
 
                 <div className="flex items-start gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-primary-500/20 flex items-center justify-center text-primary-300">
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500/25 to-indigo-600/15 border border-primary-500/30 flex items-center justify-center text-primary-300 shrink-0 shadow-inner">
                         <Grid3X3 className="w-6 h-6" />
                     </div>
+
                     <div className="flex-1 min-w-0 pr-8">
-                        <h3 className="font-semibold text-white">{service.service_name}</h3>
-                        <p className="text-sm text-white/50 mt-1 line-clamp-2">{service.description}</p>
-                        <div className="flex items-center gap-2 mt-2 flex-wrap">
-                            <span className="text-xs text-white/30 font-mono">{service.service_code}</span>
-                            {service.routing_mode && service.routing_mode !== 'township' && (
-                                <Badge variant={service.routing_mode === 'third_party' ? 'warning' : 'info'}>
-                                    {service.routing_mode === 'third_party' ? '3rd Party' : 'Road-Based'}
-                                </Badge>
-                            )}
+                        <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="font-semibold text-white text-base tracking-tight">{service.service_name}</h3>
+                            <span className="text-[11px] text-white/40 font-mono bg-white/5 border border-white/10 px-2 py-0.5 rounded-md">{service.service_code}</span>
+                        </div>
+                        <p className="text-xs text-white/60 mt-1.5 line-clamp-2 leading-relaxed">{service.description || 'No description provided.'}</p>
+                        
+                        <div className="flex items-center gap-2 mt-3.5 flex-wrap">
+                            {getModeBadge(service.routing_mode)}
                             {service.assigned_department && (
-                                <Badge variant="default">{service.assigned_department.name}</Badge>
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-white/5 border border-white/10 text-white/80">
+                                    <Users className="w-3 h-3 text-white/40" />
+                                    {service.assigned_department.name}
+                                </span>
                             )}
                         </div>
                     </div>
-                    <div className="flex gap-1 mt-6">
+                </div>
+
+                <div className="flex items-center justify-between mt-4 pt-3.5 border-t border-white/[0.06]">
+                    <span className="text-[11px] text-white/35 font-medium">Click configure to adjust routing rules</span>
+                    <div className="flex items-center gap-1.5">
                         <button
                             onClick={() => onEdit(service)}
-                            className="opacity-0 group-hover:opacity-100 p-2 hover:bg-white/10 rounded-lg transition-all"
-                            aria-label={`Configure ${service.service_name} routing`}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-500/15 border border-primary-500/30 text-xs font-medium text-primary-200 hover:bg-primary-500/30 hover:border-primary-400 transition-all shadow-sm"
                         >
-                            <Edit className="w-4 h-4 text-white/60" aria-hidden="true" />
+                            <Edit className="w-3.5 h-3.5" /> Configure Routing
                         </button>
                         <button
                             onClick={() => onDelete(service.id)}
-                            className="opacity-0 group-hover:opacity-100 p-2 hover:bg-red-500/20 rounded-lg transition-all"
+                            className="p-1.5 hover:bg-red-500/20 border border-transparent hover:border-red-500/30 rounded-lg text-white/30 hover:text-red-300 transition-all"
                             aria-label={`Delete ${service.service_name}`}
                         >
-                            <Trash2 className="w-4 h-4 text-red-400" aria-hidden="true" />
+                            <Trash2 className="w-3.5 h-3.5" />
                         </button>
                     </div>
                 </div>
-            </Card>
+            </div>
         </div>
     );
 }
@@ -328,16 +340,52 @@ function ServiceCategoriesTab({ services, setServices, loadTabData, setShowServi
         }
     };
 
+    const roadBasedCount = services.filter(s => s.routing_mode === 'road_based').length;
+    const thirdPartyCount = services.filter(s => s.routing_mode === 'third_party').length;
+    const municipalCount = services.filter(s => !s.routing_mode || s.routing_mode === 'township').length;
+
     return (
         <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <div>
-                    <h1 className="text-xl sm:text-2xl font-bold text-white">Service Categories</h1>
-                    <p className="text-sm text-white/50 mt-1">Drag to reorder how categories appear in the resident portal</p>
+            <div className="p-6 rounded-3xl bg-gradient-to-r from-primary-900/40 via-indigo-900/30 to-purple-900/20 border border-white/10 backdrop-blur-xl shadow-2xl">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                        <div className="flex items-center gap-2 mb-1">
+                            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-primary-500/20 text-primary-300 border border-primary-500/30 uppercase tracking-wider">Catalog & Routing</span>
+                        </div>
+                        <h1 className="text-2xl font-bold text-white tracking-tight">Service Categories</h1>
+                        <p className="text-sm text-white/60 mt-1 max-w-xl">Configure portal categories, assignment rules, and automated spatial routing across agencies.</p>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                        <Button className="shadow-lg shadow-primary-500/20 hover:scale-[1.02] transition-transform" leftIcon={<Plus className="w-4 h-4" />} onClick={() => setShowServiceModal(true)}>
+                            Add Category
+                        </Button>
+                    </div>
                 </div>
-                <Button className="w-full sm:w-auto" leftIcon={<Plus className="w-4 h-4" />} onClick={() => setShowServiceModal(true)}>
-                    Add Category
-                </Button>
+
+                <div className="grid grid-cols-3 gap-3 mt-6 pt-5 border-t border-white/10">
+                    <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5 flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-xs">{municipalCount}</div>
+                        <div>
+                            <div className="text-xs font-semibold text-white">Municipality</div>
+                            <div className="text-[11px] text-white/40">Handled in-house</div>
+                        </div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5 flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold text-xs">{roadBasedCount}</div>
+                        <div>
+                            <div className="text-xs font-semibold text-white">Road-Based</div>
+                            <div className="text-[11px] text-white/40">GIS spatial routing</div>
+                        </div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5 flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400 font-bold text-xs">{thirdPartyCount}</div>
+                        <div>
+                            <div className="text-xs font-semibold text-white">3rd Party</div>
+                            <div className="text-[11px] text-white/40">Outside redirects</div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -3235,27 +3283,34 @@ export default function AdminConsole() {
             >
                 <form onSubmit={handleSaveServiceRouting} className="space-y-5 max-h-[70vh] overflow-y-auto pr-2">
                     {/* Routing Mode */}
-                    <div className="space-y-2">
-                        <label className="block text-sm font-medium text-white/70">Routing Mode</label>
-                        <div className="grid grid-cols-3 gap-2">
+                    <div className="space-y-2.5">
+                        <label className="block text-xs font-bold uppercase tracking-wider text-white/60">Routing Mode</label>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             {[
-                                { value: 'township', label: 'Municipality Handles', desc: 'We process this request' },
-                                { value: 'third_party', label: '3rd Party Only', desc: 'Block & redirect' },
-                                { value: 'road_based', label: 'Road-Based', desc: 'Route by address' },
-                            ].map(mode => (
-                                <button
-                                    type="button"
-                                    key={mode.value}
-                                    onClick={() => setServiceRouting(p => ({ ...p, routing_mode: mode.value as any }))}
-                                    className={`p-3 rounded-lg border text-left transition-colors ${serviceRouting.routing_mode === mode.value
-                                        ? 'bg-primary-500/20 border-primary-500 text-white'
-                                        : 'bg-white/5 border-white/10 text-white/70 hover:border-white/30'
-                                        }`}
-                                >
-                                    <div className="font-medium text-sm">{mode.label}</div>
-                                    <div className="text-xs text-white/50 mt-1">{mode.desc}</div>
-                                </button>
-                            ))}
+                                { value: 'township', label: 'Municipality Handles', desc: 'Processed by town staff', icon: Building2, color: 'text-emerald-400' },
+                                { value: 'third_party', label: '3rd Party Only', desc: 'Redirect to outside portal', icon: ExternalLink, color: 'text-purple-400' },
+                                { value: 'road_based', label: 'Road-Based Routing', desc: 'Route by GIS jurisdiction', icon: GitFork, color: 'text-amber-400' },
+                            ].map(mode => {
+                                const IconComponent = mode.icon;
+                                const isSelected = serviceRouting.routing_mode === mode.value;
+                                return (
+                                    <button
+                                        type="button"
+                                        key={mode.value}
+                                        onClick={() => setServiceRouting(p => ({ ...p, routing_mode: mode.value as any }))}
+                                        className={`p-4 rounded-2xl border text-left transition-all duration-200 ${isSelected
+                                            ? 'bg-gradient-to-br from-primary-500/20 via-indigo-500/15 to-purple-500/10 border-primary-400 text-white shadow-[0_0_25px_rgba(99,102,241,0.2)] ring-1 ring-primary-400/40'
+                                            : 'bg-white/[0.03] border-white/10 text-white/70 hover:border-white/25 hover:bg-white/[0.06]'
+                                            }`}
+                                    >
+                                        <div className="flex items-center gap-2.5 mb-1.5">
+                                            <IconComponent className={`w-4 h-4 ${isSelected ? 'text-primary-300' : mode.color}`} />
+                                            <div className="font-semibold text-sm text-white tracking-tight">{mode.label}</div>
+                                        </div>
+                                        <div className="text-xs text-white/50 leading-relaxed">{mode.desc}</div>
+                                    </button>
+                                );
+                            })}
                         </div>
                     </div>
 
