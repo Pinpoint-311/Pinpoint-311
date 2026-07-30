@@ -137,13 +137,13 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     // Setup progress calculation. In managed mode the platform-managed steps
     // (Google Cloud, DB Backups) are excluded — the state handles them, so
     // counting them would leave progress permanently "incomplete".
-    const setupSteps: { label: string; done: boolean; required: boolean; anchor: string; note: string }[] = [
-        { label: 'Staff sign-in', done: !!signInConfigured, required: true, anchor: 'sec-providers', note: 'Clerks cannot log in' },
-        { label: 'Map provider', done: !!mapsConfigured, required: true, anchor: 'sec-providers', note: 'Residents cannot pick a location' },
-        { label: 'Email', done: !!smtpConfigured, required: false, anchor: 'sec-optional', note: 'No confirmations or status updates' },
-        { label: 'Text messages', done: smsConfigured, required: false, anchor: 'sec-optional', note: 'Email only' },
-        ...(managedMode ? [] : [{ label: 'Cloud services', done: !!gcpConfigured, required: false, anchor: 'sec-optional', note: 'AI triage and translation stay off' }]),
-        ...(managedMode ? [] : [{ label: 'Backups', done: !!backupConfigured, required: false, anchor: 'sec-optional', note: 'No off-server copy of your records' }]),
+    const setupSteps = [
+        { label: 'Staff sign-in', done: !!signInConfigured, required: true },
+        { label: 'Email', done: !!smtpConfigured, required: false },
+        ...(managedMode ? [] : [{ label: 'Google Cloud', done: !!gcpConfigured, required: false }]),
+        { label: 'Map provider', done: !!mapsConfigured, required: true },
+        { label: 'SMS Alerts', done: smsConfigured, required: false },
+        ...(managedMode ? [] : [{ label: 'DB Backups', done: !!backupConfigured, required: false }]),
     ];
 
     /* Required first, and counted separately.
@@ -154,20 +154,6 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * and a bar reading 33% told it the opposite. The headline now answers the
      * first question and the count answers the second. */
     const completedCount = setupSteps.filter(s => s.done).length;
-    const required = setupSteps.filter(s => s.required);
-    const optional = setupSteps.filter(s => !s.required);
-    const missingRequired = required.filter(s => !s.done);
-    const ready = missingRequired.length === 0;
-
-    const jumpTo = (anchor: string) => {
-        const el = document.getElementById(anchor);
-        if (!el) return;
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        // Move focus too, or a keyboard user is scrolled somewhere their cursor
-        // is not.
-        el.setAttribute('tabindex', '-1');
-        el.focus({ preventScroll: true });
-    };
 
     // Toggle helper for collapsible instruction panels
     const toggleGuide = (id: string) => setExpandedGuide(prev => prev === id ? null : id);
@@ -299,27 +285,8 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                     <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
                         <ListChecks className="w-5 h-5 text-white" />
                     </div>
-                    <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                            <h2 className="font-semibold text-white">Setup Progress</h2>
-                            {/* Readiness added alongside the count rather than
-                                replacing it. The count is what someone tracks
-                                over time; this answers the separate question of
-                                whether the town can go live today, and the two
-                                genuinely differ -- both required items done and
-                                nothing else is ready, at 2 of 6. */}
-                            {ready ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                                    <CheckCircle className="w-3 h-3" aria-hidden="true" />
-                                    Ready to take reports
-                                </span>
-                            ) : (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide bg-amber-500/15 text-amber-300 border border-amber-500/25">
-                                    <AlertCircle className="w-3 h-3" aria-hidden="true" />
-                                    Not ready yet
-                                </span>
-                            )}
-                        </div>
+                    <div>
+                        <h2 className="font-semibold text-white">Setup Progress</h2>
                         <p className="text-white/50 text-xs">{completedCount} of {setupSteps.length} integrations configured</p>
                     </div>
                 </div>
@@ -334,56 +301,24 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                     />
                 </div>
 
-                {/* Every item is a button. The chips were the right idea and
-                    dead ends -- a clerk reading "Map provider: not configured"
-                    had to then go find it on a very long page. */}
-                <div className="space-y-3">
-                    {[
-                        { heading: 'Required', items: required },
-                        { heading: 'Optional', items: optional },
-                    ].filter(g => g.items.length > 0).map(group => (
-                        <div key={group.heading}>
-                            <p className="text-[10px] uppercase tracking-wider text-white/35 font-semibold mb-1.5">{group.heading}</p>
-                            <div className="flex flex-wrap gap-2">
-                                {group.items.map(step => (
-                                    <button
-                                        key={step.label}
-                                        type="button"
-                                        onClick={() => jumpTo(step.anchor)}
-                                        title={step.done ? undefined : step.note}
-                                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${step.done
-                                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30'
-                                            : step.required
-                                                ? 'bg-amber-500/15 text-amber-300 border border-amber-500/25 hover:bg-amber-500/25'
-                                                : 'bg-white/5 text-white/45 border border-white/10 hover:bg-white/10 hover:text-white/70'}`}
-                                    >
-                                        {step.done
-                                            ? <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" />
-                                            : step.required
-                                                ? <AlertCircle className="w-3.5 h-3.5" aria-hidden="true" />
-                                                : <div className="w-3.5 h-3.5 rounded-full border border-current" aria-hidden="true" />}
-                                        {step.label}
-                                        <span className="sr-only">{step.done ? ' — configured' : ` — not configured. ${step.note}`}</span>
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
+                {/* Step chips */}
+                <div className="flex flex-wrap gap-2">
+                    {setupSteps.map(step => (
+                        <span
+                            key={step.label}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${step.done
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                : step.required
+                                    ? 'bg-amber-500/15 text-amber-300 border border-amber-500/25'
+                                    : 'bg-white/5 text-white/40 border border-white/10'
+                                }`}
+                        >
+                            {step.done ? <CheckCircle className="w-3.5 h-3.5" /> : step.required ? <AlertCircle className="w-3.5 h-3.5" /> : <div className="w-3.5 h-3.5 rounded-full border border-current" />}
+                            {step.label}
+                            {step.required && !step.done && <span className="text-[10px] opacity-70">required</span>}
+                        </span>
                     ))}
                 </div>
-
-                {/* What actually breaks, spelled out. "Not configured" is a
-                    state; this is the consequence, which is what decides whether
-                    it matters today. */}
-                {!ready && (
-                    <ul className="mt-4 pt-3.5 border-t border-white/10 space-y-1">
-                        {missingRequired.map(step => (
-                            <li key={step.label} className="text-xs text-amber-200/75 flex items-start gap-1.5">
-                                <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" aria-hidden="true" />
-                                <span><span className="font-medium">{step.label}:</span> {step.note}.</span>
-                            </li>
-                        ))}
-                    </ul>
-                )}
             </motion.div>
 
             {/* ── Setup Instructions (collapsible) ── */}
@@ -716,9 +651,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.1 }}
-                        className={`relative rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${localSmsProvider && localSmsProvider !== 'none'
+                        className={`relative rounded-2xl border p-6 transition-all duration-300 ${localSmsProvider && localSmsProvider !== 'none'
                             ? 'bg-gradient-to-br from-emerald-500/10 via-green-500/5 to-teal-500/10 border-emerald-500/30 shadow-lg shadow-emerald-500/10'
-                            : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'
+                            : 'setup-panel border-transparent'
                             }`}
                     >
 
@@ -913,9 +848,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.2 }}
-                        className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${smtpConfigured
+                        className={`relative rounded-2xl border p-6 transition-all duration-300 ${smtpConfigured
                             ? 'bg-gradient-to-br from-violet-500/10 via-purple-500/5 to-fuchsia-500/10 border-violet-500/30 shadow-lg shadow-violet-500/10'
-                            : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'
+                            : 'setup-panel border-transparent'
                             }`}
                     >
                         {smtpConfigured && (
@@ -1068,9 +1003,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.3 }}
-                        className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${gcpConfigured
+                        className={`relative rounded-2xl border p-6 transition-all duration-300 ${gcpConfigured
                             ? 'bg-gradient-to-br from-blue-500/10 via-cyan-500/5 to-sky-500/10 border-blue-500/30 shadow-lg shadow-blue-500/10'
-                            : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'
+                            : 'setup-panel border-transparent'
                             }`}
                     >
                         {gcpConfigured && (
@@ -1331,9 +1266,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.4 }}
-                        className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${sentryConfigured
+                        className={`relative rounded-2xl border p-6 transition-all duration-300 ${sentryConfigured
                             ? 'bg-gradient-to-br from-rose-500/10 via-red-500/5 to-orange-500/10 border-rose-500/30 shadow-lg shadow-rose-500/10'
-                            : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'
+                            : 'setup-panel border-transparent'
                             }`}
                     >
                         {sentryConfigured && (
@@ -1423,9 +1358,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.5 }}
-                        className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${backupConfigured
+                        className={`relative rounded-2xl border p-6 transition-all duration-300 ${backupConfigured
                             ? 'bg-gradient-to-br from-amber-500/10 via-yellow-500/5 to-orange-500/10 border-amber-500/30 shadow-lg shadow-amber-500/10'
-                            : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'
+                            : 'setup-panel border-transparent'
                             }`}
                     >
                         {backupConfigured && (
