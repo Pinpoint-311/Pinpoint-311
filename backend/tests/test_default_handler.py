@@ -16,8 +16,18 @@ reports typed in by address.
 
 import pytest
 
-from app.services.road_geometry import RoadMatch, check_config, choose_road
 from app.services.road_matching import default_jurisdiction, resolve_jurisdiction
+
+# road_geometry pulls in geoalchemy2 and SQLAlchemy, which CI does not install.
+# Guarded per-test rather than for the module, so the address-path and
+# config-check tests -- which need neither -- still run there.
+try:
+    from app.services.road_geometry import RoadMatch, check_config, choose_road
+    HAVE_GEO_STACK = True
+except ModuleNotFoundError:  # pragma: no cover - depends on the environment
+    HAVE_GEO_STACK = False
+
+needs_geo = pytest.mark.skipif(not HAVE_GEO_STACK, reason="geoalchemy2 not installed")
 
 
 def _config(default_handler, *, municipal="Elm Street"):
@@ -93,6 +103,7 @@ def test_with_a_municipal_default_an_unlisted_road_is_not_redirected():
 
 # ---- the spatial resolver, which ignored the setting entirely ----------------
 
+@needs_geo
 def test_spatially_an_unlisted_road_goes_to_the_default_agency():
     chosen = choose_road([road("Nowhere Lane")], _config("County DPW"))
     assert chosen is not None
@@ -100,16 +111,19 @@ def test_spatially_an_unlisted_road_goes_to_the_default_agency():
     assert claim is not None and claim[0]["name"] == "County DPW"
 
 
+@needs_geo
 def test_spatially_a_municipal_road_stays_with_the_town():
     chosen = choose_road([road("Elm Street")], _config("County DPW"))
     assert chosen is not None and chosen[1] is None
 
 
+@needs_geo
 def test_spatially_a_municipal_default_redirects_nothing_unlisted():
     chosen = choose_road([road("Nowhere Lane")], _config("township"))
     assert chosen is not None and chosen[1] is None
 
 
+@needs_geo
 def test_a_switched_off_stretch_stays_with_the_town_under_an_agency_default():
     """Turning a stretch off in the coverage map must not hand it away. The
     clerk did that deliberately, and the inverted default would otherwise turn
@@ -119,12 +133,14 @@ def test_a_switched_off_stretch_stays_with_the_town_under_an_agency_default():
     assert chosen is not None and chosen[1] is None
 
 
+@needs_geo
 def test_a_trimmed_stretch_stays_with_the_town_beyond_the_trim():
     cfg = dict(_config("County DPW"), segment_trims={"f1": {"start": 0.0, "end": 0.2}})
     chosen = choose_road([road("Nowhere Lane")], cfg)  # fraction_along = 0.5, past the trim
     assert chosen is not None and chosen[1] is None
 
 
+@needs_geo
 def test_an_off_road_pin_is_never_redirected_by_the_default():
     """No road means no answer, and fail-open beats turning someone away."""
     assert choose_road([], _config("County DPW")) is None
@@ -132,6 +148,7 @@ def test_an_off_road_pin_is_never_redirected_by_the_default():
 
 # ---- the clerk is told when the setting cannot take effect -------------------
 
+@needs_geo
 def test_an_ambiguous_default_is_flagged():
     cfg = _config("third_party")
     cfg["third_party_contacts"].append(
@@ -141,16 +158,19 @@ def test_an_ambiguous_default_is_flagged():
     assert "default_handler_unresolved" in kinds
 
 
+@needs_geo
 def test_a_missing_agency_default_is_flagged():
     kinds = [i.kind for i in check_config(_config("Renamed Authority"), [])]
     assert "default_handler_unresolved" in kinds
 
 
+@needs_geo
 def test_a_resolvable_default_is_not_flagged():
     kinds = [i.kind for i in check_config(_config("County DPW"), [])]
     assert "default_handler_unresolved" not in kinds
 
 
+@needs_geo
 def test_a_municipal_default_is_not_flagged():
     kinds = [i.kind for i in check_config(_config("township"), [])]
     assert "default_handler_unresolved" not in kinds
