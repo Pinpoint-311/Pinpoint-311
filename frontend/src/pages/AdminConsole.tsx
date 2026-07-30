@@ -435,35 +435,21 @@ function ServiceCategoriesTab({ services, setServices, loadTabData, setShowServi
                 </div>
             </div>
 
-            {/* Premium Table Layout (Identical to User Management Page) */}
-            <div className="rounded-2xl bg-white/[0.03] backdrop-blur-xl border border-white/10 overflow-hidden shadow-2xl">
-                {/* Table Header */}
-                <div className="hidden md:block px-6 py-4 border-b border-white/10 bg-gradient-to-r from-white/[0.05] to-transparent">
-                    <div className="grid grid-cols-12 gap-4 items-center">
-                        <div className="col-span-4 text-xs font-semibold text-white/50 uppercase tracking-wider">Category</div>
-                        <div className="col-span-3 text-xs font-semibold text-white/50 uppercase tracking-wider">Description</div>
-                        <div className="col-span-2 text-xs font-semibold text-white/50 uppercase tracking-wider text-center">Routing Mode</div>
-                        <div className="col-span-2 text-xs font-semibold text-white/50 uppercase tracking-wider">Department</div>
-                        <div className="col-span-1 text-xs font-semibold text-white/50 uppercase tracking-wider text-right">Actions</div>
+            {/* Bubbly Glassmorphic Card Grid */}
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <SortableContext items={filteredServices.map(s => s.id)} strategy={rectSortingStrategy}>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        {filteredServices.map((service) => (
+                            <BubblyServiceCard
+                                key={service.id}
+                                service={service}
+                                onEdit={handleEditService}
+                                onDelete={handleDeleteService}
+                            />
+                        ))}
                     </div>
-                </div>
-
-                {/* Table Body with DndContext */}
-                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                    <SortableContext items={filteredServices.map(s => s.id)} strategy={rectSortingStrategy}>
-                        <div className="divide-y divide-white/5">
-                            {filteredServices.map((service) => (
-                                <SortableServiceRow
-                                    key={service.id}
-                                    service={service}
-                                    onEdit={handleEditService}
-                                    onDelete={handleDeleteService}
-                                />
-                            ))}
-                        </div>
-                    </SortableContext>
-                </DndContext>
-            </div>
+                </SortableContext>
+            </DndContext>
         </div>
     );
 }
