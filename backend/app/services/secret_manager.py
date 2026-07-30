@@ -241,6 +241,11 @@ DB_REQUIRED_KEYS = frozenset({
     "AWS_REGION", "AWS_SECRETS_PREFIX", "AWS_KMS_KEY_ID",
     # KMS selection and key path, read only by the synchronous readers.
     "KMS_PROVIDER", "KMS_LOCATION", "KMS_KEY_RING", "KMS_KEY_ID",
+    # Which store to use, read by _secrets_provider() -- env, then database,
+    # never the store itself, because it is the answer to which store that is.
+    # Scrubbing it silently reverts a town on Azure or AWS to the Google
+    # default, at which point nothing can read any of its secrets.
+    "SECRETS_PROVIDER",
 })
 
 
@@ -522,25 +527,32 @@ async def set_secret(key_name: str, value: str) -> bool:
 
 async def migrate_to_secret_manager() -> Dict[str, Any]:
     """
-    Migrate all secrets from database to Google Secret Manager.
-    
-    SAFETY: Only scrubs secrets from database AFTER verifying they can be
-    read back from GCP. This prevents data loss if the write fails.
-    
+    Migrate all secrets from the database into the configured secret store.
+
+    Works against whichever store is selected -- Google Secret Manager, Azure
+    Key Vault or AWS Secrets Manager. It was previously gated on Google alone,
+    so a town on Azure or AWS had its credentials written to the vault by the
+    save path and its database copies left behind forever.
+
+    SAFETY: Only scrubs secrets from the database AFTER verifying they can be
+    read back from the store. This prevents data loss if the write fails.
+
     Returns a summary of migrated secrets.
     """
     from app.db.session import SessionLocal
     from app.models import SystemSecret
     from app.core.encryption import decrypt_safe
     from sqlalchemy import select
-    
-    if not _is_gcp_available():
+
+    from app.services.storage_maintenance import store_reachable
+
+    if not store_reachable():
         return {
             "status": "skipped",
             "reason": "Secret Manager not available",
             "migrated": 0
         }
-    
+
     migrated = []
     verified = []
     failed = []

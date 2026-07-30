@@ -33,6 +33,11 @@ SYNC_READER_SOURCES = (
     "app/core/aws_kms.py",
     "app/core/azure_keyvault.py",
     "app/core/aws_secretsmanager.py",
+    # Reads SECRETS_PROVIDER the same way -- env, then database. It was missing
+    # from this list, and so was the key: the migration would have scrubbed the
+    # only record of which store a town had chosen, defaulting them back to
+    # Google and leaving nothing able to read anything.
+    "app/services/secret_manager.py",
 )
 
 

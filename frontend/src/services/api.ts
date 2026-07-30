@@ -1181,12 +1181,24 @@ class ApiClient {
     }
 
     async reencryptPii(): Promise<{
-        total: number;
         reencrypted: number;
-        migrated_from_fernet: number;
+        rows: number;
+        fields: number;
         errors: number;
     }> {
         return this.request('/setup/reencrypt-pii', { method: 'POST' });
+    }
+
+    /** What is not yet on the storage this town chose. Drives one advisory
+     *  line; the work itself happens on a schedule without being asked. */
+    async getStorageStatus(): Promise<StorageStatus> {
+        return this.request<StorageStatus>('/setup/storage-status');
+    }
+
+    /** Generate and store a backup passphrase. Returns it once, in the clear,
+     *  because a copy has to end up somewhere other than this server. */
+    async generateBackupKey(): Promise<{ key: string }> {
+        return this.request('/setup/backup-key', { method: 'POST' });
     }
 
     // ========== Health Dashboard & Runbook (Bus Factor Mitigation) ==========
@@ -1526,6 +1538,13 @@ export interface HealthSummary {
     level: 'ok' | 'warning' | 'critical';
     label: string;
     detail: string;
+}
+
+/** Counts of what has not yet reached the storage the town selected. */
+export interface StorageStatus {
+    secrets: { count: number; store: string | null; reachable: boolean };
+    pii: { total: number; stale: number; on_application_key: number; legacy: number; current: string | null };
+    needs_attention: boolean;
 }
 
 export interface ProactiveHealth {
