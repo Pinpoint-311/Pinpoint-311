@@ -92,6 +92,7 @@ import RoadCorridorMap from '../components/RoadCorridorMap';
 import SetupIntegrationsPage from '../components/SetupIntegrationsPage';
 import AuditLogViewer from '../components/AuditLogViewer';
 import VersionSwitcher from '../components/VersionSwitcher';
+import StayInformedHost from '../components/StayInformed';
 
 // Human-friendly retention period from a day count (reflects any override):
 // 365 -> "1 year", 2190 -> "6 years", 2555 -> "7 years", 900 -> "2.5 years".
@@ -1262,6 +1263,19 @@ export default function AdminConsole() {
 
     return (
         <div className="min-h-screen flex">
+            {/* The one voluntary outbound call this application makes. Gated on
+              * a configured deployment rather than on sign-in: `township_name`
+              * only leaves its placeholder once somebody has been through
+              * branding, which is the end of installation, and asking for a
+              * contact address in the middle of installing is asking at the
+              * worst possible moment. Never shown on the setup tab for the same
+              * reason. See components/StayInformed.tsx. */}
+            <StayInformedHost
+                ready={Boolean(settings?.township_name)
+                    && settings?.township_name !== 'Your Municipality'
+                    && currentTab !== 'integration'}
+            />
+
             {/* Mobile sidebar backdrop */}
             <AnimatePresence>
                 {sidebarOpen && (

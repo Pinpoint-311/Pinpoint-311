@@ -1036,7 +1036,7 @@ Yes. Every deployment is self-hosted on your own infrastructure.
 | **Data ownership** | The PostgreSQL database is yours to control |
 | **License** | MIT — fork, modify, and redistribute freely |
 | **Dependencies** | Open-source, with public documentation |
-| **Phone-home** | The application makes no calls back to Pinpoint 311 servers |
+| **Phone-home** | The application makes no automatic calls back to Pinpoint 311 servers. The single exception is a voluntary registration form in the admin console, which sends only what an administrator types and only when they press Submit — see COMPLIANCE.md |
 | **Recovery** | Container auto-restart and health checks |
 | **Updates** | Optional automatic image updates (see below) |
 
