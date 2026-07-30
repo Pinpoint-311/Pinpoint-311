@@ -913,3 +913,56 @@ class BlockedRequestLog(Base):
     lat = Column(Float)
     long = Column(Float)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class ConnectorHealth(Base):
+    """Whether an integration is actually working, as opposed to configured.
+
+    Every badge on the setup page answered "are the credentials stored", which
+    is a question about our own database. A clerk reading a green tick assumes
+    something stronger -- that reports are reaching the county, that emails are
+    going out -- and those are the same colour right up until someone
+    complains.
+
+    The distinction that makes this useful is `last_success_at` versus
+    `last_attempt_at`. A connector nobody has called in three weeks is not
+    healthy, it is unknown, and a system that reports those identically is why
+    an expired key gets discovered by a resident. Anything relying only on a
+    manual Test button has the same problem: it proves the credential worked
+    once, at a moment chosen by the person least likely to be surprised.
+
+    One row per connector, updated in place. This is operational state, not
+    history -- the audit log is where "what happened" lives, and keeping a row
+    per call here would grow without bound for no benefit.
+    """
+
+    __tablename__ = "connector_health"
+
+    id = Column(Integer, primary_key=True)
+
+    # "ai", "maps", "identity", "translation", "email", "sms", "govtech:accela".
+    # Free-form rather than an enum so a new connector reports health without a
+    # migration -- the cost of an enum here is that the newest integration, the
+    # one most likely to be misconfigured, is the one that cannot report.
+    connector = Column(String(64), nullable=False, unique=True, index=True)
+    provider = Column(String(64))
+
+    last_attempt_at = Column(DateTime(timezone=True))
+    last_success_at = Column(DateTime(timezone=True))
+    last_error_at = Column(DateTime(timezone=True))
+
+    # The provider's own message, truncated. Generic text ("request failed")
+    # sends a clerk to us; "SES is in sandbox mode" or "21608: unverified
+    # number" sends them to the actual fix.
+    last_error = Column(Text)
+
+    # Reset to zero on success. Drives the difference between a blip and an
+    # outage without needing per-call history.
+    consecutive_failures = Column(Integer, default=0, nullable=False)
+
+    # Counted since first use. Cheap, and answers "is this connector used at
+    # all", which decides whether a failure matters today.
+    total_successes = Column(Integer, default=0, nullable=False)
+    total_failures = Column(Integer, default=0, nullable=False)
+
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
