@@ -238,41 +238,53 @@ function SortableServiceCard({ service, onEdit, onDelete }: {
     };
 
     const getModeBadge = (mode?: string) => {
-        if (mode === 'third_party') return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-purple-500/15 border border-purple-500/30 text-purple-300"><ExternalLink className="w-3 h-3" /> 3rd Party</span>;
-        if (mode === 'road_based') return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/15 border border-amber-500/30 text-amber-300"><GitFork className="w-3 h-3" /> Road-Based</span>;
-        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/15 border border-emerald-500/30 text-emerald-300"><Building2 className="w-3 h-3" /> Municipality</span>;
+        if (mode === 'third_party') return (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-purple-500/20 to-indigo-500/20 text-purple-300 border border-purple-500/30 shadow-sm">
+                <ExternalLink className="w-3.5 h-3.5" /> 3rd Party
+            </span>
+        );
+        if (mode === 'road_based') return (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30 shadow-sm">
+                <GitFork className="w-3.5 h-3.5" /> Road-Based
+            </span>
+        );
+        return (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-emerald-500/20 to-teal-500/20 text-emerald-300 border border-emerald-500/30 shadow-sm">
+                <Building2 className="w-3.5 h-3.5" /> Municipality
+            </span>
+        );
     };
 
     return (
         <div ref={setNodeRef} style={style} className={`group ${isDragging ? 'relative z-50' : ''}`}>
-            <div className={`relative p-5 rounded-2xl bg-gradient-to-br from-white/[0.06] to-white/[0.02] border border-white/10 hover:border-primary-500/40 backdrop-blur-xl shadow-xl hover:shadow-[0_0_30px_rgba(99,102,241,0.12)] transition-all duration-300 ${isDragging ? 'ring-2 ring-primary-500 shadow-2xl scale-[1.02]' : ''}`}>
+            <div className={`relative p-5 rounded-2xl bg-white/[0.03] backdrop-blur-xl border border-white/10 hover:border-primary-500/40 hover:bg-white/[0.05] shadow-xl hover:shadow-[0_0_30px_rgba(99,102,241,0.12)] transition-all duration-300 ${isDragging ? 'ring-2 ring-primary-500 shadow-2xl scale-[1.02]' : ''}`}>
                 {/* Drag handle */}
                 <button
                     {...attributes}
                     {...listeners}
-                    className="absolute top-4 right-4 p-1.5 rounded-lg text-white/20 hover:text-white/70 hover:bg-white/10 cursor-grab active:cursor-grabbing transition-colors touch-none z-10"
+                    className="absolute top-4 right-4 p-1.5 rounded-lg text-white/20 hover:text-white/80 hover:bg-white/10 cursor-grab active:cursor-grabbing transition-colors touch-none z-10"
                     aria-label={`Drag to reorder ${service.service_name}`}
                 >
                     <GripVertical className="w-4 h-4" />
                 </button>
 
                 <div className="flex items-start gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500/25 to-indigo-600/15 border border-primary-500/30 flex items-center justify-center text-primary-300 shrink-0 shadow-inner">
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500/20 to-indigo-600/15 border border-primary-500/30 flex items-center justify-center text-primary-300 shrink-0 shadow-lg">
                         <Grid3X3 className="w-6 h-6" />
                     </div>
 
                     <div className="flex-1 min-w-0 pr-8">
-                        <div className="flex items-center gap-2 flex-wrap">
-                            <h3 className="font-semibold text-white text-base tracking-tight">{service.service_name}</h3>
-                            <span className="text-[11px] text-white/40 font-mono bg-white/5 border border-white/10 px-2 py-0.5 rounded-md">{service.service_code}</span>
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                            <h3 className="font-bold text-white text-base tracking-tight">{service.service_name}</h3>
+                            <span className="text-[11px] font-mono font-medium text-white/50 bg-white/5 border border-white/10 px-2 py-0.5 rounded-md tracking-wider">{service.service_code}</span>
                         </div>
                         <p className="text-xs text-white/60 mt-1.5 line-clamp-2 leading-relaxed">{service.description || 'No description provided.'}</p>
                         
-                        <div className="flex items-center gap-2 mt-3.5 flex-wrap">
+                        <div className="flex items-center gap-2.5 mt-3.5 flex-wrap">
                             {getModeBadge(service.routing_mode)}
                             {service.assigned_department && (
-                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-white/5 border border-white/10 text-white/80">
-                                    <Users className="w-3 h-3 text-white/40" />
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-white/5 border border-white/10 text-white/80">
+                                    <Users className="w-3.5 h-3.5 text-white/40" />
                                     {service.assigned_department.name}
                                 </span>
                             )}
@@ -280,21 +292,21 @@ function SortableServiceCard({ service, onEdit, onDelete }: {
                     </div>
                 </div>
 
-                <div className="flex items-center justify-between mt-4 pt-3.5 border-t border-white/[0.06]">
-                    <span className="text-[11px] text-white/35 font-medium">Click configure to adjust routing rules</span>
-                    <div className="flex items-center gap-1.5">
+                <div className="flex items-center justify-between mt-4 pt-3.5 border-t border-white/10">
+                    <span className="text-[11px] text-white/40 font-medium">Drag handle to reorder portal list</span>
+                    <div className="flex items-center gap-2">
                         <button
                             onClick={() => onEdit(service)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-500/15 border border-primary-500/30 text-xs font-medium text-primary-200 hover:bg-primary-500/30 hover:border-primary-400 transition-all shadow-sm"
+                            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-primary-500/20 border border-primary-500/30 text-xs font-semibold text-primary-200 hover:bg-primary-500/30 hover:border-primary-400 transition-all shadow-md"
                         >
                             <Edit className="w-3.5 h-3.5" /> Configure Routing
                         </button>
                         <button
                             onClick={() => onDelete(service.id)}
-                            className="p-1.5 hover:bg-red-500/20 border border-transparent hover:border-red-500/30 rounded-lg text-white/30 hover:text-red-300 transition-all"
+                            className="p-1.5 hover:bg-red-500/20 border border-transparent hover:border-red-500/30 rounded-xl text-white/30 hover:text-red-300 transition-all"
                             aria-label={`Delete ${service.service_name}`}
                         >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-4 h-4" />
                         </button>
                     </div>
                 </div>
@@ -346,54 +358,110 @@ function ServiceCategoriesTab({ services, setServices, loadTabData, setShowServi
     const thirdPartyCount = services.filter(s => s.routing_mode === 'third_party').length;
     const municipalCount = services.filter(s => !s.routing_mode || s.routing_mode === 'township').length;
 
+    const [searchQuery, setSearchQuery] = useState('');
+    const [filterMode, setFilterMode] = useState<string>('all');
+
+    const filteredServices = services.filter(s => {
+        const matchesSearch = s.service_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            s.service_code.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (s.description || '').toLowerCase().includes(searchQuery.toLowerCase());
+        const mode = s.routing_mode || 'township';
+        const matchesFilter = filterMode === 'all' || mode === filterMode;
+        return matchesSearch && matchesFilter;
+    });
+
     return (
         <div className="space-y-6">
-            <div className="p-6 rounded-3xl bg-gradient-to-r from-primary-900/40 via-indigo-900/30 to-purple-900/20 border border-white/10 backdrop-blur-xl shadow-2xl">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div>
-                        <div className="flex items-center gap-2 mb-1">
-                            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-primary-500/20 text-primary-300 border border-primary-500/30 uppercase tracking-wider">Catalog & Routing</span>
-                        </div>
-                        <h1 className="text-2xl font-bold text-white tracking-tight">Service Categories</h1>
-                        <p className="text-sm text-white/60 mt-1 max-w-xl">Configure portal categories, assignment rules, and automated spatial routing across agencies.</p>
-                    </div>
+            {/* Top Bar Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                    <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Service Categories</h1>
+                    <p className="text-sm text-white/50 mt-1">Configure portal categories, assignment rules, and automated spatial routing</p>
+                </div>
+                <Button
+                    leftIcon={<Plus className="w-4 h-4" />}
+                    onClick={() => setShowServiceModal(true)}
+                    className="w-full sm:w-auto bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-500/25"
+                >
+                    Add Category
+                </Button>
+            </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
-                        <Button className="shadow-lg shadow-primary-500/20 hover:scale-[1.02] transition-transform" leftIcon={<Plus className="w-4 h-4" />} onClick={() => setShowServiceModal(true)}>
-                            Add Category
-                        </Button>
+            {/* 3 Premium Stat Cards (Matching Users Management Page) */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border border-emerald-500/20 backdrop-blur-sm shadow-xl">
+                    <div className="flex items-center gap-3.5">
+                        <div className="w-11 h-11 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                            <Building2 className="w-5 h-5 text-emerald-400" />
+                        </div>
+                        <div>
+                            <p className="text-2xl font-bold text-white">{municipalCount}</p>
+                            <p className="text-xs font-medium text-emerald-300/80">Municipality (Handled In-House)</p>
+                        </div>
                     </div>
                 </div>
-
-                <div className="grid grid-cols-3 gap-3 mt-6 pt-5 border-t border-white/10">
-                    <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5 flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-xs">{municipalCount}</div>
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-500/10 to-amber-600/5 border border-amber-500/20 backdrop-blur-sm shadow-xl">
+                    <div className="flex items-center gap-3.5">
+                        <div className="w-11 h-11 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center shrink-0">
+                            <GitFork className="w-5 h-5 text-amber-400" />
+                        </div>
                         <div>
-                            <div className="text-xs font-semibold text-white">Municipality</div>
-                            <div className="text-[11px] text-white/40">Handled in-house</div>
+                            <p className="text-2xl font-bold text-white">{roadBasedCount}</p>
+                            <p className="text-xs font-medium text-amber-300/80">Road-Based (GIS Spatial)</p>
                         </div>
                     </div>
-                    <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5 flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold text-xs">{roadBasedCount}</div>
-                        <div>
-                            <div className="text-xs font-semibold text-white">Road-Based</div>
-                            <div className="text-[11px] text-white/40">GIS spatial routing</div>
+                </div>
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-purple-500/10 to-purple-600/5 border border-purple-500/20 backdrop-blur-sm shadow-xl">
+                    <div className="flex items-center gap-3.5">
+                        <div className="w-11 h-11 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center shrink-0">
+                            <ExternalLink className="w-5 h-5 text-purple-400" />
                         </div>
-                    </div>
-                    <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5 flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400 font-bold text-xs">{thirdPartyCount}</div>
                         <div>
-                            <div className="text-xs font-semibold text-white">3rd Party</div>
-                            <div className="text-[11px] text-white/40">Outside redirects</div>
+                            <p className="text-2xl font-bold text-white">{thirdPartyCount}</p>
+                            <p className="text-xs font-medium text-purple-300/80">3rd Party (Outside Redirects)</p>
                         </div>
                     </div>
                 </div>
             </div>
 
+            {/* Filter & Search Bar */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-xl">
+                <div className="relative w-full sm:w-80">
+                    <input
+                        type="text"
+                        placeholder="Filter categories or codes..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full h-9 pl-9 pr-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 text-xs focus:outline-none focus:border-primary-400 focus:bg-white/10"
+                    />
+                    <Grid3X3 className="w-4 h-4 text-white/40 absolute left-3 top-2.5" />
+                </div>
+
+                <div className="flex items-center gap-1.5 w-full sm:w-auto overflow-x-auto">
+                    {[
+                        { id: 'all', label: `All (${services.length})` },
+                        { id: 'township', label: `Municipality (${municipalCount})` },
+                        { id: 'road_based', label: `Road-Based (${roadBasedCount})` },
+                        { id: 'third_party', label: `3rd Party (${thirdPartyCount})` },
+                    ].map((tab) => (
+                        <button
+                            key={tab.id}
+                            onClick={() => setFilterMode(tab.id)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${filterMode === tab.id
+                                ? 'bg-primary-500/20 border border-primary-500/40 text-primary-200 shadow-md'
+                                : 'text-white/50 hover:text-white/80 hover:bg-white/5 border border-transparent'
+                                }`}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                <SortableContext items={services.map(s => s.id)} strategy={rectSortingStrategy}>
+                <SortableContext items={filteredServices.map(s => s.id)} strategy={rectSortingStrategy}>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {services.map((service) => (
+                        {filteredServices.map((service) => (
                             <SortableServiceCard
                                 key={service.id}
                                 service={service}
@@ -4200,7 +4268,7 @@ export default function AdminConsole() {
                                     </p>
                                 ) : (
                                     <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto p-3 rounded-lg bg-white/5 border border-white/10">
-                                        {services.map((service) => (
+                                        {filteredServices.map((service) => (
                                             <label
                                                 key={service.service_code}
                                                 className="flex items-center gap-2 text-sm text-white/70 hover:text-white cursor-pointer p-2 rounded hover:bg-white/10"
