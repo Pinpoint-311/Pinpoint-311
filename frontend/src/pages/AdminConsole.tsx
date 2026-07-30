@@ -3600,22 +3600,7 @@ export default function AdminConsole() {
                                 <Route className="w-4 h-4" /> Road-Based Routing
                             </h4>
 
-                            {/* Default Handler */}
-                            <div className="space-y-2">
-                                <label className="block text-sm font-medium text-white/70">Default Handler</label>
-                                <select
-                                    value={serviceRouting.routing_config.default_handler}
-                                    onChange={(e) => setServiceRouting(p => ({
-                                        ...p,
-                                        routing_config: { ...p.routing_config, default_handler: e.target.value as any }
-                                    }))}
-                                    className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
-                                    aria-label="Default handler"
-                                >
-                                    <option value="township">Municipality handles by default</option>
-                                    <option value="third_party">Third party handles by default</option>
-                                </select>
-                            </div>
+
 
                             {/* Municipality Department */}
                             <div className="space-y-2">
@@ -3736,21 +3721,7 @@ export default function AdminConsole() {
                                 )
                             )}
 
-                            <RoadCorridorMap
-                                roads={
-                                    serviceRouting.routing_config.default_handler === 'township'
-                                        ? (typeof serviceRouting.routing_config.exclusion_list === 'string' ? serviceRouting.routing_config.exclusion_list : (Array.isArray(serviceRouting.routing_config.exclusion_list) ? (serviceRouting.routing_config.exclusion_list as string[]).join(', ') : ''))
-                                        : (typeof serviceRouting.routing_config.inclusion_list === 'string' ? serviceRouting.routing_config.inclusion_list : (Array.isArray(serviceRouting.routing_config.inclusion_list) ? (serviceRouting.routing_config.inclusion_list as string[]).join(', ') : ''))
-                                }
-                                townshipBoundary={townshipBoundary}
-                                excludedFeatureIds={excludedSegments}
-                                onExcludedChange={setExcludedSegments}
-                                trims={segmentTrims}
-                                onTrimsChange={setSegmentTrims}
-                                corridorMetres={corridorMetres}
-                                onCorridorMetresChange={setCorridorMetres}
-                                apiKey={mapsApiKey}
-                            />
+
 
                             {routingIssues.length > 0 && (
                                 <ul className="space-y-2" aria-label="Routing configuration issues">
