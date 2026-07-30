@@ -146,3 +146,47 @@ async def test_every_shipped_capability_reports_every_provider(store):
         for p in providers:
             if any(_field_required(f) for f in p["credential_fields"]):
                 assert got[p["provider"]] is False, f"{name}/{p['provider']}"
+
+
+# ---- the test endpoint's allow-list -------------------------------------------
+#
+# `POST /providers/{capability}/test` took the path segment unvalidated and
+# handed it to connector_health, whose _row() creates a row for whatever name it
+# is given. So any admin request could insert arbitrary rows into the table the
+# setup page renders, named from the URL. save_provider had always validated;
+# test_provider had not.
+
+def test_the_test_endpoint_validates_capability_before_using_it():
+    import inspect
+
+    from app.api import system
+
+    src = inspect.getsource(system.test_provider)
+    guard = src.index("capability not in _PROVIDER_SELECT_KEY")
+    # Before the first thing that would persist a row under that name.
+    assert guard < src.index("_remember"), "validation must precede any recording"
+
+
+def test_the_rejection_does_not_echo_the_path_segment():
+    """The 400 body used to interpolate the raw segment straight back."""
+    import inspect
+
+    from app.api import system
+
+    src = inspect.getsource(system.test_provider)
+    assert 'detail=f"Test not supported for: {capability}"' not in src
+    assert 'f"Unknown capability. Expected one of:' in src
+
+
+def test_the_allow_list_covers_every_capability_the_endpoint_handles():
+    """If a new branch is added to test_provider, the allow-list must admit it,
+    or the capability becomes unreachable behind a 400."""
+    import inspect
+
+    from app.api import system
+
+    src = inspect.getsource(system.test_provider)
+    handled = {line.split('"')[1] for line in src.splitlines()
+               if line.strip().startswith('if capability == "')}
+    assert handled, "expected to find the per-capability branches"
+    assert handled <= set(system._PROVIDER_SELECT_KEY), handled - set(system._PROVIDER_SELECT_KEY)
