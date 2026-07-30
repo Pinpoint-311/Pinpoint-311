@@ -215,6 +215,9 @@ export default function ResidentPortal() {
     // rather than only quoting the town's configured sentence.
     const [blockJurisdiction, setBlockJurisdiction] = useState<string | null>(null);
     const [blockMessage, setBlockMessage] = useState('');
+    // Whether blockMessage is the backend's generated sentence rather than the
+    // clerk's own, so the notice can avoid restating its own heading.
+    const [blockMessageIsDefault, setBlockMessageIsDefault] = useState(false);
     const [blockContacts, setBlockContacts] = useState<RedirectContact[]>([]);
 
     // Custom question answers
@@ -313,6 +316,7 @@ export default function ResidentPortal() {
         if (service.routing_mode === 'third_party') {
             setIsBlocked(true);
             setBlockMessage(service.routing_config?.message || '');
+            setBlockMessageIsDefault(!(service.routing_config?.message || '').trim());
             setBlockContacts(service.routing_config?.contacts || []);
             // Same fallback the backend uses for this mode: no agency-name field
             // exists, so the first contact's name is who the clerk named.
@@ -353,6 +357,7 @@ export default function ResidentPortal() {
             setDetectedRoad(result.detected_road);
             setIsBlocked(result.blocked);
             setBlockMessage(result.blocked ? result.message : '');
+            setBlockMessageIsDefault(Boolean(result.blocked && result.message_is_default));
             setBlockContacts(
                 result.blocked
                     ? (result.contacts || []).map(c => ({
@@ -977,6 +982,7 @@ export default function ResidentPortal() {
                                         variant="service"
                                         jurisdiction={blockJurisdiction}
                                         message={blockMessage}
+                                        messageIsDefault={blockMessageIsDefault}
                                         contacts={blockContacts}
                                     />
                                 )}
@@ -1086,6 +1092,7 @@ export default function ResidentPortal() {
                                                         variant="road"
                                                         jurisdiction={blockJurisdiction}
                                                         message={blockMessage}
+                                                        messageIsDefault={blockMessageIsDefault}
                                                         contacts={blockContacts}
                                                         roadName={detectedRoad?.name}
                                                     />

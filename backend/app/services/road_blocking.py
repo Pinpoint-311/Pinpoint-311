@@ -37,6 +37,12 @@ class BlockDecision:
     message: str = ""
     contacts: List[Dict[str, str]] = None
     road_name: Optional[str] = None
+    # True when `message` is our generated sentence rather than something the
+    # clerk wrote. The string is still filled in, because API clients of the 409
+    # get only that field and a blank one explains nothing -- but the portal has
+    # a heading that already says the same thing, so it uses this to avoid
+    # printing "Cranbury Rd is maintained by County DPW" twice in a row.
+    message_is_default: bool = False
 
     def __post_init__(self) -> None:
         if self.contacts is None:
@@ -96,6 +102,7 @@ async def evaluate(
                 # Never empty: API clients of the 409 get only this string, and a
                 # blank one tells a resident nothing about why they were stopped.
                 message=config.get("message") or f"This service is handled by {name}.",
+                message_is_default=not (config.get("message") or "").strip(),
                 contacts=contacts,
             )
 
@@ -112,6 +119,7 @@ async def evaluate(
             block_type="road_based",
             jurisdiction=match.name,
             message=match.message or f"This road is maintained by {match.name}.",
+            message_is_default=not (match.message or "").strip(),
             contacts=match.contacts or [],
             road_name=match.matched_road,
         )

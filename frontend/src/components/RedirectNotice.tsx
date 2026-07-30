@@ -35,6 +35,10 @@ interface RedirectNoticeProps {
     jurisdiction?: string | null;
     /** The clerk's own wording for this agency, if they wrote any. */
     message?: string;
+    /** True when `message` is the backend's generated sentence rather than the
+     *  clerk's. It restates the heading, so the notice says something more
+     *  useful instead. */
+    messageIsDefault?: boolean;
     contacts: RedirectContact[];
     /** The road the pin landed on, when the redirect was decided spatially. */
     roadName?: string | null;
@@ -60,10 +64,10 @@ function ContactAction({ icon: Icon, label, value, kind }: {
         <a
             href={href(kind, value)}
             {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-            className="contact-action group flex items-center gap-3 rounded-2xl bg-white/[0.06] hover:bg-white/[0.11] border border-white/10 hover:border-white/20 px-4 py-3 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70"
+            className="contact-action group flex items-center gap-3 rounded-2xl bg-white/[0.06] hover:bg-white/[0.11] border border-white/10 hover:border-white/20 px-4 py-3 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/70"
         >
             <span className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
-                <Icon className="w-4 h-4 text-amber-200" aria-hidden="true" />
+                <Icon className="w-4 h-4 text-rose-300" aria-hidden="true" />
             </span>
             <span className="min-w-0 flex-1">
                 <span className="block text-[11px] uppercase tracking-wider text-white/45 font-semibold">{label}</span>
@@ -85,7 +89,7 @@ function ContactAction({ icon: Icon, label, value, kind }: {
 }
 
 export default function RedirectNotice({
-    jurisdiction, message, contacts, roadName, variant = 'road',
+    jurisdiction, message, messageIsDefault, contacts, roadName, variant = 'road',
 }: RedirectNoticeProps) {
     const agency = (jurisdiction || '').trim();
     const heading = agency
@@ -105,36 +109,37 @@ export default function RedirectNotice({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.25, ease: 'easeOut' }}
             role="status"
-            className="relative overflow-hidden rounded-3xl border border-amber-300/25 bg-gradient-to-br from-amber-500/[0.14] via-orange-500/[0.08] to-transparent shadow-xl"
+            className="relative overflow-hidden rounded-3xl border border-rose-400/30 bg-gradient-to-br from-rose-500/[0.17] via-red-500/[0.09] to-transparent shadow-xl"
         >
             {/* Top glow accent, matching the service cards. */}
             <div
-                className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-amber-200/60 to-transparent"
+                className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-rose-300/60 to-transparent"
                 aria-hidden="true"
             />
             <div
-                className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 w-72 h-48 rounded-full bg-amber-400/15 blur-3xl"
+                className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 w-72 h-48 rounded-full bg-rose-500/15 blur-3xl"
                 aria-hidden="true"
             />
 
             <div className="relative p-6 sm:p-7">
                 <div className="flex items-start gap-4">
-                    <span className="w-11 h-11 rounded-2xl bg-amber-400/15 border border-amber-300/25 flex items-center justify-center shrink-0">
-                        <Building2 className="w-5 h-5 text-amber-200" aria-hidden="true" />
+                    <span className="w-11 h-11 rounded-2xl bg-rose-500/15 border border-rose-400/30 flex items-center justify-center shrink-0">
+                        <Building2 className="w-5 h-5 text-rose-300" aria-hidden="true" />
                     </span>
                     <div className="min-w-0 flex-1">
-                        <p className="text-[11px] uppercase tracking-[0.14em] text-amber-200/70 font-bold">
+                        <p className="text-[11px] uppercase tracking-[0.14em] text-rose-300/85 font-bold">
                             Report this to another agency
                         </p>
                         <h3 className="text-lg sm:text-xl font-semibold text-white mt-1 leading-snug">
                             {heading}
                         </h3>
 
-                        {message ? (
+                        {message && !messageIsDefault ? (
                             <p className="text-white/70 mt-2.5 leading-relaxed">{message}</p>
                         ) : (
-                            /* Only when the clerk wrote nothing -- otherwise this
-                               restates their own sentence back at the resident. */
+                            /* The clerk wrote nothing, so `message` is the generated
+                               sentence, which is the heading again. Say something the
+                               heading does not. */
                             <p className="text-white/70 mt-2.5 leading-relaxed">
                                 The town cannot take this one, so filing it here would not reach
                                 anyone who can fix it. {agency || 'The agency below'} accepts
