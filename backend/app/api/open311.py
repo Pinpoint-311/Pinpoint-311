@@ -698,6 +698,7 @@ async def create_request(
                 "error": "redirected",
                 "jurisdiction": decision.jurisdiction,
                 "message": decision.message,
+                "message_is_default": decision.message_is_default,
                 "contacts": decision.contacts,
                 "road": decision.road_name,
             },

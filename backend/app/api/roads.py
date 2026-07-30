@@ -63,6 +63,7 @@ async def road_check(payload: RoadCheckRequest, db: AsyncSession = Depends(get_d
         "block_type": decision.block_type,
         "jurisdiction": decision.jurisdiction,
         "message": decision.message,
+        "message_is_default": decision.message_is_default,
         "contacts": decision.contacts,
         "road": decision.road_name,
         "detected_road": detected,
