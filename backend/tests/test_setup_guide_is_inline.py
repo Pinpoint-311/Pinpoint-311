@@ -7,16 +7,16 @@ choose your provider" -- and then wrote a test asserting the guide did NOT carry
 the steps, which locked the mistake in. A test can encode a misreading as firmly
 as it encodes a requirement.
 
-So the requirement, stated plainly: a clerk following this guide top to bottom
-never has to leave it. Each section that needs a credential renders the console
-walk and the boxes it fills, for the provider the questionnaire already
-established, with a Save & Test button.
+The requirement: a clerk works through this top to bottom without leaving it.
 
-There is still exactly one copy of the walk -- both the guide and the cards
-mount ProviderCredentialSteps over setupStepsContent.tsx. The thing the old test
-was really guarding, two hand-written copies drifting apart, is guarded by
-`test_the_guide_does_not_repeat_the_cards_console_steps` in
-test_setup_steps_content.py, which still passes and should keep passing.
+What is checked where. The grouping arithmetic -- which capabilities share a
+login, what order tasks come in, whether every item has somewhere to type -- is
+plain TypeScript in `setupPlan.ts` and is tested directly in
+`setupPlan.test.ts`, where the assertions can be about behaviour rather than
+about the text of a file. What is left here is the handful of invariants that
+really are properties of the source: that no handoff sentence has come back,
+that the wizard is what the page mounts, and that nothing anywhere promises a
+price or a duration.
 """
 
 import re
@@ -25,78 +25,90 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-GUIDE = ROOT / "frontend/src/components/SetupIntegrationsPage.tsx"
-INLINE = ROOT / "frontend/src/components/InlineProviderSetup.tsx"
-SHARED = ROOT / "frontend/src/components/ProviderCredentialSteps.tsx"
-CARDS = ROOT / "frontend/src/components/ServiceProviders.tsx"
+FRONTEND = ROOT / "frontend/src/components"
+GUIDE = FRONTEND / "SetupIntegrationsPage.tsx"
+WIZARD = FRONTEND / "SetupWizard.tsx"
+PLAN = FRONTEND / "setupPlan.ts"
+INLINE = FRONTEND / "InlineProviderSetup.tsx"
+SHARED = FRONTEND / "ProviderCredentialSteps.tsx"
+CARDS = FRONTEND / "ServiceProviders.tsx"
+CONTENT = FRONTEND / "setupStepsContent.tsx"
+
+SETUP_SURFACE = (GUIDE, WIZARD, PLAN, INLINE, SHARED, CONTENT)
+
+
+def _read(path: Path) -> str:
+    if not path.exists():
+        pytest.skip("frontend not present in this checkout")
+    return path.read_text()
 
 
 @pytest.fixture(scope="module")
 def guide() -> str:
-    if not GUIDE.exists():
-        pytest.skip("frontend not present in this checkout")
-    return GUIDE.read_text()
+    return _read(GUIDE)
 
 
 # ---------------------------------------------------------------------------
 # No handoffs
 # ---------------------------------------------------------------------------
 
-# The exact shapes the guide used to end its sections with. Any of these coming
-# back means a section has gone back to describing work that happens elsewhere.
 HANDOFF_PHRASES = (
     "Scroll to the",
     "card below and choose your",
-    "card further down the page and",
+    "card below, and press",
+    "Enter the bucket and keys in the",
 )
 
 
-def test_no_section_defers_to_a_card(guide):
+def test_no_section_defers_to_a_card():
     """A guide that says "go and do this somewhere else" is a table of contents.
 
-    The specific failure: someone reading step 2 of sign-in was sent three
-    thousand pixels down the page, to a card that then asked them again which
-    provider they wanted -- a question they had answered in the questionnaire at
-    the top of this very panel.
+    Someone reading step 2 of sign-in was sent three thousand pixels down the
+    page, to a card that then asked them again which provider they wanted -- a
+    question they had answered at the top of the very same panel.
     """
-    found = [p for p in HANDOFF_PHRASES if p in guide]
-    assert not found, (
-        f"the setup guide has gone back to pointing at the cards: {found}. "
-        "Sections that need a credential should mount InlineProviderSetup instead."
+    offenders = []
+    for path in (GUIDE, WIZARD, PLAN):
+        text = _read(path)
+        offenders += [f"{path.name}: {p}" for p in HANDOFF_PHRASES if p in text]
+    assert not offenders, (
+        f"the setup guide has gone back to pointing at the cards: {offenders}"
     )
 
 
-def test_every_credential_section_sets_up_inline(guide):
-    """Each capability a town can configure from the guide does it here.
-
-    Not an arbitrary list: these are the capabilities whose absence stops a town
-    taking a report or sending a reply. Redaction is included because a fresh
-    install blurs on this server and a town should be able to point that at a
-    cloud without hunting for a card.
-    """
-    expected = {"identity", "maps", "ai", "translation", "kms", "email", "sms", "redaction"}
-    mounted = set(re.findall(r'<InlineProviderSetup[^>]*?\scap="([a-z]+)"', guide))
-    missing = expected - mounted
-    assert not missing, f"no inline setup in the guide for: {sorted(missing)}"
+def test_the_page_mounts_the_wizard(guide):
+    assert "<SetupWizard" in guide
+    # And hands it everything it needs to do the work in place rather than
+    # describing it. Any of these missing is a silently half-wired panel.
+    for prop in ("isDone=", "onRefresh=", "publicOrigin=", "renderFoundation=", "onChooseProvider="):
+        assert prop in guide, f"the wizard is mounted without {prop}"
 
 
-def test_inline_setup_can_actually_save(guide):
-    """Boxes with no save button are a form that loses what you typed.
+def test_the_wizard_sets_providers_up_in_place():
+    wizard = _read(WIZARD)
+    assert "InlineProviderSetup" in wizard, "the wizard renders no credential boxes"
+    assert "PlainSecrets" in wizard, "settings with no provider card have nowhere to go"
 
-    Each call site has to pass onSaved through, or the progress chips
-    and "Done" badges at the top never move and the clerk cannot tell that
-    anything landed.
-    """
-    if not INLINE.exists():
-        pytest.skip("frontend not present in this checkout")
-    inline = INLINE.read_text()
-    assert "api.saveProvider" in inline, "the inline block cannot save"
-    assert "api.testProvider" in inline, "a save that is not verified is the failure this page exists to avoid"
-    assert "onSaved={onRefresh}" in guide, "saves in the guide never refresh the page's own status"
+
+def test_inline_setup_saves_and_then_verifies():
+    """A save that is not verified is the silent failure this page exists to
+    avoid, so the live test is part of saving rather than a second button."""
+    inline = _read(INLINE)
+    assert "api.saveProvider" in inline
+    assert "api.testProvider" in inline
+
+
+def test_the_wizard_only_advances_on_a_passing_test():
+    """Being moved along past a credential that does not work is worse than not
+    advancing at all: it reads as confirmation."""
+    wizard = _read(WIZARD)
+    assert "onSaved={onRefresh}" not in wizard, "advancing on save rather than on a passing test"
+    assert "verified &&" in wizard, "nothing gates the advance on the test result"
+    assert "advanceFrom" in wizard
 
 
 # ---------------------------------------------------------------------------
-# One copy of the walk, rendered twice
+# One copy of the walk, rendered in both places
 # ---------------------------------------------------------------------------
 
 def test_the_guide_and_the_cards_render_the_same_component():
@@ -105,34 +117,20 @@ def test_the_guide_and_the_cards_render_the_same_component():
     Last time this page carried two hand-written copies, the guide told towns
     Okta's issuer was their org URL while the card told them the opposite.
     """
-    if not (SHARED.exists() and CARDS.exists() and INLINE.exists()):
-        pytest.skip("frontend not present in this checkout")
     for path in (CARDS, INLINE):
-        assert "ProviderCredentialSteps" in path.read_text(), (
+        assert "ProviderCredentialSteps" in _read(path), (
             f"{path.name} renders setup steps without the shared component"
         )
-    # The shared component is the only place stepsFor is turned into markup.
-    assert "stepsFor" in SHARED.read_text()
+    assert "stepsFor" in _read(SHARED)
 
 
 # ---------------------------------------------------------------------------
-# Dynamic: the questionnaire actually drives what is shown
+# The questionnaire drives the page
 # ---------------------------------------------------------------------------
 
 def test_the_cloud_answer_picks_the_provider_rather_than_asking_again(guide):
-    """Asking "which cloud?" at the top is pointless if every section re-asks.
-
-    AI, translation and key management are cloud decisions, so they take the
-    answer. Email, SMS and redaction genuinely are not -- a town on Google may
-    well send through SES -- so those keep a picker seeded from the cloud.
-    """
     for derived in ("aiProvider", "emailProvider", "smsProvider", "redactionProvider"):
         assert f"const {derived} =" in guide, f"{derived} is not derived from the questionnaire"
-    assert 'cap="ai" provider={aiProvider}' in guide
-    assert 'cap="translation" provider={setupCloud}' in guide
-    assert 'cap="kms" provider={setupCloud}' in guide
-    assert 'cap="identity" provider={setupIdp}' in guide
-    assert 'cap="maps" provider={setupMaps}' in guide
 
 
 def test_changing_the_cloud_moves_the_email_and_sms_defaults(guide):
@@ -140,66 +138,94 @@ def test_changing_the_cloud_moves_the_email_and_sms_defaults(guide):
 
     Storing the resolved provider would freeze it: a town that picked Google,
     then switched to Azure at the top, would still be looking at SMTP with
-    nothing saying why. Holding "has the clerk overridden this?" instead lets
-    the default follow the cloud while a deliberate pick stays put.
+    nothing saying why.
     """
     assert "emailOverride ?? EMAIL_BY_CLOUD[setupCloud]" in guide
     assert "smsOverride ?? SMS_BY_CLOUD[setupCloud]" in guide
     assert "redactionOverride ?? setupCloud" in guide
 
 
-def test_every_extra_has_a_chip_and_every_chip_gates_something(guide):
-    """A feature in the list with no chip cannot be turned off; a chip that
-    gates nothing is a control that does nothing when clicked.
-
-    Both existed. `errors` (crash reporting) had a section that rendered
-    unconditionally and no chip at all, so the questionnaire's promise -- "untick
-    it to hide the guide again" -- was false for it.
-    """
+def test_every_extra_has_a_chip_and_every_chip_reaches_the_plan(guide):
+    """A feature with no chip cannot be turned off; a chip the plan ignores is a
+    control that does nothing when clicked."""
     features = set(re.findall(r"'([a-z]+)'", re.search(r"const ALL_FEATURES = \[(.*?)\]", guide, re.S).group(1)))
     chips = set(re.findall(r"\['([a-z]+)', '[^']+'\]", guide))
     assert features == chips, (
         f"features without a chip: {sorted(features - chips)}; "
         f"chips that are not features: {sorted(chips - features)}"
     )
-    ungated = [f for f in features if f"wants('{f}')" not in guide]
-    assert not ungated, f"ticking these changes nothing on the page: {sorted(ungated)}"
+    plan = _read(PLAN)
+    unused = [f for f in features if f"want('{f}')" not in plan]
+    assert not unused, f"ticking these changes nothing in the plan: {sorted(unused)}"
 
 
-def test_redaction_is_not_gated_on_the_moderation_tick(guide):
-    """They are different decisions and were sharing one switch.
+def test_screening_and_blurring_are_one_thing(guide):
+    """They were two panels about what is safe to publish, three sections apart,
+    and the second was hidden by the first one's tick."""
+    assert "'safety'" in guide, "no combined screening-and-blurring feature"
+    assert "'moderation'" not in guide, "the old separate moderation tick is back"
+    assert "safety: 'redaction'" in guide
 
-    Unticking "content moderation" silently hid face blurring, and there was no
-    way to have blurring without it -- which matters because moderation screens
-    what a resident wrote and redaction blurs a bystander who wrote nothing.
+
+# ---------------------------------------------------------------------------
+# Callback URLs point at the real site
+# ---------------------------------------------------------------------------
+
+def test_callback_urls_use_the_configured_domain(guide):
+    """`window.location.origin` is wherever the admin happens to be -- an
+    internal hostname, a port-forward, an IP. A redirect URI registered from one
+    of those can never be redirected to, and the login then fails after the
+    password is accepted, which reads as a wrong secret rather than a wrong URL.
     """
-    assert "show={wants('redaction')}" in guide, "redaction has no tick of its own"
-    assert "redaction: 'redaction'" in guide, "the redaction capability is not mapped to its own feature"
-    assert "moderation: 'redaction'" not in guide, "redaction is still riding on the moderation tick"
+    assert "public_origin" in guide, "the page never asks the server for its real address"
+    inline = _read(INLINE)
+    assert "publicOrigin || window.location.origin" in inline, (
+        "the steps still build callback URLs from the browser's address"
+    )
+
+
+def test_the_backend_serves_the_real_origin():
+    system = (ROOT / "backend/app/api/system.py").read_text()
+    assert "async def public_origin" in system
+    assert '"public_origin"' in system
 
 
 # ---------------------------------------------------------------------------
-# Settings with no card still get boxes
+# No promises about price, speed or difficulty
 # ---------------------------------------------------------------------------
 
-# Keys the guide used to print as bare environment-variable names in the middle
-# of a sentence. That is not an instruction a clerk can act on -- it reads as
-# something to hand to IT, and it was the only place on this page that asked
-# somebody to go and edit a file.
-KEYS_THAT_NEED_A_BOX = (
-    "AZURE_CONTENT_SAFETY_ENDPOINT",
-    "AZURE_CONTENT_SAFETY_KEY",
-    "SENTRY_DSN",
+# A town's procurement officer reads this page too. A free tier can change
+# without notice, and telling a clerk something takes ten minutes is a way of
+# making them feel slow when it takes forty.
+CLAIMS = re.compile(
+    r"\b(free tier|for free|no cost|costs? (?:only|about|around)|"
+    r"\$\d|per month|a few dollars|cents? per|a cent per|"
+    r"about \d+ minutes?|takes \d+|in (?:under )?\d+ minutes?|"
+    r"quickest|fastest|easiest|simplest|it is easy|very easy)\b",
+    re.I,
 )
 
 
-def test_settings_without_a_provider_card_still_have_inputs(guide):
-    for key in KEYS_THAT_NEED_A_BOX:
-        assert f"key: '{key}'" in guide, f"{key} is named in the guide but has no box to type it into"
+def test_nothing_promises_a_price_a_duration_or_that_it_is_easy():
+    offenders = []
+    for path in SETUP_SURFACE:
+        for n, line in enumerate(_read(path).splitlines(), 1):
+            if line.lstrip().startswith(("*", "//", "/*")):
+                continue  # commentary to maintainers, not copy shown to a clerk
+            for hit in CLAIMS.findall(line):
+                offenders.append(f"{path.name}:{n} {hit!r}")
+    assert not offenders, "claims about cost, speed or difficulty:\n" + "\n".join(offenders)
 
 
-def test_the_guide_does_not_tell_anyone_to_set_an_environment_variable(guide):
-    """MODERATION_PROVIDER was printed as something to "set", with no box and no
-    explanation of where. It is derived from the cloud answer, so nobody should
-    be asked to set it at all."""
-    assert "MODERATION_PROVIDER" not in guide
+def test_the_guide_no_longer_carries_time_and_cost_labels(guide):
+    """Every section used to be introduced by an estimate and a price."""
+    assert "cost=" not in guide
+    assert "time=" not in guide
+
+
+def test_esri_is_offered_rather_than_pushed():
+    """The maps step led with "ask your GIS department before you buy anything"
+    and told towns to pick Esri. It is one of four reasonable options."""
+    guide_text = _read(GUIDE)
+    assert "before you buy anything" not in guide_text
+    assert "choose Esri above" not in guide_text
