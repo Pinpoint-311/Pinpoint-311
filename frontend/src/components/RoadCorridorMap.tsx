@@ -67,6 +67,7 @@ export default function RoadCorridorMap({
     const excludedRef = useRef(new Set(excludedFeatureIds));
     const handleLayerRef = useRef<MarkerLayer | null>(null);
     const canvasOverlayRef = useRef<CanvasOverlayHandle | null>(null);
+    const hasFittedBoundsRef = useRef<Record<string, boolean>>({});
     // The clicked stretch, and its vertices, so handles can be placed along it.
     const [selected, setSelected] = useState<{ id: string; name: string; path: LatLng[] } | null>(null);
     // feature id -> vertices, kept from the fetch. GeoFeature deliberately does
@@ -149,7 +150,7 @@ export default function RoadCorridorMap({
         return {
             strokeColor: off ? "#64748b" : "#ef4444",
             strokeWidth: off ? 4 : bufferPx,
-            strokeOpacity: off ? 0.18 : 0.45,
+            strokeOpacity: 0.0,
             strokeDasharray: off ? "4,4" : "6,6",
         };
     }, [corridorMetres, zoomLevel]);
@@ -163,7 +164,7 @@ export default function RoadCorridorMap({
             // pixels, so this is indicative rather than a true buffer -- but it
             // makes the setting legible instead of abstract.
             strokeWidth: off ? 2 : Math.max(3, Math.round(corridorMetres / 3)),
-            strokeOpacity: off ? 0.35 : 0.85,
+            strokeOpacity: 0.0,
         };
     }, [corridorMetres]);
 
@@ -234,8 +235,13 @@ export default function RoadCorridorMap({
                     },
                 });
 
-                const bounds = boundsOfGeoJson(collection);
-                if (bounds) rendererRef.current.fitBounds(bounds, { padding: 40 });
+                if (!hasFittedBoundsRef.current[roadKey]) {
+                    const bounds = boundsOfGeoJson(collection);
+                    if (bounds) {
+                        rendererRef.current.fitBounds(bounds, { padding: 40 });
+                        hasFittedBoundsRef.current[roadKey] = true;
+                    }
+                }
             })
             .catch(() => !cancelled && setUnavailable(true))
             .finally(() => !cancelled && setLoading(false));
@@ -259,26 +265,56 @@ export default function RoadCorridorMap({
                 const metersPerPixel = (156543.03392 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, view.zoom || 15);
                 const bufferPx = Math.max(4, Math.round(corridorMetres / metersPerPixel));
 
-                // 1. Draw Striped Translucent Buffer for active road features
+                // 1. Draw Striped Translucent Buffer & Red Centerline for active road features
                 pathsRef.current.forEach((path, id) => {
                     if (path.length < 2) return;
                     if (excludedRef.current.has(id)) return;
 
-                    ctx.save();
-                    ctx.beginPath();
-                    path.forEach((p, idx) => {
-                        const pt = view.project(p);
-                        if (isNaN(pt.x) || isNaN(pt.y)) return;
-                        if (idx === 0) ctx.moveTo(pt.x, pt.y);
-                        else ctx.lineTo(pt.x, pt.y);
-                    });
-                    ctx.setLineDash([12, 8]);
-                    ctx.strokeStyle = "rgba(239, 68, 68, 0.40)";
-                    ctx.lineWidth = bufferPx;
-                    ctx.lineCap = "round";
-                    ctx.lineJoin = "round";
-                    ctx.stroke();
-                    ctx.restore();
+                    const trim = trimsRef.current[id] || { start: 0, end: 1 };
+                    const isTrimmed = trim.start > 0.001 || trim.end < 0.999;
+                    const activeSubPath = subPathByFractions(path, trim.start, trim.end);
+
+                    // If segment is trimmed, draw the untrimmed full path in faint muted grey
+                    if (isTrimmed) {
+                        ctx.save();
+                        ctx.beginPath();
+                        path.forEach((p, idx) => {
+                            const pt = view.project(p);
+                            if (isNaN(pt.x) || isNaN(pt.y)) return;
+                            if (idx === 0) ctx.moveTo(pt.x, pt.y);
+                            else ctx.lineTo(pt.x, pt.y);
+                        });
+                        ctx.setLineDash([4, 4]);
+                        ctx.strokeStyle = "rgba(100, 116, 139, 0.35)";
+                        ctx.lineWidth = 3;
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+
+                    // Draw Red Striped Buffer along activeSubPath
+                    if (activeSubPath.length >= 2) {
+                        ctx.save();
+                        ctx.beginPath();
+                        activeSubPath.forEach((p, idx) => {
+                            const pt = view.project(p);
+                            if (isNaN(pt.x) || isNaN(pt.y)) return;
+                            if (idx === 0) ctx.moveTo(pt.x, pt.y);
+                            else ctx.lineTo(pt.x, pt.y);
+                        });
+                        ctx.setLineDash([12, 8]);
+                        ctx.strokeStyle = "rgba(239, 68, 68, 0.40)";
+                        ctx.lineWidth = bufferPx;
+                        ctx.lineCap = "round";
+                        ctx.lineJoin = "round";
+                        ctx.stroke();
+
+                        // Draw Red Centerline along activeSubPath
+                        ctx.setLineDash([]);
+                        ctx.strokeStyle = "rgba(239, 68, 68, 0.95)";
+                        ctx.lineWidth = 4;
+                        ctx.stroke();
+                        ctx.restore();
+                    }
                 });
 
                 // 2. Draw Active Highlighted Trim Polyline for selected segment
