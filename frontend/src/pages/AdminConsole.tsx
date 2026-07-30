@@ -615,7 +615,7 @@ export default function AdminConsole() {
             exclusion_list: '', // County roads (when township is default)
             inclusion_list: '', // Township roads (when third party is default)
             third_party_message: '',
-            third_party_contacts: [] as { name: string; phone: string; url: string }[],
+            third_party_contacts: [] as { name: string; phone: string; email?: string; url: string; message?: string; road_list?: string; roads?: string[] }[],
             // Custom questions
             custom_questions: [] as { id: string; label: string; type: string; options: string[]; required: boolean; placeholder: string }[],
         },
@@ -3957,10 +3957,6 @@ export default function AdminConsole() {
                                 </div>
 
                                 {(serviceRouting.routing_config.third_party_contacts || []).map((agency: any, idx: number) => {
-                                    const roadsList: string[] = Array.isArray(agency.roads)
-                                        ? agency.roads
-                                        : (typeof agency.road_list === 'string' ? agency.road_list.split(',').map((r: string) => r.trim()).filter(Boolean) : []);
-
                                     return (
                                         <div key={idx} className="p-5 rounded-3xl bg-white/[0.04] border border-white/15 space-y-4 shadow-xl">
                                             <div className="flex items-center justify-between border-b border-white/10 pb-2">
@@ -4084,6 +4080,37 @@ export default function AdminConsole() {
                                 {(serviceRouting.routing_config.third_party_contacts || []).length === 0 && (
                                     <div className="p-5 rounded-3xl bg-white/[0.02] border border-dashed border-white/15 text-center text-xs text-white/40">
                                         No 3rd party agencies added yet. Click "+ Add 3rd Party Agency" above to list agencies like PennDOT or Mercer County DPW.
+                                    </div>
+                                )}
+
+                                {/* Coverage preview, directly beneath the agency cards it describes.
+                                    Typing a road name claims every segment the data files under that
+                                    name, which is not always the stretch the agency actually
+                                    maintains -- a spur, a block the town keeps, or a continuation
+                                    past the border get swept in, and the rule looks correct while
+                                    covering the wrong thing. Corrections made here are stored as a
+                                    diff against the road name, so a monthly data refresh still picks
+                                    up a newly built block. */}
+                                {(serviceRouting.routing_config.third_party_contacts || []).length > 0 && (
+                                    <div className="pt-2">
+                                        <RoadCorridorMap
+                                            roads={
+                                                (serviceRouting.routing_config.third_party_contacts || [])
+                                                    .map((a: any) => (typeof a?.road_list === 'string'
+                                                        ? a.road_list
+                                                        : (Array.isArray(a?.roads) ? a.roads.join(', ') : '')))
+                                                    .filter(Boolean)
+                                                    .join(', ')
+                                            }
+                                            townshipBoundary={townshipBoundary}
+                                            excludedFeatureIds={excludedSegments}
+                                            onExcludedChange={setExcludedSegments}
+                                            trims={segmentTrims}
+                                            onTrimsChange={setSegmentTrims}
+                                            corridorMetres={corridorMetres}
+                                            onCorridorMetresChange={setCorridorMetres}
+                                            apiKey={mapsApiKey}
+                                        />
                                     </div>
                                 )}
                             </div>
@@ -4554,7 +4581,7 @@ export default function AdminConsole() {
                                     </p>
                                 ) : (
                                     <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto p-3 rounded-lg bg-white/5 border border-white/10">
-                                        {filteredServices.map((service) => (
+                                        {services.map((service) => (
                                             <label
                                                 key={service.service_code}
                                                 className="flex items-center gap-2 text-sm text-white/70 hover:text-white cursor-pointer p-2 rounded hover:bg-white/10"
