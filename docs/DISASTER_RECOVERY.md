@@ -276,3 +276,69 @@ Before giving a contractor access:
 
 *Last Updated: February 2026*
 *Review Schedule: Quarterly*
+
+## Losing the encryption key
+
+The one failure on this list that no backup fixes.
+
+Resident names, emails and phone numbers are protected by envelope encryption: a
+data key encrypts the field, and your cloud's key service wraps that data key.
+The database holds the encrypted value and the wrapped data key side by side.
+The key service holds the only thing that can unwrap it.
+
+If the key is destroyed, every wrapped data key becomes a sealed box. The
+encrypted values remain in the database, intact and meaningless. **Restoring a
+backup does not help** — the backup contains the same sealed boxes.
+
+What survives: the report text, category, location, photos, status history and
+audit log. All of it. You keep the complete public record of what was reported
+and what the town did. What you lose is the ability to say who reported it or to
+contact them.
+
+### The failure is silent, and the clock is short
+
+Nothing raises when a key stops answering. `_wrap_dek` falls back to the
+application key and carries on, so new reports save normally while older rows
+quietly stop being readable. Two consequences:
+
+- It looks like a database fault, not a key fault, because new records are fine.
+- If the cause was a scheduled deletion, the cancellation window (7–30 days on
+  AWS, the retention period on Azure, the destroy-scheduled-duration on Google)
+  can expire before anyone connects the symptom to the cause.
+
+The proactive health scan checks for exactly this every fifteen minutes and
+emails admins at critical severity. It performs a live wrap rather than reading
+the cached data key, because a long-running worker would otherwise keep
+reporting the state of the world from before the key broke — for the whole
+window. See `_kms_check` in `app/services/proactive_health.py`.
+
+### Prevention, in order of value
+
+1. **Deny the deletion, do not merely avoid it.** On AWS, add an explicit deny
+   for `kms:ScheduleKeyDeletion` and `kms:DisableKey` in the key policy — an
+   explicit deny cannot be overridden by any allow, including the account root.
+   On Azure, enable soft delete and purge protection at vault creation. On
+   Google, keys cannot be deleted at all; set the key's destroy scheduled
+   duration to its maximum (120 days) and keep
+   `cloudkms.cryptoKeyVersions.destroy` off everyday roles.
+2. **Set `REQUIRE_KMS`.** The application then refuses to write PII rather than
+   silently falling back to the application key. It converts a silent
+   divergence into a loud outage, which is the right trade for this data.
+3. **Calendar the credential expiry.** Azure client secrets expire. When one
+   lapses, decryption stops and nothing about the failure points at a date.
+4. **Do not confuse rotation with deletion.** Rotating is safe — old versions
+   are retained and keep decrypting old rows — and worth doing. Destroying is
+   final. They sit next to each other in every console.
+
+### If it has already happened
+
+Check whether the deletion is still pending. On AWS a scheduled deletion can be
+cancelled with `CancelKeyDeletion` any time inside the waiting period; on Azure
+a soft-deleted key can be recovered within the retention period; on Google a
+destroy-scheduled key version can be restored before its scheduled time. In all
+three the key stops working at the *start* of that period, so the system being
+broken is not evidence that it is too late.
+
+If the window has closed, the encrypted PII is unrecoverable. Everything else in
+the database is unaffected, and the service continues to function for new
+reports.
