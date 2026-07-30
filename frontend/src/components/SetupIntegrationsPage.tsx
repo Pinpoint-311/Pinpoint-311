@@ -42,7 +42,15 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [localSmsProvider, setLocalSmsProvider] = useState<string>('none');
     const [savingSmsProvider, setSavingSmsProvider] = useState(false);
     const userModifiedSms = useRef(false);
+    /* The guide starts open on a fresh install and closed once the required
+     * integrations are in. It is a first-run document: hidden behind a click it
+     * is missed by the person who needs it most, and left open forever it pushes
+     * the actual controls off the screen for everyone else.
+     *
+     * null means "not decided yet" so the effect below can set it once the
+     * config has loaded, without overriding a deliberate click afterwards. */
     const [expandedGuide, setExpandedGuide] = useState<string | null>(null);
+    const guideAutoSet = useRef(false);
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
     // Setup Instructions chooser: the guide shows ONLY the steps for the cloud
@@ -145,7 +153,22 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         { label: 'SMS Alerts', done: smsConfigured, required: false },
         ...(managedMode ? [] : [{ label: 'DB Backups', done: !!backupConfigured, required: false }]),
     ];
+
+    /* Required first, and counted separately.
+     *
+     * "5 of 6 configured" mixes two different questions: can this town take
+     * reports at all, and how much of the optional surface is switched on. A
+     * town with both required items done and nothing else is ready to go live,
+     * and a bar reading 33% told it the opposite. The headline now answers the
+     * first question and the count answers the second. */
     const completedCount = setupSteps.filter(s => s.done).length;
+
+    useEffect(() => {
+        // secrets arrives as a prop; an empty array means it has not loaded yet.
+        if (guideAutoSet.current || secrets.length === 0) return;
+        guideAutoSet.current = true;
+        if (!signInConfigured || !mapsConfigured) setExpandedGuide('master');
+    }, [secrets.length, signInConfigured, mapsConfigured]);
 
     // Toggle helper for collapsible instruction panels
     const toggleGuide = (id: string) => setExpandedGuide(prev => prev === id ? null : id);
@@ -592,60 +615,26 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
 
             {/* Required Integrations */}
-            <CollapsibleSection title="Database" icon={Shield} accent="primary" subtitle="Connection status — set from DATABASE_URL, not here" defaultOpen={true}>
-                <div className="grid grid-cols-1 gap-4">
-                    {/* The Auth0 card that used to live here has been removed.
-                        Sign-in is a pluggable capability with four providers
-                        (Auth0, Entra, Okta, and generic OIDC for anything else),
-                        and this card wrote the same three AUTH0_* secrets the
-                        Staff Sign-In card already owns -- while implying Auth0
-                        was the only option. The callback URL a town has to
-                        register is in the Staff sign-in guide above, with a copy
-                        button. */}
+            {/* Order is the flow itself: the two required integrations live in
+                Service Providers, so it goes first. Optional extras next. The
+                town's own systems after that, because connecting one presumes
+                the basics work. Database last -- it is read-only status set from
+                DATABASE_URL, there is nothing to do there, and it used to sit
+                open above everything that actually needed attention. */}
 
-                    {/* Database - usually auto-configured */}
-                    <Card className="h-full">
-                        <div className="flex items-start justify-between mb-4">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center">
-                                    <Database className="w-5 h-5 text-purple-400" />
-                                </div>
-                                <div>
-                                    <h3 className="font-semibold text-white">PostgreSQL Database</h3>
-                                    <p className="text-gray-300 text-xs">Primary data storage</p>
-                                </div>
-                            </div>
-                            <Badge variant="success">Auto-configured</Badge>
-                        </div>
-                        <p className="text-gray-300 text-sm">
-                            Database connection is configured via <code className="bg-white/10 px-1 rounded break-all">DATABASE_URL</code> environment variable in docker-compose.yml.
-                        </p>
-                        <div className="mt-4 flex items-center gap-2 text-green-400 text-sm">
-                            <CheckCircle className="w-4 h-4" />
-                            Connected and operational
-                        </div>
-                    </Card>
+            {/* 1 — Required + core capabilities: sign-in, maps, AI, translation */}
+            <div id="sec-providers"><ServiceProviders /></div>
 
-                    {/* The Google Maps card that used to live here has been
-                        removed. Maps is a pluggable capability now, so this page
-                        showed a second, Google-only copy of the same two fields
-                        writing to the same two secrets -- with worse help text
-                        than the provider catalog carries, and no way to pick
-                        Esri, Apple or Azure. One place to configure a map. */}
-                </div>
-            </CollapsibleSection>
-
-            {/* Optional Integrations */}
-            <CollapsibleSection title="Optional Integrations" icon={Cloud} subtitle="SMS, email, cloud services, monitoring, and backups" defaultOpen={false}>
+            <CollapsibleSection id="sec-optional" title="Notifications & Extras" icon={Cloud} subtitle="Email, text messages, cloud services, error reporting, backups — none required to take reports" defaultOpen={false}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* SMS Notifications - Premium Card */}
                     <motion.div
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.1 }}
-                        className={`relative rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${localSmsProvider && localSmsProvider !== 'none'
+                        className={`relative rounded-3xl border p-6 transition-all duration-300 ${localSmsProvider && localSmsProvider !== 'none'
                             ? 'bg-gradient-to-br from-emerald-500/10 via-green-500/5 to-teal-500/10 border-emerald-500/30 shadow-lg shadow-emerald-500/10'
-                            : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'
+                            : 'setup-panel border-transparent'
                             }`}
                     >
 
@@ -659,7 +648,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 <div className="flex items-center gap-4">
                                     <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${localSmsProvider && localSmsProvider !== 'none'
                                         ? 'bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg shadow-emerald-500/30'
-                                        : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'
+                                        : 'setup-tile'
                                         }`}>
                                         <MessageSquare className="w-7 h-7 text-white" />
                                     </div>
@@ -840,9 +829,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.2 }}
-                        className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${smtpConfigured
+                        className={`relative rounded-3xl border p-6 transition-all duration-300 ${smtpConfigured
                             ? 'bg-gradient-to-br from-violet-500/10 via-purple-500/5 to-fuchsia-500/10 border-violet-500/30 shadow-lg shadow-violet-500/10'
-                            : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'
+                            : 'setup-panel border-transparent'
                             }`}
                     >
                         {smtpConfigured && (
@@ -854,7 +843,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 <div className="flex items-center gap-4">
                                     <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${smtpConfigured
                                         ? 'bg-gradient-to-br from-violet-400 to-purple-500 shadow-lg shadow-violet-500/30'
-                                        : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'
+                                        : 'setup-tile'
                                         }`}>
                                         <Mail className="w-7 h-7 text-white" />
                                     </div>
@@ -869,7 +858,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                         Configured
                                     </span>
                                 ) : (
-                                    <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                    <span className="inline-flex items-center px-3 py-1.5 rounded-2xl text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
                                         <AlertCircle className="w-3.5 h-3.5 mr-1" />
                                         Setup Required
                                     </span>
@@ -995,9 +984,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.3 }}
-                        className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${gcpConfigured
+                        className={`relative rounded-3xl border p-6 transition-all duration-300 ${gcpConfigured
                             ? 'bg-gradient-to-br from-blue-500/10 via-cyan-500/5 to-sky-500/10 border-blue-500/30 shadow-lg shadow-blue-500/10'
-                            : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'
+                            : 'setup-panel border-transparent'
                             }`}
                     >
                         {gcpConfigured && (
@@ -1009,7 +998,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 <div className="flex items-center gap-4">
                                     <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${gcpConfigured
                                         ? 'bg-gradient-to-br from-blue-400 to-cyan-500 shadow-lg shadow-blue-500/30'
-                                        : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'
+                                        : 'setup-tile'
                                         }`}>
                                         <Cloud className="w-7 h-7 text-white" />
                                     </div>
@@ -1258,9 +1247,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.4 }}
-                        className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${sentryConfigured
+                        className={`relative rounded-3xl border p-6 transition-all duration-300 ${sentryConfigured
                             ? 'bg-gradient-to-br from-rose-500/10 via-red-500/5 to-orange-500/10 border-rose-500/30 shadow-lg shadow-rose-500/10'
-                            : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'
+                            : 'setup-panel border-transparent'
                             }`}
                     >
                         {sentryConfigured && (
@@ -1272,7 +1261,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 <div className="flex items-center gap-4">
                                     <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${sentryConfigured
                                         ? 'bg-gradient-to-br from-rose-400 to-orange-500 shadow-lg shadow-rose-500/30'
-                                        : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'
+                                        : 'setup-tile'
                                         }`}>
                                         <AlertTriangle className="w-7 h-7 text-white" />
                                     </div>
@@ -1350,9 +1339,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.5 }}
-                        className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${backupConfigured
+                        className={`relative rounded-3xl border p-6 transition-all duration-300 ${backupConfigured
                             ? 'bg-gradient-to-br from-amber-500/10 via-yellow-500/5 to-orange-500/10 border-amber-500/30 shadow-lg shadow-amber-500/10'
-                            : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'
+                            : 'setup-panel border-transparent'
                             }`}
                     >
                         {backupConfigured && (
@@ -1364,7 +1353,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 <div className="flex items-center gap-4">
                                     <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${backupConfigured
                                         ? 'bg-gradient-to-br from-amber-400 to-orange-500 shadow-lg shadow-amber-500/30'
-                                        : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'
+                                        : 'setup-tile'
                                         }`}>
                                         <HardDrive className="w-7 h-7 text-white" />
                                     </div>
@@ -1501,17 +1490,60 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 </div>
             </CollapsibleSection>
 
+
+            {/* 3 — The town's own systems */}
+            <GovtechIntegrations />
+
+            <CollapsibleSection id="sec-database" title="Database" icon={Database} subtitle="Read-only status. Configured by your host through DATABASE_URL, not on this page." defaultOpen={false}>
+                <div className="grid grid-cols-1 gap-4">
+                    {/* The Auth0 card that used to live here has been removed.
+                        Sign-in is a pluggable capability with four providers
+                        (Auth0, Entra, Okta, and generic OIDC for anything else),
+                        and this card wrote the same three AUTH0_* secrets the
+                        Staff Sign-In card already owns -- while implying Auth0
+                        was the only option. The callback URL a town has to
+                        register is in the Staff sign-in guide above, with a copy
+                        button. */}
+
+                    {/* Database - usually auto-configured */}
+                    <Card className="h-full">
+                        <div className="flex items-start justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center">
+                                    <Database className="w-5 h-5 text-purple-400" />
+                                </div>
+                                <div>
+                                    <h3 className="font-semibold text-white">PostgreSQL Database</h3>
+                                    <p className="text-gray-300 text-xs">Primary data storage</p>
+                                </div>
+                            </div>
+                            <Badge variant="success">Auto-configured</Badge>
+                        </div>
+                        <p className="text-gray-300 text-sm">
+                            Database connection is configured via <code className="bg-white/10 px-1 rounded break-all">DATABASE_URL</code> environment variable in docker-compose.yml.
+                        </p>
+                        <div className="mt-4 flex items-center gap-2 text-green-400 text-sm">
+                            <CheckCircle className="w-4 h-4" />
+                            Connected and operational
+                        </div>
+                    </Card>
+
+                    {/* The Google Maps card that used to live here has been
+                        removed. Maps is a pluggable capability now, so this page
+                        showed a second, Google-only copy of the same two fields
+                        writing to the same two secrets -- with worse help text
+                        than the provider catalog carries, and no way to pick
+                        Esri, Apple or Azure. One place to configure a map. */}
+                </div>
+            </CollapsibleSection>
+
+            {/* Optional Integrations */}
             {saveMessage && (
                 <div className="rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-sm text-white/80">
                     {saveMessage}
                 </div>
             )}
 
-            {/* Pluggable service providers (AI / translation / identity) */}
-            <ServiceProviders />
-
-            {/* GovTech Platform Connections */}
-            <GovtechIntegrations />
 
             {/* Help Link — dark surface (not the translucent glass-card, whose
                 white veil dropped these blues below AA contrast) with light text. */}

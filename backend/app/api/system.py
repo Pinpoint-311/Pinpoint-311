@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
-from typing import List, Optional, Dict
+from typing import Any, List, Optional, Dict
 from pydantic import BaseModel
 import subprocess
 import os
@@ -45,6 +45,137 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
     return settings
 
 
+@router.get("/config")
+async def get_deployment_config():
+    """Deployment-mode flags (public). The setup UI uses managed_mode to show
+    'Managed by your state' placeholders instead of the Google Cloud / Backups
+    / domain cards (A1)."""
+    from app.core.config import get_settings as get_app_settings
+    app_settings = get_app_settings()
+    return {
+        "managed_mode": app_settings.managed_mode,
+        "app_version": app_settings.app_version,
+    }
+
+
+def _field_required(field: Dict[str, Any]) -> bool:
+    """Whether a credential field must be present for a provider to count as set up.
+
+    Two conventions exist in the catalogs. The maps catalog carries an explicit
+    `required` boolean; the older AI, identity and translation catalogs encode it
+    by ending the label with "(optional)". Trust the flag when it is there and
+    fall back to the label when it is not, rather than making every catalog
+    change shape at once.
+    """
+    if "required" in field:
+        return bool(field["required"])
+    return not str(field.get("label", "")).rstrip().endswith("(optional)")
+
+
+async def _configured_map(providers: List[Dict[str, Any]]) -> Dict[str, bool]:
+    """{provider id: are all of its required credentials stored}.
+
+    This exists because three of the four capability catalogs were not returning
+    it at all. The admin UI reads `configured[current_provider]`, so identity,
+    translation and maps cards resolved it to undefined and reported "not
+    configured" however well set up they actually were -- a false negative on a
+    working connector, which is worse than no badge, because it sends someone off
+    to re-paste credentials that were already fine.
+
+    A provider with no required fields counts as configured: there is nothing to
+    supply, so there is nothing missing.
+    """
+    from app.services.secret_manager import get_secret
+
+    out: Dict[str, bool] = {}
+    for provider in providers:
+        required = [f["key"] for f in provider.get("credential_fields", []) if _field_required(f)]
+        present = True
+        for key in required:
+            try:
+                if not await get_secret(key):
+                    present = False
+                    break
+            except Exception:
+                # An unreachable secret store is not the same as an unconfigured
+                # provider. Say nothing rather than say something false.
+                present = False
+                break
+        out[provider["provider"]] = present
+    return out
+
+
+@router.get("/client-errors")
+async def list_client_errors(
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Browser crashes residents and staff have hit.
+
+    The error screen promises a report. Without this the promise resolved to a
+    line in a container log, which for a self-hosted town is the same as
+    nowhere. Identical crashes are collapsed with a count, so a render loop
+    shows as one row seen 400 times rather than burying every other fault.
+    """
+    from app.services import client_errors
+
+    rows = await client_errors.recent(db, limit=min(max(limit, 1), 200))
+    return {
+        "errors": [
+            {
+                "id": r.id,
+                "kind": r.kind,
+                "message": r.message,
+                "stack": r.stack,
+                "component_stack": r.component_stack,
+                "url": r.url,
+                "occurrences": r.occurrences,
+                "first_seen_at": r.first_seen_at.isoformat() if r.first_seen_at else None,
+                "last_seen_at": r.last_seen_at.isoformat() if r.last_seen_at else None,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/connectors/health")
+async def connector_health_report(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """What each integration is actually doing, as opposed to whether its
+    credentials are stored.
+
+    Deliberately separate from the catalog endpoints. "Configured" is a fact
+    about our database and is always answerable; "working" is a fact about
+    someone else's service and is sometimes genuinely unknown. Merging them
+    into one field would force the unknown case to pick a side, and it always
+    picks green.
+    """
+    from app.services import connector_health as ch
+
+    healths = ch.worst_first(list((await ch.snapshot(db)).values()))
+    return {
+        "connectors": [
+            {
+                "connector": h.connector,
+                "provider": h.provider,
+                "status": h.status,
+                "summary": h.summary(),
+                "last_success_at": h.last_success_at.isoformat() if h.last_success_at else None,
+                "last_error_at": h.last_error_at.isoformat() if h.last_error_at else None,
+                "last_error": h.last_error,
+                "consecutive_failures": h.consecutive_failures,
+                "total_successes": h.total_successes,
+                "total_failures": h.total_failures,
+            }
+            for h in healths
+        ],
+        "needs_attention": [h.connector for h in healths if h.status in (ch.DOWN, ch.FAILING)],
+    }
+
+
 @router.get("/identity/catalog")
 async def get_identity_catalog(_: User = Depends(get_current_admin)):
     """Identity provider catalog for the admin UI (Auth0 / Entra / Okta / OIDC),
@@ -52,7 +183,9 @@ async def get_identity_catalog(_: User = Depends(get_current_admin)):
     from app.services.identity import catalog_for_api, IDENTITY_PROVIDER_KEY
     from app.services.secret_manager import get_secret
     current = (await get_secret(IDENTITY_PROVIDER_KEY)) or "auth0"
-    return {"current_provider": current.strip().lower(), "default_provider": "auth0", "providers": catalog_for_api()}
+    providers = catalog_for_api()
+    return {"current_provider": current.strip().lower(), "default_provider": "auth0",
+            "providers": providers, "configured": await _configured_map(providers)}
 
 
 @router.get("/translation/catalog")
@@ -61,39 +194,96 @@ async def get_translation_catalog(_: User = Depends(get_current_admin)):
     from app.services.translation_providers import catalog_for_api, TRANSLATION_PROVIDER_KEY
     from app.services.secret_manager import get_secret
     current = (await get_secret(TRANSLATION_PROVIDER_KEY)) or "google"
-    return {"current_provider": current.strip().lower(), "default_provider": "google", "providers": catalog_for_api()}
+    providers = catalog_for_api()
+    return {"current_provider": current.strip().lower(), "default_provider": "google",
+            "providers": providers, "configured": await _configured_map(providers)}
+
+
+@router.get("/maps/catalog")
+async def get_maps_catalog(_: User = Depends(get_current_admin)):
+    """Map provider catalog. Maps is a capability like AI or translation, so it
+    uses the same catalog/save/test endpoints and the same card in the UI --
+    a town switches its map the way it switches anything else."""
+    from app.services.map_provider import MAP_PROVIDER_KEY, catalog_for_api, normalize_provider
+    from app.services.secret_manager import get_secret
+    current = normalize_provider(await get_secret(MAP_PROVIDER_KEY))
+    providers = catalog_for_api()
+    return {"current_provider": current, "default_provider": "google",
+            "providers": providers, "configured": await _configured_map(providers)}
 
 
 @router.get("/ai/catalog")
-async def get_ai_catalog(_: User = Depends(get_current_admin)):
+async def get_ai_catalog(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
     """AI provider catalog for the admin UI: available boundaries (Vertex /
     Azure Government / Bedrock), their models, and the fields each needs, plus
-    which provider is currently selected and which are configured."""
+    which provider is currently selected and which are configured.
+
+    Model lists are served from the live-discovery cache when available (a
+    provider's actual current models, refreshed on demand and daily) and fall
+    back to the curated catalog. No live network call happens here — the load
+    stays fast; refreshing is explicit (POST /ai/models/refresh) or scheduled."""
     from app.services.ai.registry import AI_CATALOG, catalog_for_api, AI_PROVIDER_KEY, AI_MODEL_KEY
+    from app.services.ai import model_discovery as md
     from app.services.secret_manager import get_secret
 
     current_provider = (await get_secret(AI_PROVIDER_KEY)) or "vertex"
     current_model = await get_secret(AI_MODEL_KEY)
 
-    configured = {}
-    for key, meta in AI_CATALOG.items():
-        required = [f["key"] for f in meta["credential_fields"] if not f["label"].endswith("(optional)")]
-        # "configured" = the non-optional credential fields are all present
-        present = True
-        for field in meta["credential_fields"]:
-            if field["key"] in required:
-                if not await get_secret(field["key"]):
-                    present = False
-                    break
-        configured[key] = present
+    # Overlay the discovered model lists (per-provider) onto the curated catalog.
+    cache = await md.load_db_cache(db)
+    providers = catalog_for_api()
 
+    # Shared with the other three capabilities rather than a second copy of the
+    # same rule. The AI-only version this replaces inferred "required" purely
+    # from the label ending in "(optional)", which silently mis-reads any
+    # catalog that states it as a flag.
+    configured = await _configured_map(providers)
+    for p in providers:
+        entry = cache.get(p["provider"])
+        if entry and entry.get("models"):
+            p["models"] = entry["models"]
+            p["models_source"] = entry.get("source", "live")
+            p["models_fetched_at"] = entry.get("fetched_at")
+        else:
+            p["models_source"] = "curated"
+            p["models_fetched_at"] = None
+
+    resolved_model = current_model or AI_CATALOG.get(current_provider, {}).get("default_model")
+    current_models = next((p["models"] for p in providers if p["provider"] == current_provider), [])
     return {
         "current_provider": current_provider,
         "default_provider": "vertex",
-        "current_model": current_model or AI_CATALOG.get(current_provider, {}).get("default_model"),
+        "current_model": resolved_model,
+        "current_model_available": md.model_is_available(current_models, current_model),
         "configured": configured,
-        "providers": catalog_for_api(),
+        "providers": providers,
     }
+
+
+class AIModelRefreshRequest(BaseModel):
+    provider: str
+
+
+@router.post("/ai/models/refresh")
+@_cost_limiter.limit("6/minute")  # live provider API call
+async def refresh_ai_models(
+    request: Request,
+    body: AIModelRefreshRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Live-discover a provider's current models and update the shared cache.
+    Returns the merged list plus whether the configured model is still offered."""
+    from app.services.ai.registry import AI_CATALOG
+    provider = (body.provider or "").strip().lower()
+    if provider not in AI_CATALOG:
+        raise HTTPException(status_code=400, detail=f"Unknown AI provider: {provider}")
+    from app.services.ai import model_discovery as md
+    result = await md.refresh_provider(db, provider)
+    return {"provider": provider, **result}
 
 
 # ---- Unified provider save + test (AI / translation / identity) ----
@@ -102,6 +292,7 @@ _PROVIDER_SELECT_KEY = {
     "ai": "AI_PROVIDER",
     "translation": "TRANSLATION_PROVIDER",
     "identity": "IDENTITY_PROVIDER",
+    "maps": "MAP_PROVIDER",
 }
 
 
@@ -109,7 +300,9 @@ async def _persist_secret(db: AsyncSession, key_name: str, value: str):
     """Write a secret to the configured store (Secret Manager / Key Vault when
     available) and always keep an encrypted DB copy — same path as /secrets."""
     from app.core.encryption import encrypt
+    from app.core.managed import reject_platform_key_writes
     from app.services.secret_manager import set_secret, clear_cache
+    reject_platform_key_writes(key_name)
     bootstrap_keys = {"GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT"}
     if value and key_name not in bootstrap_keys:
         try:
@@ -145,6 +338,9 @@ def _capability_catalog(capability: str) -> Dict:
     if capability == "identity":
         from app.services.identity import IDENTITY_CATALOG
         return IDENTITY_CATALOG
+    if capability == "maps":
+        from app.services.map_provider import MAP_CATALOG
+        return MAP_CATALOG
     return {}
 
 
@@ -170,7 +366,21 @@ async def save_provider(
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unexpected settings for {provider_id}: {', '.join(sorted(unknown))}")
     if capability == "ai" and body.model:
+        # Validate against curated ∪ live-discovered models. A model the provider
+        # actually offers (from the discovery cache) is accepted even if it isn't
+        # in the curated list — that's the whole point of live discovery. Only
+        # reject when we can positively prove the id is offered nowhere.
         allowed_models = {m["id"] for m in catalog[provider_id].get("models", [])}
+        try:
+            from app.services.ai import model_discovery as md
+            cache = await md.load_db_cache(db)
+            entry = cache.get(provider_id) or {}
+            allowed_models |= {m["id"] for m in entry.get("models", []) if m.get("id")}
+        except Exception:
+            # Discovery is an *additional* source of valid model ids. If the
+            # cache can't be read, fall back to validating against the curated
+            # list alone rather than rejecting the save.
+            pass
         if allowed_models and body.model not in allowed_models:
             raise HTTPException(status_code=400, detail=f"Unknown model for {provider_id}: {body.model}")
     await _persist_secret(db, _PROVIDER_SELECT_KEY[capability], provider_id)
@@ -181,7 +391,17 @@ async def save_provider(
             await _persist_secret(db, key, value)
     from app.services.secret_manager import clear_cache
     clear_cache()
-    return {"ok": True, "provider": provider_id}
+    # Shape findings are advisory and never block: a rule is a heuristic about
+    # someone else's format, and refusing a credential that would have worked is
+    # a worse failure than accepting one that will not -- the second is
+    # discoverable, the first is a dead end.
+    from app.services.credential_checks import inspect_settings
+    findings = inspect_settings(body.settings)
+    return {
+        "ok": True,
+        "provider": provider_id,
+        "warnings": [{"key": f.key, "severity": f.severity, "message": f.message} for f in findings],
+    }
 
 
 @router.post("/providers/{capability}/test")
@@ -193,35 +413,284 @@ async def test_provider(
     _: User = Depends(get_current_admin),
 ):
     """Live connectivity check for the currently-configured provider of a
-    capability. Returns {ok, detail}."""
+    capability. Returns {ok, detail}.
+
+    The outcome is recorded, so a test is not just a moment on screen. That
+    matters in the failing direction especially: an admin who tests, sees red
+    and walks away leaves a record the setup page can keep showing, instead of
+    a green badge that only means credentials exist.
+    """
+    from app.services import connector_health
+
+    # Validate before anything else, the way save_provider does. Without this,
+    # `capability` is an unvalidated path segment that reaches
+    # connector_health._row(), which creates a row for whatever name it is
+    # given -- so any admin request could insert arbitrary junk rows into a
+    # table the setup page renders. It also kept the raw segment out of the
+    # 400 body below.
+    if capability not in _PROVIDER_SELECT_KEY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown capability. Expected one of: {', '.join(sorted(_PROVIDER_SELECT_KEY))}.",
+        )
+
+    async def _remember(outcome: dict) -> dict:
+        try:
+            if outcome.get("ok"):
+                await connector_health.record_success(db, capability)
+            else:
+                await connector_health.record_failure(db, capability, outcome.get("detail", ""))
+        except Exception:
+            # Bookkeeping must never turn a passing test into a failing one.
+            pass
+        return outcome
+
     try:
         if capability == "ai":
             from app.services.ai import get_ai_provider
             provider = await get_ai_provider(db)
             if not provider:
-                return {"ok": False, "detail": "No AI provider is configured. Enter the required fields and save first."}
+                return await _remember({"ok": False, "detail": "No AI provider is configured. Enter the required fields and save first."})
             result = await provider.complete_json('Reply with {"priority_score": 5}. This is a connection test.')
-            ok = isinstance(result, dict) and "_error" not in result
-            return {"ok": ok, "detail": f"{provider.provider}/{provider.model} responded" if ok else f"Call failed: {result.get('_error', 'unknown')[:200]}"}
+            # A connection test verifies reachability + auth, not that the model
+            # emits parseable JSON. Providers flag `_reachable` when the API
+            # responded (200) even if a trivial prompt yielded no usable output.
+            reachable = isinstance(result, dict) and ("_error" not in result or bool(result.get("_reachable")))
+            if reachable:
+                return await _remember({"ok": True, "detail": f"{provider.provider}/{provider.model} reachable and authenticated"})
+            return await _remember({"ok": False, "detail": f"Call failed: {result.get('_error', 'unknown')[:200]}"})
         if capability == "translation":
             from app.services.translation_providers import get_translation_provider
             provider = await get_translation_provider()
             if not provider:
-                return {"ok": False, "detail": "No translation provider is configured."}
+                return await _remember({"ok": False, "detail": "No translation provider is configured."})
             out = await provider.translate(["hello"], "en", "es")
-            return {"ok": bool(out), "detail": f"Translated sample → {out[0]}" if out else "No translation returned"}
+            return await _remember({"ok": bool(out), "detail": f"Translated sample → {out[0]}" if out else "No translation returned"})
         if capability == "identity":
             from app.services.identity import resolve_identity_config, get_oidc_metadata
             cfg = await resolve_identity_config(db)
             if not cfg:
-                return {"ok": False, "detail": "No identity provider is configured."}
+                return await _remember({"ok": False, "detail": "No identity provider is configured."})
             meta = await get_oidc_metadata(cfg)
-            return {"ok": bool(meta.get("authorization_endpoint")), "detail": f"Discovered {cfg['provider']} endpoints at {cfg['issuer_base']}"}
-        raise HTTPException(status_code=400, detail=f"Test not supported for: {capability}")
+            return await _remember({"ok": bool(meta.get("authorization_endpoint")), "detail": f"Discovered {cfg['provider']} endpoints at {cfg['issuer_base']}"})
+        raise HTTPException(status_code=400, detail="A live test is not available for this capability.")
     except HTTPException:
         raise
     except Exception as e:
-        return {"ok": False, "detail": f"Test failed: {str(e)[:200]}"}
+        # The provider's own words, plus a next step when we recognise the
+        # shape of the complaint. Never a replacement -- a clerk searching the
+        # web for their error needs the actual string.
+        from app.services.credential_checks import describe_failure
+        return await _remember({"ok": False, "detail": describe_failure(str(e)[:300])})
+
+
+# ---- Cloud environment profile (hybrid one-choice front door) ----
+#
+# The real decision a jurisdiction makes is its compliance boundary — it is
+# authorized under ONE cloud (Google, or Azure Government / GCC High), so a
+# single choice should set AI + translation + secret-store together. Identity is
+# deliberately NOT bundled: an Azure-cloud town may still use Auth0/Okta for SSO,
+# so we only *recommend* the matching IdP and switch it on explicit opt-in.
+# Google Maps is fixed regardless of profile.
+CLOUD_PROFILES: Dict[str, Dict[str, str]] = {
+    "google": {
+        "label": "Google Cloud",
+        "boundary": "Google Cloud — FedRAMP High / StateRAMP",
+        "ai": "vertex",
+        "translation": "google",
+        "secrets": "google",
+        "kms": "google",
+        # Google has no first-party SMS; email works via SMTP (Workspace/relay).
+        "email": "smtp",
+        "sms": "",
+        "identity_recommended": "auth0",
+    },
+    "azure": {
+        "label": "Microsoft Azure (Government)",
+        "boundary": "Azure Government / GCC High — FedRAMP High, DoD IL4/5",
+        "ai": "azure",
+        "translation": "azure",
+        "secrets": "azure",
+        "kms": "azure",
+        "email": "acs",
+        "sms": "acs",
+        "identity_recommended": "entra",
+    },
+    "aws": {
+        "label": "Amazon Web Services (GovCloud)",
+        "boundary": "AWS GovCloud — FedRAMP High, DoD IL4/5",
+        "ai": "bedrock",
+        "translation": "aws",
+        "secrets": "aws",
+        "kms": "aws",
+        "email": "ses",
+        "sms": "sns",
+        "identity_recommended": "oidc",
+    },
+}
+
+
+def _derive_cloud_profile(ai: str, translation: str, secrets: str, kms: str = None) -> str:
+    """Report which named profile the current core selections match, or 'mixed'.
+    Matches on the boundary-defining set (AI, translation, secret store, and KMS
+    when provided); email/SMS can legitimately differ and aren't part of the match."""
+    for pid, p in CLOUD_PROFILES.items():
+        if ai == p["ai"] and translation == p["translation"] and secrets == p["secrets"]:
+            if kms is not None and kms != p["kms"]:
+                continue
+            return pid
+    return "mixed"
+
+
+class CloudProfileRequest(BaseModel):
+    profile: str
+    # Opt-in: also switch the staff sign-in provider to the profile's
+    # recommended IdP. Off by default because identity is a separate contract.
+    apply_identity: bool = False
+
+
+@router.get("/providers/cloud-profile")
+async def get_cloud_profile(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Report the current cloud environment: the matched profile (or 'mixed'),
+    the per-capability selections behind it, and the fixed Maps provider."""
+    from app.services.secret_manager import get_secret, _secrets_provider
+    from app.core.config import get_settings as _app_settings
+    from app.core.encryption import _kms_provider
+    ai = (await get_secret("AI_PROVIDER")) or "vertex"
+    translation = (await get_secret("TRANSLATION_PROVIDER")) or "google"
+    identity = (await get_secret("IDENTITY_PROVIDER")) or "auth0"
+    email = (await get_secret("EMAIL_PROVIDER")) or "smtp"
+    sms = (await get_secret("SMS_PROVIDER")) or ""
+    secrets = _secrets_provider()
+    kms = _kms_provider()
+    return {
+        "profile": _derive_cloud_profile(ai, translation, secrets, kms),
+        "managed": _app_settings().managed_mode,
+        "components": {
+            "ai": ai, "translation": translation, "secrets": secrets, "kms": kms,
+            "identity": identity, "email": email, "sms": sms,
+        },
+        "maps": {"provider": "google", "locked": True, "label": "Google Maps (required)"},
+        "profiles": [{"id": k, **v} for k, v in CLOUD_PROFILES.items()],
+    }
+
+
+@router.post("/providers/cloud-profile")
+async def set_cloud_profile(
+    body: CloudProfileRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """Apply a whole cloud environment in one choice: sets the AI, translation and
+    secret-store providers to the profile's defaults. In managed (state-hosted)
+    mode this is locked — the compliance boundary is set by the hosting platform.
+    """
+    # The compliance boundary is a state-level decision when hosted centrally.
+    from app.core.config import get_settings as _app_settings
+    if _app_settings().managed_mode:
+        raise HTTPException(
+            status_code=403,
+            detail="The cloud environment is set by your state's hosting platform and can't be changed here.",
+        )
+    pid = (body.profile or "").strip().lower()
+    if pid not in CLOUD_PROFILES:
+        raise HTTPException(status_code=400, detail=f"Unknown cloud profile: {body.profile}")
+    p = CLOUD_PROFILES[pid]
+
+    await _persist_secret(db, _PROVIDER_SELECT_KEY["ai"], p["ai"])
+    await _persist_secret(db, _PROVIDER_SELECT_KEY["translation"], p["translation"])
+    await _persist_secret(db, "SECRETS_PROVIDER", p["secrets"])
+    await _persist_secret(db, "KMS_PROVIDER", p["kms"])
+    # Email/SMS only when the cloud has a native option — Google has no first-party
+    # SMS, so leave the existing SMS provider (e.g. Twilio) untouched there.
+    if p.get("email"):
+        await _persist_secret(db, "EMAIL_PROVIDER", p["email"])
+    if p.get("sms"):
+        await _persist_secret(db, "SMS_PROVIDER", p["sms"])
+
+    warnings: List[str] = []
+    # Gov-readiness: flipping the secret store to a vault that isn't wired up yet
+    # is allowed (writes fall back to the encrypted DB), but say so plainly.
+    if p["secrets"] == "azure":
+        try:
+            from app.core import azure_keyvault
+            if not azure_keyvault.is_configured():
+                warnings.append(
+                    "Azure Key Vault isn't configured yet — secrets stay in the encrypted "
+                    "database until Key Vault credentials are added."
+                )
+        except Exception:
+            warnings.append("Could not verify Azure Key Vault configuration.")
+    elif p["secrets"] == "google":
+        try:
+            from app.services.secret_manager import _is_gcp_available
+            if not _is_gcp_available():
+                warnings.append(
+                    "Google Secret Manager isn't reachable yet — secrets stay in the "
+                    "encrypted database until GOOGLE_CLOUD_PROJECT and credentials are set."
+                )
+        except Exception:
+            # This block only decides whether to add an advisory warning. Failing
+            # to determine reachability is not a reason to fail the profile switch.
+            pass
+    elif p["secrets"] == "aws":
+        try:
+            from app.core import aws_secretsmanager
+            if not aws_secretsmanager.is_configured():
+                warnings.append(
+                    "AWS Secrets Manager isn't configured yet (set AWS_REGION + credentials) — "
+                    "secrets stay in the encrypted database until then."
+                )
+        except Exception:
+            # As above: advisory only, so an unavailable check stays silent
+            # rather than blocking the switch.
+            pass
+
+    # KMS migration safety: existing PII is unwrapped by the KMS tag stored in
+    # each value, so it stays readable ONLY while the previous KMS credentials
+    # remain in place. New PII uses the new KMS immediately.
+    warnings.append(
+        f"PII encryption now uses {p['kms'].upper()} KMS for new data. Existing encrypted "
+        "records still need the previous KMS's credentials to decrypt — keep them in place, "
+        "or run “Re-encrypt All PII” to migrate everything to the new key."
+    )
+
+    identity_applied = False
+    if body.apply_identity:
+        await _persist_secret(db, _PROVIDER_SELECT_KEY["identity"], p["identity_recommended"])
+        identity_applied = True
+
+    from app.services.secret_manager import clear_cache
+    clear_cache()
+    # Drop the cached wrapped-DEK so the next PII write re-wraps under the new KMS.
+    try:
+        from app.core import pii_crypto
+        pii_crypto.clear_caches()
+    except Exception:
+        # Best-effort. A stale cached DEK means the next PII write re-wraps
+        # under the old KMS, which the migration warning above already covers;
+        # it is not worth failing an otherwise-applied profile over.
+        pass
+
+    from app.core.sanitize import sanitize_for_log
+    logger.info(
+        f"[Providers] {sanitize_for_log(current_user.username)} set cloud profile → "
+        f"{sanitize_for_log(pid)} (identity_applied={identity_applied})"
+    )
+    return {
+        "ok": True,
+        "profile": pid,
+        "components": {
+            "ai": p["ai"], "translation": p["translation"], "secrets": p["secrets"],
+            "kms": p["kms"], "email": p.get("email", ""), "sms": p.get("sms", ""),
+        },
+        "identity_recommended": p["identity_recommended"],
+        "identity_applied": identity_applied,
+        "warnings": warnings,
+    }
 
 
 @router.post("/settings", response_model=SystemSettingsResponse)
@@ -322,8 +791,11 @@ async def create_or_update_secret(
 ):
     """Create or update a secret (admin only) - values are encrypted at rest and stored in Secret Manager"""
     from app.core.encryption import encrypt
+    from app.core.managed import reject_platform_key_writes
     from app.services.secret_manager import set_secret, clear_cache
-    
+
+    reject_platform_key_writes(secret_data.key_name)
+
     # Bootstrap keys that must stay in database (needed to access Secret Manager)
     bootstrap_keys = {"GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT"}
     
@@ -516,14 +988,23 @@ async def update_retention_policy(
 ):
     """Update retention policy configuration (admin only)"""
     from app.services.retention_service import get_retention_policy
-    
+
     result = await db.execute(select(SystemSettings).limit(1))
     settings = result.scalar_one_or_none()
-    
+
     if not settings:
         settings = SystemSettings()
         db.add(settings)
-    
+
+    # If the state has pushed a managed retention/legal-hold policy, the town
+    # can't override it here — it's controlled from the hosting control plane.
+    managed = getattr(settings, "managed_policy", None) or {}
+    if any(k in managed for k in ("retention_days", "retention_mode", "pii_anonymization", "legal_hold")):
+        raise HTTPException(
+            403,
+            "Data-retention policy is managed by your state and can't be changed here.",
+        )
+
     if state_code:
         # Validate state code
         policy = get_retention_policy(state_code)
@@ -532,9 +1013,14 @@ async def update_retention_policy(
         settings.retention_state_code = state_code.upper()
     
     if override_days is not None:
-        if override_days < 365:
+        # 0 is the explicit "clear the override, revert to the state default"
+        # signal — without this, an override once set could never be removed.
+        if override_days == 0:
+            settings.retention_days_override = None
+        elif override_days < 365:
             raise HTTPException(400, "Override must be at least 365 days (1 year)")
-        settings.retention_days_override = override_days
+        else:
+            settings.retention_days_override = override_days
     
     if mode:
         if mode not in ["anonymize", "delete"]:
@@ -1208,15 +1694,34 @@ async def get_advanced_statistics(
     except Exception as e:
         logger.warning(f"Repeat locations query failed: {e}")
     
-    # Aging high-priority count (P1-P3 open > 7 days)
-    aging_hp_query = select(func.count(ServiceRequest.id)).where(
-        ServiceRequest.deleted_at.is_(None),
-        ServiceRequest.status == "open",
-        ServiceRequest.priority.in_([1, 2, 3]),
-        ServiceRequest.requested_datetime < now - timedelta(days=7)
+    # High-priority aging: requests still unresolved (open or in progress) for
+    # more than 7 days whose *effective* priority is high (>= 8 on the 1-10 scale
+    # the rest of the app uses). Effective priority mirrors the UI: the
+    # human-approved manual_priority_score if set, else the AI suggestion in
+    # ai_analysis, else the neutral default of 5. The legacy `priority` column is
+    # unused (always its default), so it must not be used here.
+    aging_candidates = await db.execute(
+        select(ServiceRequest.manual_priority_score, ServiceRequest.ai_analysis).where(
+            ServiceRequest.deleted_at.is_(None),
+            ServiceRequest.status.in_(["open", "in_progress"]),
+            ServiceRequest.requested_datetime < now - timedelta(days=7),
+        )
     )
-    aging_hp_result = await db.execute(aging_hp_query)
-    aging_high_priority_count = aging_hp_result.scalar() or 0
+    aging_high_priority_count = 0
+    for manual_score, ai in aging_candidates.all():
+        if manual_score is not None:
+            effective = manual_score
+        elif isinstance(ai, dict) and ai.get("priority_score") is not None:
+            effective = ai.get("priority_score")
+        else:
+            effective = 5
+        try:
+            if float(effective) >= 8:
+                aging_high_priority_count += 1
+        except (TypeError, ValueError):
+            # A non-numeric priority in ai_analysis is bad data, not a high
+            # priority. Skip the row rather than counting or raising on it.
+            pass
     
     # ========== Trends ==========
     
@@ -1225,7 +1730,9 @@ async def get_advanced_statistics(
     for i in range(7, -1, -1):
         week_start = now - timedelta(weeks=i+1)
         week_end = now - timedelta(weeks=i)
-        week_label = f"W{8-i}"
+        # Label each point with the week's start date (e.g. "Jul 21") rather than
+        # a generic "W1"..."W8", so the axis and tooltip show real dates.
+        week_label = f"{week_start.strftime('%b')} {week_start.day}"
         
         week_stats = {"period": week_label, "open": 0, "in_progress": 0, "closed": 0, "total": 0}
         for status in ["open", "in_progress", "closed"]:
@@ -1380,6 +1887,8 @@ async def get_heatmap_data(
             if cached:
                 return json.loads(cached)
     except Exception:
+        # Cache read is an optimisation; on any failure fall through and
+        # recompute from the database.
         pass
 
     # All request coordinates (for "reports" heatmap)
@@ -1433,6 +1942,8 @@ async def get_heatmap_data(
         if redis_client:
             await redis_client.setex(cache_key, STATS_CACHE_TTL, json.dumps(result))
     except Exception:
+        # Failing to cache costs the next caller a recompute. The result is
+        # already correct and must still be returned.
         pass
 
     return result
@@ -1457,7 +1968,8 @@ def _reject_if_managed():
 @router.post("/update")
 async def update_system(_: User = Depends(get_current_admin)):
     """Pull updates from GitHub (admin only). Code changes reload automatically."""
-    _reject_if_managed()
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Upgrading")  # hosted upgrades come only from the orchestrator (A2)
     try:
         # Get the project root
         project_root = os.environ.get("PROJECT_ROOT", "/project")
@@ -1787,7 +2299,8 @@ async def switch_version(
 ):
     """
     Production-grade version deployment with automatic rollback.
-    
+    Disabled in managed mode — rollouts come only from the orchestrator (A2).
+
     This endpoint performs a full deployment cycle:
     1. Save rollback point (current git HEAD)
     2. Create database backup (pg_dump)
@@ -1797,10 +2310,11 @@ async def switch_version(
     6. Health check the new deployment
     7. Automatic rollback on any failure
     """
-    _reject_if_managed()
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Upgrading")
     import httpx
     from datetime import datetime
-    
+
     project_root = os.environ.get("PROJECT_ROOT", "/project")
     deployment_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     backup_dir = "/project/backups"
@@ -2240,9 +2754,11 @@ async def configure_domain(
     _: User = Depends(get_current_admin)
 ):
     """Configure custom domain with automatic HTTPS via Caddy"""
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Domain/DNS configuration")  # platform-managed in hosted mode (A1)
     import re
     import httpx
-    
+
     # Validate domain format
     domain = domain.strip().lower()
     domain_regex = r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'
@@ -2571,8 +3087,10 @@ async def create_backup_endpoint(
     _: User = Depends(get_current_admin)
 ):
     """Trigger a manual database backup"""
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Backup management")  # state-run DR in hosted mode (A1)
     from app.services.backup_service import create_backup
-    
+
     result = await create_backup()
     if result["status"] == "error":
         raise HTTPException(status_code=500, detail="Backup failed")
@@ -2586,6 +3104,8 @@ async def cleanup_backups_endpoint(
     _: User = Depends(get_current_admin)
 ):
     """Clean up old backups based on retention policy"""
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Backup management")
     from app.services.backup_service import cleanup_old_backups
     return await cleanup_old_backups(retention_days)
 
@@ -2596,8 +3116,10 @@ async def delete_backup_endpoint(
     _: User = Depends(get_current_admin)
 ):
     """Delete a specific backup"""
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Backup management")
     from app.services.backup_service import delete_backup
-    
+
     result = await delete_backup(backup_name)
     if result["status"] == "error":
         raise HTTPException(status_code=500, detail="Delete failed")
@@ -2617,6 +3139,8 @@ async def restore_backup_endpoint(
     WARNING: This will overwrite the current database!
     You must pass confirm=true to proceed.
     """
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Backup restore")
     if not confirm:
         raise HTTPException(
             status_code=400, 
@@ -2809,7 +3333,12 @@ async def execute_runbook(
     - clear-cache: Clear Redis cache
     - vacuum: Run PostgreSQL vacuum analyze
     - restore: Restore from backup (requires backup_name parameter)
+
+    Disabled in managed mode — infrastructure operations come only from the
+    orchestrator (A2).
     """
+    from app.core.managed import ensure_not_managed
+    ensure_not_managed("Infrastructure runbook execution")
     from datetime import datetime
     
     result = {
@@ -2820,39 +3349,78 @@ async def execute_runbook(
         "details": {}
     }
     
+    import shutil
+
+    def _compose_cmd():
+        """Resolve a usable Docker Compose command, or None if unavailable.
+
+        Prefers Compose v2 (`docker compose`) and falls back to v1
+        (`docker-compose`). Also requires the project directory to exist — the
+        app can only drive Compose if it has the Docker socket + the repo on disk
+        (e.g. a self-hosted host mount), which isn't the case in many
+        environments. Returns (cmd_list, project_root) or (None, project_root)."""
+        project_root = os.environ.get("PROJECT_ROOT", "/project")
+        if not os.path.isdir(project_root):
+            return None, project_root
+        if shutil.which("docker"):
+            return ["docker", "compose"], project_root
+        if shutil.which("docker-compose"):
+            return ["docker-compose"], project_root
+        return None, project_root
+
     try:
-        if action == "restart-all":
-            # Restart all containers (except database to avoid data issues)
-            for service in ["backend", "frontend", "redis", "caddy"]:
-                subprocess.run(
-                    ["docker-compose", "restart", service],
-                    cwd="/home/ubuntu/Pinpoint-311",
-                    capture_output=True, timeout=60
-                )
-            result["details"]["restarted"] = ["backend", "frontend", "redis", "caddy"]
-            result["details"]["note"] = "Database not restarted for safety"
-        
-        elif action.startswith("restart-"):
-            service = action.replace("restart-", "")
-            if service not in ["backend", "frontend", "redis", "caddy"]:
-                raise HTTPException(status_code=400, detail=f"Cannot restart service: {service}")
-            subprocess.run(
-                ["docker-compose", "restart", service],
-                cwd="/home/ubuntu/Pinpoint-311",
-                capture_output=True, timeout=60
+        if action == "restart-all" or action.startswith("restart-"):
+            services = (
+                ["backend", "frontend", "redis", "caddy"]
+                if action == "restart-all"
+                else [action.replace("restart-", "")]
             )
-            result["details"]["restarted"] = [service]
-        
+            for service in services:
+                if service not in ["backend", "frontend", "redis", "caddy"]:
+                    raise HTTPException(status_code=400, detail=f"Cannot restart service: {service}")
+
+            compose, project_root = _compose_cmd()
+            if not compose:
+                # Report honestly rather than pretending it worked.
+                result["status"] = "unavailable"
+                result["details"]["error"] = (
+                    "Container restarts aren't available to the app in this environment "
+                    "(Docker Compose or the project directory isn't reachable). "
+                    "Run `docker compose restart <service>` on the host instead."
+                )
+            else:
+                restarted, failed = [], {}
+                for service in services:
+                    proc = subprocess.run(
+                        compose + ["restart", service],
+                        cwd=project_root, capture_output=True, timeout=60, text=True,
+                    )
+                    if proc.returncode == 0:
+                        restarted.append(service)
+                    else:
+                        failed[service] = (proc.stderr or proc.stdout or "restart failed").strip()[:300]
+                result["details"]["restarted"] = restarted
+                if failed:
+                    result["details"]["failed"] = failed
+                    result["status"] = "partial" if restarted else "error"
+                if action == "restart-all":
+                    result["details"]["note"] = "Database not restarted for safety"
+
         elif action == "clear-cache":
             if redis_client:
-                redis_client.flushdb()
+                await redis_client.flushdb()
                 result["details"]["cleared"] = True
             else:
                 result["status"] = "skipped"
                 result["details"]["reason"] = "Redis not configured"
-        
+
         elif action == "vacuum":
-            await db.execute(text("VACUUM ANALYZE"))
+            # VACUUM cannot run inside a transaction block, so use a dedicated
+            # AUTOCOMMIT connection rather than the request's transactional session.
+            from app.db.session import engine
+            async with engine.connect() as conn:
+                ac = conn.execution_options(isolation_level="AUTOCOMMIT")
+                await ac.execute(text("VACUUM ANALYZE"))
             result["details"]["operation"] = "VACUUM ANALYZE completed"
         
         elif action == "restore":
@@ -3331,13 +3899,13 @@ Season: {'Winter' if now.month in [12,1,2] else 'Spring' if now.month in [3,4,5]
 {json.dumps(request_details[:50], indent=None, default=str)}
 
 ## RESPONSE FORMAT RULES
-- Use **##** section headers to organize responses into clear sections
-- Use bullet points for lists of 3+ items
-- **Bold** all key numbers, percentages, and metric values
-- Use tables (| col | col |) when comparing departments, categories, or time periods
-- Keep paragraphs short: 2-3 sentences maximum
-- End substantive responses with a "## Key Takeaway" section (1-2 sentences)
-- When recommending actions, use numbered lists for priority order
+The chat UI renders plain text with basic inline markdown only — it does NOT render markdown tables or headers, so those come out as raw pipes and hashes. Format accordingly:
+- NEVER use markdown tables (| col | col |). To compare departments, categories, or time periods, use a bullet list with a bold label per item instead — e.g. "**Public Works** — 42 requests, 3.1 day avg".
+- Do NOT use markdown headers (#, ##, ###). For a section title, put a short **bold line** on its own line instead.
+- Use bullet points ("- ") for lists of 3+ items, and numbered lists ("1. ") for prioritized actions.
+- **Bold** all key numbers, percentages, and metric values.
+- Keep paragraphs short: 2-3 sentences maximum.
+- End substantive responses with a bold **Key Takeaway** line followed by 1-2 sentences.
 
 ## IMPORTANT RULES
 - NEVER share or reference resident names, emails, or phone numbers
@@ -3389,7 +3957,7 @@ Season: {'Winter' if now.month in [12,1,2] else 'Spring' if now.month in [3,4,5]
         
         credentials.refresh(Request())
         
-        endpoint = f"https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/gemini-3.1-flash-lite-preview:generateContent"
+        endpoint = f"https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent"
         
         payload = {
             "contents": [{"role": "user", "parts": [{"text": conversation}]}],
@@ -3453,144 +4021,71 @@ Season: {'Winter' if now.month in [12,1,2] else 'Spring' if now.month in [3,4,5]
 
 
 
-
-# ---- Cloud environment profile (hybrid one-choice front door) ----
-CLOUD_PROFILES: Dict[str, Dict[str, str]] = {
-    "google": {
-        "label": "Google Cloud",
-        "boundary": "Google Cloud — FedRAMP High / StateRAMP",
-        "ai": "vertex",
-        "translation": "google",
-        "secrets": "google",
-        "identity_recommended": "auth0",
-    },
-    "azure": {
-        "label": "Microsoft Azure (Government)",
-        "boundary": "Azure Government / GCC High — FedRAMP High, DoD IL4/5",
-        "ai": "azure",
-        "translation": "azure",
-        "secrets": "azure",
-        "identity_recommended": "entra",
-    },
-}
-
-
-def _derive_cloud_profile(ai: str, translation: str, secrets: str) -> str:
-    """Report which named profile the current selections match, or 'mixed'."""
-    for pid, p in CLOUD_PROFILES.items():
-        if ai == p["ai"] and translation == p["translation"] and secrets == p["secrets"]:
-            return pid
-    return "mixed"
-
-
-class CloudProfileRequest(BaseModel):
-    profile: str
-    apply_identity: bool = False
-
-
-@router.get("/providers/cloud-profile")
-async def get_cloud_profile(
+@router.get("/statistics/redirected")
+async def get_redirected_statistics(
+    days: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    _: User = Depends(get_current_staff),
 ):
-    """Report the current cloud environment: the matched profile (or 'mixed'),
-    the per-capability selections behind it, and the fixed Maps provider."""
-    from app.services.secret_manager import get_secret, _secrets_provider
-    from app.core.config import get_settings as _app_settings
-    ai = (await get_secret("AI_PROVIDER")) or "vertex"
-    translation = (await get_secret("TRANSLATION_PROVIDER")) or "google"
-    identity = (await get_secret("IDENTITY_PROVIDER")) or "auth0"
-    secrets = _secrets_provider()
-    return {
-        "profile": _derive_cloud_profile(ai, translation, secrets),
-        "managed": _app_settings().managed_mode,
-        "components": {"ai": ai, "translation": translation, "secrets": secrets, "identity": identity},
-        "maps": {"provider": "google", "locked": True, "label": "Google Maps (required)"},
-        "profiles": [{"id": k, **v} for k, v in CLOUD_PROFILES.items()],
-    }
+    """How many residents were redirected instead of filing, and to whom.
 
+    These are not service requests -- nobody worked them and they appear in no
+    queue, feed, export or map. But the count is the only way a town learns that
+    one road is turning away twenty people a month, which is either evidence for
+    a conversation with the county or a sign the routing config is wrong.
 
-@router.post("/providers/cloud-profile")
-async def set_cloud_profile(
-    body: CloudProfileRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin),
-):
-    """Apply a whole cloud environment in one choice: sets the AI, translation and
-    secret-store providers to the profile's defaults."""
-    from app.core.config import get_settings as _app_settings
-    if _app_settings().managed_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="The cloud environment is set by your state's hosting platform and can't be changed here.",
-        )
-    pid = (body.profile or "").strip().lower()
-    if pid not in CLOUD_PROFILES:
-        raise HTTPException(status_code=400, detail=f"Unknown cloud profile: {body.profile}")
-    p = CLOUD_PROFILES[pid]
+    Road-based redirects (this road belongs to someone else) and whole-category
+    redirects (the whole service is handled elsewhere) are reported separately
+    because they mean different things to a clerk.
+    """
+    # system.py imports datetime lazily per-function; do the same rather than
+    # adding a module-level import that the rest of the file does not expect.
+    from datetime import datetime, timedelta, timezone
 
-    await _persist_secret(db, _PROVIDER_SELECT_KEY["ai"], p["ai"])
-    await _persist_secret(db, _PROVIDER_SELECT_KEY["translation"], p["translation"])
-    await _persist_secret(db, "SECRETS_PROVIDER", p["secrets"])
+    from app.models import BlockedRequestLog
 
-    warnings: List[str] = []
-    if p["secrets"] == "azure":
-        try:
-            from app.core import azure_keyvault
-            if not azure_keyvault.is_configured():
-                warnings.append("Azure Key Vault isn't configured yet — secrets stay in encrypted database.")
-        except Exception:
-            warnings.append("Could not verify Azure Key Vault configuration.")
-    elif p["secrets"] == "google":
-        try:
-            from app.services.secret_manager import _is_gcp_available
-            if not _is_gcp_available():
-                warnings.append("Google Secret Manager isn't reachable yet — secrets stay in encrypted database.")
-        except Exception:
-            pass
+    since = datetime.now(timezone.utc) - timedelta(days=days)
 
-    identity_applied = False
-    if body.apply_identity:
-        await _persist_secret(db, _PROVIDER_SELECT_KEY["identity"], p["identity_recommended"])
-        identity_applied = True
+    async def grouped(column):
+        rows = (
+            await db.execute(
+                select(column, func.count(BlockedRequestLog.id).label("count"))
+                .where(BlockedRequestLog.created_at >= since)
+                .group_by(column)
+                .order_by(func.count(BlockedRequestLog.id).desc())
+            )
+        ).all()
+        return [{"label": row[0] or "Unspecified", "count": row[1]} for row in rows]
 
-    from app.services.secret_manager import clear_cache
-    clear_cache()
+    try:
+        total = (
+            await db.execute(
+                select(func.count(BlockedRequestLog.id)).where(BlockedRequestLog.created_at >= since)
+            )
+        ).scalar() or 0
 
-    from app.core.sanitize import sanitize_for_log
-    logger.info(
-        f"[Providers] {sanitize_for_log(current_user.username)} set cloud profile → "
-        f"{sanitize_for_log(pid)} (identity_applied={identity_applied})"
-    )
-    return {
-        "ok": True,
-        "profile": pid,
-        "components": {
-            "ai": p["ai"], "translation": p["translation"], "secrets": p["secrets"],
-        },
-        "warnings": warnings,
-    }
+        by_type = {
+            row["label"]: row["count"] for row in await grouped(BlockedRequestLog.block_type)
+        }
 
-
-@router.get("/maps/catalog")
-async def get_maps_catalog(_: User = Depends(get_current_admin)):
-    """Map providers catalog for system admin console."""
-    from app.services import map_provider as mp
-    return {"providers": mp.catalog(), "default": mp.DEFAULT_PROVIDER}
-
-
-@router.get("/config")
-async def get_system_config(db: AsyncSession = Depends(get_db)):
-    """System config details for admin UI."""
-    from app.services.secret_manager import get_secret
-    return {
-        "ok": True,
-        "township_name": (await get_secret("TOWNSHIP_NAME")) or "Township",
-    }
-
-
-@router.post("/ai/models/refresh")
-async def refresh_ai_models(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_admin)):
-    """Refresh AI model catalog."""
-    from app.services.ai.registry import catalog_for_api
-    return {"ok": True, "providers": catalog_for_api()}
+        return {
+            "days": days,
+            "total": total,
+            "road_based": by_type.get("road_based", 0),
+            "category": by_type.get("category", 0),
+            "by_jurisdiction": await grouped(BlockedRequestLog.jurisdiction_name),
+            # road_name is null for whole-category redirects, which is why this
+            # list will not sum to `total`.
+            "by_road": [
+                r for r in await grouped(BlockedRequestLog.road_name) if r["label"] != "Unspecified"
+            ],
+            "by_service": await grouped(BlockedRequestLog.service_name),
+        }
+    except Exception as e:
+        # A town that has never redirected anyone has no table rows and possibly
+        # no table yet; that is an empty report, not a failure.
+        logger.info(f"Redirected statistics unavailable: {e}")
+        return {
+            "days": days, "total": 0, "road_based": 0, "category": 0,
+            "by_jurisdiction": [], "by_road": [], "by_service": [],
+        }

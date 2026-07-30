@@ -147,6 +147,73 @@ body {
     /* Premium gradient-border card: a soft indigo ring drawn with a
        masked gradient so the border itself is a gradient, not a flat color.
        Deep layered shadow + a faint inner top highlight give real depth. */
+    /* The bubbly card treatment, lifted from BubblyServiceCard in Service
+     * Categories so the setup page reads as the same product.
+     *
+     * Values transcribed from that component's Tailwind classes rather than
+     * matched by eye:
+     *   rounded-3xl                              -> 1.5rem
+     *   from-white/[.08] via-white/[.03] to-indigo-950/30
+     *   border-white/15, backdrop-blur-2xl       -> 24px
+     *   shadow-[0_10px_30px_rgba(0,0,0,.3)]
+     *   hover: shadow-[0_20px_50px_rgba(99,102,241,.2)],
+     *          border-primary-400/50, -translate-y-1 -> 4px
+     *
+     * The parts that make it feel bubbly rather than flat, in rough order of
+     * how much each contributes: a 24px radius, the warm indigo floor under the
+     * white sheen so it is not grey, a real drop shadow, and lift on hover. The
+     * hairline this replaces had the blur but none of the depth.
+     */
+    .setup-panel {
+        position: relative;
+        border-radius: 1.5rem;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        background: linear-gradient(to bottom right,
+            rgba(255, 255, 255, 0.08) 0%,
+            rgba(255, 255, 255, 0.03) 50%,
+            rgba(30, 27, 75, 0.30) 100%);
+        /* 24px, matching Tailwind's backdrop-blur-2xl on the source card.
+         * At 40px the panel reads as noticeably heavier and lighter than the
+         * service cards beside it -- the blur brightens what it samples. */
+        backdrop-filter: blur(24px);
+        -webkit-backdrop-filter: blur(24px);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        transition: box-shadow 0.3s ease, border-color 0.3s ease, transform 0.3s ease;
+    }
+
+    /* The glow bar across the top edge. In the source card this is a real div;
+     * as a pseudo-element it comes free on every panel instead of having to be
+     * added to each one by hand. */
+    .setup-panel::before {
+        content: '';
+        position: absolute;
+        inset: 0 0 auto 0;
+        /* 4px and 40% opacity, matching the h-1 via-primary-400/40 div on the
+         * source card. At 2px it did not read at all. */
+        height: 4px;
+        border-radius: 1.5rem 1.5rem 0 0;
+        background: linear-gradient(90deg,
+            transparent, rgba(129, 140, 248, 0.40) 50%, transparent);
+        pointer-events: none;
+    }
+
+    .setup-panel:hover {
+        border-color: rgba(129, 140, 248, 0.5);
+        box-shadow: 0 20px 50px rgba(99, 102, 241, 0.2);
+        transform: translateY(-4px);
+    }
+
+    /* The icon tile that sits top-left of each card. */
+    .setup-tile {
+        border-radius: 1rem;
+        background: linear-gradient(to bottom right,
+            rgba(99, 102, 241, 0.25) 0%,
+            rgba(99, 102, 241, 0.20) 50%,
+            rgba(168, 85, 247, 0.15) 100%);
+        border: 1px solid rgba(255, 255, 255, 0.20);
+        box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.25);
+    }
+
     .premium-card {
         position: relative;
         background:

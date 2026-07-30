@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown } from 'lucide-react';
 
 interface CollapsibleSectionProps {
+    /** DOM id, so the setup status rail can scroll and focus a section. */
+    id?: string;
     title: string;
     icon?: React.ElementType;
     /** Shown under the title as context (kept while collapsed so it stays scannable). */
@@ -24,12 +26,13 @@ interface CollapsibleSectionProps {
  * The header doubles as the toggle to keep the setup page compact.
  */
 export function CollapsibleSection({
+    id,
     title, icon: Icon, subtitle, badge, trailing, accent = 'neutral', defaultOpen = false, children,
 }: CollapsibleSectionProps) {
     const [open, setOpen] = useState(defaultOpen);
     const isPrimary = accent === 'primary';
     return (
-        <section className={`rounded-2xl border overflow-hidden transition-colors ${isPrimary
+        <section id={id} className={`rounded-2xl border overflow-hidden transition-colors ${isPrimary
             ? 'border-primary-400/25 bg-primary-500/[0.04]'
             : 'border-white/10 bg-white/[0.03]'}`}>
             <div className="flex items-center gap-3 p-4 sm:p-5">

@@ -14,6 +14,9 @@ import time
 import pytest
 
 am = pytest.importorskip("app.services.apple_mapkit")
+# apple_mapkit imports PyJWT lazily inside the signing call, so the module-level
+# guard above passes without it and the tests would fail at call time instead.
+pytest.importorskip("jwt")
 
 # ES256 needs a real EC key; without cryptography installed there is nothing to
 # sign with and the signing tests cannot run.

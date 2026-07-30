@@ -425,13 +425,55 @@ class NotificationService:
                 use_tls=config.get("use_tls", True)
             )
     
+    async def _record_health(self, connector: str, success: bool) -> None:
+        """Record a real send against connector health.
+
+        Health used to be written only by the admin Test button, which meant a
+        card claimed "Working" for a week on the strength of one manual click
+        and never reflected whether residents were actually getting their
+        email. Recording here is what makes the badge mean something: it moves
+        with real traffic.
+
+        Best-effort, and its own session -- a notification must never fail
+        because bookkeeping did, and it must not join the caller's transaction
+        where a rollback would erase the record of a send that really happened.
+        """
+        try:
+            from app.db.session import SessionLocal
+            from app.services import connector_health as ch
+            async with SessionLocal() as db:
+                if success:
+                    await ch.record_success(db, connector)
+                else:
+                    await ch.record_failure(db, connector, "The provider did not accept the message")
+        except Exception as exc:
+            logger.debug("Could not record %s health: %s", connector, exc)
+
+    def _record_health_sync(self, connector: str, success: bool) -> None:
+        """The same, from the synchronous email path.
+
+        Scheduled onto a running loop when there is one and skipped otherwise:
+        spinning up an event loop inside a worker thread to write one row is not
+        worth the deadlock risk.
+        """
+        try:
+            import asyncio
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        try:
+            loop.create_task(self._record_health(connector, success))
+        except Exception as exc:
+            logger.debug("Could not schedule %s health: %s", connector, exc)
+
     async def send_sms(self, to: str, message: str) -> bool:
         """Send SMS notification"""
         if not self._sms_provider:
             logger.warning("SMS provider not configured")
             return False
         success = await self._sms_provider.send_sms(to, message)
-        
+        await self._record_health("sms", success)
+
         # Track SMS usage if successful
         if success:
             try:
@@ -462,7 +504,8 @@ class NotificationService:
             logger.warning("Email provider not configured")
             return False
         success = self._email_provider.send_email(to, subject, body_html, body_text, from_name=from_name)
-        
+        self._record_health_sync("email", success)
+
         # Track email usage if successful (sync version)
         if success:
             try:

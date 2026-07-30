@@ -80,6 +80,6 @@ async def test_pagination_follows_next_and_dedupes(monkeypatch):
         return httpx.Response(200, json=pages[key], request=request)
 
     monkeypatch.setattr(base.httpx.AsyncHTTPTransport, "handle_async_request", paged)
-    conn = build_connector("sdl", {"base_url": "https://api.test/v1"}, {"api_key": "k"})
+    conn = build_connector("generic_rest", {"base_url": "https://api.test/v1"}, {"api_key": "k"})
     recs = await conn.pull_updates()
     assert sorted(r.external_id for r in recs) == ["1", "2", "3"]

@@ -9,6 +9,7 @@ import {
 import { CollapsibleSection } from './ui';
 import SecretField from './SecretField';
 import { api, ProviderCatalog, ProviderInfo, ProviderModelSpec, CloudProfileState } from '../services/api';
+import type { ConnectorHealth } from '../types';
 
 // Relative "updated Xh ago" from an epoch-seconds timestamp.
 function agoLabel(epochSeconds?: number | null): string {
@@ -57,11 +58,58 @@ function Step({ n, children, aside }: { n: number; children: React.ReactNode; as
     );
 }
 
+/** The live-state pill shown next to "Configured".
+ *
+ * Deliberately a second, separate badge. "Configured" is a fact about our own
+ * database -- the credentials are stored -- and "working" is a fact about
+ * someone else's service. Merging them into one badge forces the case where we
+ * genuinely do not know to pick a colour, and it always picks green, which is
+ * how a revoked key keeps a healthy tick for a month.
+ *
+ * So "unknown" is shown as unknown. It is not a failure and it is not success;
+ * it means nothing has called this connector yet.
+ */
+function HealthPill({ health }: { health?: ConnectorHealth }) {
+    if (!health || health.status === 'unknown') {
+        return (
+            <span
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-medium bg-white/[0.06] text-white/50 border border-white/12"
+                title="Nothing has used this connector yet, so we cannot say whether it works."
+            >
+                <span className="w-1.5 h-1.5 rounded-full bg-white/35" aria-hidden="true" />
+                Not used yet
+            </span>
+        );
+    }
+    const tone = {
+        working: 'bg-emerald-500/15 text-emerald-300 border-emerald-400/25',
+        stale: 'bg-white/[0.06] text-white/55 border-white/12',
+        failing: 'bg-amber-500/15 text-amber-300 border-amber-400/25',
+        down: 'bg-red-500/15 text-red-300 border-red-400/30',
+    }[health.status];
+    const dot = {
+        working: 'bg-emerald-400', stale: 'bg-white/40',
+        failing: 'bg-amber-400', down: 'bg-red-400',
+    }[health.status];
+    const label = {
+        working: 'Working', stale: 'No recent use',
+        failing: 'Last call failed', down: `Failing (${health.consecutive_failures})`,
+    }[health.status];
+    return (
+        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-medium border ${tone}`}
+              title={health.summary}>
+            <span className={`w-1.5 h-1.5 rounded-full ${dot}`} aria-hidden="true" />
+            {label}
+        </span>
+    );
+}
+
 export interface CapStatus { providerName?: string; onDefault?: boolean; verified?: boolean | null }
 
-function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus }: {
+function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus, health }: {
     cap: Capability; title: string; blurb: string; icon: typeof Sparkles; delay: number;
     recheckToken: number; reloadToken: number; onStatus: (cap: Capability, s: CapStatus) => void;
+    health?: ConnectorHealth;
 }) {
     const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
     const [selected, setSelected] = useState<string>('');
@@ -75,6 +123,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const [liveModels, setLiveModels] = useState<ProviderModelSpec[] | null>(null);
     const [modelsMeta, setModelsMeta] = useState<{ source?: string; fetched_at?: number | null } | null>(null);
     const [staleOverride, setStaleOverride] = useState<boolean | null>(null);
+    const [warnings, setWarnings] = useState<{ key: string; severity: string; message: string }[]>([]);
     /* Collapsed by default, expanded when something needs attention.
      *
      * I removed this disclosure earlier after reading "I don't like the drop down
@@ -194,10 +243,17 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const active: ProviderInfo | undefined = catalog.providers.find(p => p.provider === selected);
     const currentName = catalog.providers.find(p => p.provider === catalog.current_provider)?.name || catalog.current_provider;
 
-    // Whether the provider actually in use has its credentials stored. Drives
-    // the same green treatment every other connector card uses, so "set up" and
-    // "not set up" read identically across the whole page.
-    const configured = !!catalog.configured?.[catalog.current_provider];
+    /* Whether the provider actually in use has its credentials stored.
+     *
+     * `undefined` means the endpoint did not tell us, which is not the same as
+     * "no". Three capabilities used to omit this map entirely and every one of
+     * their cards claimed "Not configured" on a working connector -- so an
+     * absent answer now renders as unknown rather than as a confident negative,
+     * and the card cannot lie in that direction again if a future capability
+     * forgets to send it. */
+    const configuredState = catalog.configured?.[catalog.current_provider];
+    const configured = configuredState === true;
+    const statusUnknown = configuredState === undefined;
     // null means "not touched yet", so an unconfigured card starts open and a
     // configured one starts closed, without overriding a deliberate click.
     const isOpen = open === null ? !configured : open;
@@ -213,7 +269,12 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 const v = (values[f.key] || '').trim();
                 if (v) settings[f.key] = v;
             });
-            await api.saveProvider(cap, { provider: selected, model: model || undefined, settings });
+            const saved = await api.saveProvider(cap, { provider: selected, model: model || undefined, settings });
+            // Shown even though the save succeeded. These are "that value does
+            // not look like what this field wants" -- most often the right
+            // credential in the wrong box, which the connection test below may
+            // not distinguish from a wrong key.
+            setWarnings(saved.warnings || []);
             setValues({});
             await load();
             // Immediately verify
@@ -244,9 +305,9 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-            className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-6 transition-all duration-300 ${configured
+            className={`relative overflow-hidden rounded-3xl border p-6 transition-all duration-300 ${configured
                 ? 'bg-gradient-to-br from-green-500/10 via-emerald-500/5 to-teal-500/10 border-green-500/30 shadow-lg shadow-green-500/10'
-                : 'bg-white/5 border-white/10 hover:border-white/20 hover:bg-white/[0.07]'}`}
+                : 'setup-panel border-transparent'}`}
         >
             {configured && (
                 <div className="absolute inset-0 bg-gradient-to-r from-green-500/5 via-transparent to-emerald-500/5 pointer-events-none" aria-hidden="true" />
@@ -265,7 +326,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                     <div className="flex items-center gap-4 min-w-0">
                         <div className={`w-14 h-14 shrink-0 rounded-2xl flex items-center justify-center transition-all duration-300 ${configured
                             ? 'bg-gradient-to-br from-green-400 to-emerald-500 shadow-lg shadow-green-500/30'
-                            : 'bg-gradient-to-br from-slate-600/50 to-slate-700/50'}`}>
+                            : 'setup-tile'}`}>
                             <Icon className="w-7 h-7 text-white" />
                         </div>
                         <div className="min-w-0">
@@ -277,13 +338,22 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                         </div>
                     </div>
                     <div className="flex items-center gap-2.5 shrink-0">
+                        {/* Live state sits beside stored-credentials state, not
+                            instead of it. They answer different questions and a
+                            clerk needs both: "we have the key" and "the key
+                            works" diverge exactly when it matters. */}
+                        {configured && <HealthPill health={health} />}
                         {configured ? (
-                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-green-500/20 to-emerald-500/20 text-green-300 border border-green-500/30 shadow-lg shadow-green-500/10">
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-2xl text-xs font-semibold bg-gradient-to-r from-green-500/20 to-emerald-500/20 text-green-300 border border-green-500/30 shadow-lg shadow-green-500/10">
                                 <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" />
                                 Configured
                             </span>
+                        ) : statusUnknown ? (
+                            <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 text-white/60 border border-white/20">
+                                Status unknown
+                            </span>
                         ) : (
-                            <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            <span className="inline-flex items-center px-3 py-1.5 rounded-2xl text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
                                 Not configured
                             </span>
                         )}
@@ -300,6 +370,18 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
 
                 <p className="text-white/60 text-sm mb-4">{blurb}</p>
 
+            {warnings.length > 0 && (
+                <div className="mt-3 space-y-1.5">
+                    {warnings.map(w => (
+                        <div key={w.key} className={`rounded-xl px-3 py-2.5 text-xs border flex items-start gap-2 ${w.severity === 'error'
+                            ? 'bg-amber-500/10 border-amber-400/30 text-amber-100/90'
+                            : 'bg-white/[0.04] border-white/12 text-white/65'}`}>
+                            <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+                            <span><span className="font-semibold">{w.key}</span> — {w.message}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
             {result && (
                 <motion.div
                     initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
@@ -340,7 +422,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                     key={p.provider}
                                     role="radio"
                                     aria-checked={isSel}
-                                    onClick={() => { setSelected(p.provider); setResult(null); setModel(p.default_model || ''); }}
+                                    onClick={() => { setSelected(p.provider); setResult(null); setWarnings([]); setModel(p.default_model || ''); }}
                                     className={`relative text-left rounded-xl px-3 py-2.5 border transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${isSel
                                         ? 'bg-gradient-to-br from-primary-500/25 to-primary-700/15 border-primary-400/50 shadow-lg shadow-primary-900/30'
                                         : 'bg-white/[0.03] border-white/10 hover:bg-white/[0.06] hover:border-white/20'}`}
@@ -673,7 +755,7 @@ function CloudEnvironment({ onApplied }: { onApplied: () => void }) {
                 </p>
             )}
 
-            {result && (result?.warnings || []).length > 0 && (
+            {result && result.warnings.length > 0 && (
                 <div className="mt-3 rounded-xl bg-amber-500/10 border border-amber-400/30 px-3 py-2.5 text-xs text-amber-200 space-y-1">
                     {result.warnings.map((w, i) => (
                         <p key={i} className="flex items-start gap-2"><AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {w}</p>
@@ -708,6 +790,25 @@ function CloudEnvironment({ onApplied }: { onApplied: () => void }) {
 
 export default function ServiceProviders() {
     const [recheckToken, setRecheckToken] = useState(0);
+    /* One request for the whole section rather than one per card: the endpoint
+     * returns every connector, and four parallel calls on page load for data
+     * that arrives together is wasteful.
+     *
+     * Refetched whenever a recheck runs, because a recheck is precisely the
+     * moment the answer changes. Failure is silent -- the pill degrades to
+     * "not used yet", which is honest: if we cannot read the health table, we
+     * do not know. */
+    const [health, setHealth] = useState<Record<string, ConnectorHealth>>({});
+    const loadHealth = useCallback(async () => {
+        try {
+            const report = await api.getConnectorHealth();
+            setHealth(Object.fromEntries(report.connectors.map(c => [c.connector, c])));
+        } catch {
+            setHealth({});
+        }
+    }, []);
+    useEffect(() => { loadHealth(); }, [loadHealth, recheckToken]);
+
     const [reloadToken, setReloadToken] = useState(0);
     const [statuses, setStatuses] = useState<Record<string, CapStatus>>({});
 
@@ -740,7 +841,7 @@ export default function ServiceProviders() {
                 Choose which cloud powers each capability. Every option is pre-built — pick a provider, paste your key, and test.
                 Google &amp; Auth0 are the defaults, so you can leave these untouched and everything just works.
             </p>
-            {(loaded || []).length > 0 && (
+            {loaded.length > 0 && (
                 <div className="text-[11px] text-white/55 flex flex-wrap items-center gap-x-3 gap-y-0.5 mb-4">
                     <span>{onDefaultCount === loaded.length
                         ? 'All on recommended defaults'
@@ -761,7 +862,8 @@ export default function ServiceProviders() {
             <div className="relative grid grid-cols-1 gap-4">
                 {CAPS.map((c, i) => (
                     <CapabilityCard key={c.key} cap={c.key} title={c.title} blurb={c.blurb} icon={c.icon} delay={i * 0.08}
-                        recheckToken={recheckToken} reloadToken={reloadToken} onStatus={onStatus} />
+                        recheckToken={recheckToken} reloadToken={reloadToken} onStatus={onStatus}
+                        health={health[c.key]} />
                 ))}
             </div>
         </CollapsibleSection>
