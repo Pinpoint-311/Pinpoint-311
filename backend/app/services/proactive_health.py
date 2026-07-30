@@ -213,6 +213,120 @@ async def _redis_check() -> Dict[str, Any]:
         return _check("redis", "Cache (Redis)", "unknown", None, "Could not reach Redis.")
 
 
+async def _kms_check() -> Dict[str, Any]:
+    """Is resident data still being encrypted with the key the town chose?
+
+    This is the only check here whose failure is not recoverable by fixing it
+    later, which is why it is critical rather than warning.
+
+    A cloud KMS key that stops answering -- scheduled for deletion, permissions
+    revoked, credentials expired -- does not raise anything. `_wrap_dek` falls
+    back to the application key and carries on: new reports save fine, and the
+    rows written under the old key quietly stop being readable. The gap can run
+    for weeks, and if the cause was a scheduled deletion, the window to cancel
+    it closes inside that time. After that the data is gone for good.
+
+    So this compares what the town selected against what actually wrapped the
+    data key just now. Those agreeing is the only evidence that the arrangement
+    still works; a settings page showing a key name proves nothing, because the
+    key name is still there when the key is not.
+    """
+    try:
+        from app.core import pii_crypto
+        from app.core.encryption import _kms_provider
+
+        selected = _kms_provider()
+        if selected not in ("google", "azure", "aws"):
+            # No cloud KMS chosen. Encrypting with the application key is then
+            # the configured behaviour, not a fault.
+            return _check("kms", "Resident data encryption", "ok", "local",
+                          "Resident data is encrypted with the application key, as configured.")
+
+        # A live wrap, not `active_backend()`. That reads the data key this
+        # process cached at startup, so a worker that has been running since
+        # before the key broke would answer with the state of the world an
+        # arbitrary time ago -- and would keep saying "ok" through the entire
+        # deletion window, which is the one stretch where saying otherwise
+        # matters. Wrapping a throwaway key costs one KMS call every fifteen
+        # minutes and answers the question as of now.
+        actual = pii_crypto.probe_backend()
+        if actual == selected:
+            return _check("kms", "Resident data encryption", "ok", actual,
+                          f"Resident data is being encrypted with your {actual} key.")
+
+        return _check(
+            "kms", "Resident data encryption", "critical", actual,
+            f"Your {selected} key is not being used — new resident data is being "
+            f"encrypted with the application key instead.",
+            action=(
+                "Act today. Check that the key still exists and has not been scheduled "
+                "for deletion, and that its credentials have not expired. Records saved "
+                "before this started may already be unreadable, and if a deletion is "
+                "pending it can only be cancelled inside the waiting period."
+            ),
+        )
+    except Exception:
+        logger.debug("KMS health probe failed", exc_info=True)
+        return _check("kms", "Resident data encryption", "unknown", None,
+                      "Could not determine which key is encrypting resident data.")
+
+
+async def _redaction_check() -> Dict[str, Any]:
+    """Is the detector a town chose the one actually blurring its photos?
+
+    Redaction fails more quietly than anything else here. A cloud detector with
+    no credentials returns an empty result, and so does a photo of an empty
+    street -- the two are the same value. Photos get stored, the card stays
+    green, and nobody finds out until a resident's face is on the public map.
+
+    The dispatch now degrades to on-server detection rather than to nothing, so
+    the harm is contained. But degraded is still not what the town selected: it
+    is paying for Azure and getting OpenCV, which finds fewer faces. That is
+    worth a warning rather than silence.
+    """
+    try:
+        from app.services.image_redaction import (
+            _usable, effective_provider, resolve_provider,
+        )
+
+        selected = await resolve_provider()
+        if not selected:
+            return _check("redaction", "Photo redaction", "ok", "off",
+                          "Photo redaction is switched off, as configured.")
+
+        actual, degraded_from = await effective_provider(selected)
+
+        if degraded_from == actual:
+            return _check(
+                "redaction", "Photo redaction", "critical", "none",
+                "No detector is available — resident photos are being stored "
+                "without blurring faces or licence plates.",
+                action=(
+                    "Check the Photo Redaction card. On-server detection needs no "
+                    "account and works anywhere, so this usually means the image is "
+                    "missing OpenCV rather than that a credential is wrong."
+                ),
+            )
+
+        if degraded_from:
+            return _check(
+                "redaction", "Photo redaction", "warning", actual,
+                f"Blurring is running on this server because {degraded_from} has no "
+                f"usable credentials. Photos are still redacted, less accurately.",
+                action=(
+                    f"Fix the {degraded_from} credentials on the Photo Redaction card, "
+                    f"or choose on-server detection so the page matches what is running."
+                ),
+            )
+
+        return _check("redaction", "Photo redaction", "ok", actual,
+                      f"Faces and plates are being blurred using {actual}.")
+    except Exception:
+        logger.debug("Redaction health probe failed", exc_info=True)
+        return _check("redaction", "Photo redaction", "unknown", None,
+                      "Could not determine which detector is redacting photos.")
+
+
 async def collect_checks(db) -> List[Dict[str, Any]]:
     """Run all proactive checks. Never raises; failed probes return 'unknown'."""
     checks = [
@@ -221,6 +335,8 @@ async def collect_checks(db) -> List[Dict[str, Any]]:
         await _db_connection_check(db),
         await _backup_age_check(),
         await _redis_check(),
+        await _kms_check(),
+        await _redaction_check(),
     ]
     return checks
 

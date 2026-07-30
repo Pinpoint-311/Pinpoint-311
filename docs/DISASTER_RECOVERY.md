@@ -276,3 +276,113 @@ Before giving a contractor access:
 
 *Last Updated: February 2026*
 *Review Schedule: Quarterly*
+
+## Losing the encryption key
+
+The one failure on this list that no backup fixes.
+
+Resident names, emails and phone numbers are protected by envelope encryption: a
+data key encrypts the field, and your cloud's key service wraps that data key.
+The database holds the encrypted value and the wrapped data key side by side.
+The key service holds the only thing that can unwrap it.
+
+If the key is destroyed, every wrapped data key becomes a sealed box. The
+encrypted values remain in the database, intact and meaningless. **Restoring a
+backup does not help** — the backup contains the same sealed boxes.
+
+What survives: the report text, category, location, photos, status history and
+audit log. All of it. You keep the complete public record of what was reported
+and what the town did. What you lose is the ability to say who reported it or to
+contact them.
+
+### The failure is silent, and the clock is short
+
+Nothing raises when a key stops answering. `_wrap_dek` falls back to the
+application key and carries on, so new reports save normally while older rows
+quietly stop being readable. Two consequences:
+
+- It looks like a database fault, not a key fault, because new records are fine.
+- If the cause was a scheduled deletion, the cancellation window (7–30 days on
+  AWS, the retention period on Azure, the destroy-scheduled-duration on Google)
+  can expire before anyone connects the symptom to the cause.
+
+The proactive health scan checks for exactly this every fifteen minutes and
+emails admins at critical severity. It performs a live wrap rather than reading
+the cached data key, because a long-running worker would otherwise keep
+reporting the state of the world from before the key broke — for the whole
+window. See `_kms_check` in `app/services/proactive_health.py`.
+
+### The controls guard the key, not the account
+
+Worth being precise, because it is easy to read the list below and conclude the
+problem is solved. Every control there stops somebody deleting the *key*. None
+of them survives losing the *account* that holds it, and the timelines are all
+quiet ones:
+
+| Path | What happens | Window |
+|---|---|---|
+| Azure subscription cancelled | Subscription deleted, resources with it | ~90 days after cancellation |
+| AWS account closed | Resources deleted after the post-closure period | 90 days |
+| Google project deleted | Takes the key ring; material erased | 30-day destruction window, erased within 45 days |
+
+A `kms:ScheduleKeyDeletion` deny does not apply, because closing an account is
+not that call. Purge protection protects a key inside a vault, not a vault
+inside a subscription that no longer exists.
+
+For a municipality this is the likelier ending than a mis-click: a card that
+expires between budget cycles, a subscription opened on a departing employee's
+personal account, a purchasing gap nobody notices until the disable notice
+arrives. The controls for it are unglamorous — the account in the town's name on
+a town payment method, more than one administrator, billing alerts to a shared
+address that is still monitored after somebody leaves.
+
+Two more paths that are *not* deletion and are recoverable, but break decryption
+identically and silently:
+
+- **An expiry set on the Azure key.** Key Vault keys support an `exp` attribute,
+  after which cryptographic operations are refused. Azure Policy actively
+  recommends setting one ("Key Vault keys should have an expiration date"), so a
+  well-meaning security review can break PII decryption without deleting
+  anything. The key still exists and the date can be extended.
+- **The Azure client secret expiring.** Same symptom, different cause, also
+  fixable in minutes once identified.
+
+In both cases the `_kms_check` alert fires, which is most of the value: the
+failure is recoverable but only if somebody knows it is happening.
+
+### Prevention, in order of value
+
+0. **Protect the container.** Google: place a lien on the project
+   (`gcloud alpha resource-manager liens create --restrictions=resourcemanager.projects.delete`),
+   which blocks deletion until the lien is removed. Azure: add a `CanNotDelete`
+   lock on the vault — locks override user permissions, and an attempt to delete
+   the enclosing resource group fails whole rather than half-completing. AWS has
+   no equivalent for account closure; billing hygiene is the only control.
+1. **Deny the deletion, do not merely avoid it.** On AWS, add an explicit deny
+   for `kms:ScheduleKeyDeletion` and `kms:DisableKey` in the key policy — an
+   explicit deny cannot be overridden by any allow, including the account root.
+   On Azure, enable soft delete and purge protection at vault creation. On
+   Google, keys cannot be deleted at all; set the key's destroy scheduled
+   duration to its maximum (120 days) and keep
+   `cloudkms.cryptoKeyVersions.destroy` off everyday roles.
+2. **Set `REQUIRE_KMS`.** The application then refuses to write PII rather than
+   silently falling back to the application key. It converts a silent
+   divergence into a loud outage, which is the right trade for this data.
+3. **Calendar the credential expiry.** Azure client secrets expire. When one
+   lapses, decryption stops and nothing about the failure points at a date.
+4. **Do not confuse rotation with deletion.** Rotating is safe — old versions
+   are retained and keep decrypting old rows — and worth doing. Destroying is
+   final. They sit next to each other in every console.
+
+### If it has already happened
+
+Check whether the deletion is still pending. On AWS a scheduled deletion can be
+cancelled with `CancelKeyDeletion` any time inside the waiting period; on Azure
+a soft-deleted key can be recovered within the retention period; on Google a
+destroy-scheduled key version can be restored before its scheduled time. In all
+three the key stops working at the *start* of that period, so the system being
+broken is not evidence that it is too late.
+
+If the window has closed, the encrypted PII is unrecoverable. Everything else in
+the database is unaffected, and the service continues to function for new
+reports.

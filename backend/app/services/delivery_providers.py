@@ -209,7 +209,12 @@ KMS_CATALOG: Dict[str, Dict[str, Any]] = {
 # endpoint writes and what image_redaction._flag parses ("1/true/yes/on/enabled").
 
 REDACTION_PROVIDER_KEY = "REDACTION_PROVIDER"
-DEFAULT_REDACTION_PROVIDER = "google"
+# Local, so the card names the detector that is actually running. It was
+# "google", which meant a fresh install displayed Google Cloud Vision while
+# resolve_provider() -- finding no Google credentials and no other signal --
+# returned None and blurred nothing. The page and the behaviour disagreed, and
+# the page was the reassuring one.
+DEFAULT_REDACTION_PROVIDER = "local"
 
 _REDACTION_TOGGLES = [
     {"key": "REDACT_FACES", "label": "Blur faces (true/false)", "required": False},
@@ -234,9 +239,31 @@ REDACTION_CATALOG: Dict[str, Dict[str, Any]] = {
     },
     "azure": {
         "name": "Azure AI Vision",
-        "description": "Microsoft's detector, using your Azure credentials.",
+        # Google and AWS reuse credentials entered elsewhere -- vision_annotate
+        # takes the GCP service account, _aws_kwargs takes the AWS keys. Azure
+        # does not: `_azure_face_creds` and `_azure_vision_creds` read four keys
+        # of their own, because Face and Vision are separate resources with
+        # separate endpoints and separate keys.
+        #
+        # Those four were read by the dispatch code and offered by no card, so
+        # selecting Azure here stored a provider choice, reported success, and
+        # then found no credentials and blurred nothing -- with no error and
+        # nowhere on the page to fix it.
+        "description": (
+            "Microsoft's detector. Needs two Azure resources of its own — AI Face for faces and "
+            "AI Vision for plates — which are not the same endpoint and not the same key."
+        ),
         "boundary": "Azure — Government available",
-        "credential_fields": list(_REDACTION_TOGGLES),
+        "credential_fields": list(_REDACTION_TOGGLES) + [
+            {"key": "AZURE_FACE_ENDPOINT", "label": "Face endpoint", "required": False},
+            {"key": "AZURE_FACE_KEY", "label": "Face key", "required": False, "secret": True},
+            {"key": "AZURE_VISION_ENDPOINT", "label": "Vision endpoint", "required": False},
+            {"key": "AZURE_VISION_KEY", "label": "Vision key", "required": False, "secret": True},
+        ],
+        "field_help": {
+            "AZURE_FACE_ENDPOINT": "Only needed if you are blurring faces. Microsoft gates the Face API behind a Limited Access review — detection is the least restricted operation, but the subscription still has to be approved before it will serve traffic.",
+            "AZURE_VISION_ENDPOINT": "Only needed if you are blurring plates. Plates are found by reading text in the photo.",
+        },
     },
     "local": {
         "name": "On this server (no cloud)",

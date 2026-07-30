@@ -36,7 +36,14 @@ def test_azure_kms_wrap_roundtrip(monkeypatch):
             return AESGCM(_kek).decrypt(nonce, ct, b"azurekv").decode("ascii")
 
     monkeypatch.setattr(enc, "_kms_provider", lambda: "azure")
+    # Both the package attribute and sys.modules. `_wrap_dek` reaches the real
+    # module via `from app.core import azure_keyvault`, which reads the
+    # attribute off the already-imported package and never consults sys.modules
+    # -- so patching sys.modules alone only worked while nothing earlier in the
+    # run had imported it. Order-dependent, and it passed only by luck.
+    import app.core
     monkeypatch.setitem(__import__("sys").modules, "app.core.azure_keyvault", _FakeAzureKeyVault)
+    monkeypatch.setattr(app.core, "azure_keyvault", _FakeAzureKeyVault, raising=False)
     pii.clear_caches()
 
     token = pii.encrypt("resident@example.gov")

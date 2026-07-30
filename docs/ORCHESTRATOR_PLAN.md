@@ -154,10 +154,83 @@ contacts. **Metadata only — no resident data ever.** This table doubles as the
 StateRAMP/FedRAMP authorization-boundary inventory.
 
 ## B2. Provisioner
+
 Per town, in order: create DB → generate `SECRET_KEY` → create/assign KMS key
 → allocate storage bucket → set DNS + request TLS → deploy app image @ version
 → call the app's **A4 provisioning API** to set township + admin → email the
 one-time onboarding link. Idempotent and re-runnable.
+
+**That list is a deployment template.** Every line of it is something ARM,
+CloudFormation or Terraform already expresses, in a language the target cloud
+executes and a state IT reviewer can read. Writing it twice -- once as a
+template for towns who self-host, once as orchestrator code for towns the state
+hosts -- would be two implementations of one thing, and the one used less would
+be the one that breaks.
+
+So the template is the provisioner, and B2 becomes: render the parameters,
+invoke the cloud's deployment API, poll to completion, then call A4. Most of
+what is listed above moves out of Python and into the template.
+
+Three consequences worth stating, because they are the argument rather than a
+side effect:
+
+- **One artifact, two front doors.** A town clicks a button on the website and
+  the template runs under their own console session; the state calls the same
+  template through a service principal, eighty times. Same resources, same
+  hardening, same version.
+- **The self-host path stops rotting.** The usual failure of a hosted product is
+  that the self-install path decays because nobody internal uses it. Here the
+  state's provisioning exercises the identical artifact on every town it
+  onboards, so a break shows up immediately and in the place that hurts most.
+- **The hardening stops being optional.** Deny-deletion on the KMS key, purge
+  protection, the project lien, `REQUIRE_KMS=true`, the attached identity
+  instead of a stored credential -- these are the steps a human skips because
+  they are the least obviously necessary. A template cannot skip them. One-click
+  is not a convenience with a security cost; it is the more secure path,
+  because it is the one where the protective settings are not a choice.
+
+The template must not assume an interactive context: it runs as a signed-in
+human in one case and a service principal in the other, and must behave the
+same either way.
+
+### What one-click does not remove
+
+Templates eliminate the work that is *mechanical*. They do not eliminate the
+work that is a *queue*, and being clear about the difference avoids promising a
+town an afternoon when the answer is three weeks:
+
+- **Carrier and provider approvals.** 10DLC brand and campaign registration
+  before a US number can send at all. SES production access. Neither is a
+  resource anyone can create.
+- **Anything requiring DNS.** Domain verification for email, SPF and DKIM, the
+  town's own hostname and certificate. Controlled by whoever runs the town's
+  DNS, which is frequently not the person deploying.
+- **Staff sign-in.** An Entra app registration lives in the town's *directory*,
+  not in the subscription being deployed into -- and a deployment template with
+  permission to write to a directory is a far larger grant than a town should
+  hand over for this. Sign-in stays a human step, deliberately.
+- **Third-party accounts.** Twilio, a Google Maps browser key, an ArcGIS
+  organisation. No cloud template creates an account with another company.
+- **The billing account itself.** Someone owns the subscription and attaches a
+  payment method, and that ownership is the residual risk described in
+  DISASTER_RECOVERY.md -- an account closed for non-payment takes the KMS key
+  with it whatever the template set.
+
+Roughly: one-click removes the infrastructure setup and the security hardening,
+which is the bulk and the part most often done wrong. It leaves the approvals
+and the accounts, which are the part that takes calendar time. Plan the pitch
+around that split rather than around "zero setup".
+
+### Prerequisite already met, and one thing to fix
+
+`build-publish.yml` already publishes `ghcr.io/pinpoint-311/pinpoint-311-{backend,frontend}`
+stamped with version and DB revision, which is the hard part -- a template is
+mostly a manifest referencing those images.
+
+`docker-compose.prod.yml` pins `:latest`. That is wrong for one-click: two towns
+deploying on different days would get different software with nothing recording
+which. Templates must reference an immutable version tag, and the button points
+at the current release.
 
 ## B3. Release management
 Org publishes a versioned image → panel schedules a **canary rollout** across
@@ -220,6 +293,15 @@ provisioning/rollout/support action.
 4. **Shared-key chargeback** — "town brings own key" (recommended, no
    invoicing) vs shared-key metering + billing.
 5. **Data residency / region** per town.
+6. **Marketplace listing, and who is the seller of record.** Deploy buttons need
+   nobody's permission and can ship independently. A marketplace listing is a
+   separate question, and the reason to want one is procurement rather than
+   discoverability: a marketplace purchase can draw against a cloud agreement a
+   county or state already holds, which removes a procurement cycle for the
+   buyer. It requires a legal seller entity -- for a fiscally sponsored project
+   that means the sponsor -- and weeks of review per cloud. Free listings do not
+   require banking details, only seller registration, so the blocker is the
+   entity decision rather than the money.
 
 ---
 

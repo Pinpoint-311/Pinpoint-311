@@ -87,6 +87,27 @@ def public_visibility_filters():
     )
 
 
+def direct_link_filters():
+    """The rule for reaching ONE report by its id — a tracking link.
+
+    Deliberately does not filter on `is_public`. Unlisted means "kept out of the
+    town's public listing", not "hidden from the person who filed it": the
+    resident has the link, staff have the link, and the whole point of the
+    setting is that the report is still worked and still trackable.
+
+    Named and shared for the same reason as the listing rule above, and because
+    the two are easy to confuse. Adding `is_public` here would look like
+    tightening security and would in fact break every tracking link for every
+    unlisted report, silently -- the endpoint would 404 and the resident would
+    conclude their report had been deleted.
+
+    Two of the four by-id endpoints were also missing the soft-delete clause, so
+    a deleted request still served its comments. Folded in here so there is one
+    rule rather than four inline copies of most of it.
+    """
+    return (ServiceRequest.deleted_at.is_(None),)
+
+
 @router.get("/public/requests")
 async def list_public_requests(
     status: Optional[str] = Query(None, description="Filter by status"),
@@ -166,7 +187,7 @@ async def get_public_request_detail(request_id: str, db: AsyncSession = Depends(
             selectinload(ServiceRequest.assigned_department)
         ).where(
             ServiceRequest.service_request_id == request_id,
-            ServiceRequest.deleted_at.is_(None)
+            *direct_link_filters(),
         )
     )
     request = result.scalar_one_or_none()
@@ -202,7 +223,8 @@ async def get_public_comments(request_id: str, db: AsyncSession = Depends(get_db
     """Get external/public comments for a request - no auth required"""
     # Find the request
     result = await db.execute(
-        select(ServiceRequest).where(ServiceRequest.service_request_id == request_id)
+        select(ServiceRequest).where(
+            ServiceRequest.service_request_id == request_id, *direct_link_filters())
     )
     request = result.scalar_one_or_none()
     if not request:
@@ -229,7 +251,8 @@ async def add_public_comment(
     """Add a public comment to a request - no auth required, always external visibility"""
     # Find the request
     result = await db.execute(
-        select(ServiceRequest).where(ServiceRequest.service_request_id == request_id)
+        select(ServiceRequest).where(
+            ServiceRequest.service_request_id == request_id, *direct_link_filters())
     )
     sr = result.scalar_one_or_none()
     if not sr:
@@ -277,7 +300,8 @@ async def get_audit_log(
 ):
     """Get audit log for a request (staff only - full history)"""
     result = await db.execute(
-        select(ServiceRequest).where(ServiceRequest.service_request_id == request_id)
+        select(ServiceRequest).where(
+            ServiceRequest.service_request_id == request_id, *direct_link_filters())
     )
     request = result.scalar_one_or_none()
     if not request:
@@ -308,7 +332,8 @@ async def verify_audit_log(
     """
     from app.models import compute_request_audit_hash, compute_request_audit_hash_legacy
     result = await db.execute(
-        select(ServiceRequest).where(ServiceRequest.service_request_id == request_id)
+        select(ServiceRequest).where(
+            ServiceRequest.service_request_id == request_id, *direct_link_filters())
     )
     request = result.scalar_one_or_none()
     if not request:
@@ -351,7 +376,7 @@ async def get_public_audit_log(request_id: str, db: AsyncSession = Depends(get_d
     result = await db.execute(
         select(ServiceRequest).where(
             ServiceRequest.service_request_id == request_id,
-            ServiceRequest.deleted_at.is_(None)
+            *direct_link_filters(),
         )
     )
     request = result.scalar_one_or_none()
@@ -570,7 +595,7 @@ async def lookup_request_by_token(service_request_id: str, db: AsyncSession = De
     result = await db.execute(
         select(ServiceRequest).where(
             ServiceRequest.service_request_id == service_request_id,
-            ServiceRequest.deleted_at.is_(None)
+            *direct_link_filters(),
         )
     )
     request_obj = result.scalar_one_or_none()
@@ -1153,7 +1178,8 @@ async def delete_request(
 ):
     """Soft delete a service request with justification (staff/admin)"""
     result = await db.execute(
-        select(ServiceRequest).where(ServiceRequest.service_request_id == request_id)
+        select(ServiceRequest).where(
+            ServiceRequest.service_request_id == request_id, *direct_link_filters())
     )
     request = result.scalar_one_or_none()
     if not request:
@@ -1192,7 +1218,8 @@ async def restore_request(
 ):
     """Restore a soft-deleted service request (staff/admin)"""
     result = await db.execute(
-        select(ServiceRequest).where(ServiceRequest.service_request_id == request_id)
+        select(ServiceRequest).where(
+            ServiceRequest.service_request_id == request_id, *direct_link_filters())
     )
     request = result.scalar_one_or_none()
     if not request:
@@ -1231,7 +1258,8 @@ async def accept_ai_priority(
 ):
     """Accept AI-suggested priority score (copies to manual_priority_score)"""
     result = await db.execute(
-        select(ServiceRequest).where(ServiceRequest.service_request_id == request_id)
+        select(ServiceRequest).where(
+            ServiceRequest.service_request_id == request_id, *direct_link_filters())
     )
     request = result.scalar_one_or_none()
     if not request:

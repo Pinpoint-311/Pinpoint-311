@@ -96,15 +96,33 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
         loadRequests();
     }, []);
 
-    // Auto-load request from URL
+    /* Auto-load the report a tracking link points at.
+     *
+     * Falls back to fetching it directly when it is not in the loaded list. A
+     * link is shared by the person who filed the report and by staff, and it
+     * has to work for an unlisted report -- which by definition is not in the
+     * public list -- and for one filed on a different device, where
+     * localStorage knows nothing about it. Previously either case left the page
+     * showing the list with no indication that the link had failed. */
     useEffect(() => {
-        if (initialRequestId && requests.length > 0) {
-            const request = requests.find(r => r.service_request_id === initialRequestId);
-            if (request) {
-                setSelectedRequest(request);
-            }
+        if (!initialRequestId) return;
+        const known = requests.find(r => r.service_request_id === initialRequestId);
+        if (known) {
+            setSelectedRequest(known);
+            return;
         }
-    }, [initialRequestId, requests]);
+        if (isLoading) return;  // the list may still bring it in
+        let cancelled = false;
+        api.getPublicRequestDetail(initialRequestId)
+            .then(r => {
+                if (cancelled || !r) return;
+                setRequests(prev => prev.some(p => p.service_request_id === r.service_request_id)
+                    ? prev : [r, ...prev]);
+                setSelectedRequest(r);
+            })
+            .catch(() => { /* genuinely not found, or deleted */ });
+        return () => { cancelled = true; };
+    }, [initialRequestId, requests, isLoading]);
 
     useEffect(() => {
         if (selectedRequest) {
@@ -132,7 +150,36 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
         try {
             // Always load all requests - filtering happens client-side
             const data = await api.getPublicRequests();
-            setRequests(data);
+
+            /* The public list excludes reports the resident marked unlisted,
+             * which is the whole point of the setting -- but it is also the
+             * list this component searches for "my reports" and for the report
+             * a tracking link points at. So a resident who filed an unlisted
+             * report could not see it in their own list, and their own link did
+             * nothing: the id was not in the array, `find` returned undefined,
+             * and the component sat there.
+             *
+             * Unlisted means "not in the town's public listing", not "hidden
+             * from the person who filed it". The by-id endpoint deliberately
+             * does not filter on is_public for exactly this reason, so anything
+             * of ours that is missing from the list is fetched directly and
+             * merged in. */
+            const mine: string[] = (() => {
+                try {
+                    const stored = JSON.parse(localStorage.getItem('my_requests') || '[]');
+                    return Array.isArray(stored) ? stored : [];
+                } catch { return []; }
+            })();
+
+            const present = new Set(data.map(r => r.service_request_id));
+            const missing = mine.filter(id => !present.has(id));
+            const fetched = missing.length
+                ? (await Promise.all(missing.map(id =>
+                    api.getPublicRequestDetail(id).catch(() => null))))
+                    .filter((r): r is PublicServiceRequest => r !== null)
+                : [];
+
+            setRequests(fetched.length ? [...fetched, ...data] : data);
         } catch (err) {
             console.error('Failed to load requests:', err);
         } finally {

@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request, Query
+from fastapi import (APIRouter, BackgroundTasks, Depends, HTTPException, status, UploadFile,
+                     File, Request, Query)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from typing import Any, List, Optional, Dict
@@ -321,17 +322,31 @@ _PROVIDER_SELECT_KEY = {
 }
 
 
-async def _persist_secret(db: AsyncSession, key_name: str, value: str):
-    """Write a secret to the configured store (Secret Manager / Key Vault when
-    available) and always keep an encrypted DB copy — same path as /secrets."""
+async def _persist_secret(db: AsyncSession, key_name: str, value: str) -> bool:
+    """Write a secret to the configured store and keep an encrypted DB copy.
+
+    Returns whether the external store took it. That return value matters: when
+    the store is not reachable yet, set_secret returns False and logs at DEBUG,
+    which nothing raises the level for -- so the secret quietly lived only in
+    the database and the town had no way to know. It is a real ordering trap,
+    because the credentials that make Secret Manager reachable are themselves
+    entered on this page: anything saved before them lands in the database and
+    stays there until somebody happens to run the migration.
+
+    The caller surfaces this rather than swallowing it.
+    """
     from app.core.encryption import encrypt
     from app.core.managed import reject_platform_key_writes
     from app.services.secret_manager import set_secret, clear_cache
     reject_platform_key_writes(key_name)
+    # These two are deliberately database-only: they are what makes the secret
+    # store reachable in the first place, so storing them in it is circular.
     bootstrap_keys = {"GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT"}
+    stored_externally = key_name in bootstrap_keys
     if value and key_name not in bootstrap_keys:
         try:
             if await set_secret(key_name, value):
+                stored_externally = True
                 clear_cache()
         except Exception as e:
             from app.core.sanitize import sanitize_for_log
@@ -345,6 +360,7 @@ async def _persist_secret(db: AsyncSession, key_name: str, value: str):
     else:
         db.add(SystemSecret(key_name=key_name, key_value=enc, is_configured=bool(value)))
     await db.commit()
+    return stored_externally
 
 
 class ProviderSaveRequest(BaseModel):
@@ -376,6 +392,7 @@ def _capability_catalog(capability: str) -> Dict:
 async def save_provider(
     capability: str,
     body: ProviderSaveRequest,
+    background: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin),
 ):
@@ -414,9 +431,16 @@ async def save_provider(
     await _persist_secret(db, _PROVIDER_SELECT_KEY[capability], provider_id)
     if capability == "ai" and body.model:
         await _persist_secret(db, "AI_MODEL", body.model)
+    # Track where each credential actually landed. A False here is not an
+    # error -- the encrypted database is a supported store -- but it is
+    # something the town has to be told, because the usual cause is saving
+    # this card before the credentials that make the secret store reachable,
+    # and the fix (enter those, then re-save) is only obvious if you know.
+    db_only: List[str] = []
     for key, value in (body.settings or {}).items():
         if value:  # blank = keep existing
-            await _persist_secret(db, key, value)
+            if not await _persist_secret(db, key, value):
+                db_only.append(key)
     from app.services.secret_manager import clear_cache
     clear_cache()
     # Shape findings are advisory and never block: a rule is a heuristic about
@@ -425,11 +449,322 @@ async def save_provider(
     # discoverable, the first is a dead end.
     from app.services.credential_checks import inspect_settings
     findings = inspect_settings(body.settings)
+    warnings = [{"key": f.key, "severity": f.severity, "message": f.message} for f in findings]
+    if db_only:
+        from app.services.secret_manager import _secrets_provider
+        warnings.append({
+            "key": db_only[0],
+            "severity": "info",
+            "message": (
+                f"Saved and encrypted in the database. "
+                f"{ {'azure': 'Azure Key Vault', 'aws': 'AWS Secrets Manager'}.get(_secrets_provider(), 'Google Secret Manager') }"
+                " is not reachable yet — once you finish the cloud credentials above,"
+                " this moves across on its own. Nothing further to do here."
+            ),
+        })
+    else:
+        # The store took everything, which means it is reachable -- and this may
+        # be the moment it became reachable, if what was just saved were the
+        # cloud credentials themselves. Sweep anything entered earlier across
+        # now rather than leaving it for the hourly pass. Scheduled after the
+        # response so a slow store cannot make Save feel broken.
+        from app.services.storage_maintenance import vault_secrets as _vault
+        background.add_task(_vault)
     return {
         "ok": True,
         "provider": provider_id,
-        "warnings": [{"key": f.key, "severity": f.severity, "message": f.message} for f in findings],
+        "warnings": warnings,
     }
+
+
+# ---- live tests for the capabilities that had none ---------------------------
+#
+# `test_provider` validated eight capabilities and could test three. Pressing
+# Save & Test on maps, email, text messages, encryption or photo redaction
+# returned "A live test is not available for this capability" -- a button whose
+# whole job is to tell you whether something works, telling five of eight cards
+# that it cannot.
+#
+# Two of the five turned out to be the most valuable tests on the page, because
+# they check the two things that fail without saying so: which key is actually
+# encrypting resident data, and whether the photo detector can answer at all.
+#
+# The rest need a real network call. Where one exists that does not send
+# anything to a resident, it is made. Where it does not -- a generic HTTP SMS
+# gateway cannot be exercised without sending a text -- the response says so and
+# is deliberately NOT recorded as a connector failure, because "we cannot check
+# this from here" is not the same as "this is broken", and a red badge that
+# never goes green teaches people to ignore badges.
+
+
+async def _test_ai(db) -> dict:
+    from app.services.ai import get_ai_provider
+    provider = await get_ai_provider(db)
+    if not provider:
+        return {"ok": False, "detail": "No AI provider is configured. Enter the required fields and save first."}
+    result = await provider.complete_json('Reply with {"priority_score": 5}. This is a connection test.')
+    # Reachability and auth, not whether a trivial prompt produced parseable
+    # JSON. Providers set `_reachable` when the API answered at all.
+    reachable = isinstance(result, dict) and ("_error" not in result or bool(result.get("_reachable")))
+    if reachable:
+        return {"ok": True, "detail": f"{provider.provider}/{provider.model} reachable and authenticated"}
+    return {"ok": False, "detail": f"Call failed: {result.get('_error', 'unknown')[:200]}"}
+
+
+async def _test_translation(db) -> dict:
+    from app.services.translation_providers import get_translation_provider
+    provider = await get_translation_provider()
+    if not provider:
+        return {"ok": False, "detail": "No translation provider is configured."}
+    out = await provider.translate(["hello"], "en", "es")
+    return {"ok": bool(out), "detail": f"Translated sample → {out[0]}" if out else "No translation returned"}
+
+
+async def _test_identity(db) -> dict:
+    from app.services.identity import resolve_identity_config, get_oidc_metadata
+    cfg = await resolve_identity_config(db)
+    if not cfg:
+        return {"ok": False, "detail": "No identity provider is configured."}
+    meta = await get_oidc_metadata(cfg)
+    return {"ok": bool(meta.get("authorization_endpoint")),
+            "detail": f"Discovered {cfg['provider']} endpoints at {cfg['issuer_base']}"}
+
+
+async def _test_kms(db=None) -> dict:
+    """Wrap a throwaway key and see which service actually did it.
+
+    The most valuable check on the page. A KMS that stops answering does not
+    raise -- pii_crypto falls back to the application key and carries on -- so
+    "is the key I selected the one encrypting resident data" is a question
+    nothing else asks out loud. `probe_backend` rather than `active_backend`,
+    because the latter reads the data key this process cached at startup and
+    would answer for the world as it was then.
+    """
+    from app.core import pii_crypto
+    from app.core.encryption import _kms_provider
+
+    selected = _kms_provider()
+    actual = pii_crypto.probe_backend()
+    if actual == selected:
+        label = {"google": "Google Cloud KMS", "azure": "Azure Key Vault",
+                 "aws": "AWS KMS", "local": "the application key"}.get(actual, actual)
+        return {"ok": True, "detail": f"Wrapped a test key with {label}."}
+    return {"ok": False, "detail": (
+        f"Selected {selected}, but a test key was wrapped with {actual}. Resident "
+        f"data is not being encrypted with the key you chose — check the "
+        f"credentials and that the key still exists.")}
+
+
+async def _test_redaction(db=None) -> dict:
+    """Can the chosen detector answer, and is it the chosen one?
+
+    A detector with no credentials returns the same empty result as a photo
+    with nobody in it, so this is the only place the difference is visible.
+    """
+    from app.services.image_redaction import effective_provider, resolve_provider
+
+    selected = await resolve_provider()
+    if not selected:
+        return {"ok": True, "detail": "Photo redaction is switched off, as configured."}
+    actual, degraded_from = await effective_provider(selected)
+    if degraded_from == actual:
+        return {"ok": False, "detail": (
+            "No detector is available, so photos would be stored without blurring. "
+            "On-server detection needs no account — this usually means OpenCV is missing.")}
+    if degraded_from:
+        return {"ok": False, "detail": (
+            f"{degraded_from} has no usable credentials, so blurring is falling back to "
+            f"on-server detection. Photos are still redacted, less accurately.")}
+    return {"ok": True, "detail": f"{actual} is available and will blur faces and plates."}
+
+
+async def _test_email(db=None) -> dict:
+    return await _test_delivery("email")
+
+
+async def _test_sms(db=None) -> dict:
+    return await _test_delivery("sms")
+
+
+def _unverifiable(detail: str) -> dict:
+    """A result that is shown but not written to connector health."""
+    return {"ok": False, "detail": detail, "recorded": False}
+
+
+async def _test_maps() -> dict:
+    """Geocode a known address. Reads only, costs a fraction of a cent."""
+    import httpx
+
+    from app.services.secret_manager import get_secret
+
+    provider = (await get_secret("MAPS_PROVIDER")) or "google"
+    sample = "1600 Pennsylvania Ave NW, Washington DC"
+
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        if provider == "google":
+            key = await get_secret("GOOGLE_MAPS_API_KEY")
+            if not key:
+                return {"ok": False, "detail": "No Google Maps API key is saved."}
+            r = await client.get("https://maps.googleapis.com/maps/api/geocode/json",
+                                 params={"address": sample, "key": key})
+            body = r.json()
+            status = body.get("status")
+            if status == "OK":
+                return {"ok": True, "detail": "Key accepted; a test address geocoded successfully."}
+            # Google's own words matter here: REQUEST_DENIED with "billing" is
+            # the single most common failure on this page and its remedy is
+            # nothing to do with the key.
+            return {"ok": False, "detail": f"Google returned {status}. {body.get('error_message', '')}".strip()}
+
+        if provider == "azure":
+            key = await get_secret("AZURE_MAPS_KEY")
+            if not key:
+                return {"ok": False, "detail": "No Azure Maps key is saved."}
+            r = await client.get("https://atlas.microsoft.com/search/address/json",
+                                 params={"api-version": "1.0", "subscription-key": key, "query": sample})
+            if r.status_code == 200:
+                return {"ok": True, "detail": "Key accepted; a test address geocoded successfully."}
+            return {"ok": False, "detail": f"Azure Maps returned HTTP {r.status_code}."}
+
+        if provider == "esri":
+            key = await get_secret("ARCGIS_API_KEY")
+            if not key:
+                return {"ok": False, "detail": "No ArcGIS API key is saved."}
+            locator = (await get_secret("ARCGIS_LOCATOR_URL")) or (
+                "https://geocode-api.arcgis.com/arcgis/rest/services/World/GeocodeServer")
+            r = await client.get(f"{locator.rstrip('/')}/findAddressCandidates",
+                                 params={"SingleLine": sample, "f": "json", "token": key})
+            body = r.json() if r.status_code == 200 else {}
+            if "error" in body:
+                return {"ok": False, "detail": f"ArcGIS: {body['error'].get('message', 'rejected the key')}"}
+            if r.status_code == 200:
+                return {"ok": True, "detail": "Key accepted; the locator answered."}
+            return {"ok": False, "detail": f"ArcGIS returned HTTP {r.status_code}."}
+
+        if provider == "apple":
+            return _unverifiable(
+                "Apple Maps credentials can only be checked by signing a token in the "
+                "browser, so there is nothing to test from here. Open the resident "
+                "portal and confirm the map draws.")
+
+    return _unverifiable(f"No live test is available for {provider}.")
+
+
+async def _test_delivery(capability: str) -> dict:
+    """Email and text messages, without sending anything to a resident."""
+    import httpx
+
+    from app.services.secret_manager import get_secret
+
+    if capability == "email":
+        provider = (await get_secret("EMAIL_PROVIDER")) or "smtp"
+        if provider == "smtp":
+            import asyncio
+            import smtplib
+            host = await get_secret("SMTP_HOST")
+            user = await get_secret("SMTP_USER")
+            password = await get_secret("SMTP_PASSWORD")
+            if not host:
+                return {"ok": False, "detail": "No SMTP host is saved."}
+            port = int((await get_secret("SMTP_PORT")) or 587)
+
+            def _connect():
+                # Connect and authenticate only. Nothing is sent, so this is
+                # safe to press repeatedly.
+                if port == 465:
+                    server = smtplib.SMTP_SSL(host, port, timeout=12)
+                else:
+                    server = smtplib.SMTP(host, port, timeout=12)
+                    server.starttls()
+                with server:
+                    if user and password:
+                        server.login(user, password)
+                return True
+
+            await asyncio.get_event_loop().run_in_executor(None, _connect)
+            return {"ok": True, "detail": f"Connected to {host}:{port} and signed in. Nothing was sent."}
+
+        if provider == "ses":
+            import asyncio
+            from app.services.cloud_moderation import _aws_kwargs
+            kwargs = await _aws_kwargs()
+            if not kwargs:
+                return {"ok": False, "detail": "No AWS region or credentials are saved."}
+
+            def _quota():
+                import boto3
+                return boto3.client("ses", **kwargs).get_send_quota()
+
+            quota = await asyncio.get_event_loop().run_in_executor(None, _quota)
+            sent, cap = quota.get("SentLast24Hours", 0), quota.get("Max24HourSend", 0)
+            if cap and cap <= 200:
+                # The sandbox cap. Everything looks fine and residents receive
+                # nothing, so it is worth saying rather than passing green.
+                return {"ok": False, "detail": (
+                    f"Credentials work, but the 24-hour cap is {int(cap)} — this account is still "
+                    f"in the SES sandbox and will not deliver to unverified addresses. "
+                    f"Request production access.")}
+            return {"ok": True, "detail": f"SES reachable. {int(sent)} of {int(cap)} sent in the last 24 hours."}
+
+        return _unverifiable(
+            "Azure Communication Services has no check that avoids sending a real "
+            "message. Save, then send yourself a test from a request.")
+
+    provider = (await get_secret("SMS_PROVIDER")) or "none"
+    if provider == "none":
+        return {"ok": True, "detail": "Text messages are switched off, as configured."}
+
+    if provider == "twilio":
+        sid = await get_secret("TWILIO_ACCOUNT_SID")
+        token = await get_secret("TWILIO_AUTH_TOKEN")
+        if not (sid and token):
+            return {"ok": False, "detail": "Account SID or auth token is missing."}
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            r = await client.get(f"https://api.twilio.com/2010-04-01/Accounts/{sid}.json",
+                                 auth=(sid, token))
+        if r.status_code == 200:
+            status = r.json().get("status", "active")
+            if status != "active":
+                return {"ok": False, "detail": f"Credentials work, but the Twilio account is {status}."}
+            return {"ok": True, "detail": "Twilio credentials accepted. Nothing was sent."}
+        if r.status_code == 401:
+            return {"ok": False, "detail": "Twilio rejected the Account SID or auth token."}
+        return {"ok": False, "detail": f"Twilio returned HTTP {r.status_code}."}
+
+    if provider == "sns":
+        import asyncio
+        from app.services.cloud_moderation import _aws_kwargs
+        kwargs = await _aws_kwargs()
+        if not kwargs:
+            return {"ok": False, "detail": "No AWS region or credentials are saved."}
+
+        def _attrs():
+            import boto3
+            return boto3.client("sns", **kwargs).get_sms_attributes()
+
+        await asyncio.get_event_loop().run_in_executor(None, _attrs)
+        return {"ok": True, "detail": "SNS reachable and authenticated. Nothing was sent."}
+
+    return _unverifiable(
+        f"There is no way to check {provider} without sending a real text message. "
+        f"Save, then send yourself one from a request to confirm delivery.")
+
+
+# One table, so the set of capabilities the endpoint accepts and the set it can
+# actually test cannot drift apart. They did: the accept-list was widened when
+# maps, email, SMS, encryption and redaction got catalogs, and five of eight
+# cards then answered "a live test is not available for this capability" -- a
+# button whose whole job is to say whether something works, saying it could not.
+_CAPABILITY_TESTS = {
+    "ai": _test_ai,
+    "translation": _test_translation,
+    "identity": _test_identity,
+    "maps": lambda db=None: _test_maps(),
+    "email": _test_email,
+    "sms": _test_sms,
+    "kms": _test_kms,
+    "redaction": _test_redaction,
+}
 
 
 @router.post("/providers/{capability}/test")
@@ -473,35 +808,19 @@ async def test_provider(
             pass
         return outcome
 
-    try:
-        if capability == "ai":
-            from app.services.ai import get_ai_provider
-            provider = await get_ai_provider(db)
-            if not provider:
-                return await _remember({"ok": False, "detail": "No AI provider is configured. Enter the required fields and save first."})
-            result = await provider.complete_json('Reply with {"priority_score": 5}. This is a connection test.')
-            # A connection test verifies reachability + auth, not that the model
-            # emits parseable JSON. Providers flag `_reachable` when the API
-            # responded (200) even if a trivial prompt yielded no usable output.
-            reachable = isinstance(result, dict) and ("_error" not in result or bool(result.get("_reachable")))
-            if reachable:
-                return await _remember({"ok": True, "detail": f"{provider.provider}/{provider.model} reachable and authenticated"})
-            return await _remember({"ok": False, "detail": f"Call failed: {result.get('_error', 'unknown')[:200]}"})
-        if capability == "translation":
-            from app.services.translation_providers import get_translation_provider
-            provider = await get_translation_provider()
-            if not provider:
-                return await _remember({"ok": False, "detail": "No translation provider is configured."})
-            out = await provider.translate(["hello"], "en", "es")
-            return await _remember({"ok": bool(out), "detail": f"Translated sample → {out[0]}" if out else "No translation returned"})
-        if capability == "identity":
-            from app.services.identity import resolve_identity_config, get_oidc_metadata
-            cfg = await resolve_identity_config(db)
-            if not cfg:
-                return await _remember({"ok": False, "detail": "No identity provider is configured."})
-            meta = await get_oidc_metadata(cfg)
-            return await _remember({"ok": bool(meta.get("authorization_endpoint")), "detail": f"Discovered {cfg['provider']} endpoints at {cfg['issuer_base']}"})
+    check = _CAPABILITY_TESTS.get(capability)
+    if check is None:
+        # Cannot happen while the accept-list is derived from this table, and
+        # a test asserts that it is. Kept as a real branch rather than an
+        # assertion because a 400 is a better failure than a 500.
         raise HTTPException(status_code=400, detail="A live test is not available for this capability.")
+
+    try:
+        outcome = await check(db)
+        # An outcome we could not verify is shown but not written to connector
+        # health: "we cannot check this from here" is not "this is broken", and
+        # a red badge that can never go green teaches people to ignore badges.
+        return outcome if outcome.get("recorded") is False else await _remember(outcome)
     except HTTPException:
         raise
     except Exception as e:
@@ -575,6 +894,23 @@ class CloudProfileRequest(BaseModel):
     # Opt-in: also switch the staff sign-in provider to the profile's
     # recommended IdP. Off by default because identity is a separate contract.
     apply_identity: bool = False
+
+
+@router.get("/providers/cloud-identity")
+async def cloud_identity(_: User = Depends(get_current_admin)):
+    """Whether this server already has an identity on its cloud.
+
+    When it does, the credential boxes for that cloud are not merely optional --
+    leaving them empty is the better answer. The token is issued minutes at a
+    time and rotated by the platform, so there is no long-lived secret to leak,
+    to vault, or to expire on a date nobody recorded.
+
+    Two of the three already behaved this way by accident: boto3 falls through
+    to the instance role and google-auth to Application Default Credentials when
+    nothing is configured. Nothing said so, so every town pasted a key anyway.
+    """
+    from app.services.cloud_identity import summary
+    return summary()
 
 
 @router.get("/providers/cloud-profile")

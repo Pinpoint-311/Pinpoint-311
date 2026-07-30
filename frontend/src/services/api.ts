@@ -619,6 +619,13 @@ class ApiClient {
         return this.request(`/system/providers/${capability}/test`, { method: 'POST' });
     }
 
+    /** Whether this server already has an identity on its cloud, in which case
+     *  the credential boxes for that cloud should be left empty rather than
+     *  filled — the platform issues a short-lived token instead. */
+    async getCloudIdentity(): Promise<CloudIdentity> {
+        return this.request<CloudIdentity>('/system/providers/cloud-identity');
+    }
+
     async getCloudProfile(): Promise<CloudProfileState> {
         return this.request<CloudProfileState>('/system/providers/cloud-profile');
     }
@@ -1181,12 +1188,24 @@ class ApiClient {
     }
 
     async reencryptPii(): Promise<{
-        total: number;
         reencrypted: number;
-        migrated_from_fernet: number;
+        rows: number;
+        fields: number;
         errors: number;
     }> {
         return this.request('/setup/reencrypt-pii', { method: 'POST' });
+    }
+
+    /** What is not yet on the storage this town chose. Drives one advisory
+     *  line; the work itself happens on a schedule without being asked. */
+    async getStorageStatus(): Promise<StorageStatus> {
+        return this.request<StorageStatus>('/setup/storage-status');
+    }
+
+    /** Generate and store a backup passphrase. Returns it once, in the clear,
+     *  because a copy has to end up somewhere other than this server. */
+    async generateBackupKey(): Promise<{ key: string }> {
+        return this.request('/setup/backup-key', { method: 'POST' });
     }
 
     // ========== Health Dashboard & Runbook (Bus Factor Mitigation) ==========
@@ -1526,6 +1545,23 @@ export interface HealthSummary {
     level: 'ok' | 'warning' | 'critical';
     label: string;
     detail: string;
+}
+
+/** An identity attached to the compute by the cloud itself. When present, the
+ *  listed keys need no value — and leaving them empty is the better answer, not
+ *  merely an allowed one. */
+export interface CloudIdentity {
+    attached: boolean;
+    provider: string | null;
+    identity: string | null;
+    skippable_keys: string[];
+}
+
+/** Counts of what has not yet reached the storage the town selected. */
+export interface StorageStatus {
+    secrets: { count: number; store: string | null; reachable: boolean };
+    pii: { total: number; stale: number; on_application_key: number; legacy: number; current: string | null };
+    needs_attention: boolean;
 }
 
 export interface ProactiveHealth {

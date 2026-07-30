@@ -47,8 +47,60 @@ def _b64url_decode(s: str) -> bytes:
 
 
 def is_configured() -> bool:
+    """A vault URL, plus some way to prove who we are.
+
+    The second half used to require a client secret. On an Azure VM, App Service
+    or Container App there is a managed identity attached to the compute, and
+    using it is both less work -- nothing to enter -- and better: the token is
+    issued minutes at a time and rotated by the platform, so no long-lived
+    secret exists to leak, and none expires on a date nobody wrote down.
+    Requiring a client secret meant a town on Azure had to create the worst
+    credential of the three clouds while the platform was already offering it
+    the best one.
+    """
+    if not _cfg("AZURE_KEYVAULT_URL"):
+        return False
+    if _managed_identity_endpoint():
+        return True
     return bool(_cfg("AZURE_TENANT_ID") and _cfg("AZURE_KEYVAULT_CLIENT_ID")
-                and _cfg("AZURE_KEYVAULT_CLIENT_SECRET") and _cfg("AZURE_KEYVAULT_URL"))
+                and _cfg("AZURE_KEYVAULT_CLIENT_SECRET"))
+
+
+def _managed_identity_endpoint() -> Optional[str]:
+    """Where to ask for a token, if this host has an identity of its own.
+
+    App Service and Container Apps inject IDENTITY_ENDPOINT with a matching
+    header secret; VMs and scale sets use the link-local IMDS address. Both are
+    reachable only from inside Azure, so their presence is the detection.
+    """
+    return os.getenv("IDENTITY_ENDPOINT") or os.getenv("MSI_ENDPOINT")
+
+
+def _managed_identity_token(scope: str):
+    """(token, ttl_seconds) from the attached identity, or None."""
+    endpoint = _managed_identity_endpoint()
+    header_secret = os.getenv("IDENTITY_HEADER") or os.getenv("MSI_SECRET")
+    try:
+        if endpoint:
+            resp = httpx.get(
+                endpoint,
+                params={"api-version": "2019-08-01", "resource": scope},
+                headers={"X-IDENTITY-HEADER": header_secret} if header_secret else {},
+                timeout=15.0,
+            )
+        else:
+            resp = httpx.get(
+                "http://169.254.169.254/metadata/identity/oauth2/token",
+                params={"api-version": "2018-02-01", "resource": scope},
+                headers={"Metadata": "true"},
+                timeout=15.0,
+            )
+        resp.raise_for_status()
+        body = resp.json()
+        return body["access_token"], int(body.get("expires_in", 3600))
+    except Exception as e:
+        logger.debug(f"Managed identity token request failed: {e}")
+        return None
 
 
 def _get_token() -> Optional[str]:
@@ -57,6 +109,21 @@ def _get_token() -> Optional[str]:
     client_secret = _cfg("AZURE_KEYVAULT_CLIENT_SECRET")
     authority = _cfg("AZURE_AUTHORITY") or "login.microsoftonline.com"
     scope = _cfg("AZURE_KEYVAULT_SCOPE") or "https://vault.azure.net"
+
+    # The attached identity wins when there is one, rather than serving as a
+    # fallback. A town with both keeps working after the client secret expires,
+    # which is the failure this is most useful against.
+    if _managed_identity_endpoint():
+        cache_key = ("managed", scope)
+        cached = _token_cache.get(cache_key)
+        if cached and cached[1] - 60 > time.time():
+            return cached[0]
+        result = _managed_identity_token(scope)
+        if result:
+            token, ttl = result
+            _token_cache[cache_key] = (token, time.time() + ttl)
+            return token
+
     if not all([tenant, client_id, client_secret]):
         return None
 

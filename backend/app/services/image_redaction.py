@@ -605,12 +605,29 @@ async def _flag(key: str, default: bool) -> bool:
 
 
 async def resolve_provider() -> Optional[str]:
-    """Which detector to use, or None for "redaction is off".
+    """Which detector to use, or None only when a town has switched it off.
 
     Falls through to the moderation provider and then the AI provider, so a town
     that has already pasted one set of cloud credentials gets redaction without
-    configuring a second thing. `local` is never chosen implicitly -- OpenCV
-    quality is low enough that it should be a decision, not a default.
+    configuring a second thing.
+
+    `local` used to be excluded from that fall-through, on the reasoning that
+    OpenCV quality is low enough to deserve a decision rather than a default.
+    The reasoning compares local against a cloud detector. The actual
+    alternative, on a deployment with no cloud credentials, is **no detection at
+    all** -- and against that, imperfect detection wins every time.
+
+    It also contradicted `settings()` twelve lines below, which turns faces and
+    plates on by default and says why: "publishing a stranger's face on a
+    municipal website is a harm a town incurs by doing nothing, and the default
+    should not be the harmful one." Both toggles defaulted on, and then the
+    provider resolved to None and neither did anything. A fresh install stored
+    every resident photo unmodified while the Photo Redaction card displayed
+    Google Cloud Vision, because the catalog default said so.
+
+    So local is now the floor. Off is still reachable -- explicitly, by choosing
+    it -- which is the difference between a town deciding not to blur and a town
+    not knowing it wasn't.
     """
     from app.services.secret_manager import get_secret
 
@@ -627,7 +644,11 @@ async def resolve_provider() -> Optional[str]:
         return None
 
     ai = ((await get_secret("AI_PROVIDER")) or "").strip().lower()
-    return {"vertex": "google", "azure": "azure", "bedrock": "aws"}.get(ai)
+    derived = {"vertex": "google", "azure": "azure", "bedrock": "aws"}.get(ai)
+    # Nothing indicates a cloud. Detection on this server needs no account and
+    # no key, and sends no photo anywhere, so there is no reason for the answer
+    # to be "none".
+    return derived or "local"
 
 
 async def settings() -> Tuple[Optional[str], bool, bool]:
@@ -979,19 +1000,96 @@ async def _local_detect(raw: bytes, width: int, height: int,
 
 
 # --------------------------------------------------------------------------
-# entry points
+# is the chosen detector actually able to answer?
 # --------------------------------------------------------------------------
+#
+# Every cloud detector returns an empty result when it has no credentials, and
+# an empty result is also what a photo of an empty street returns. Callers
+# cannot tell them apart -- `vision_annotate` says so in its own docstring:
+# "Returns {} when Google is not configured, so callers can treat 'no
+# credentials' the same as 'nothing detected'."
+#
+# For content moderation that conflation is tolerable. For redaction it is the
+# difference between a photo with nobody in it and a photo of somebody's face
+# published on a municipal website. `redact_image` already named this in its
+# docstring -- "a town whose Vision credentials quietly expired will publish
+# unblurred faces and only find out from the admin console" -- and concluded the
+# honest fix was to surface it loudly.
+#
+# There is a better answer than surfacing it, which that note did not consider:
+# fall back to the detector that needs no credentials. Local detection finds
+# less than the cloud, but it runs anywhere with nothing configured, so the
+# choice is no longer between publishing an unblurred face and refusing the
+# resident's report. Degrade, blur what we can, and say so.
+
+
+async def _usable(provider: str) -> bool:
+    """Whether this detector has what it needs to answer. Never raises."""
+    try:
+        if provider == "local":
+            import cv2  # noqa: F401
+            return True
+        if provider == "google":
+            from app.services.cloud_moderation import _google_token_and_project
+            token, _ = await _google_token_and_project()
+            return bool(token)
+        if provider == "aws":
+            from app.services.cloud_moderation import _aws_kwargs
+            return bool(await _aws_kwargs())
+        if provider == "azure":
+            face_endpoint, face_key = await _azure_face_creds()
+            vision_endpoint, vision_key = await _azure_vision_creds()
+            # Either half is enough to be worth calling: Face covers faces,
+            # Vision covers plates, and a town may deliberately have only one
+            # because Face is behind Microsoft's Limited Access review.
+            return bool((face_endpoint and face_key) or (vision_endpoint and vision_key))
+    except Exception as exc:
+        from app.core.sanitize import sanitize_for_log
+        logger.info("[Redaction] could not check %s credentials: %s",
+                    provider, sanitize_for_log(str(exc)))
+    return False
+
+
+async def effective_provider(provider: str) -> Tuple[str, Optional[str]]:
+    """(detector to actually use, the one it replaced or None).
+
+    A cloud detector that cannot answer becomes local rather than nothing. The
+    second element is what the caller records and what the health check reports,
+    because a town that selected Azure and is silently running on OpenCV needs
+    to be told -- it is getting worse detection than it thinks it paid for.
+    """
+    if await _usable(provider):
+        return provider, None
+    if provider != "local" and await _usable("local"):
+        logger.warning(
+            "[Redaction] %s has no usable credentials; falling back to on-server "
+            "detection so photos are still blurred. Fix the credentials or change "
+            "the provider on the Photo Redaction card.", provider,
+        )
+        return "local", provider
+    # Local is unavailable too -- OpenCV missing from the image. Nothing can
+    # blur, and that must not look like "no faces in this photo".
+    logger.error(
+        "[Redaction] no detector is usable (selected %s, and on-server detection "
+        "is unavailable). Photos are being stored WITHOUT redaction.", provider,
+    )
+    return provider, provider
+
 
 async def redact_image(media: str, provider: str, faces: bool, plates: bool) -> RedactionResult:
     """Redact one photo. Never raises.
 
     Fails *open* -- an unredactable photo is stored as submitted rather than
-    dropped -- and records why in `skipped_reason`. That direction is
-    deliberate but it is the weaker of the two: a town whose Vision credentials
-    quietly expired will publish unblurred faces and only find out from the
-    admin console. The alternative, refusing the report, punishes the resident
-    for the town's misconfiguration, so the honest fix is surfacing the failure
-    loudly, not dropping the photo.
+    dropped, because refusing the report punishes the resident for the town's
+    misconfiguration.
+
+    But "unredactable" is now much rarer than it was. A cloud detector with no
+    usable credentials falls back to on-server detection rather than returning
+    nothing, so the case this docstring used to describe -- "a town whose Vision
+    credentials quietly expired will publish unblurred faces" -- no longer
+    happens while OpenCV is present. When even that is unavailable the photo is
+    stored unredacted, and `skipped_reason` says `no-detector` rather than
+    `no-detections`, so the two are distinguishable by everything downstream.
     """
     decoded = _decode(media)
     if not decoded:
@@ -1001,6 +1099,14 @@ async def redact_image(media: str, provider: str, faces: bool, plates: bool) -> 
     width, height = image_size(raw)
     if width <= 0 or height <= 0:
         return RedactionResult(media, skipped_reason="unreadable-image")
+
+    provider, degraded_from = await effective_provider(provider)
+    if degraded_from == provider:
+        # Nothing can blur. Keep the photo -- dropping it helps nobody -- but do
+        # not let this be reported as "we looked and there was no one there".
+        cleaned = strip_exif(raw)
+        payload = _encode(cleaned, "image/jpeg") if cleaned is not None else media
+        return RedactionResult(payload, changed=False, skipped_reason="no-detector")
 
     found = await detect(provider, raw, width, height, faces, plates)
     if not found:

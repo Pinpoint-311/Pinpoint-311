@@ -14,7 +14,19 @@ Pinpoint 311 is designed for self-hosted deployment within a municipal jurisdict
   - **Cloud KMS mode**: PII is protected with envelope encryption — a local data key encrypts the field, and that data key is wrapped by your cloud's key service (Google Cloud KMS, Azure Key Vault, or AWS KMS). Ciphertext is stored locally; only the data-key wrap/unwrap involves the cloud.
   - **Local mode**: PII is encrypted locally with Fernet (`SECRET_KEY`-derived), with no cloud dependency.
   - **Fail-loud option**: setting `REQUIRE_KMS` makes the platform refuse to store PII if the key service is unavailable, rather than silently falling back.
-- **No third-party analytics**: no external tracking or analytics services; the application does not phone home.
+- **No third-party analytics**: no external tracking or analytics services; the application does not phone home. There is exactly one voluntary exception, documented below.
+
+### Optional Deployment Registration (the one outbound exception)
+
+The application makes no automatic calls to Pinpoint 311 servers. Because it is self-hosted, that also means there is no way to reach a town when a security fix ships. The admin console therefore includes an **optional, user-initiated registration form**, disclosed here rather than left to be discovered:
+
+- **Nothing is transmitted unless a person fills in the form and presses Submit.** There is no background call, no scheduled call, and no call on install, upgrade or startup. Dismissing the prompt sends nothing.
+- **Submission is browser-side.** The request is made by the admin's browser directly to `pinpoint311.org`, not by the application server. The server holds no connection to Pinpoint 311 infrastructure, before or after. A deployment that blocks outbound traffic simply sees the submission fail; the form then offers a link to the same form on the website, and nothing else changes.
+- **The payload contains only typed values plus two consent flags.** Nothing is inferred, measured, or attached: no version string, no deployment fingerprint, no request counts, no configuration, no identifiers of any kind. The fields are: organization or municipality, contact name, contact email, contact role or title, deployment URL, state or country, how the deployment is being used (self-hosted for one municipality / hosting for multiple / evaluating), consent to receive security advisories and release notes, and consent to be listed publicly as a deployment. The first three are required; the rest are optional. A hidden anti-spam field is submitted empty.
+- **Dismissal is honoured.** Closing the prompt by any route stops it reappearing in that browser. It remains reachable from a dismissible banner and from an entry on the setup page, and never blocks any part of the console.
+- **The receiving endpoint is unauthenticated by design.** Distributing an API key with an open-source install would publish it; requiring one would break the zero-config install. The endpoint accepts requests from any origin, since every deployment is on a different domain, and is rate-limited by IP.
+
+The implementation is `frontend/src/components/StayInformed.tsx`, which carries the same account of what it does and does not send.
 
 ### Audit Logging
 - **Comprehensive trail**: every lifecycle event is recorded in the `request_audit_logs` table (submission, assignment, status changes, comments, edits).
