@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
-from typing import List, Optional, Dict
+from typing import Any, List, Optional, Dict
 from pydantic import BaseModel
 import subprocess
 import os
@@ -58,6 +58,53 @@ async def get_deployment_config():
     }
 
 
+def _field_required(field: Dict[str, Any]) -> bool:
+    """Whether a credential field must be present for a provider to count as set up.
+
+    Two conventions exist in the catalogs. The maps catalog carries an explicit
+    `required` boolean; the older AI, identity and translation catalogs encode it
+    by ending the label with "(optional)". Trust the flag when it is there and
+    fall back to the label when it is not, rather than making every catalog
+    change shape at once.
+    """
+    if "required" in field:
+        return bool(field["required"])
+    return not str(field.get("label", "")).rstrip().endswith("(optional)")
+
+
+async def _configured_map(providers: List[Dict[str, Any]]) -> Dict[str, bool]:
+    """{provider id: are all of its required credentials stored}.
+
+    This exists because three of the four capability catalogs were not returning
+    it at all. The admin UI reads `configured[current_provider]`, so identity,
+    translation and maps cards resolved it to undefined and reported "not
+    configured" however well set up they actually were -- a false negative on a
+    working connector, which is worse than no badge, because it sends someone off
+    to re-paste credentials that were already fine.
+
+    A provider with no required fields counts as configured: there is nothing to
+    supply, so there is nothing missing.
+    """
+    from app.services.secret_manager import get_secret
+
+    out: Dict[str, bool] = {}
+    for provider in providers:
+        required = [f["key"] for f in provider.get("credential_fields", []) if _field_required(f)]
+        present = True
+        for key in required:
+            try:
+                if not await get_secret(key):
+                    present = False
+                    break
+            except Exception:
+                # An unreachable secret store is not the same as an unconfigured
+                # provider. Say nothing rather than say something false.
+                present = False
+                break
+        out[provider["provider"]] = present
+    return out
+
+
 @router.get("/identity/catalog")
 async def get_identity_catalog(_: User = Depends(get_current_admin)):
     """Identity provider catalog for the admin UI (Auth0 / Entra / Okta / OIDC),
@@ -65,7 +112,9 @@ async def get_identity_catalog(_: User = Depends(get_current_admin)):
     from app.services.identity import catalog_for_api, IDENTITY_PROVIDER_KEY
     from app.services.secret_manager import get_secret
     current = (await get_secret(IDENTITY_PROVIDER_KEY)) or "auth0"
-    return {"current_provider": current.strip().lower(), "default_provider": "auth0", "providers": catalog_for_api()}
+    providers = catalog_for_api()
+    return {"current_provider": current.strip().lower(), "default_provider": "auth0",
+            "providers": providers, "configured": await _configured_map(providers)}
 
 
 @router.get("/translation/catalog")
@@ -74,7 +123,9 @@ async def get_translation_catalog(_: User = Depends(get_current_admin)):
     from app.services.translation_providers import catalog_for_api, TRANSLATION_PROVIDER_KEY
     from app.services.secret_manager import get_secret
     current = (await get_secret(TRANSLATION_PROVIDER_KEY)) or "google"
-    return {"current_provider": current.strip().lower(), "default_provider": "google", "providers": catalog_for_api()}
+    providers = catalog_for_api()
+    return {"current_provider": current.strip().lower(), "default_provider": "google",
+            "providers": providers, "configured": await _configured_map(providers)}
 
 
 @router.get("/maps/catalog")
@@ -85,7 +136,9 @@ async def get_maps_catalog(_: User = Depends(get_current_admin)):
     from app.services.map_provider import MAP_PROVIDER_KEY, catalog_for_api, normalize_provider
     from app.services.secret_manager import get_secret
     current = normalize_provider(await get_secret(MAP_PROVIDER_KEY))
-    return {"current_provider": current, "default_provider": "google", "providers": catalog_for_api()}
+    providers = catalog_for_api()
+    return {"current_provider": current, "default_provider": "google",
+            "providers": providers, "configured": await _configured_map(providers)}
 
 
 @router.get("/ai/catalog")
@@ -108,21 +161,15 @@ async def get_ai_catalog(
     current_provider = (await get_secret(AI_PROVIDER_KEY)) or "vertex"
     current_model = await get_secret(AI_MODEL_KEY)
 
-    configured = {}
-    for key, meta in AI_CATALOG.items():
-        required = [f["key"] for f in meta["credential_fields"] if not f["label"].endswith("(optional)")]
-        # "configured" = the non-optional credential fields are all present
-        present = True
-        for field in meta["credential_fields"]:
-            if field["key"] in required:
-                if not await get_secret(field["key"]):
-                    present = False
-                    break
-        configured[key] = present
-
     # Overlay the discovered model lists (per-provider) onto the curated catalog.
     cache = await md.load_db_cache(db)
     providers = catalog_for_api()
+
+    # Shared with the other three capabilities rather than a second copy of the
+    # same rule. The AI-only version this replaces inferred "required" purely
+    # from the label ending in "(optional)", which silently mis-reads any
+    # catalog that states it as a flag.
+    configured = await _configured_map(providers)
     for p in providers:
         entry = cache.get(p["provider"])
         if entry and entry.get("models"):

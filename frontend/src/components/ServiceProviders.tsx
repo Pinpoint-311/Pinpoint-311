@@ -194,10 +194,17 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const active: ProviderInfo | undefined = catalog.providers.find(p => p.provider === selected);
     const currentName = catalog.providers.find(p => p.provider === catalog.current_provider)?.name || catalog.current_provider;
 
-    // Whether the provider actually in use has its credentials stored. Drives
-    // the same green treatment every other connector card uses, so "set up" and
-    // "not set up" read identically across the whole page.
-    const configured = !!catalog.configured?.[catalog.current_provider];
+    /* Whether the provider actually in use has its credentials stored.
+     *
+     * `undefined` means the endpoint did not tell us, which is not the same as
+     * "no". Three capabilities used to omit this map entirely and every one of
+     * their cards claimed "Not configured" on a working connector -- so an
+     * absent answer now renders as unknown rather than as a confident negative,
+     * and the card cannot lie in that direction again if a future capability
+     * forgets to send it. */
+    const configuredState = catalog.configured?.[catalog.current_provider];
+    const configured = configuredState === true;
+    const statusUnknown = configuredState === undefined;
     // null means "not touched yet", so an unconfigured card starts open and a
     // configured one starts closed, without overriding a deliberate click.
     const isOpen = open === null ? !configured : open;
@@ -281,6 +288,10 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-green-500/20 to-emerald-500/20 text-green-300 border border-green-500/30 shadow-lg shadow-green-500/10">
                                 <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" />
                                 Configured
+                            </span>
+                        ) : statusUnknown ? (
+                            <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 text-white/60 border border-white/20">
+                                Status unknown
                             </span>
                         ) : (
                             <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
