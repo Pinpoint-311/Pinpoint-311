@@ -233,13 +233,25 @@ defineSteps('identity', 'okta', (ctx) => [
     {
         body: (
             <>
-                The issuer is somewhere else. Open <B>Security → API</B> in the left menu and copy the{' '}
-                <B>Issuer URI</B> of the authorization server you are using — usually the one named{' '}
-                <C>default</C>.
+                The issuer is not on the application page. Open <B>Security → API</B> in the left menu.
+                You will see more than one authorization server, and <B>either can be correct</B> — what
+                matters is that the one you enter here is the one your app is set to use:
+                <span className="mt-2 grid gap-1.5">
+                    <span className="text-white/50 text-xs">
+                        <B>Org</B> — issuer is your plain Okta domain, <C>https://your-org.okta.com</C>.
+                        This is Okta's recommendation for ordinary single sign-on, which is all Pinpoint
+                        does.
+                    </span>
+                    <span className="text-white/50 text-xs">
+                        <B>default</B> (a custom server) — issuer ends <C>/oauth2/default</C>. Use this if
+                        your Okta administrator has put claims or policies on it.
+                    </span>
+                </span>
+                If you are unsure, ask whoever administers Okta which one the app was assigned to.
             </>
         ),
         fields: ['OKTA_ISSUER'],
-        trouble: <>Not your org URL. It typically ends <C>/oauth2/default</C>, and the plain org address looks close enough to be pasted by mistake — after which sign-in fails at discovery with a message that names neither.</>,
+        trouble: <>You can check the value before saving: paste <C>{'<issuer>'}/.well-known/openid-configuration</C> into a browser. A page of JSON means it is right; a 404 or an error means it is not. That takes ten seconds and saves diagnosing a login loop.</>,
     },
 ]);
 
@@ -351,8 +363,8 @@ defineSteps('maps', 'esri', () => [
                 remember — ArcGIS API keys are valid for up to a year and then simply stop.
             </>
         ),
-        check: <>a key string starting <C>AAPT</C> or <C>AAPK</C>.</>,
-        trouble: <>Note the expiry date somewhere the town will see it. When one of these lapses the map goes blank with no warning and nothing in the console says why.</>,
+        check: <>a key string starting <C>AAPK</C>. (<C>AAPT</C> is Esri's prefix for short-lived access tokens — if that is what you have, it is not the right credential.)</>,
+        trouble: <>Write the expiry date somewhere the town will see it. Keys expire at 00:00:00 GMT on the date you set, and when one lapses the map goes blank with no warning and nothing in the console saying why.</>,
     },
     {
         body: (
@@ -490,12 +502,11 @@ defineSteps('ai', 'azure', () => [
         body: (
             <>
                 In the <L href="https://portal.azure.com">Azure portal</L>, create an <B>Azure OpenAI</B>{' '}
-                resource in a region your town is allowed to use. Access to Azure OpenAI is granted per
-                subscription and can take a day or two to be approved if it has not been requested
-                before.
+                resource in a region your town is allowed to use. No application or approval is needed —
+                every Azure subscription is eligible for the standard models.
             </>
         ),
-        trouble: <>Check this first if you are on a deadline. Everything else here takes ten minutes; the approval does not.</>,
+        trouble: <>Older write-ups describe a registration form and a wait of a day or two. Microsoft removed that for general access; a form is now only required for specific restricted features, none of which Pinpoint uses. If someone tells you to apply and wait, they are working from stale instructions.</>,
     },
     {
         body: (
@@ -637,7 +648,7 @@ defineSteps('email', 'smtp', () => [
                 status update, the replies land wherever this sends from.
             </>
         ),
-        trouble: <>Microsoft 365 and Google Workspace both restrict plain SMTP by default. If your IT provider says it is blocked, they are right, and Amazon SES or Azure Communication Services will be less work than arguing for an exception.</>,
+        trouble: <>Microsoft 365 and Google Workspace both restrict plain SMTP by default — on Microsoft it is switched off unless an administrator turns it back on. Worse, Microsoft is removing password-based SMTP from Exchange Online at the end of December 2026: existing tenants have it disabled by default from then, and tenants created afterwards cannot use it at all. If your town is on Microsoft 365, choosing SMTP today buys you a few months. Amazon SES or Azure Communication Services is the durable answer.</>,
     },
     {
         body: (
@@ -795,13 +806,24 @@ defineSteps('sms', 'acs', () => [
     {
         body: (
             <>
-                Use the same <B>Communication Services</B> resource as email if you have one. Open it in
-                the <L href="https://portal.azure.com">Azure portal</L> and go to{' '}
-                <B>Telephony and SMS → Phone numbers → Get</B> to acquire a number with SMS enabled.
+                <B>Register before you try to buy a number.</B> On the Communication Services resource,
+                open <B>Telephony and SMS → Regulatory Documents</B> and complete the 10DLC{' '}
+                <B>brand</B> and <B>campaign</B> registration for the town. In the US, both have to be
+                approved before you can acquire or SMS-enable a number at all — this is not a step you
+                can come back to.
             </>
         ),
-        check: <>a number listed with SMS among its capabilities.</>,
-        trouble: <>Acquiring a US number needs a regulatory profile and, for most SMS use, 10DLC registration. Azure walks you through it, but it is not instant — start it before you need it.</>,
+        trouble: <>You also need a paid Azure subscription. Phone numbers cannot be acquired on a trial or with free credits, and availability depends on your subscription's billing country.</>,
+    },
+    {
+        body: (
+            <>
+                Once registration is approved, go to <B>Telephony and SMS → Phone numbers</B> and acquire
+                a number with SMS among its capabilities. Use the same Communication Services resource as
+                email if you already made one.
+            </>
+        ),
+        check: <>the number listed with SMS in its capabilities.</>,
     },
     {
         body: (
@@ -943,7 +965,7 @@ defineSteps('kms', 'aws', () => [
             </>
         ),
         fields: ['AWS_REGION', 'AWS_KMS_KEY_ID'],
-        trouble: <>Never schedule this key for deletion. AWS enforces a waiting period of at least seven days, and at the end of it the resident data encrypted under it is unrecoverable — by you, and by AWS.</>,
+        trouble: <>Never schedule this key for deletion. AWS enforces a waiting period between 7 and 30 days — 30 by default — during which the key cannot be used at all, so resident data stops decrypting the moment deletion is scheduled rather than when it completes. It can be cancelled inside that window. After it, the data encrypted under the key is unrecoverable, by you and by AWS.</>,
     },
 ]);
 
