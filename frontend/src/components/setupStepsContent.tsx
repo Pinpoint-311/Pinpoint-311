@@ -1085,6 +1085,33 @@ defineSteps('kms', 'aws', () => [
 // town is actually deciding, which is what to blur.
 // ===========================================================================
 
+/**
+ * The two warnings every redaction path needs.
+ *
+ * Redaction is the one capability whose failure is invisible from inside the
+ * product. A misconfigured email provider bounces and somebody notices; a
+ * detector that finds nothing looks exactly like a photo with nobody in it. The
+ * blurring either happened or it did not, and the only way to know is to look
+ * at a photo.
+ */
+const UNCONFIGURED_DETECTOR = (
+    <>
+        If the credentials are missing or wrong, this fails <em>quietly</em>. The detector returns no
+        faces, Pinpoint blurs nothing, the photo is stored, and the card still shows redaction as on —
+        because "found nobody" and "could not ask" look identical from here. Check the Photo Redaction
+        line on the health dashboard after saving, and do the test below.
+    </>
+);
+
+const VERIFY_WITH_A_PHOTO = (
+    <>
+        <B>Test it once, with a real photo.</B> Open the resident portal, file a test report with a
+        picture that has a recognisable face in it, then look at the stored image in the staff
+        dashboard. Thirty seconds, and it is the only thing that actually proves this is working.
+        Delete the test report afterwards.
+    </>
+);
+
 const REDACTION_CHOICE = (
     <>
         Faces and licence plates are both on by default. Residents photograph potholes with cars parked
@@ -1103,8 +1130,9 @@ defineSteps('redaction', 'google', () => [
             </>
         ),
         check: <>"API Enabled" on the Cloud Vision API page.</>,
+        trouble: <>{UNCONFIGURED_DETECTOR}</>,
     },
-    { body: REDACTION_CHOICE, fields: ['REDACT_FACES', 'REDACT_PLATES'] },
+    { body: REDACTION_CHOICE, fields: ['REDACT_FACES', 'REDACT_PLATES'], trouble: VERIFY_WITH_A_PHOTO },
 ]);
 
 defineSteps('redaction', 'aws', () => [
@@ -1113,11 +1141,14 @@ defineSteps('redaction', 'aws', () => [
             <>
                 Amazon Rekognition needs nothing enabled in its console. Add{' '}
                 <C>rekognition:DetectFaces</C> and <C>rekognition:DetectText</C> to the IAM user this
-                deployment uses — plate detection works by reading text in the image.
+                deployment uses — plate detection works by reading text in the image, so leaving
+                DetectText off silently disables plates while faces keep working.
             </>
         ),
+        check: <>both actions listed on the IAM user's policy.</>,
+        trouble: <>{UNCONFIGURED_DETECTOR}</>,
     },
-    { body: REDACTION_CHOICE, fields: ['REDACT_FACES', 'REDACT_PLATES'] },
+    { body: REDACTION_CHOICE, fields: ['REDACT_FACES', 'REDACT_PLATES'], trouble: VERIFY_WITH_A_PHOTO },
 ]);
 
 // Azure is the only redaction backend with credentials of its own. Google and
@@ -1167,12 +1198,24 @@ defineSteps('redaction', 'local', () => [
     {
         body: (
             <>
-                Detection runs on this server. Nothing to configure and no photo ever leaves the
-                building, which is the reason to choose it. It finds fewer faces than the cloud
-                detectors, particularly small or partly turned ones — so it is the safer choice for
-                privacy and the weaker one for coverage.
+                <B>This is what you get if you choose nothing.</B> Detection runs on this server using
+                OpenCV, with no account, no key and no cost — and no resident photo ever leaves the
+                building, which is the real reason to keep it.
             </>
         ),
+        trouble: <>It is the default because the alternative was worse. A deployment with no cloud credentials used to blur nothing at all while the page displayed Google Cloud Vision as the provider. Imperfect blurring beats none; that is the whole argument, and it is worth knowing which one you are relying on.</>,
     },
-    { body: REDACTION_CHOICE, fields: ['REDACT_FACES', 'REDACT_PLATES'] },
+    {
+        body: (
+            <>
+                <B>What it misses.</B> It finds faces that are roughly front-on and reasonably large.
+                Small faces, faces in profile, faces in shadow or behind glass are often missed, and
+                plate detection is weaker still. The cloud detectors are meaningfully better at all of
+                those. If your town publishes photos to a public map and a missed face is a serious
+                problem, one of them is worth the setup.
+            </>
+        ),
+        trouble: <>The safest arrangement for a town with no cloud account is to keep this on <em>and</em> have a person look at photos before they are published, rather than treating either one as sufficient on its own.</>,
+    },
+    { body: REDACTION_CHOICE, fields: ['REDACT_FACES', 'REDACT_PLATES'], trouble: VERIFY_WITH_A_PHOTO },
 ]);
