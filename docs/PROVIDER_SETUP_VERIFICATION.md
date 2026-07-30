@@ -22,7 +22,7 @@ against the real credential catalogs by
 reads is checked to have a box by `backend/tests/test_dispatch_keys_are_enterable.py`.
 Those are machine-verified on every commit regardless of the level below.
 
-Last reconciliation: 2026-07-30.
+Last reconciliation: 2026-07-30 (second pass, every path).
 
 | Path | Level | Checked against |
 |---|---|---|
@@ -57,7 +57,55 @@ Last reconciliation: 2026-07-30.
 
 ## What reconciliation caught
 
-It is worth recording that this was not a formality.
+It is worth recording that this was not a formality. A second pass over every
+path found six factual errors on top of the broken feature below.
+
+**Azure OpenAI is no longer gated.** The steps said access "can take a day or
+two to be approved if it has not been requested before" and told towns to start
+that first if they were on a deadline. Microsoft removed the general
+registration requirement; every subscription is eligible for the standard
+models, and a form is now needed only for restricted features Pinpoint does not
+use. The advice would have sent a town looking for an approval process that does
+not exist, and delayed a launch for nothing.
+
+**Okta's issuer — a correction to an earlier correction.** These steps had
+claimed the issuer is "not your org URL" and "typically ends /oauth2/default".
+That is wrong, and it was written while removing a passage from the setup guide
+that said the opposite. Okta documents *both* as legitimate: the org
+authorization server issues on the plain domain and is Okta's recommendation for
+ordinary single sign-on, which is what Pinpoint does; a custom server such as
+`default` issues on `/oauth2/{id}` and exists for custom claims and policies.
+What matters is that the issuer matches the server the app is assigned to. The
+steps now say so, and give a ten-second check —
+`<issuer>/.well-known/openid-configuration` should return JSON in a browser.
+
+**ACS text messaging is registration-first.** The steps had a town acquire a
+number and then mentioned registration as a caveat. In the US, 10DLC brand and
+campaign registration must be approved *before* a number can be acquired or
+SMS-enabled at all. It is also not possible on a trial subscription or with free
+credits. Both facts now come before the step they would otherwise block.
+
+**Microsoft is removing password-based SMTP.** From the end of December 2026,
+Exchange Online disables basic authentication for SMTP AUTH on existing tenants
+by default, and tenants created after that cannot use it. A town on Microsoft
+365 choosing SMTP today buys a few months. The step says so and points at the
+durable alternatives.
+
+**ArcGIS keys start `AAPK`.** The steps accepted `AAPT` as well; that is Esri's
+prefix for short-lived access tokens, which is a different credential and will
+not work. Keys also expire at 00:00:00 GMT on the date set, which is now stated.
+
+**AWS KMS deletion is 7 to 30 days, defaulting to 30**, and the key becomes
+unusable the moment deletion is *scheduled* rather than when the window closes —
+so resident data stops decrypting immediately. It can be cancelled inside the
+window. The steps said only "at least seven days".
+
+Confirmed correct, having originally been written from memory: `TranslateReadOnly`
+does include `translate:TranslateText` despite the name; `roles/cloudtranslate.user`
+and `roles/aiplatform.user` are the right role names; Rekognition finds plates
+via `DetectText`; Cloud KMS Encrypter/Decrypter must be granted on the key;
+`AmazonSESFullAccess` exists and `ses:SendEmail` + `ses:SendRawEmail` are the
+minimum; Azure Translator's region is the short form from Keys and Endpoint.
 
 **Azure photo redaction was broken, not just imprecise.** Writing the steps
 surfaced that `image_redaction.py` reads four keys — `AZURE_FACE_ENDPOINT`,
