@@ -3892,19 +3892,7 @@ export default function AdminConsole() {
                             </div>
 
                             {/* Default Fallback Redirect Message */}
-                            <div className="space-y-2 pt-3 border-t border-white/10">
-                                <label className="block text-xs font-bold uppercase tracking-wider text-white/70">General Fallback Redirect Message</label>
-                                <textarea
-                                    rows={2}
-                                    placeholder="This road is maintained by an external agency (State / County)..."
-                                    value={serviceRouting.routing_config.third_party_message}
-                                    onChange={(e) => setServiceRouting(p => ({
-                                        ...p,
-                                        routing_config: { ...p.routing_config, third_party_message: e.target.value }
-                                    }))}
-                                    className="w-full rounded-2xl bg-white/10 border border-white/20 text-white px-3 py-2 text-xs focus:outline-none focus:border-amber-400"
-                                />
-                            </div>
+
                         </div>
                     )}
 
