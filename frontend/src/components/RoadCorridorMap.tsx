@@ -136,11 +136,12 @@ export default function RoadCorridorMap({
         const bufferStyleFor = useCallback((feature: GeoFeature): VectorStyle => {
         const id = String(feature.properties?.feature_id ?? "");
         const off = excludedRef.current.has(id);
-        const bufferPx = Math.round(8 + (corridorMetres - 5) * (26 / 35));
+        const bufferPx = Math.round(10 + (corridorMetres - 5) * (28 / 35));
         return {
-            strokeColor: off ? "#64748b" : "#f87171",
+            strokeColor: off ? "#64748b" : "#ef4444",
             strokeWidth: off ? 4 : bufferPx,
-            strokeOpacity: off ? 0.2 : 0.35,
+            strokeOpacity: off ? 0.18 : 0.35,
+            strokeDasharray: off ? "4,4" : "6,6",
         };
     }, [corridorMetres]);
 
@@ -320,14 +321,9 @@ export default function RoadCorridorMap({
                     </div>
                 )}
                 {unavailable && (
-                    <div className="absolute inset-0 flex items-center justify-center text-center px-6">
-                        <div>
-                            <MapPin className="w-7 h-7 mx-auto mb-2 text-white/25" aria-hidden="true" />
-                            <p className="text-sm text-white/50">Road data hasn&apos;t loaded for this town yet.</p>
-                            <p className="text-xs text-white/35 mt-1">
-                                Rules still work — you just can&apos;t preview them here.
-                            </p>
-                        </div>
+                    <div className="absolute top-3 left-3 z-10 flex items-center gap-2 rounded-lg bg-slate-900/80 backdrop-blur-md border border-white/10 px-3 py-1.5 text-xs text-white/70 shadow-lg pointer-events-none">
+                        <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0" aria-hidden="true" />
+                        <span>Road data loading for this boundary...</span>
                     </div>
                 )}
             </div>
