@@ -13,7 +13,7 @@ import {
     createMap,
     fractionAlongLine,
     legacyMapProviderConfig,
-    pointAtFraction,
+    pointAtFraction, subPathByFractions,
 } from '../maps';
 
 /**
@@ -76,6 +76,7 @@ export default function RoadCorridorMap({
     useEffect(() => { trimsRef.current = trims; }, [trims]);
 
     const [ready, setReady] = useState(false);
+    const [zoomLevel, setZoomLevel] = useState(13);
     const [loading, setLoading] = useState(false);
     const [segmentCount, setSegmentCount] = useState(0);
     const [unavailable, setUnavailable] = useState(false);
@@ -99,6 +100,11 @@ export default function RoadCorridorMap({
             .then(renderer => {
                 if (cancelled) { renderer.destroy(); return; }
                 rendererRef.current = renderer;
+
+                renderer.onBoundsChange?.(() => {
+                    const z = renderer.getZoom();
+                    if (typeof z === "number") setZoomLevel(z);
+                });
 
                 if (townshipBoundary) {
                     try {
@@ -136,14 +142,15 @@ export default function RoadCorridorMap({
         const bufferStyleFor = useCallback((feature: GeoFeature): VectorStyle => {
         const id = String(feature.properties?.feature_id ?? "");
         const off = excludedRef.current.has(id);
-        const bufferPx = Math.round(10 + (corridorMetres - 5) * (28 / 35));
+        const zoomFactor = Math.pow(2, (zoomLevel || 13) - 13);
+        const bufferPx = Math.max(6, Math.round((corridorMetres * 0.9) * zoomFactor));
         return {
             strokeColor: off ? "#64748b" : "#ef4444",
             strokeWidth: off ? 4 : bufferPx,
-            strokeOpacity: off ? 0.18 : 0.35,
+            strokeOpacity: off ? 0.18 : 0.45,
             strokeDasharray: off ? "4,4" : "6,6",
         };
-    }, [corridorMetres]);
+    }, [corridorMetres, zoomLevel]);
 
     const centerlineStyleFor = useCallback((feature: GeoFeature): VectorStyle => {
         const id = String(feature.properties?.feature_id ?? '');
@@ -251,8 +258,6 @@ export default function RoadCorridorMap({
             const fraction = fractionAlongLine(selected.path, position);
             const current = trimsRef.current[selected.id] || { start: 0, end: 1 };
             const next = { ...current, [which]: fraction };
-            // Dragging the handles across each other is a normal thing to do
-            // and should mean "the other way round", not an empty rule.
             const ordered = next.start <= next.end
                 ? next
                 : { start: next.end, end: next.start };
@@ -261,6 +266,7 @@ export default function RoadCorridorMap({
             if (ordered.start <= 0.001 && ordered.end >= 0.999) delete updated[selected.id];
             else updated[selected.id] = ordered;
             onTrimsChange(updated);
+            restyle();
         };
 
         const markers = (['start', 'end'] as const).flatMap(which => {
