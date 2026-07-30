@@ -90,7 +90,11 @@ export interface ServiceDefinition {
         third_party_name?: string;
         contacts?: RoutingContact[];
         // Road-based mode
-        default_handler?: 'township' | 'third_party';
+        /** Who handles a road no rule names: 'township' for the municipality,
+         *  or a configured agency's name. The old literal 'third_party' is
+         *  still read for configs saved before agencies were named, and
+         *  resolves only when exactly one agency exists. */
+        default_handler?: string;
         exclusion_list?: string[];
         inclusion_list?: string[];
         third_party_message?: string;

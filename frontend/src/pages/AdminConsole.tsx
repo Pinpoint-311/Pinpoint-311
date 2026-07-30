@@ -611,7 +611,10 @@ export default function AdminConsole() {
             message: '',
             contacts: [] as RoutingContact[],
             // Road-based mode
-            default_handler: 'township' as 'township' | 'third_party',
+            // 'township', or a configured agency's name. Not a closed union:
+            // narrowing it here is what forced the `as any` that hid the value
+            // never matching an agency.
+            default_handler: 'township' as string,
             exclusion_list: '', // County roads (when township is default)
             inclusion_list: '', // Township roads (when third party is default)
             third_party_message: '',
@@ -3817,7 +3820,7 @@ export default function AdminConsole() {
                                     value={serviceRouting.routing_config.default_handler}
                                     onChange={(e) => setServiceRouting(p => ({
                                         ...p,
-                                        routing_config: { ...p.routing_config, default_handler: e.target.value as any }
+                                        routing_config: { ...p.routing_config, default_handler: e.target.value }
                                     }))}
                                     className="w-full h-11 rounded-2xl bg-white/[0.08] border border-white/20 text-white px-4 text-sm focus:outline-none focus:border-amber-400"
                                     aria-label="Who handles a road that is not listed"
