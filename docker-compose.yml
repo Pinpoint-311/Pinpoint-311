@@ -63,31 +63,6 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  # Watchtower - Automatic container updates for security
-  watchtower:
-    image: containrrr/watchtower:latest
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      WATCHTOWER_CLEANUP: "true"
-      WATCHTOWER_SCHEDULE: "0 0 3 * * *" # Update at 3am daily
-      WATCHTOWER_ROLLING_RESTART: "true"
-      WATCHTOWER_INCLUDE_STOPPED: "false"
-      DOCKER_API_VERSION: "1.44"
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    deploy:
-      resources:
-        limits:
-          cpus: '0.1'
-          memory: 128M
-
   backend:
     build: ./backend
     restart: unless-stopped
