@@ -83,7 +83,7 @@ import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { useDialog } from '../components/DialogProvider';
 import { api, MapLayer } from '../services/api';
-import { User, ServiceDefinition, SystemSettings, SystemSecret, Department } from '../types';
+import { User, ServiceDefinition, SystemSettings, SystemSecret, Department, RoutingContact } from '../types';
 import { usePageNavigation } from '../hooks/usePageNavigation';
 import ClientErrorPanel from '../components/ClientErrorPanel';
 import OperationsPanel from '../components/OperationsPanel';
@@ -609,13 +609,15 @@ export default function AdminConsole() {
             staff_ids: [] as number[],
             // Third party mode
             message: '',
-            contacts: [] as { name: string; phone: string; url: string }[],
+            contacts: [] as RoutingContact[],
             // Road-based mode
             default_handler: 'township' as 'township' | 'third_party',
             exclusion_list: '', // County roads (when township is default)
             inclusion_list: '', // Township roads (when third party is default)
             third_party_message: '',
-            third_party_contacts: [] as { name: string; phone: string; email?: string; url: string; message?: string; road_list?: string; roads?: string[] }[],
+            // The shared shape, so the admin state, the API type and the
+            // resident-facing notice cannot drift apart again.
+            third_party_contacts: [] as RoutingContact[],
             // Custom questions
             custom_questions: [] as { id: string; label: string; type: string; options: string[]; required: boolean; placeholder: string }[],
         },

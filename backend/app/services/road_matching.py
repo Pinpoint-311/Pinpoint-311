@@ -178,6 +178,72 @@ def _as_list(value: Any) -> List[str]:
     return []
 
 
+def _agency_contacts(agency: Dict[str, Any]) -> List[Dict[str, str]]:
+    """One agency card becomes one contact block.
+
+    The routing modal collects the contact details flat on the agency itself --
+    name, phone, email, url -- rather than as a nested list, so build the list
+    the rest of the pipeline expects. An explicit `contacts` list, if a config
+    has one, wins.
+    """
+    explicit = agency.get("contacts")
+    if isinstance(explicit, list) and explicit:
+        return [c for c in explicit if isinstance(c, dict)]
+    entry = {
+        key: str(agency.get(key) or "").strip()
+        for key in ("name", "phone", "email", "url")
+    }
+    return [entry] if any(entry.values()) else []
+
+
+def jurisdictions_from_config(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Every agency in a routing config, each owning only its own roads.
+
+    Three shapes, newest first. This is the single reader for all of them, so
+    that the spatial resolver and the address resolver cannot disagree about
+    who owns a road -- they did diverge before, and a resident reporting through
+    the portal could be told something different from one phoned in.
+
+      1. `jurisdictions`  -- the explicit multi-agency shape.
+      2. `third_party_contacts` where the entries carry roads -- what the
+         routing modal writes: one card per agency, each with its own road
+         list, message and contact details.
+      3. the pre-multi-jurisdiction shape -- one unnamed third party owning
+         `exclusion_list`.
+
+    Shape 2 previously fell through to shape 3, which read the *combined*
+    exclusion_list as one nameless agency's roads and handed back every
+    agency's contacts at once. A resident on a state highway was shown the
+    county's phone number alongside the state's, under the heading "Another
+    agency".
+    """
+    jurisdictions = config.get("jurisdictions")
+    if isinstance(jurisdictions, list) and jurisdictions:
+        return [j for j in jurisdictions if isinstance(j, dict)]
+
+    agencies = config.get("third_party_contacts")
+    if isinstance(agencies, list):
+        built: List[Dict[str, Any]] = []
+        for agency in agencies:
+            if not isinstance(agency, dict):
+                continue
+            # `roads` is the normalised array; `road_list` is the raw
+            # comma-separated string the input writes as the clerk types.
+            roads = _as_list(agency.get("roads")) or _as_list(agency.get("road_list"))
+            if not roads:
+                continue
+            built.append({
+                "name": agency.get("name") or "Another agency",
+                "roads": roads,
+                "message": agency.get("message") or "",
+                "contacts": _agency_contacts(agency),
+            })
+        if built:
+            return built
+
+    return _legacy_jurisdictions(config)
+
+
 def _legacy_jurisdictions(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Read the older single-third-party shape as one unnamed jurisdiction.
 
@@ -222,9 +288,7 @@ def resolve_jurisdiction(
         if road_matches(entry, detected_road):
             return None
 
-    jurisdictions = config.get("jurisdictions")
-    if not isinstance(jurisdictions, list) or not jurisdictions:
-        jurisdictions = _legacy_jurisdictions(config)
+    jurisdictions = jurisdictions_from_config(config)
 
     for jurisdiction in jurisdictions:
         if not isinstance(jurisdiction, dict):
