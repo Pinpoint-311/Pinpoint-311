@@ -170,7 +170,7 @@ async def record_success(db, connector: str, provider: Optional[str] = None) -> 
         await db.commit()
     except Exception as exc:
         logger.warning("[Health] could not record success for %s: %s",
-                       sanitize_for_log(connector), exc)
+                       sanitize_for_log(connector), sanitize_for_log(str(exc)))
 
 
 async def record_failure(db, connector: str, error: Any,
@@ -188,7 +188,7 @@ async def record_failure(db, connector: str, error: Any,
         await db.commit()
     except Exception as exc:
         logger.warning("[Health] could not record failure for %s: %s",
-                       sanitize_for_log(connector), exc)
+                       sanitize_for_log(connector), sanitize_for_log(str(exc)))
 
 
 async def snapshot(db) -> Dict[str, Health]:
@@ -201,7 +201,7 @@ async def snapshot(db) -> Dict[str, Health]:
         result = await db.execute(select(ConnectorHealth))
         return {r.connector: to_health(r) for r in result.scalars().all()}
     except Exception as exc:
-        logger.warning("[Health] could not read connector health: %s", exc)
+        logger.warning("[Health] could not read connector health: %s", sanitize_for_log(str(exc)))
         return {}
 
 
