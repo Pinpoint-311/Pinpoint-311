@@ -115,7 +115,9 @@ async def state_from_coordinates(lon: float, lat: float, *, client=None) -> Opti
         "geometryType": "esriGeometryPoint",
         "inSR": "4326",
         "spatialRel": "esriSpatialRelIntersects",
-        "outFields": "STUSAB",
+        # Every field rather than a named one. See state_code_in for why
+        # naming it would be a single unverifiable string this depends on.
+        "outFields": "*",
         "returnGeometry": "false",
         "f": "json",
     }
@@ -130,12 +132,64 @@ async def state_from_coordinates(lon: float, lat: float, *, client=None) -> Opti
         logger.info("state lookup failed for %s,%s: %s", lon, lat, exc)
         return None
 
-    features = payload.get("features") or []
+    if isinstance(payload, dict) and payload.get("error"):
+        logger.info("state lookup rejected for %s,%s: %s", lon, lat, payload["error"])
+        return None
+
+    features = (payload or {}).get("features") or []
     if not features:
         return None
-    code = (features[0].get("attributes") or {}).get("STUSAB")
-    if isinstance(code, str) and len(code.strip()) == 2:
-        return code.strip().upper()
+    return state_code_in(features[0].get("attributes") or {})
+
+
+def state_code_in(attributes: Dict[str, Any]) -> Optional[str]:
+    """Find the state abbreviation in an ArcGIS attribute bag.
+
+    Deliberately not `attributes["STUSAB"]`.
+
+    I could not reach the Census service from where this was written -- the
+    environment's egress policy refuses that host -- so the exact field name is
+    the one thing here I was unable to confirm. Census services variously call
+    it STUSAB and STUSPS, and a wrong guess would fail in the worst possible
+    way: the lookup returns None every time, the caller falls back to the name
+    match, uploaded boundaries keep getting the national road layer, and every
+    test still passes. That is precisely the bug this change exists to fix,
+    reintroduced one layer down.
+
+    So this does not depend on knowing the name. It looks through the preferred
+    keys first, then any key at all, for a value that is a real USPS state
+    abbreviation. Validating against the known set is what makes the wide search
+    safe -- "OK" the state is a valid code, but it only reaches here as the
+    value of some attribute on a state polygon, and the preferred keys are
+    checked first anyway.
+    """
+    if not isinstance(attributes, dict):
+        return None
+
+    def valid(value: Any) -> Optional[str]:
+        if isinstance(value, str):
+            code = value.strip().upper()
+            if code in STATE_CODES:
+                return code
+        return None
+
+    for key in ("STUSAB", "STUSPS", "STATE_ABBR", "STATE"):
+        found = valid(attributes.get(key))
+        if found:
+            return found
+    for key, value in attributes.items():
+        if "NAME" in key.upper():
+            continue  # a full state name is handled below, not here
+        found = valid(value)
+        if found:
+            return found
+
+    # Last resort: a full state name in any field, e.g. {"NAME": "New Jersey"}.
+    for value in attributes.values():
+        if isinstance(value, str):
+            code = STATE_NAME_MAP.get(value.strip().upper())
+            if code:
+                return code
     return None
 
 
@@ -208,3 +262,8 @@ STATE_NAME_MAP = {
     "TEXAS": "TX", "UTAH": "UT", "VERMONT": "VT", "VIRGINIA": "VA", "WASHINGTON": "WA",
     "WEST VIRGINIA": "WV", "WISCONSIN": "WI", "WYOMING": "WY", "DISTRICT OF COLUMBIA": "DC",
 }
+
+
+# The abbreviations, for recognising one wherever it turns up in an attribute
+# bag whose field names we could not confirm.
+STATE_CODES = frozenset(STATE_NAME_MAP.values())
