@@ -116,7 +116,6 @@ class DemoModeMiddleware(BaseHTTPMiddleware):
         "/api/research/",       # Research suite
         "/api/system/analytics-chat", # AI Analytics Advisor
         "/api/services/reorder",  # Service category reordering
-        "/api/system/client-errors",  # Frontend error reporting
         "/api/system/update",          # Admin code update (admin-auth protected)
     ]
     
@@ -454,6 +453,11 @@ from pydantic import BaseModel
 from typing import Optional
 import logging
 
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_db
+
 client_error_logger = logging.getLogger("client_errors")
 
 class ClientError(BaseModel):
@@ -469,18 +473,48 @@ class ClientError(BaseModel):
     userAgent: Optional[str] = None
 
 @app.post("/api/system/client-errors", status_code=204)
-async def log_client_error(error: ClientError):
+async def log_client_error(error: ClientError, db: AsyncSession = Depends(get_db)):
     """Log frontend errors for monitoring."""
-    import re
-    def sanitize(text):
-        if not text: return text
-        return re.sub(r'[\r\n]+', ' ', str(text))
+    # The shared sanitizer rather than a local one: it strips the full control
+    # range, not just \r\n, and it is the barrier the rest of the codebase uses.
+    from app.core.sanitize import sanitize_for_log
 
-    client_error_logger.error(
+    def sanitize(text):
+        return sanitize_for_log(text, max_length=2000) if text else text
+
+    # The stack goes in the same ERROR record, not a separate debug() call.
+    #
+    # It used to be logged at DEBUG, and nothing raises the level for this
+    # logger, so Python's default of WARNING discarded every stack trace that
+    # was ever submitted. What survived was one line naming a minified variable
+    # -- "Cannot access 'Z' before initialization" -- with nothing to locate it
+    # by. The report arrived and was useless, which is worse than not arriving,
+    # because the UI told the user it had been handled.
+    detail = (
         f"[CLIENT {sanitize(error.type)}] {sanitize(error.message)} | url={sanitize(error.url)} | "
         f"source={sanitize(error.source)}:{error.lineno}:{error.colno} | "
         f"ua={sanitize(error.userAgent)[:60] if error.userAgent else 'unknown'}"
     )
     if error.stack:
-        client_error_logger.debug(f"Stack: {sanitize(error.stack)[:500]}")
+        detail += f"\n  stack: {sanitize(error.stack)[:1500]}"
+    if error.componentStack:
+        # For a React boundary this is usually more useful than the JS stack:
+        # it names the component tree rather than minified frames.
+        detail += f"\n  components: {sanitize(error.componentStack)[:800]}"
+    client_error_logger.error(detail)
+
+    # Also persisted, so it reaches somebody. The log line above only helps a
+    # deployment with a Sentry DSN or an operator reading container logs;
+    # neither describes a town running this on its own server, which is exactly
+    # the deployment the error screen was promising a report to.
+    from app.services import client_errors
+    await client_errors.record(
+        db,
+        kind=error.type,
+        message=error.message,
+        stack=error.stack,
+        component_stack=error.componentStack,
+        url=error.url,
+        user_agent=error.userAgent,
+    )
     return Response(status_code=204)

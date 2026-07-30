@@ -11,6 +11,9 @@ import {
     Statistics,
     AdvancedStatistics,
     UserCreate,
+    UserUpdate,
+    ConnectorHealthReport,
+    ClientErrorEntry,
     ServiceCreate,
     Department,
     RequestComment,
@@ -472,6 +475,25 @@ class ApiClient {
         });
     }
 
+    /** Browser crashes staff and residents have hit. The error screen promises
+     *  a report; this is where that promise is kept. */
+    async getClientErrors(limit = 50): Promise<{ errors: ClientErrorEntry[] }> {
+        return this.request<{ errors: ClientErrorEntry[] }>(`/system/client-errors?limit=${limit}`);
+    }
+
+    /** What each connector is actually doing, as opposed to whether its
+     *  credentials are stored. See /system/connectors/health. */
+    async getConnectorHealth(): Promise<ConnectorHealthReport> {
+        return this.request<ConnectorHealthReport>('/system/connectors/health');
+    }
+
+    async updateUser(id: number, data: UserUpdate): Promise<User> {
+        return this.request<User>(`/users/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
     async deleteUser(id: number): Promise<void> {
         return this.request<void>(`/users/${id}`, { method: 'DELETE' });
     }
@@ -574,7 +596,13 @@ class ApiClient {
         });
     }
 
-    async saveProvider(capability: string, data: ProviderSave): Promise<{ ok: boolean; provider: string }> {
+    async saveProvider(capability: string, data: ProviderSave): Promise<{
+        ok: boolean;
+        provider: string;
+        /** Shape problems spotted in the pasted values. Advisory: the save has
+         *  already happened by the time these arrive. */
+        warnings?: { key: string; severity: 'error' | 'warn' | 'info'; message: string }[];
+    }> {
         return this.request(`/system/providers/${capability}/save`, {
             method: 'POST',
             body: JSON.stringify(data),

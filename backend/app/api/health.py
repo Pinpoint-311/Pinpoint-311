@@ -24,6 +24,17 @@ from app.core.encryption import decrypt_safe
 router = APIRouter()
 
 
+@router.get("/proactive")
+async def proactive_health(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_admin),
+):
+    """Leading-indicator health for admins: per-check status, values, and the
+    suggested action — shown alongside the restart/diagnose runbooks. Admin-only."""
+    from app.services.proactive_health import evaluate
+    return await evaluate(db)
+
+
 async def get_config_value(db: AsyncSession, key_name: str, env_name: Optional[str] = None) -> Optional[str]:
     """
     Get a configuration value from environment variable OR database secret.
@@ -235,7 +246,7 @@ async def check_vertex_ai(db: AsyncSession) -> Dict[str, Any]:
             "message": "Vertex AI configured (not tested to save API costs)",
             "project": project,
             "location": location,
-            "model": "gemini-3.1-flash-lite-preview"
+            "model": "gemini-3.1-flash-lite"
         }
         
     except Exception as e:
@@ -308,6 +319,49 @@ async def check_gcp_auth(db: AsyncSession) -> Dict[str, Any]:
             "message": "GCP auth check failed"
         }
 
+# Only the database is truly critical — without it nothing works, so a failure
+# there is loud (overall "critical"). Everything else is an *optional* provider:
+# if it's down the app keeps working and simply skips that feature (AI triage,
+# translation, external secret store, etc.), surfaced as a non-blocking warning
+# in the admin console. (PII encryption fails loud separately, at write time,
+# when REQUIRE_KMS is set — see app/core/pii_crypto.py.)
+CRITICAL_CHECKS = {"database"}
+_OK_STATUSES = {"healthy", "configured", "disabled", "fallback"}
+
+
+def classify_health(results: dict) -> dict:
+    """Split check results into non-blocking warnings (optional providers that
+    are down — the app still works) vs critical failures (a core dependency is
+    down). Pure function so the policy is unit-testable."""
+    for name, res in results.items():
+        res["critical"] = name in CRITICAL_CHECKS
+
+    critical_failures = [
+        {"check": n, **results[n]}
+        for n in CRITICAL_CHECKS
+        if n in results and results[n].get("status") not in _OK_STATUSES
+    ]
+    warnings = [
+        {"check": n, "detail": res.get("detail") or res.get("message") or res.get("status")}
+        for n, res in results.items()
+        if n not in CRITICAL_CHECKS and res.get("status") not in _OK_STATUSES
+    ]
+
+    if critical_failures:
+        overall = "critical"      # loud: a core dependency is down
+    elif warnings:
+        overall = "degraded"      # optional provider(s) skipped, app still works
+    else:
+        overall = "healthy"
+
+    return {
+        "overall_status": overall,
+        "checks": results,
+        "warnings": warnings,
+        "critical_failures": critical_failures,
+    }
+
+
 @router.get("/")
 async def health_check(
     db: AsyncSession = Depends(get_db),
@@ -329,36 +383,36 @@ async def health_check(
         "vertex_ai": await check_vertex_ai(db),
         "translation_api": await check_translation_api(db)
     }
-    
-    # Calculate overall health
-    statuses = [v["status"] for v in results.values()]
-    
-    if all(s in ["healthy", "configured", "disabled", "fallback"] for s in statuses):
-        overall = "healthy"
-    elif any(s == "error" for s in statuses):
-        overall = "degraded"
-    else:
-        overall = "partial"
-    
-    return {
-        "overall_status": overall,
-        "checks": results,
-        "timestamp": __import__("datetime").datetime.now().isoformat()
-    }
+
+    classified = classify_health(results)
+    return {**classified, "timestamp": __import__("datetime").datetime.now().isoformat()}
 
 
 @router.get("/quick")
-async def quick_health_check():
+async def quick_health_check(db: AsyncSession = Depends(get_db)):
     """
     Quick health check for monitoring (no auth required).
 
-    Just checks if the API is responding.
+    Carries the build/migration stamp (ORCHESTRATOR_PLAN.md A3) so the
+    orchestrator can gate canary rollouts on version + DB-revision
+    compatibility. Fields are null when the deployment doesn't set them.
     """
     from app.core.config import get_settings
+
     settings = get_settings()
+    db_revision = None
+    try:
+        result = await db.execute(text("SELECT version_num FROM alembic_version"))
+        db_revision = result.scalar_one_or_none()
+    except Exception:
+        pass  # no alembic_version table (fresh or non-migrated DB)
+
     return {
         "status": "ok",
         "version": settings.app_version,
+        "git_sha": settings.git_sha,
+        "db_revision": db_revision,
+        "min_db_revision": settings.min_db_revision,
         "timestamp": __import__("datetime").datetime.now().isoformat()
     }
 

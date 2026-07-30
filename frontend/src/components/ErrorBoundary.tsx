@@ -8,13 +8,15 @@ interface Props {
 interface State {
     hasError: boolean;
     error: Error | null;
+    /** null while the report is in flight, then whether it actually landed. */
+    reported: boolean | null;
 }
 
 export default class ErrorBoundary extends Component<Props, State> {
-    state: State = { hasError: false, error: null };
+    state: State = { hasError: false, error: null, reported: null };
 
     static getDerivedStateFromError(error: Error): State {
-        return { hasError: true, error };
+        return { hasError: true, error, reported: null };
     }
 
     componentDidCatch(error: Error, errorInfo: ErrorInfo) {
@@ -33,8 +35,12 @@ export default class ErrorBoundary extends Component<Props, State> {
                     timestamp: new Date().toISOString(),
                     userAgent: navigator.userAgent,
                 }),
-            }).catch(() => {});
-        } catch {}
+            })
+                .then(res => this.setState({ reported: res.ok }))
+                .catch(() => this.setState({ reported: false }));
+        } catch {
+            this.setState({ reported: false });
+        }
     }
 
     render() {
@@ -46,7 +52,22 @@ export default class ErrorBoundary extends Component<Props, State> {
                             <AlertTriangle className="w-8 h-8 text-red-400" strokeWidth={2} aria-hidden="true" />
                         </div>
                         <h1 className="text-2xl font-bold text-white mb-2">Something went wrong</h1>
-                        <p className="text-white/60 mb-6">An unexpected error occurred. This has been automatically reported.</p>
+                        {/* Says what actually happened rather than asserting
+                            success. The old copy claimed "this has been
+                            automatically reported" unconditionally -- before the
+                            request had finished, and identically when it failed
+                            or when the server was the thing that was down. A
+                            reassurance that is sometimes false is worse than
+                            none: someone who believes a report went in does not
+                            tell anyone, and the fault goes unreported. */}
+                        <p className="text-white/60 mb-6">
+                            An unexpected error occurred.{' '}
+                            {this.state.reported === true
+                                ? 'It has been logged for your administrator.'
+                                : this.state.reported === false
+                                    ? 'It could not be logged automatically — please tell your administrator what you were doing.'
+                                    : 'Logging it now…'}
+                        </p>
                         <button
                             onClick={() => window.location.reload()}
                             className="px-6 py-3 bg-primary-500 hover:bg-primary-600 text-white rounded-xl font-semibold transition-colors"

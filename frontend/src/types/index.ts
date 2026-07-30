@@ -19,6 +19,23 @@ export interface UserCreate {
     department_ids?: number[];
 }
 
+/** Everything an admin can change about an existing staff member.
+ *
+ * Username is deliberately absent: it is the identity the audit log and the
+ * identity provider key off, so renaming it would orphan history rather than
+ * correct it. Password has its own reset endpoint.
+ *
+ * Every field is optional and only what is sent gets changed, so editing a
+ * phone number cannot accidentally blank a role. */
+export interface UserUpdate {
+    email?: string;
+    full_name?: string;
+    role?: 'admin' | 'staff' | 'researcher';
+    is_active?: boolean;
+    phone?: string;
+    department_ids?: number[];
+}
+
 // Department types
 export interface Department {
     id: number;
@@ -427,4 +444,48 @@ export interface AuthState {
     token: string | null;
     isAuthenticated: boolean;
     isLoading: boolean;
+}
+
+
+/** One connector's live state.
+ *
+ * `status` has four values and the important one is "unknown": nothing has
+ * called this connector, so we do not know it works. Rendering that as either
+ * green or red is how a revoked key keeps a healthy badge, so the UI has to
+ * carry the distinction the backend went to the trouble of making.
+ */
+export interface ConnectorHealth {
+    connector: string;
+    provider: string | null;
+    status: 'working' | 'failing' | 'down' | 'stale' | 'unknown';
+    summary: string;
+    last_success_at: string | null;
+    last_error_at: string | null;
+    last_error: string | null;
+    consecutive_failures: number;
+    total_successes: number;
+    total_failures: number;
+}
+
+export interface ConnectorHealthReport {
+    connectors: ConnectorHealth[];
+    needs_attention: string[];
+}
+
+
+/** A browser crash, as the admin console shows it.
+ *
+ * `occurrences` matters: identical crashes collapse onto one row, so a render
+ * loop reads as "seen 400 times" rather than burying every other fault under
+ * 400 identical entries. */
+export interface ClientErrorEntry {
+    id: number;
+    kind: string;
+    message: string;
+    stack: string | null;
+    component_stack: string | null;
+    url: string | null;
+    occurrences: number;
+    first_seen_at: string | null;
+    last_seen_at: string | null;
 }

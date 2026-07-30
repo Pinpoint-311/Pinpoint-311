@@ -8,6 +8,12 @@ from enum import Enum
 class UserRole(str, Enum):
     admin = "admin"
     staff = "staff"
+    # The researcher role exists throughout the product -- get_current_researcher
+    # gates /research on it, the Research Portal module toggle advertises it, and
+    # the admin user editor offers it -- but it was missing from this enum, so
+    # saving anyone as a researcher returned 422 and the role could never be
+    # assigned to anybody. The whole Research Lab was admin-only in practice.
+    researcher = "researcher"
 
 
 class RequestStatus(str, Enum):
@@ -67,6 +73,9 @@ class UserUpdate(BaseModel):
     role: Optional[UserRole] = None
     is_active: Optional[bool] = None
     department_ids: Optional[List[int]] = None
+    # A column on User, used for staff SMS alerts, that was missing here -- so
+    # a staff member's phone number could be set at creation and never changed.
+    phone: Optional[str] = None
 
 
 class DepartmentBrief(BaseModel):

@@ -1,4 +1,3 @@
-import LocationPicker from '../components/LocationPicker';
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
@@ -77,6 +76,7 @@ import {
     Eye,
     EyeOff,
     CircleCheck,
+    Pencil,
 } from 'lucide-react';
 import { Button, Card, Modal, Input, Select, Badge, AccordionSection } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
@@ -85,6 +85,7 @@ import { useDialog } from '../components/DialogProvider';
 import { api, MapLayer } from '../services/api';
 import { User, ServiceDefinition, SystemSettings, SystemSecret, Department } from '../types';
 import { usePageNavigation } from '../hooks/usePageNavigation';
+import ClientErrorPanel from '../components/ClientErrorPanel';
 import OperationsPanel from '../components/OperationsPanel';
 import RoadListInput from '../components/RoadListInput';
 import RoadCorridorMap from '../components/RoadCorridorMap';
@@ -480,6 +481,21 @@ export default function AdminConsole() {
     const [currentTab, setCurrentTab] = useState<Tab>('branding');
     const [isLoading, setIsLoading] = useState(false);
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
+    const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+    /** Surface a failed action instead of only console.error-ing it.
+     *
+     * The API client puts the server's `detail` into Error.message, and that
+     * detail is usually the actionable sentence -- "Override must be at least
+     * 365 days (1 year)", "Unknown state code: ZZ", "managed by your state and
+     * can't be changed here". Losing it left the admin pressing a button that
+     * appeared to do nothing. */
+    const reportError = (context: string, err: unknown) => {
+        console.error(`${context}:`, err);
+        const detail = err instanceof Error ? err.message : String(err ?? '');
+        setErrorMessage(detail ? `${context}: ${detail}` : `${context}. Please try again.`);
+        setTimeout(() => setErrorMessage(null), 12000);
+    };
     const contentRef = useRef<HTMLDivElement>(null);
 
     // URL hashing, dynamic titles, and scroll-to-top
@@ -519,6 +535,54 @@ export default function AdminConsole() {
         department_ids: [] as number[],
     });
 
+    /* Editing an existing staff member.
+     *
+     * Separate from newUser rather than reusing it: the two are genuinely
+     * different forms. Creating needs a username and a password; editing must
+     * not offer either, because the username is what the audit log and the
+     * identity provider key off -- renaming it orphans history instead of
+     * correcting it -- and passwords have their own reset flow. */
+    const [editingUser, setEditingUser] = useState<User | null>(null);
+    const [editUser, setEditUser] = useState({
+        email: '',
+        full_name: '',
+        phone: '',
+        role: 'staff' as 'staff' | 'admin' | 'researcher',
+        is_active: true,
+        department_ids: [] as number[],
+    });
+
+    const openEditUser = (u: User) => {
+        setEditingUser(u);
+        setEditUser({
+            email: u.email || '',
+            full_name: u.full_name || '',
+            phone: (u as any).phone || '',
+            role: (u.role as 'staff' | 'admin' | 'researcher') || 'staff',
+            is_active: (u as any).is_active !== false,
+            department_ids: (u.departments || []).map(d => d.id),
+        });
+    };
+
+    const handleUpdateUser = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editingUser) return;
+        try {
+            await api.updateUser(editingUser.id, {
+                email: editUser.email,
+                full_name: editUser.full_name,
+                phone: editUser.phone,
+                role: editUser.role,
+                is_active: editUser.is_active,
+                department_ids: editUser.department_ids,
+            });
+            setEditingUser(null);
+            loadTabData();
+        } catch (err: any) {
+            alert(err?.message || 'Could not save changes');
+        }
+    };
+
     // Services state
     const [services, setServices] = useState<ServiceDefinition[]>([]);
     const [departments, setDepartments] = useState<Department[]>([]);
@@ -551,7 +615,7 @@ export default function AdminConsole() {
             exclusion_list: '', // County roads (when township is default)
             inclusion_list: '', // Township roads (when third party is default)
             third_party_message: '',
-            third_party_contacts: [] as { name: string; phone: string; url: string }[],
+            third_party_contacts: [] as { name: string; phone: string; email?: string; url: string; message?: string; road_list?: string; roads?: string[] }[],
             // Custom questions
             custom_questions: [] as { id: string; label: string; type: string; options: string[]; required: boolean; placeholder: string }[],
         },
@@ -844,7 +908,7 @@ export default function AdminConsole() {
             setSaveMessage('Settings saved!');
             setTimeout(() => setSaveMessage(''), 3000);
         } catch (err) {
-            console.error('Failed to save branding:', err);
+            reportError('Could not save branding', err);
         } finally {
             setIsLoading(false);
         }
@@ -952,7 +1016,7 @@ export default function AdminConsole() {
             await api.deleteUser(userId);
             loadTabData();
         } catch (err) {
-            console.error('Failed to delete user:', err);
+            reportError('Could not delete the user', err);
         }
     };
 
@@ -965,7 +1029,7 @@ export default function AdminConsole() {
             setNewService({ service_code: '', service_name: '', description: '', icon: 'AlertCircle' });
             loadTabData();
         } catch (err) {
-            console.error('Failed to create service:', err);
+            reportError('Could not create the service category', err);
         }
     };
 
@@ -982,7 +1046,7 @@ export default function AdminConsole() {
             await api.deleteService(serviceId);
             loadTabData();
         } catch (err) {
-            console.error('Failed to delete service:', err);
+            reportError('Could not delete the service category', err);
         }
     };
 
@@ -1176,7 +1240,7 @@ export default function AdminConsole() {
             setSaveMessage('Modules saved successfully');
             setTimeout(() => setSaveMessage(null), 3000);
         } catch (err) {
-            console.error('Failed to save modules:', err);
+            reportError('Could not save module settings', err);
         } finally {
             setIsLoading(false);
         }
@@ -1421,6 +1485,25 @@ export default function AdminConsole() {
                                 >
                                     <Check className="w-5 h-5" />
                                     {saveMessage}
+                                </motion.div>
+                            )}
+                            {/* Failures were logged to the browser console and
+                                nowhere else, so a rejected save was
+                                indistinguishable from a button that did nothing.
+                                The server almost always says exactly what is
+                                wrong -- "Override must be at least 365 days" --
+                                and that sentence never reached the person who
+                                could act on it. */}
+                            {errorMessage && (
+                                <motion.div
+                                    initial={{ opacity: 0, y: -20 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -20 }}
+                                    className="mb-6 flex items-start gap-3 p-4 rounded-xl bg-red-500/15 border border-red-500/30 text-red-200"
+                                    role="alert"
+                                >
+                                    <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" aria-hidden="true" />
+                                    <span className="min-w-0">{errorMessage}</span>
                                 </motion.div>
                             )}
                         </AnimatePresence>
@@ -1921,6 +2004,13 @@ export default function AdminConsole() {
                                                             )}
                                                         </div>
                                                         <button
+                                                            onClick={() => openEditUser(u)}
+                                                            className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors"
+                                                            title={`Edit ${u.full_name || u.username}`}
+                                                        >
+                                                            <Pencil className="w-4 h-4" />
+                                                        </button>
+                                                        <button
                                                             onClick={() => handleDeleteUser(u.id)}
                                                             disabled={u.id === user?.id}
                                                             className={`p-2 rounded-lg ${u.id === user?.id
@@ -1998,6 +2088,13 @@ export default function AdminConsole() {
                                                     {/* Actions */}
                                                     <div className="col-span-1 flex justify-end">
                                                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                            <button
+                                                                onClick={() => openEditUser(u)}
+                                                                className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors"
+                                                                title={`Edit ${u.full_name || u.username}`}
+                                                            >
+                                                                <Pencil className="w-4 h-4" />
+                                                            </button>
                                                             <button
                                                                 onClick={() => handleDeleteUser(u.id)}
                                                                 disabled={u.id === user?.id}
@@ -3014,7 +3111,7 @@ export default function AdminConsole() {
                                                     setSaveMessage('Retention policy updated successfully');
                                                     setTimeout(() => setSaveMessage(null), 3000);
                                                 } catch (err) {
-                                                    console.error('Failed to update retention policy:', err);
+                                                    reportError('Could not apply the retention policy', err);
                                                 } finally {
                                                     setIsSavingRetention(false);
                                                 }
@@ -3038,7 +3135,7 @@ export default function AdminConsole() {
                                                         loadTabData();
                                                     }, 3000);
                                                 } catch (err) {
-                                                    console.error('Failed to run retention:', err);
+                                                    reportError('Could not start the retention task', err);
                                                 } finally {
                                                     setIsRunningRetention(false);
                                                 }
@@ -3106,7 +3203,15 @@ export default function AdminConsole() {
 
                         {/* System Health Tab */}
                         {currentTab === 'health' && (
-                            <OperationsPanel />
+                            <div className="space-y-6">
+                                <OperationsPanel />
+                                {/* The other half of the error screen's promise.
+                                    Everything above is what the server knows
+                                    about itself; this is what broke in
+                                    somebody's browser, which nothing in the
+                                    product surfaced before. */}
+                                <ClientErrorPanel />
+                            </div>
                         )}
 
                         {/* Audit Logs - part of Compliance */}
@@ -3153,6 +3258,98 @@ export default function AdminConsole() {
                     <div className="flex justify-end gap-3 pt-4">
                         <Button variant="ghost" onClick={() => setShowDepartmentModal(false)}>Cancel</Button>
                         <Button type="submit">{editingDepartment ? 'Save Changes' : 'Create Department'}</Button>
+                    </div>
+                </form>
+            </Modal>
+
+            {/* Edit User Modal.
+
+                Username and password are absent on purpose. The username keys
+                the audit log and the identity provider, so renaming it orphans
+                history rather than correcting it; passwords have their own
+                reset action. Everything else about a staff member changes over
+                time -- people move department, change surname, get a new phone,
+                leave -- and none of it was editable before this. */}
+            <Modal isOpen={!!editingUser} onClose={() => setEditingUser(null)}
+                title={`Edit ${editingUser?.full_name || editingUser?.username || 'user'}`}>
+                <form onSubmit={handleUpdateUser} className="space-y-4">
+                    <div className="rounded-lg bg-white/5 border border-white/10 px-3 py-2">
+                        <p className="text-xs text-white/40">Username</p>
+                        <p className="text-sm text-white/70 font-mono">@{editingUser?.username}</p>
+                        <p className="text-[11px] text-white/35 mt-1">
+                            Cannot be changed — it is how this person&apos;s history is recorded.
+                        </p>
+                    </div>
+                    <Input
+                        label="Full name"
+                        value={editUser.full_name}
+                        onChange={(e) => setEditUser((p) => ({ ...p, full_name: e.target.value }))}
+                        placeholder="Jane Doe"
+                    />
+                    <Input
+                        label="Email"
+                        type="email"
+                        value={editUser.email}
+                        onChange={(e) => setEditUser((p) => ({ ...p, email: e.target.value }))}
+                        placeholder="jane@township.gov"
+                    />
+                    <Input
+                        label="Phone (for text alerts)"
+                        value={editUser.phone}
+                        onChange={(e) => setEditUser((p) => ({ ...p, phone: e.target.value }))}
+                        placeholder="+1 555 010 0000"
+                    />
+                    <Select
+                        label="Role"
+                        value={editUser.role}
+                        onChange={(e) => setEditUser((p) => ({ ...p, role: e.target.value as 'staff' | 'admin' | 'researcher' }))}
+                        options={[
+                            { value: 'staff', label: 'Staff — works reports' },
+                            { value: 'admin', label: 'Admin — full access, including this page' },
+                            { value: 'researcher', label: 'Researcher — read-only, anonymised data' },
+                        ]}
+                    />
+                    <div>
+                        <p className="text-sm text-white/60 mb-1.5">Departments</p>
+                        <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                            {departments.map((dept) => (
+                                <label key={dept.id} className="flex items-center gap-2 text-sm text-white/80 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={editUser.department_ids.includes(dept.id)}
+                                        onChange={(e) => setEditUser((p) => e.target.checked
+                                            ? { ...p, department_ids: [...p.department_ids, dept.id] }
+                                            : { ...p, department_ids: p.department_ids.filter(id => id !== dept.id) })}
+                                        className="rounded"
+                                    />
+                                    {dept.name}
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+                    {/* Deactivating rather than deleting is what a records system
+                        wants: the person keeps their history and simply cannot
+                        sign in. Deleting is still available on the row. */}
+                    <label className="flex items-start gap-2.5 text-sm text-white/80 cursor-pointer rounded-lg bg-white/[0.03] border border-white/10 px-3 py-2.5">
+                        <input
+                            type="checkbox"
+                            checked={editUser.is_active}
+                            onChange={(e) => setEditUser((p) => ({ ...p, is_active: e.target.checked }))}
+                            className="rounded mt-0.5"
+                            disabled={editingUser?.id === user?.id}
+                        />
+                        <span>
+                            Active
+                            <span className="block text-[11px] text-white/40">
+                                {editingUser?.id === user?.id
+                                    ? 'You cannot deactivate your own account.'
+                                    : 'Unticking keeps all their history but stops them signing in.'}
+                            </span>
+                        </span>
+                    </label>
+                    <div className="flex justify-end gap-3 pt-4">
+                        <Button variant="ghost" onClick={() => setEditingUser(null)}>Cancel</Button>
+                        <Button type="submit">Save Changes</Button>
                     </div>
                 </form>
             </Modal>
@@ -3760,10 +3957,6 @@ export default function AdminConsole() {
                                 </div>
 
                                 {(serviceRouting.routing_config.third_party_contacts || []).map((agency: any, idx: number) => {
-                                    const roadsList: string[] = Array.isArray(agency.roads)
-                                        ? agency.roads
-                                        : (typeof agency.road_list === 'string' ? agency.road_list.split(',').map((r: string) => r.trim()).filter(Boolean) : []);
-
                                     return (
                                         <div key={idx} className="p-5 rounded-3xl bg-white/[0.04] border border-white/15 space-y-4 shadow-xl">
                                             <div className="flex items-center justify-between border-b border-white/10 pb-2">
@@ -3887,6 +4080,37 @@ export default function AdminConsole() {
                                 {(serviceRouting.routing_config.third_party_contacts || []).length === 0 && (
                                     <div className="p-5 rounded-3xl bg-white/[0.02] border border-dashed border-white/15 text-center text-xs text-white/40">
                                         No 3rd party agencies added yet. Click "+ Add 3rd Party Agency" above to list agencies like PennDOT or Mercer County DPW.
+                                    </div>
+                                )}
+
+                                {/* Coverage preview, directly beneath the agency cards it describes.
+                                    Typing a road name claims every segment the data files under that
+                                    name, which is not always the stretch the agency actually
+                                    maintains -- a spur, a block the town keeps, or a continuation
+                                    past the border get swept in, and the rule looks correct while
+                                    covering the wrong thing. Corrections made here are stored as a
+                                    diff against the road name, so a monthly data refresh still picks
+                                    up a newly built block. */}
+                                {(serviceRouting.routing_config.third_party_contacts || []).length > 0 && (
+                                    <div className="pt-2">
+                                        <RoadCorridorMap
+                                            roads={
+                                                (serviceRouting.routing_config.third_party_contacts || [])
+                                                    .map((a: any) => (typeof a?.road_list === 'string'
+                                                        ? a.road_list
+                                                        : (Array.isArray(a?.roads) ? a.roads.join(', ') : '')))
+                                                    .filter(Boolean)
+                                                    .join(', ')
+                                            }
+                                            townshipBoundary={townshipBoundary}
+                                            excludedFeatureIds={excludedSegments}
+                                            onExcludedChange={setExcludedSegments}
+                                            trims={segmentTrims}
+                                            onTrimsChange={setSegmentTrims}
+                                            corridorMetres={corridorMetres}
+                                            onCorridorMetresChange={setCorridorMetres}
+                                            apiKey={mapsApiKey}
+                                        />
                                     </div>
                                 )}
                             </div>
@@ -4357,7 +4581,7 @@ export default function AdminConsole() {
                                     </p>
                                 ) : (
                                     <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto p-3 rounded-lg bg-white/5 border border-white/10">
-                                        {filteredServices.map((service) => (
+                                        {services.map((service) => (
                                             <label
                                                 key={service.service_code}
                                                 className="flex items-center gap-2 text-sm text-white/70 hover:text-white cursor-pointer p-2 rounded hover:bg-white/10"
