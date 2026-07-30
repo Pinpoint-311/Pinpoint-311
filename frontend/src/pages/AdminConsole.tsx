@@ -310,26 +310,20 @@ function BubblyServiceCard({ service, onEdit, onDelete }: {
                 </div>
 
                 {/* Action Footer */}
-                <div className="flex items-center justify-between mt-5 pt-4 border-t border-white/10">
-                    <span className="text-[11px] font-semibold text-white/40 flex items-center gap-1.5">
-                        <Sparkles className="w-3.5 h-3.5 text-primary-400" /> GIS Automated
-                    </span>
-
-                    <div className="flex items-center gap-2">
-                        <button
-                            onClick={() => onEdit(service)}
-                            className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-gradient-to-r from-primary-500 to-indigo-600 hover:from-primary-400 hover:to-indigo-500 text-xs font-bold text-white shadow-lg shadow-primary-500/25 hover:scale-[1.03] active:scale-[0.98] transition-all"
-                        >
-                            <Edit className="w-3.5 h-3.5" /> Configure Routing
-                        </button>
-                        <button
-                            onClick={() => onDelete(service.id)}
-                            className="p-2 rounded-2xl bg-white/5 hover:bg-red-500/20 border border-white/10 hover:border-red-500/30 text-white/40 hover:text-red-300 transition-all"
-                            title="Delete Category"
-                        >
-                            <Trash2 className="w-4 h-4" />
-                        </button>
-                    </div>
+                <div className="flex items-center justify-end gap-2.5 mt-5 pt-4 border-t border-white/10">
+                    <button
+                        onClick={() => onEdit(service)}
+                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-gradient-to-r from-primary-500 via-indigo-500 to-purple-600 hover:from-primary-400 hover:via-indigo-400 hover:to-purple-500 text-xs font-extrabold text-white shadow-[0_4px_25px_rgba(99,102,241,0.45)] hover:shadow-[0_6px_30px_rgba(99,102,241,0.65)] hover:scale-[1.05] active:scale-[0.97] border border-white/20 transition-all duration-200 tracking-wide"
+                    >
+                        <Edit className="w-4 h-4" /> Configure Routing
+                    </button>
+                    <button
+                        onClick={() => onDelete(service.id)}
+                        className="p-2.5 rounded-2xl bg-white/5 hover:bg-red-500/20 border border-white/10 hover:border-red-500/30 text-white/40 hover:text-red-300 transition-all"
+                        title="Delete Category"
+                    >
+                        <Trash2 className="w-4 h-4" />
+                    </button>
                 </div>
             </div>
         </div>
@@ -3376,17 +3370,17 @@ export default function AdminConsole() {
                     </div>
 
                     {/* Icon Picker */}
-                    <div className="space-y-2">
-                        <label className="block text-sm font-medium text-white/70">Category Icon</label>
-                        <div className="grid grid-cols-10 gap-1 p-2 rounded-lg bg-white/5 border border-white/10 max-h-24 overflow-y-auto">
+                    <div className="space-y-2.5 p-4 rounded-3xl bg-white/[0.03] border border-white/15 shadow-xl">
+                        <label className="block text-xs font-bold uppercase tracking-wider text-white/70">Category Icon</label>
+                        <div className="grid grid-cols-10 gap-2 p-2.5 rounded-2xl bg-white/[0.04] border border-white/10 max-h-28 overflow-y-auto">
                             {ICON_LIBRARY.map(({ name, icon: IconComponent }) => (
                                 <button
                                     type="button"
                                     key={name}
                                     onClick={() => setServiceRouting(p => ({ ...p, icon: name }))}
-                                    className={`p-2 rounded transition-colors ${serviceRouting.icon === name
-                                        ? 'bg-primary-500 text-white'
-                                        : 'bg-white/5 text-white/60 hover:bg-white/10'
+                                    className={`p-2.5 rounded-2xl transition-all duration-200 flex items-center justify-center ${serviceRouting.icon === name
+                                        ? 'bg-gradient-to-r from-primary-500 to-indigo-600 text-white shadow-lg shadow-primary-500/40 scale-110 ring-2 ring-white/30'
+                                        : 'bg-white/5 text-white/60 hover:bg-white/15 hover:text-white'
                                         }`}
                                     title={name}
                                 >
@@ -3440,13 +3434,13 @@ export default function AdminConsole() {
 
                     {/* Township Mode Config */}
                     {serviceRouting.routing_mode === 'township' && (
-                        <div className="space-y-4 p-4 rounded-lg bg-green-500/10 border border-green-500/20">
-                            <h4 className="font-medium text-green-300 flex items-center gap-2">
-                                <Check className="w-4 h-4" /> Municipality Handles This
+                        <div className="space-y-4 p-5 rounded-3xl bg-gradient-to-br from-emerald-500/15 via-teal-900/10 to-slate-950/50 border border-emerald-500/30 shadow-xl">
+                            <h4 className="font-bold text-emerald-300 flex items-center gap-2 text-sm tracking-wide">
+                                <Check className="w-4 h-4 text-emerald-400" /> Municipality Handles Requests in House
                             </h4>
 
                             <div className="space-y-2">
-                                <label className="block text-sm font-medium text-white/70">Assign to Department</label>
+                                <label className="block text-xs font-bold uppercase tracking-wider text-white/70">Assign to Department</label>
                                 <select
                                     value={serviceRouting.assigned_department_id || ''}
                                     onChange={(e) => setServiceRouting(p => ({
@@ -3454,7 +3448,7 @@ export default function AdminConsole() {
                                         assigned_department_id: e.target.value ? parseInt(e.target.value) : null,
                                         routing_config: { ...p.routing_config, staff_ids: [] }
                                     }))}
-                                    className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
+                                    className="w-full h-11 rounded-2xl bg-white/[0.08] border border-white/20 text-white px-4 text-sm focus:outline-none focus:border-emerald-400"
                                     aria-label="Assign to department"
                                 >
                                     <option value="">Select department...</option>
@@ -3537,11 +3531,11 @@ export default function AdminConsole() {
 
                     {/* Third Party Config */}
                     {serviceRouting.routing_mode === 'third_party' && (
-                        <div className="space-y-4 p-4 rounded-lg bg-red-500/10 border border-red-500/20">
-                            <h4 className="font-medium text-red-300 flex items-center gap-2">
-                                <AlertTriangle className="w-4 h-4" /> Third Party Only (Blocks Submission)
+                        <div className="space-y-4 p-5 rounded-3xl bg-gradient-to-br from-purple-500/15 via-indigo-900/10 to-slate-950/50 border border-purple-500/30 shadow-xl">
+                            <h4 className="font-bold text-purple-300 flex items-center gap-2 text-sm tracking-wide">
+                                <AlertTriangle className="w-4 h-4 text-purple-400" /> Third Party Only (Blocks Portal Submission)
                             </h4>
-                            <p className="text-sm text-white/50">Users cannot submit requests. They see message + contacts.</p>
+                            <p className="text-xs text-white/60">Residents cannot submit requests directly in portal; they are provided redirection links & contacts.</p>
 
                             <div className="space-y-2">
                                 <label className="block text-sm font-medium text-white/70">Message to Display</label>
