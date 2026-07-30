@@ -221,19 +221,36 @@ async def road_geometry(
         return {"type": "FeatureCollection", "features": []}
 
     try:
-        rows = (
-            await db.execute(
-                select(
-                    RoadSegment.id,
-                    RoadSegment.source_feature_id,
-                    RoadSegment.name,
-                    RoadSegment.ref,
-                    func.ST_AsGeoJSON(RoadSegment.geom).label("geojson"),
-                ).where(
-                    RoadSegment.name_norm.in_(normalized) | RoadSegment.ref_norm.in_(normalized)
-                ).limit(5000)
-            )
-        ).all()
+        query = (
+            select(
+                RoadSegment.id,
+                RoadSegment.source_feature_id,
+                RoadSegment.name,
+                RoadSegment.ref,
+                func.ST_AsGeoJSON(RoadSegment.geom).label("geojson"),
+            ).where(
+                RoadSegment.name_norm.in_(normalized) | RoadSegment.ref_norm.in_(normalized)
+            ).limit(5000)
+        )
+        rows = (await db.execute(query)).all()
+
+        if not rows:
+            from sqlalchemy import or_
+            conditions = []
+            for norm in normalized:
+                conditions.append(RoadSegment.name_norm.ilike(f"%{norm}%"))
+                conditions.append(RoadSegment.name.ilike(f"%{norm}%"))
+            if conditions:
+                fallback_query = (
+                    select(
+                        RoadSegment.id,
+                        RoadSegment.source_feature_id,
+                        RoadSegment.name,
+                        RoadSegment.ref,
+                        func.ST_AsGeoJSON(RoadSegment.geom).label("geojson"),
+                    ).where(or_(*conditions)).limit(5000)
+                )
+                rows = (await db.execute(fallback_query)).all()
     except Exception as exc:
         logger.info("road geometry unavailable: %s", exc)
         return {"type": "FeatureCollection", "features": [], "available": False}
