@@ -66,6 +66,7 @@ export default function RoadCorridorMap({
     // A ref rather than state so a redraw never closes over a stale set.
     const excludedRef = useRef(new Set(excludedFeatureIds));
     const handleLayerRef = useRef<MarkerLayer | null>(null);
+    const canvasOverlayRef = useRef<CanvasOverlayHandle | null>(null);
     // The clicked stretch, and its vertices, so handles can be placed along it.
     const [selected, setSelected] = useState<{ id: string; name: string; path: LatLng[] } | null>(null);
     // feature id -> vertices, kept from the fetch. GeoFeature deliberately does
@@ -244,6 +245,72 @@ export default function RoadCorridorMap({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [roadKey, ready, bufferStyleFor, centerlineStyleFor, toggleSegment]);
 
+
+    // Dynamic Canvas Overlay for crisp zoom-scaled striped buffer & live trim rendering
+    useEffect(() => {
+        const renderer = rendererRef.current;
+        if (!renderer || !ready) return;
+
+        canvasOverlayRef.current?.remove();
+        canvasOverlayRef.current = renderer.addCanvasOverlay({
+            draw: (ctx, view) => {
+                const zoomFactor = Math.pow(2, (view.zoom || 13) - 13);
+                const bufferPx = Math.max(8, Math.round((corridorMetres * 0.95) * zoomFactor));
+
+                // 1. Draw Striped Translucent Buffer for active road features
+                pathsRef.current.forEach((path, id) => {
+                    if (path.length < 2) return;
+                    if (excludedRef.current.has(id)) return;
+
+                    ctx.save();
+                    ctx.beginPath();
+                    path.forEach((p, idx) => {
+                        const pt = view.project(p);
+                        if (isNaN(pt.x) || isNaN(pt.y)) return;
+                        if (idx === 0) ctx.moveTo(pt.x, pt.y);
+                        else ctx.lineTo(pt.x, pt.y);
+                    });
+                    ctx.setLineDash([12, 8]);
+                    ctx.strokeStyle = "rgba(239, 68, 68, 0.40)";
+                    ctx.lineWidth = bufferPx;
+                    ctx.lineCap = "round";
+                    ctx.lineJoin = "round";
+                    ctx.stroke();
+                    ctx.restore();
+                });
+
+                // 2. Draw Active Highlighted Trim Polyline for selected segment
+                if (selected && selected.path.length >= 2) {
+                    const trim = trimsRef.current[selected.id] || { start: 0, end: 1 };
+                    const sub = subPathByFractions(selected.path, trim.start, trim.end);
+
+                    if (sub.length >= 2) {
+                        ctx.save();
+                        ctx.beginPath();
+                        sub.forEach((p, idx) => {
+                            const pt = view.project(p);
+                            if (isNaN(pt.x) || isNaN(pt.y)) return;
+                            if (idx === 0) ctx.moveTo(pt.x, pt.y);
+                            else ctx.lineTo(pt.x, pt.y);
+                        });
+                        ctx.setLineDash([8, 6]);
+                        ctx.strokeStyle = "rgba(251, 191, 36, 0.55)";
+                        ctx.lineWidth = bufferPx + 4;
+                        ctx.lineCap = "round";
+                        ctx.lineJoin = "round";
+                        ctx.stroke();
+
+                        ctx.setLineDash([]);
+                        ctx.strokeStyle = "rgba(251, 191, 36, 1.0)";
+                        ctx.lineWidth = 6;
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+                }
+            },
+        });
+    }, [ready, corridorMetres, selected, roadKey]);
+
     // Draggable handles at the trim boundaries of the selected stretch.
     useEffect(() => {
         const renderer = rendererRef.current;
@@ -254,7 +321,7 @@ export default function RoadCorridorMap({
         const trim = trims[selected.id] || { start: 0, end: 1 };
         const layer = renderer.createMarkerLayer();
 
-        const commit = (which: 'start' | 'end') => (position: LatLng) => {
+        const updateTrimLive = (which: 'start' | 'end') => (position: LatLng) => {
             const fraction = fractionAlongLine(selected.path, position);
             const current = trimsRef.current[selected.id] || { start: 0, end: 1 };
             const next = { ...current, [which]: fraction };
@@ -265,8 +332,10 @@ export default function RoadCorridorMap({
             const updated = { ...trimsRef.current };
             if (ordered.start <= 0.001 && ordered.end >= 0.999) delete updated[selected.id];
             else updated[selected.id] = ordered;
+
+            trimsRef.current = updated;
             onTrimsChange(updated);
-            restyle();
+            canvasOverlayRef.current?.redraw();
         };
 
         const markers = (['start', 'end'] as const).flatMap(which => {
@@ -276,7 +345,7 @@ export default function RoadCorridorMap({
                 draggable: true,
                 icon: {
                     type: 'circle' as const,
-                    radius: 8,
+                    radius: 9,
                     fillColor: '#fbbf24',
                     fillOpacity: 1,
                     strokeColor: '#78350f',
@@ -284,7 +353,8 @@ export default function RoadCorridorMap({
                 },
                 title: which === 'start' ? 'Drag: where this rule starts' : 'Drag: where this rule ends',
                 zIndex: 200,
-                onDragEnd: commit(which),
+                onDrag: updateTrimLive(which),
+                onDragEnd: updateTrimLive(which),
             }] : [];
         });
 
