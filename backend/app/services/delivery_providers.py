@@ -209,7 +209,12 @@ KMS_CATALOG: Dict[str, Dict[str, Any]] = {
 # endpoint writes and what image_redaction._flag parses ("1/true/yes/on/enabled").
 
 REDACTION_PROVIDER_KEY = "REDACTION_PROVIDER"
-DEFAULT_REDACTION_PROVIDER = "google"
+# Local, so the card names the detector that is actually running. It was
+# "google", which meant a fresh install displayed Google Cloud Vision while
+# resolve_provider() -- finding no Google credentials and no other signal --
+# returned None and blurred nothing. The page and the behaviour disagreed, and
+# the page was the reassuring one.
+DEFAULT_REDACTION_PROVIDER = "local"
 
 _REDACTION_TOGGLES = [
     {"key": "REDACT_FACES", "label": "Blur faces (true/false)", "required": False},
