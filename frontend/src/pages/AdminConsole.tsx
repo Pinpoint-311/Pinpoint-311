@@ -223,7 +223,7 @@ function SidebarItem({ icon: Icon, label, isActive, onClick }: SidebarItemProps)
 
 // ============ Drag-and-Drop Service Reorder ============
 
-function SortableServiceRow({ service, onEdit, onDelete }: {
+function BubblyServiceCard({ service, onEdit, onDelete }: {
     service: ServiceDefinition;
     onEdit: (s: ServiceDefinition) => void;
     onDelete: (id: number) => void;
@@ -237,89 +237,99 @@ function SortableServiceRow({ service, onEdit, onDelete }: {
         opacity: isDragging ? 0.85 : 1,
     };
 
+    const getIconComponent = (iconName?: string) => {
+        if (!iconName) return Grid3X3;
+        const found = ICON_LIBRARY.find(i => i.name === iconName);
+        return found ? found.icon : Grid3X3;
+    };
+
+    const IconComp = getIconComponent((service as any).icon);
+
     const getModeBadge = (mode?: string) => {
         if (mode === 'third_party') return (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-purple-500/20 to-indigo-500/20 text-purple-300 border border-purple-500/30 shadow-sm">
-                <ExternalLink className="w-3 h-3" /> 3rd Party
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl text-xs font-semibold bg-gradient-to-r from-purple-500/20 to-indigo-500/20 text-purple-300 border border-purple-500/30 shadow-md shadow-purple-950/40">
+                <ExternalLink className="w-3.5 h-3.5" /> 3rd Party
             </span>
         );
         if (mode === 'road_based') return (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30 shadow-sm">
-                <GitFork className="w-3 h-3" /> Road-Based
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl text-xs font-semibold bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30 shadow-md shadow-amber-950/40">
+                <GitFork className="w-3.5 h-3.5" /> Road-Based
             </span>
         );
         return (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-emerald-500/20 to-teal-500/20 text-emerald-300 border border-emerald-500/30 shadow-sm">
-                <Building2 className="w-3 h-3" /> Municipality
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl text-xs font-semibold bg-gradient-to-r from-emerald-500/20 to-teal-500/20 text-emerald-300 border border-emerald-500/30 shadow-md shadow-emerald-950/40">
+                <Building2 className="w-3.5 h-3.5" /> Municipality
             </span>
         );
     };
 
     return (
-        <div
-            ref={setNodeRef}
-            style={style}
-            className={`px-4 md:px-6 py-4 hover:bg-white/[0.04] transition-all duration-200 group flex items-center justify-between gap-4 ${isDragging ? 'bg-white/10 ring-1 ring-primary-500 z-50' : ''}`}
-        >
-            <div className="grid grid-cols-12 gap-4 items-center w-full">
-                {/* CATEGORY (Avatar + Name + Code) */}
-                <div className="col-span-12 md:col-span-4 flex items-center gap-3.5">
-                    {/* Drag Handle */}
+        <div ref={setNodeRef} style={style} className={`group ${isDragging ? 'relative z-50' : ''}`}>
+            <div className={`relative p-6 rounded-3xl bg-gradient-to-br from-white/[0.08] via-white/[0.03] to-indigo-950/30 border border-white/15 backdrop-blur-2xl shadow-[0_10px_30px_rgba(0,0,0,0.3)] hover:shadow-[0_20px_50px_rgba(99,102,241,0.2)] hover:border-primary-400/50 hover:-translate-y-1 transition-all duration-300 ${isDragging ? 'ring-2 ring-primary-500 shadow-2xl scale-[1.03]' : ''}`}>
+                {/* Glow accent bar on top */}
+                <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-primary-400/40 to-transparent rounded-t-3xl" />
+
+                {/* Top bar: Icon, Code Badge, Drag Handle */}
+                <div className="flex items-center justify-between gap-3 mb-4">
+                    <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary-500/25 via-indigo-500/20 to-purple-500/15 border border-white/20 shadow-inner flex items-center justify-center text-primary-300 shrink-0">
+                            <IconComp className="w-6 h-6" />
+                        </div>
+                        <div>
+                            <h3 className="font-bold text-white text-lg tracking-tight group-hover:text-primary-200 transition-colors">{service.service_name}</h3>
+                            <span className="text-[11px] font-mono font-semibold text-white/50 bg-white/10 border border-white/15 px-2.5 py-0.5 rounded-full tracking-wider">@{service.service_code.toLowerCase()}</span>
+                        </div>
+                    </div>
+
                     <button
                         {...attributes}
                         {...listeners}
-                        className="p-1 rounded text-white/20 hover:text-white/70 hover:bg-white/10 cursor-grab active:cursor-grabbing transition-colors touch-none shrink-0"
+                        className="p-2 rounded-xl text-white/20 hover:text-white/80 hover:bg-white/10 cursor-grab active:cursor-grabbing transition-colors touch-none shrink-0"
                         aria-label={`Drag to reorder ${service.service_name}`}
                     >
-                        <GripVertical className="w-4 h-4" />
+                        <GripVertical className="w-5 h-5" />
                     </button>
-
-                    {/* Avatar Icon */}
-                    <div className="relative w-10 h-10 rounded-xl bg-gradient-to-br from-primary-400 to-indigo-600 flex items-center justify-center font-bold text-white shadow-md shadow-primary-900/40 shrink-0">
-                        {service.service_name.charAt(0).toUpperCase()}
-                        <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-slate-900 shadow-md shadow-emerald-900/70" />
-                    </div>
-
-                    <div className="min-w-0">
-                        <p className="font-semibold text-white text-sm truncate">{service.service_name}</p>
-                        <p className="text-xs font-mono text-white/40">@{service.service_code.toLowerCase()}</p>
-                    </div>
                 </div>
 
-                {/* DESCRIPTION */}
-                <div className="col-span-12 md:col-span-3 text-xs text-white/60 truncate">
-                    {service.description || <span className="text-white/30 italic">No description</span>}
-                </div>
+                {/* Description */}
+                <p className="text-xs text-white/65 leading-relaxed min-h-[32px] line-clamp-2">{service.description || 'No description provided.'}</p>
 
-                {/* ROUTING MODE */}
-                <div className="col-span-6 md:col-span-2 flex md:justify-center">
+                {/* Routing & Department Badges */}
+                <div className="flex items-center gap-2 mt-4 flex-wrap">
                     {getModeBadge(service.routing_mode)}
-                </div>
-
-                {/* DEPARTMENT */}
-                <div className="col-span-6 md:col-span-2 text-xs text-white/60">
                     {service.assigned_department ? (
-                        <span className="text-white/80 font-medium">{service.assigned_department.name}</span>
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-2xl text-xs font-medium bg-white/10 border border-white/15 text-white/90">
+                            <Users className="w-3.5 h-3.5 text-white/40" />
+                            {service.assigned_department.name}
+                        </span>
                     ) : (
-                        <span className="text-white/30 italic">No department</span>
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-2xl text-xs font-medium bg-white/5 border border-white/10 text-white/30 italic">
+                            No department assigned
+                        </span>
                     )}
                 </div>
 
-                {/* ACTIONS */}
-                <div className="col-span-12 md:col-span-1 flex items-center justify-end gap-1.5">
-                    <button
-                        onClick={() => onEdit(service)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary-500/20 border border-primary-500/30 text-xs font-semibold text-primary-200 hover:bg-primary-500/30 hover:border-primary-400 transition-all shadow-md shrink-0"
-                    >
-                        <Edit className="w-3.5 h-3.5" /> Configure
-                    </button>
-                    <button
-                        onClick={() => onDelete(service.id)}
-                        className="p-1.5 hover:bg-red-500/20 text-white/30 hover:text-red-300 rounded-xl transition-all shrink-0"
-                        title="Delete Category"
-                    >
-                        <Trash2 className="w-4 h-4" />
-                    </button>
+                {/* Action Footer */}
+                <div className="flex items-center justify-between mt-5 pt-4 border-t border-white/10">
+                    <span className="text-[11px] font-semibold text-white/40 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-primary-400" /> GIS Automated
+                    </span>
+
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => onEdit(service)}
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-gradient-to-r from-primary-500 to-indigo-600 hover:from-primary-400 hover:to-indigo-500 text-xs font-bold text-white shadow-lg shadow-primary-500/25 hover:scale-[1.03] active:scale-[0.98] transition-all"
+                        >
+                            <Edit className="w-3.5 h-3.5" /> Configure Routing
+                        </button>
+                        <button
+                            onClick={() => onDelete(service.id)}
+                            className="p-2 rounded-2xl bg-white/5 hover:bg-red-500/20 border border-white/10 hover:border-red-500/30 text-white/40 hover:text-red-300 transition-all"
+                            title="Delete Category"
+                        >
+                            <Trash2 className="w-4 h-4" />
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
