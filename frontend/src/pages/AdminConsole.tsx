@@ -313,9 +313,9 @@ function BubblyServiceCard({ service, onEdit, onDelete }: {
                 <div className="flex items-center justify-end gap-2.5 mt-5 pt-4 border-t border-white/10">
                     <button
                         onClick={() => onEdit(service)}
-                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-gradient-to-r from-primary-500 via-indigo-500 to-purple-600 hover:from-primary-400 hover:via-indigo-400 hover:to-purple-500 text-xs font-extrabold text-white shadow-[0_4px_25px_rgba(99,102,241,0.45)] hover:shadow-[0_6px_30px_rgba(99,102,241,0.65)] hover:scale-[1.05] active:scale-[0.97] border border-white/20 transition-all duration-200 tracking-wide"
+                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-primary-500 hover:from-indigo-500 hover:to-primary-400 text-xs font-bold text-white shadow-[0_4px_20px_rgba(99,102,241,0.4)] hover:shadow-[0_6px_30px_rgba(99,102,241,0.6)] hover:scale-[1.04] active:scale-[0.98] border border-indigo-400/40 transition-all duration-200 tracking-wide"
                     >
-                        <Edit className="w-4 h-4" /> Configure Routing
+                        <Edit className="w-4 h-4 text-white" /> Configure Routing
                     </button>
                     <button
                         onClick={() => onDelete(service.id)}
@@ -3297,7 +3297,7 @@ export default function AdminConsole() {
             </Modal>
 
             {/* Add Service Modal */}
-            <Modal isOpen={showServiceModal} size="lg" panelClassName="bg-slate-950/95 border border-white/15 shadow-2xl backdrop-blur-2xl rounded-3xl" onClose={() => setShowServiceModal(false)} title="Add Service Category">
+            <Modal isOpen={showServiceModal} size="lg" panelClassName="bg-slate-900/95 border border-white/20 shadow-[0_20px_80px_rgba(0,0,0,0.6)] backdrop-blur-3xl rounded-3xl" headerClassName="bg-slate-800/90 border-b border-white/15 p-6" onClose={() => setShowServiceModal(false)} title="Add Service Category">
                 <form onSubmit={handleCreateService} className="space-y-4">
                     <Input
                         label="Service Name"
@@ -3328,8 +3328,8 @@ export default function AdminConsole() {
             <Modal
                 isOpen={showServiceEditModal}
                 size="xl"
-                panelClassName="bg-slate-950/95 border border-white/15 shadow-[0_0_80px_rgba(0,0,0,0.85)] backdrop-blur-2xl rounded-3xl overflow-hidden"
-                headerClassName="bg-slate-900/90 border-b border-white/10"
+                panelClassName="bg-slate-900/95 border border-white/20 shadow-[0_20px_90px_rgba(0,0,0,0.7)] backdrop-blur-3xl rounded-3xl overflow-hidden"
+                headerClassName="bg-gradient-to-r from-slate-800 via-slate-850 to-slate-800 border-b border-white/15 p-6"
                 onClose={() => {
                     setShowServiceEditModal(false);
                     setEditingService(null);
@@ -3370,7 +3370,7 @@ export default function AdminConsole() {
                     </div>
 
                     {/* Icon Picker */}
-                    <div className="space-y-2.5 p-4 rounded-3xl bg-white/[0.03] border border-white/15 shadow-xl">
+                    <div className="space-y-2.5 p-4 rounded-3xl bg-slate-800/50 border border-white/20 shadow-xl backdrop-blur-xl">
                         <label className="block text-xs font-bold uppercase tracking-wider text-white/70">Category Icon</label>
                         <div className="grid grid-cols-10 gap-2 p-2.5 rounded-2xl bg-white/[0.04] border border-white/10 max-h-28 overflow-y-auto">
                             {ICON_LIBRARY.map(({ name, icon: IconComponent }) => (
