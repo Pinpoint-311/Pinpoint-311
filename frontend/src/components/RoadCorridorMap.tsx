@@ -143,8 +143,9 @@ export default function RoadCorridorMap({
         const bufferStyleFor = useCallback((feature: GeoFeature): VectorStyle => {
         const id = String(feature.properties?.feature_id ?? "");
         const off = excludedRef.current.has(id);
-        const zoomFactor = Math.pow(2, (zoomLevel || 13) - 13);
-        const bufferPx = Math.max(6, Math.round((corridorMetres * 0.9) * zoomFactor));
+        const lat = 40.73;
+        const metersPerPixel = (156543.03392 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoomLevel || 15);
+        const bufferPx = Math.max(4, Math.round(corridorMetres / metersPerPixel));
         return {
             strokeColor: off ? "#64748b" : "#ef4444",
             strokeWidth: off ? 4 : bufferPx,
@@ -254,8 +255,9 @@ export default function RoadCorridorMap({
         canvasOverlayRef.current?.remove();
         canvasOverlayRef.current = renderer.addCanvasOverlay({
             draw: (ctx, view) => {
-                const zoomFactor = Math.pow(2, (view.zoom || 13) - 13);
-                const bufferPx = Math.max(8, Math.round((corridorMetres * 0.95) * zoomFactor));
+                const lat = view.bounds ? (view.bounds.north + view.bounds.south) / 2 : 40.73;
+                const metersPerPixel = (156543.03392 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, view.zoom || 15);
+                const bufferPx = Math.max(4, Math.round(corridorMetres / metersPerPixel));
 
                 // 1. Draw Striped Translucent Buffer for active road features
                 pathsRef.current.forEach((path, id) => {
@@ -321,7 +323,7 @@ export default function RoadCorridorMap({
         const trim = trims[selected.id] || { start: 0, end: 1 };
         const layer = renderer.createMarkerLayer();
 
-        const updateTrimLive = (which: 'start' | 'end') => (position: LatLng) => {
+        const handleDrag = (which: 'start' | 'end') => (position: LatLng) => {
             const fraction = fractionAlongLine(selected.path, position);
             const current = trimsRef.current[selected.id] || { start: 0, end: 1 };
             const next = { ...current, [which]: fraction };
@@ -334,8 +336,12 @@ export default function RoadCorridorMap({
             else updated[selected.id] = ordered;
 
             trimsRef.current = updated;
-            onTrimsChange(updated);
             canvasOverlayRef.current?.redraw();
+        };
+
+        const handleDragEnd = (which: 'start' | 'end') => (position: LatLng) => {
+            handleDrag(which)(position);
+            onTrimsChange({ ...trimsRef.current });
         };
 
         const markers = (['start', 'end'] as const).flatMap(which => {
@@ -353,14 +359,14 @@ export default function RoadCorridorMap({
                 },
                 title: which === 'start' ? 'Drag: where this rule starts' : 'Drag: where this rule ends',
                 zIndex: 200,
-                onDrag: updateTrimLive(which),
-                onDragEnd: updateTrimLive(which),
+                onDrag: handleDrag(which),
+                onDragEnd: handleDragEnd(which),
             }] : [];
         });
 
         layer.setMarkers(markers);
         handleLayerRef.current = layer;
-    }, [selected, trims, ready, onTrimsChange]);
+    }, [selected?.id, ready]);
 
     const excludedCount = (excludedFeatureIds || []).length;
     const selectedExcluded = selected ? excludedFeatureIds.includes(selected.id) : false;
