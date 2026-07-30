@@ -622,6 +622,23 @@ class CloudProfileRequest(BaseModel):
     apply_identity: bool = False
 
 
+@router.get("/providers/cloud-identity")
+async def cloud_identity(_: User = Depends(get_current_admin)):
+    """Whether this server already has an identity on its cloud.
+
+    When it does, the credential boxes for that cloud are not merely optional --
+    leaving them empty is the better answer. The token is issued minutes at a
+    time and rotated by the platform, so there is no long-lived secret to leak,
+    to vault, or to expire on a date nobody recorded.
+
+    Two of the three already behaved this way by accident: boto3 falls through
+    to the instance role and google-auth to Application Default Credentials when
+    nothing is configured. Nothing said so, so every town pasted a key anyway.
+    """
+    from app.services.cloud_identity import summary
+    return summary()
+
+
 @router.get("/providers/cloud-profile")
 async def get_cloud_profile(
     db: AsyncSession = Depends(get_db),
