@@ -212,6 +212,38 @@ def _get_secret_from_gcp(secret_name: str, force_refresh: bool = False) -> Optio
         return None
 
 
+# Keys that must keep their encrypted database copy, and must never be scrubbed
+# out of it after a migration.
+#
+# Two reasons, and both end in the same silent failure.
+#
+# Circularity: the Azure Key Vault and AWS credentials below are the credentials
+# *for* the secret store. Moving them into the store they unlock leaves nothing
+# able to open it -- which is why GCP's two were already excluded, and the other
+# clouds' equivalents were not.
+#
+# Reader mismatch: KMS configuration is read by encryption._get_config_sync and
+# aws_kms._cfg, which look at the environment and then the database and never
+# consult Secret Manager at all. Migrating those keys therefore succeeded, and
+# verified, and then scrubbed the only copy anything could read. PII encryption
+# would quietly fall back to wrapping with the application SECRET_KEY -- no
+# error, no log above DEBUG, and nothing on the page to say the KMS a town
+# selected had stopped being used.
+DB_REQUIRED_KEYS = frozenset({
+    # Google bootstrap -- unlocks Secret Manager itself.
+    "GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT",
+    # Azure Key Vault's own credentials.
+    "AZURE_KEYVAULT_URL", "AZURE_KEYVAULT_KEY", "AZURE_KEYVAULT_CLIENT_ID",
+    "AZURE_KEYVAULT_CLIENT_SECRET", "AZURE_KEYVAULT_API_VERSION",
+    "AZURE_KEYVAULT_SCOPE", "AZURE_TENANT_ID", "AZURE_AUTHORITY",
+    # AWS Secrets Manager / KMS credentials.
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+    "AWS_REGION", "AWS_SECRETS_PREFIX", "AWS_KMS_KEY_ID",
+    # KMS selection and key path, read only by the synchronous readers.
+    "KMS_PROVIDER", "KMS_LOCATION", "KMS_KEY_RING", "KMS_KEY_ID",
+})
+
+
 async def get_secret(key_name: str) -> Optional[str]:
     """
     Get a single secret value.
@@ -516,10 +548,7 @@ async def migrate_to_secret_manager() -> Dict[str, Any]:
     scrubbed = []
     
     # Keys that should NOT be migrated (they're needed to access Secret Manager itself)
-    bootstrap_keys = {
-        "GCP_SERVICE_ACCOUNT_JSON",
-        "GOOGLE_CLOUD_PROJECT",
-    }
+    bootstrap_keys = set(DB_REQUIRED_KEYS)
     
     try:
         async with SessionLocal() as db:
@@ -570,10 +599,11 @@ async def migrate_to_secret_manager() -> Dict[str, Any]:
                 except Exception as e:
                     failed.append({"key": key_name, "error": f"verification failed: {str(e)}"})
             
-            # Only scrub VERIFIED secrets from database
+            # Only scrub VERIFIED secrets from database, and never one that a
+            # synchronous reader depends on -- see DB_REQUIRED_KEYS.
             if verified:
                 for secret in secrets:
-                    if secret.key_name in verified:
+                    if secret.key_name in verified and secret.key_name not in DB_REQUIRED_KEYS:
                         # Clear the encrypted value but keep the record
                         secret.key_value = None
                         scrubbed.append(secret.key_name)
