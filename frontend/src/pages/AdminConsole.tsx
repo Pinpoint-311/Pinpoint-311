@@ -3821,7 +3821,7 @@ export default function AdminConsole() {
                                             <div>
                                                 <label className="block text-[11px] font-semibold text-white/60 mb-1">Agency Name</label>
                                                 <input
-                                                    placeholder="e.g. PennDOT / State Highways"
+                                                    placeholder="e.g. PennDOT (State DOT)"
                                                     value={jurisdiction.name || ''}
                                                     onChange={(e) => {
                                                         const updated = [...(serviceRouting.routing_config.third_party_contacts || [])];
@@ -3832,7 +3832,7 @@ export default function AdminConsole() {
                                                 />
                                             </div>
                                             <div>
-                                                <label className="block text-[11px] font-semibold text-white/60 mb-1">Road Classification</label>
+                                                <label className="block text-[11px] font-semibold text-white/60 mb-1">Jurisdiction Level</label>
                                                 <select
                                                     value={jurisdiction.jurisdiction_type || 'State DOT'}
                                                     onChange={(e) => {
@@ -3842,13 +3842,41 @@ export default function AdminConsole() {
                                                     }}
                                                     className="w-full h-9 rounded-xl bg-slate-900 border border-white/20 text-white px-3 text-xs focus:outline-none focus:border-amber-400"
                                                 >
-                                                    <option value="State DOT">State Highway (State DOT)</option>
-                                                    <option value="County DPW">County Road (County DPW)</option>
-                                                    <option value="Interstate / Turnpike">Interstate / Turnpike Authority</option>
-                                                    <option value="Private / HOA">Private / HOA Road</option>
+                                                    <option value="State DOT">State Highways (State DOT)</option>
+                                                    <option value="County DPW">County Roads (County DPW)</option>
+                                                    <option value="Interstate / Turnpike">Interstates / Turnpike Authority</option>
+                                                    <option value="Private / HOA">Private / HOA Roads</option>
                                                     <option value="Adjacent Municipality">Adjacent Municipality</option>
                                                 </select>
                                             </div>
+                                        </div>
+
+                                        {/* Separate Road List for this Specific Jurisdiction */}
+                                        <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
+                                            <label className="block text-[11px] font-bold text-amber-300 mb-1 flex items-center gap-1.5">
+                                                <Route className="w-3.5 h-3.5 text-amber-400" /> Roads Managed By {jurisdiction.name || 'This Jurisdiction'} (Comma-separated)
+                                            </label>
+                                            <input
+                                                placeholder={jurisdiction.jurisdiction_type === 'County DPW' ? "e.g. County Road 522, CR-535, Old Trenton Rd" : "e.g. Route 27, US Highway 1, State Route 130"}
+                                                value={jurisdiction.road_list || ''}
+                                                onChange={(e) => {
+                                                    const updated = [...(serviceRouting.routing_config.third_party_contacts || [])];
+                                                    updated[idx] = { ...updated[idx], road_list: e.target.value };
+                                                    
+                                                    // Sync combined road lists into exclusion_list if default handler is township
+                                                    const allRoads = updated.map((j: any) => j.road_list || '').filter(Boolean).join(', ');
+                                                    setServiceRouting(p => ({
+                                                        ...p,
+                                                        routing_config: {
+                                                            ...p.routing_config,
+                                                            third_party_contacts: updated,
+                                                            exclusion_list: allRoads || p.routing_config.exclusion_list
+                                                        }
+                                                    }));
+                                                }}
+                                                className="w-full h-9 rounded-xl bg-slate-950/60 border border-amber-500/30 text-white px-3 text-xs focus:outline-none focus:border-amber-400 placeholder-white/30 font-mono"
+                                            />
+                                            <p className="text-[10px] text-white/50 mt-1">Listing roads here directs issues on these specific segments straight to {jurisdiction.name || 'this agency'}.</p>
                                         </div>
 
                                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
