@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
-import { claimedFields, stepsFor } from './setupSteps';
+import { stepsFor } from './setupSteps';
 // Registers every provider's steps as a side effect of importing it.
 import './setupStepsContent';
 import type { StepContext } from './setupSteps';
+import ProviderCredentialSteps from './ProviderCredentialSteps';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -13,7 +14,6 @@ import {
 } from 'lucide-react';
 
 import { CollapsibleSection } from './ui';
-import SecretField from './SecretField';
 import { api, ProviderCatalog, ProviderInfo, ProviderModelSpec, CloudProfileState, CloudIdentity } from '../services/api';
 import type { ConnectorHealth } from '../types';
 
@@ -126,14 +126,6 @@ export interface CapStatus {
      *  the endpoint did not say, which is not the same as no. */
     configured?: boolean;
 }
-
-/** Cloud names for a heading, kept out of the render so the three places that
- *  need them cannot drift apart. */
-const CLOUD_LABEL: Record<string, string> = {
-    google: 'Google Cloud',
-    azure: 'Azure',
-    aws: 'AWS',
-};
 
 function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus, health, step, guided, identity }: {
     cap: Capability; title: string; blurb: string; icon: typeof Sparkles; delay: number;
@@ -614,101 +606,32 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 {/* Credential/config fields */}
                 {active && (active?.credential_fields || []).length > 0 && (() => {
                     const alreadySet = !!(catalog.configured?.[selected] && selected === catalog.current_provider);
-                    const field = (key: string) => {
-                        const f = active.credential_fields.find(x => x.key === key);
-                        if (!f) return null;  // catalog changed under the steps
-
-                        /* This server already has an identity on the cloud, so
-                         * this particular box needs no value -- and empty is the
-                         * better answer, not merely a permitted one: the
-                         * platform issues a token minutes at a time and rotates
-                         * it, so no long-lived secret exists to be mis-copied,
-                         * vaulted, or left to expire.
-                         *
-                         * It has to say so. Two of the three clouds already
-                         * behaved this way and nothing mentioned it, so every
-                         * town pasted a key into a box that did not need one. */
-                        if (identity?.skippable_keys?.includes(f.key)) {
-                            return (
-                                <div key={f.key} className="mb-3 rounded-xl border border-emerald-400/25 bg-emerald-500/[0.07] px-3 py-2.5">
-                                    <div className="flex items-start gap-2">
-                                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-300 mt-0.5 shrink-0" />
-                                        <div>
-                                            <p className="text-xs text-emerald-100/90">
-                                                <span className="font-semibold">{f.label}</span> — nothing to enter.
-                                            </p>
-                                            <p className="text-[11px] text-white/45 mt-0.5">
-                                                This server already has an identity on {CLOUD_LABEL[identity.provider ?? ''] ?? 'your cloud'}
-                                                {identity.identity ? <> (<code className="bg-black/30 px-1 rounded">{identity.identity}</code>)</> : null}.
-                                                It signs in with that, so there is no key to create, copy, or renew.
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
-                            );
-                        }
-
-                        return (
-                            <SecretField
-                                key={f.key}
-                                label={f.label}
-                                secret={f.secret}
-                                value={values[f.key] || ''}
-                                onChange={(v) => setValues(p => ({ ...p, [f.key]: v }))}
-                                placeholder={`Enter ${f.label.toLowerCase()}`}
-                                help={active.field_help?.[f.key]}
-                                savedHint={alreadySet}
-                            />
-                        );
-                    };
 
                     /* Steps own the boxes they produce, so each instruction is
                      * followed immediately by the inputs it just told you how to
                      * obtain. A provider with no steps written yet falls back to
-                     * the plain list, which is what every provider had before. */
-                    const steps = stepsFor(cap, selected, stepCtx);
-                    const claimed = claimedFields(steps);
-                    const leftover = active.credential_fields.filter(f => !claimed.has(f.key));
+                     * the plain list, which is what every provider had before.
+                     *
+                     * The layout lives in ProviderCredentialSteps because the
+                     * setup guide renders the same walk inline. One component,
+                     * one content file, two mount points -- the alternative was
+                     * two hand-written copies, which is what this page had
+                     * before and which drifted. */
+                    const hasSteps = stepsFor(cap, selected, stepCtx).length > 0;
 
                     return (
                         <div>
-                            <Step n={cap === 'ai' ? 3 : 2}>{steps.length ? 'Set it up' : 'Credentials'}</Step>
-
-                            {steps.map((st, i) => (
-                                <div key={i} className="mb-4">
-                                    <div className="flex gap-3">
-                                        <span className="mt-0.5 w-6 h-6 shrink-0 rounded-full bg-white/10 border border-white/15 text-[11px] font-semibold text-white/70 flex items-center justify-center">
-                                            {i + 1}
-                                        </span>
-                                        <div className="min-w-0 flex-1">
-                                            <div className="text-sm text-white/75 leading-relaxed">{st.body}</div>
-                                            {st.check && (
-                                                <p className="mt-1.5 text-xs text-emerald-300/75 flex items-start gap-1.5">
-                                                    <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
-                                                    <span><span className="font-medium">You should see:</span> {st.check}</span>
-                                                </p>
-                                            )}
-                                            {st.trouble && (
-                                                <p className="mt-1.5 text-xs text-amber-200/75 flex items-start gap-1.5">
-                                                    <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
-                                                    <span>{st.trouble}</span>
-                                                </p>
-                                            )}
-                                            {!!st.fields?.length && (
-                                                <div className="mt-2.5 grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
-                                                    {st.fields.map(field)}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-
-                            {leftover.length > 0 && (
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
-                                    {leftover.map(f => field(f.key))}
-                                </div>
-                            )}
+                            <Step n={cap === 'ai' ? 3 : 2}>{hasSteps ? 'Set it up' : 'Credentials'}</Step>
+                            <ProviderCredentialSteps
+                                cap={cap}
+                                provider={selected}
+                                active={active}
+                                values={values}
+                                onChange={(key, value) => setValues(p => ({ ...p, [key]: value }))}
+                                ctx={stepCtx}
+                                identity={identity}
+                                alreadySet={alreadySet}
+                            />
                         </div>
                     );
                 })()}
