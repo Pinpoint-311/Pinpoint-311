@@ -987,22 +987,27 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                                 </div>
                                             )}
 
-                                            {/* Where the stored data lives.
-                                                *
-                                                * This used to be two buttons -- "Vault Local Secrets to
-                                                * GCP Identity" and "Re-encrypt All PII Data (after key
-                                                * rotation)" -- which asked a clerk to recognise the need
-                                                * for work they had no way to know about. Both now run on
-                                                * a schedule, so all that is left is one sentence, shown
-                                                * only while there is something in flight. */}
-                                            <div className="border-t border-white/10 pt-3 mt-3">
-                                                <StorageStatusLine />
-                                            </div>
                                         </div>
                                     )}
                                 </div>
                             </motion.div>
                             )}
+
+                            {/* Where the stored data actually lives.
+                              *
+                              * This used to be two buttons -- "Vault Local Secrets to GCP
+                              * Identity" and "Re-encrypt All PII Data (after key rotation)" --
+                              * which asked a clerk to recognise the need for work they had no
+                              * way to know about. Both now run on a schedule, so all that is
+                              * left is one sentence.
+                              *
+                              * Deliberately outside the Google Cloud card. Secret storage and
+                              * key management are pluggable, and anything nested in that card
+                              * is invisible to a town on Azure or AWS -- which is exactly the
+                              * town most likely to want to know where its credentials are. */}
+                            <div className="px-1">
+                                <StorageStatusLine />
+                            </div>
 
 
                             {/* Sentry Error Tracking - Premium Card */}

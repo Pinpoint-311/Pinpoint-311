@@ -337,12 +337,19 @@ async def _get_secret_from_db(key_name: str) -> Optional[str]:
 async def get_secrets_bundle(prefix: str) -> Dict[str, str]:
     """
     Get all secrets with a given prefix.
-    
+
     Example: get_secrets_bundle("SMTP_") returns all SMTP settings.
+
+    Only Google's path is bundle-shaped -- Key Vault and Secrets Manager store
+    one secret per key, with no prefix query -- so for those this falls through
+    to the database, which holds only the keys that could not be migrated. It is
+    therefore not a safe way to read credentials on those stores, and nothing
+    does: `get_secret` is the supported reader and handles all three. Kept for
+    the Google bundle-inspection case only.
     """
     result = {}
-    
-    if _is_gcp_available():
+
+    if _secrets_provider() == "google" and _is_gcp_available():
         # Map prefix to bundle name
         if prefix.startswith("AUTH0"):
             bundle = _get_secret_from_gcp("secret-auth")

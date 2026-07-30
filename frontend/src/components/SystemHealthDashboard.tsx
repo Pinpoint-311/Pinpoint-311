@@ -14,12 +14,32 @@ interface HealthCheckResponse {
         database: HealthCheckResult;
         auth0: HealthCheckResult;
         gcp_auth: HealthCheckResult;
-        google_kms: HealthCheckResult;
-        google_secret_manager: HealthCheckResult;
+        kms: HealthCheckResult;
+        secret_store: HealthCheckResult;
         vertex_ai: HealthCheckResult;
         translation_api: HealthCheckResult;
     };
     timestamp: string;
+}
+
+/** Which key manager wrapped the data key, in words. `local` is the honest
+ *  answer for a self-hosted install with no cloud account, and is also what a
+ *  town sees when the KMS it selected is unreachable — so it says so rather
+ *  than naming a vendor that is not being used. */
+function backendLabel(backend?: string): string {
+    return {
+        google: 'Google Cloud KMS',
+        azure: 'Azure Key Vault',
+        aws: 'AWS KMS',
+    }[backend ?? ''] ?? 'Key Management';
+}
+
+function storeLabel(store?: string): string {
+    return {
+        google: 'Google Secret Manager',
+        azure: 'Azure Key Vault',
+        aws: 'AWS Secrets Manager',
+    }[store ?? ''] ?? 'Secret Store';
 }
 
 export default function SystemHealthDashboard() {
@@ -218,32 +238,39 @@ export default function SystemHealthDashboard() {
                         </Card>
                     )}
 
-                    {/* Google Cloud KMS */}
+                    {/* Key management. Headed by whichever key manager is
+                        actually in use — this card said "Google Cloud KMS"
+                        unconditionally, including to towns running Azure Key
+                        Vault or AWS KMS. */}
                     <Card>
                         <div className="flex items-start gap-3">
-                            {getStatusIcon(health.checks.google_kms.status)}
+                            {getStatusIcon(health.checks.kms.status)}
                             <div className="flex-1">
-                                <h3 className="font-semibold text-white">Google Cloud KMS</h3>
+                                <h3 className="font-semibold text-white">
+                                    {backendLabel(health.checks.kms.kms_backend)}
+                                </h3>
                                 <p className="text-xs text-gray-500 mb-1">PII Encryption</p>
-                                <p className={`text-sm ${getStatusColor(health.checks.google_kms.status)}`}>
-                                    {health.checks.google_kms.message}
+                                <p className={`text-sm ${getStatusColor(health.checks.kms.status)}`}>
+                                    {health.checks.kms.message}
                                 </p>
-                                {renderCheckDetails(health.checks.google_kms)}
+                                {renderCheckDetails(health.checks.kms)}
                             </div>
                         </div>
                     </Card>
 
-                    {/* Secret Manager */}
+                    {/* Secret store */}
                     <Card>
                         <div className="flex items-start gap-3">
-                            {getStatusIcon(health.checks.google_secret_manager.status)}
+                            {getStatusIcon(health.checks.secret_store.status)}
                             <div className="flex-1">
-                                <h3 className="font-semibold text-white">Secret Manager</h3>
-                                <p className="text-xs text-gray-500 mb-1">Google Cloud</p>
-                                <p className={`text-sm ${getStatusColor(health.checks.google_secret_manager.status)}`}>
-                                    {health.checks.google_secret_manager.message}
+                                <h3 className="font-semibold text-white">
+                                    {storeLabel(health.checks.secret_store.store)}
+                                </h3>
+                                <p className="text-xs text-gray-500 mb-1">Credential storage</p>
+                                <p className={`text-sm ${getStatusColor(health.checks.secret_store.status)}`}>
+                                    {health.checks.secret_store.message}
                                 </p>
-                                {renderCheckDetails(health.checks.google_secret_manager)}
+                                {renderCheckDetails(health.checks.secret_store)}
                             </div>
                         </div>
                     </Card>
