@@ -184,7 +184,7 @@ async def lifespan(app: FastAPI):
     import asyncio
     from app.db.session import SessionLocal
     from app.api.health import (
-        check_database, check_auth0, check_google_kms,
+        check_database, check_auth0, check_kms,
         check_secret_manager, check_vertex_ai, check_translation_api,
         record_uptime_check
     )
@@ -199,8 +199,13 @@ async def lifespan(app: FastAPI):
                     services_to_check = [
                         ("database", check_database),
                         ("auth0", check_auth0),
-                        ("google_kms", check_google_kms),
-                        ("secret_manager", check_secret_manager),
+                        # Renamed from "google_kms": key management is
+                        # pluggable, and the old name asserted a vendor. The
+                        # uptime series restarts under the new name; these are
+                        # five-minute samples for a recent-availability figure,
+                        # not a long-term record.
+                        ("kms", check_kms),
+                        ("secret_store", check_secret_manager),
                         ("vertex_ai", check_vertex_ai),
                         ("translation_api", check_translation_api),
                     ]

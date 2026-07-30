@@ -204,3 +204,99 @@ def test_the_scheduled_pass_never_raises(monkeypatch):
 
     monkeypatch.setattr(sm, "store_reachable", _explode)
     assert asyncio.run(sm.vault_secrets())["status"] in ("error", "skipped")
+
+
+# ---------------------------------------------------------------------------
+# No lock-in: the health dashboard must not be Google-shaped
+# ---------------------------------------------------------------------------
+
+class _NoDatabase:
+    """get_config_value falls back to a database query and swallows failures,
+    so this stands in for a session without needing one."""
+
+
+def _kms_check(monkeypatch, *, wrapped_by: str, selected: str):
+    import asyncio
+
+    from app.api import health
+    from app.core import encryption, pii_crypto
+
+    monkeypatch.setattr(encryption, "encrypt_pii", lambda v: "pii2:w:n:c")
+    monkeypatch.setattr(encryption, "decrypt_pii", lambda v: "health_check_test@example.com")
+    monkeypatch.setattr(pii_crypto, "active_backend", lambda: wrapped_by)
+    monkeypatch.setattr(encryption, "_kms_provider", lambda: selected)
+
+    return asyncio.run(health.check_kms(_NoDatabase()))
+
+
+@pytest.mark.parametrize("provider,label", [
+    ("google", "Google Cloud KMS"),
+    ("azure", "Azure Key Vault"),
+    ("aws", "AWS KMS"),
+])
+def test_every_key_manager_reports_healthy(monkeypatch, provider, label):
+    """The check used to open by looking for GOOGLE_CLOUD_PROJECT and return
+    "GCP project not configured" if it was absent -- so a town running Azure
+    Key Vault or AWS KMS, with envelope encryption working perfectly, saw a
+    failure on its health dashboard. A false alarm on a supported setup is
+    worse than no check."""
+    pytest.importorskip("fastapi")
+    result = _kms_check(monkeypatch, wrapped_by=provider, selected=provider)
+    assert result["status"] == "healthy"
+    assert result["kms_backend"] == provider
+    assert label in result["message"]
+
+
+def test_a_selected_but_unreachable_key_manager_is_reported(monkeypatch):
+    """The failure mode this check exists for. `_wrap_dek` falls back to the
+    application key when the chosen KMS is unreachable -- no exception, nothing
+    logged above DEBUG. Reporting plain "healthy" here would hide the one thing
+    an admin needs to know."""
+    pytest.importorskip("fastapi")
+    result = _kms_check(monkeypatch, wrapped_by="local", selected="azure")
+    assert result["status"] == "fallback"
+    assert "azure" in result["message"]
+    assert "not reachable" in result["message"]
+
+
+def test_no_cloud_kms_is_not_reported_as_a_problem(monkeypatch):
+    """A self-hosted install with no cloud account at all. Supported, and the
+    normal case for a small town."""
+    pytest.importorskip("fastapi")
+    result = _kms_check(monkeypatch, wrapped_by="local", selected="local")
+    assert result["status"] == "fallback"
+    assert "not reachable" not in result["message"]
+
+
+@pytest.mark.parametrize("provider,label", [
+    ("google", "Google Secret Manager"),
+    ("azure", "Azure Key Vault"),
+    ("aws", "AWS Secrets Manager"),
+])
+def test_the_secret_store_check_names_the_store_in_use(monkeypatch, provider, label):
+    pytest.importorskip("fastapi")
+    import asyncio
+
+    from app.api import health
+    from app.services import secret_manager
+
+    monkeypatch.setattr(secret_manager, "_secrets_provider", lambda: provider)
+    monkeypatch.setattr(sm, "store_reachable", lambda: True)
+
+    result = asyncio.run(health.check_secret_manager(_NoDatabase()))
+    assert result["status"] == "healthy"
+    assert result["store"] == provider
+    assert label in result["message"]
+
+
+def test_the_health_response_does_not_key_these_checks_by_vendor():
+    """They were `google_kms` and `google_secret_manager`, and the dashboard
+    rendered them under Google headings whatever the town was running."""
+    pytest.importorskip("fastapi")
+    import inspect
+
+    from app.api import health
+
+    src = inspect.getsource(health.health_check)
+    assert '"kms":' in src and '"secret_store":' in src
+    assert '"google_kms"' not in src
