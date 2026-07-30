@@ -143,6 +143,15 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             && isConfigured('APPLE_MAPKIT_PRIVATE_KEY'));
     const smsConfigured = !!(localSmsProvider && localSmsProvider !== 'none');
     const backupConfigured = isConfigured('BACKUP_S3_BUCKET') && isConfigured('BACKUP_S3_ACCESS_KEY') && isConfigured('BACKUP_S3_SECRET_KEY') && isConfigured('BACKUP_ENCRYPTION_KEY');
+    // The capabilities that gained a card. Each is "done" when any one of its
+    // providers has the credentials that provider needs, so a town on Azure is
+    // not marked incomplete for having no Google key.
+    const aiConfigured = isConfigured('VERTEX_AI_PROJECT') || isConfigured('AZURE_OPENAI_API_KEY') || isConfigured('AWS_REGION');
+    const translationConfigured = isConfigured('GOOGLE_CLOUD_PROJECT') || isConfigured('AZURE_TRANSLATOR_KEY') || isConfigured('AWS_REGION');
+    const kmsConfigured = isConfigured('KMS_KEY_ID') || isConfigured('AZURE_KEYVAULT_URL') || isConfigured('AWS_KMS_KEY_ID');
+    // Redaction needs no credentials of its own -- it reuses the cloud ones --
+    // so it counts as set up once a detector has been chosen.
+    const redactionConfigured = isConfigured('REDACTION_PROVIDER');
 
     // Setup progress calculation. In managed mode the platform-managed steps
     // (Google Cloud, DB Backups) are excluded — the state handles them, so
@@ -153,6 +162,10 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         ...(managedMode ? [] : [{ label: 'Google Cloud', done: !!gcpConfigured, required: false }]),
         { label: 'Map provider', done: !!mapsConfigured, required: false },
         { label: 'SMS Alerts', done: smsConfigured, required: false },
+        { label: 'AI triage', done: !!aiConfigured, required: false },
+        { label: 'Translation', done: !!translationConfigured, required: false },
+        { label: 'PII encryption', done: !!kmsConfigured, required: false },
+        { label: 'Photo redaction', done: !!redactionConfigured, required: false },
         ...(managedMode ? [] : [{ label: 'DB Backups', done: !!backupConfigured, required: false }]),
     ];
 
@@ -304,7 +317,13 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                     </div>
                     <div>
                         <h2 className="font-semibold text-white">Setup Progress</h2>
-                        <p className="text-white/50 text-xs">{completedCount} of {setupSteps.length} integrations configured</p>
+                        <p className="text-white/50 text-xs">
+                            {completedCount} of {setupSteps.length} integrations configured{' · '}
+                            <span className="text-white/70 font-medium">{Math.round((completedCount / setupSteps.length) * 100)}%</span>
+                            {completedCount < setupSteps.length && (
+                                <span className="text-white/40">{' · '}{setupSteps.length - completedCount} left</span>
+                            )}
+                        </p>
                     </div>
                 </div>
 

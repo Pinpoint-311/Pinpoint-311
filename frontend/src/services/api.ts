@@ -188,6 +188,12 @@ export interface CloudProfileResult {
     warnings: string[];
 }
 
+/** Every capability with a provider catalog. The last four were already
+ *  switchable in the backend and had no catalog, so nothing surfaced them. */
+export type Capability =
+    | 'ai' | 'translation' | 'identity' | 'maps'
+    | 'email' | 'sms' | 'kms' | 'redaction';
+
 class ApiClient {
     private token: string | null = null;
     private onUnauthorized: (() => void) | null = null;
@@ -584,7 +590,7 @@ class ApiClient {
     }
 
     // Service providers (AI / translation / identity)
-    async getProviderCatalog(capability: 'ai' | 'translation' | 'identity' | 'maps'): Promise<ProviderCatalog> {
+    async getProviderCatalog(capability: Capability): Promise<ProviderCatalog> {
         return this.request<ProviderCatalog>(`/system/${capability}/catalog`);
     }
 
