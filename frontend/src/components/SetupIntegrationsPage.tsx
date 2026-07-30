@@ -2,12 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    Key, Shield, Cloud, MessageSquare, Mail, CheckCircle,
+    Key, Shield, Cloud, CheckCircle,
     AlertCircle, ChevronDown, ChevronUp,
     ExternalLink, AlertTriangle, Database, BookOpen,
-    ListChecks, HardDrive, MapPin,
-    Sparkles, Languages, Lock, Image as ImageIcon, Landmark,
-    Clock, DollarSign, Bell,
+    ListChecks, HardDrive, Bell,
 } from 'lucide-react';
 
 import { Card, Button, Input, Badge, CollapsibleSection } from './ui';
@@ -16,8 +14,7 @@ import { api } from '../services/api';
 import type { Capability } from '../services/api';
 import GovtechIntegrations from './GovtechIntegrations';
 import ServiceProviders from './ServiceProviders';
-import InlineProviderSetup from './InlineProviderSetup';
-import SecretField from './SecretField';
+import SetupWizard from './SetupWizard';
 // Registers every provider's setup steps as a side effect, so the guide can
 // render them inline rather than pointing at the cards that do.
 import './setupStepsContent';
@@ -75,7 +72,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * up with the whole platform switched on, not the three we happened to
      * pre-tick -- so the list below is every feature, and a town removes what
      * it genuinely does not want. */
-    const ALL_FEATURES = ['ai', 'translation', 'moderation', 'redaction', 'email', 'sms', 'secrets', 'govtech', 'backups', 'errors'];
+    const ALL_FEATURES = ['ai', 'translation', 'safety', 'email', 'sms', 'secrets', 'govtech', 'backups', 'errors'];
     const [wantedFeatures, setWantedFeatures] = useState<Set<string>>(new Set(ALL_FEATURES));
     const toggleFeature = (f: string) =>
         setWantedFeatures(prev => {
@@ -115,6 +112,15 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const smsProvider = smsOverride ?? SMS_BY_CLOUD[setupCloud];
     const redactionProvider = redactionOverride ?? setupCloud;
 
+    /** A picker inside the wizard writing back to the questionnaire's state. */
+    const chooseProvider = (key: 'email' | 'sms' | 'redaction' | 'maps' | 'idp', id: string) => {
+        if (key === 'email') setEmailOverride(id);
+        else if (key === 'sms') setSmsOverride(id);
+        else if (key === 'redaction') setRedactionOverride(id);
+        else if (key === 'maps') setSetupMaps(id as typeof setupMaps);
+        else if (key === 'idp') setSetupIdp(id as typeof setupIdp);
+    };
+
     /* The setup questions are asked in feature terms ("AI triage", "Secret
      * storage + PII encryption") and the provider cards are keyed by
      * capability. This is the one mapping between them. `secrets` covers the
@@ -128,7 +134,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * bystander who never wrote anything -- so they are now separate ticks. */
     const FEATURE_TO_CAPABILITY: Record<string, Capability> = {
         ai: 'ai', translation: 'translation', email: 'email',
-        sms: 'sms', secrets: 'kms', redaction: 'redaction',
+        sms: 'sms', secrets: 'kms', safety: 'redaction',
     };
     const wantedCapabilities = new Set<Capability>(
         Object.entries(FEATURE_TO_CAPABILITY)
@@ -140,10 +146,23 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     // Managed (state-hosted) mode: infrastructure cards are locked because the
     // state's orchestrator owns those keys (Google Cloud, Backups, domain).
     const [managedMode, setManagedMode] = useState(false);
+    /* The address residents actually use, for the callback URLs the setup steps
+     * tell an admin to paste into a vendor console.
+     *
+     * Not window.location.origin, which is wherever the admin happens to be
+     * -- an internal hostname, a port-forward, an IP. A redirect URI registered
+     * from one of those can never be redirected to, and the login then fails
+     * after the password is accepted, which looks like a wrong secret rather
+     * than a wrong URL. null means nothing has configured a domain yet, and the
+     * browser's origin is the best guess available. */
+    const [publicOrigin, setPublicOrigin] = useState<string | null>(null);
     useEffect(() => {
         fetch('/api/system/config')
             .then(r => (r.ok ? r.json() : null))
-            .then(cfg => setManagedMode(!!cfg?.managed_mode))
+            .then(cfg => {
+                setManagedMode(!!cfg?.managed_mode);
+                setPublicOrigin(cfg?.public_origin ?? null);
+            })
             .catch(() => setManagedMode(false));
     }, []);
 
@@ -211,6 +230,32 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     // so it counts as set up once a detector has been chosen.
     const redactionConfigured = isConfigured('REDACTION_PROVIDER');
 
+    /* Whether one wizard item is already set up.
+     *
+     * Reuses the flags computed above rather than fetching eight catalogs to
+     * fill in a list of ticks -- the answer is already in `secrets`, which the
+     * page has loaded anyway. Anything not listed is treated as unfinished,
+     * which is the safe direction: an item wrongly shown as done is one nobody
+     * ever opens.
+     */
+    const DONE_BY_ITEM: Record<string, boolean> = {
+        identity: !!signInConfigured,
+        maps: !!mapsConfigured,
+        ai: !!aiConfigured,
+        translation: !!translationConfigured,
+        kms: !!kmsConfigured,
+        safety: !!redactionConfigured,
+        email: !!smtpConfigured,
+        sms: smsConfigured,
+        backups: !!backupConfigured,
+        errors: !!sentryConfigured,
+        // The connector wizard lives in its own component and reports no single
+        // "configured" flag, so this never marks itself finished. Optional, and
+        // a town that has not connected anything has not got it wrong.
+        govtech: false,
+    };
+    const itemDone = (id: string) => DONE_BY_ITEM[id] ?? false;
+
     // Setup progress calculation. In managed mode the platform-managed steps
     // (Google Cloud, DB Backups) are excluded — the state handles them, so
     // counting them would leave progress permanently "incomplete".
@@ -269,56 +314,6 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         </div>
     );
 
-    /* Boxes for settings that belong to no provider card.
-     *
-     * Most of this page's credentials hang off a capability with a catalog, so
-     * InlineSetup covers them. A few do not -- Azure's Content Safety pair, the
-     * Sentry DSN -- and those were being printed as bare environment-variable
-     * names in the middle of a sentence, which is not an instruction a clerk
-     * can act on. It reads as something to hand to IT, and it is the only place
-     * on the page that asks somebody to go and edit a file.
-     *
-     * They are ordinary settings with ordinary boxes, so they get ordinary
-     * boxes, saved the same way as everything else here. */
-    const PlainSecrets = ({ fields }: {
-        fields: { key: string; label: string; secret?: boolean; help?: string }[];
-    }) => {
-        const pending = fields.filter(f => secretValues[f.key]);
-        return (
-            <div className="ml-9 rounded-xl border border-white/10 bg-white/[0.03] p-3.5">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
-                    {fields.map(f => (
-                        <SecretField
-                            key={f.key}
-                            label={f.label}
-                            secret={f.secret}
-                            help={f.help}
-                            savedHint={!!isConfigured(f.key)}
-                            value={secretValues[f.key] || ''}
-                            onChange={(v) => setSecretValues(prev => ({ ...prev, [f.key]: v }))}
-                        />
-                    ))}
-                </div>
-                <div className="flex flex-wrap items-center gap-2.5 mt-3 pt-3 border-t border-white/[0.07]">
-                    <button
-                        type="button"
-                        onClick={async () => { for (const f of pending) await handleSave(f.key); }}
-                        disabled={pending.length === 0 || savingKey !== null}
-                        className="inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-semibold text-white bg-primary-500 hover:bg-primary-400 border border-primary-400/50 transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-                    >
-                        {savingKey ? 'Saving…' : 'Save'}
-                    </button>
-                    {fields.every(f => isConfigured(f.key)) && (
-                        <span className="text-[11px] text-emerald-300/80 inline-flex items-center gap-1.5">
-                            <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" />
-                            Already saved — leave a box blank to keep what is stored.
-                        </span>
-                    )}
-                </div>
-            </div>
-        );
-    };
-
     /* Sections that need a credential mount InlineProviderSetup directly --
      * not through a wrapper defined in here. A component declared during render
      * is a fresh type on every render, so React unmounts and remounts it, and
@@ -342,78 +337,59 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         </div>
     );
 
-    /* A term worth glossing inline. Hovering is not discoverable, so the plain
-     * meaning goes in parentheses right there in the sentence. */
-    const Term = ({ children, means }: { children: React.ReactNode; means: string }) => (
-        <span>
-            <strong className="text-white/90">{children}</strong>
-            <span className="text-white/45"> ({means})</span>
-        </span>
-    );
-
-    // Static tone classes (kept literal so Tailwind doesn't purge them).
-    const TONES: Record<string, { box: string; icon: string }> = {
-        orange: { box: 'border-orange-500/20 bg-orange-500/5', icon: 'text-orange-400' },
-        violet: { box: 'border-violet-500/20 bg-violet-500/5', icon: 'text-violet-400' },
-        blue: { box: 'border-blue-500/20 bg-blue-500/5', icon: 'text-blue-400' },
-        emerald: { box: 'border-emerald-500/20 bg-emerald-500/5', icon: 'text-emerald-400' },
-        amber: { box: 'border-amber-500/20 bg-amber-500/5', icon: 'text-amber-400' },
-        sky: { box: 'border-sky-500/20 bg-sky-500/5', icon: 'text-sky-400' },
-        rose: { box: 'border-rose-500/20 bg-rose-500/5', icon: 'text-rose-400' },
-        cyan: { box: 'border-cyan-500/20 bg-cyan-500/5', icon: 'text-cyan-400' },
-    };
-    /* A single guide block; renders nothing unless `show` is true.
+    /* The account itself, before anything is created inside it.
      *
-     * `what`, `time` and `cost` exist because the person doing this is usually a
-     * clerk who was handed the job, not an engineer. Before a numbered list is
-     * any use they need to know what they are about to sign the town up for:
-     * what it actually does, roughly how long it takes, and whether it costs
-     * money. Without that, "create a service account" is just alarming.
-     *
-     * `time` is honest-to-slow. Being told 10 minutes and taking 40 is worse
-     * than being told 30.
+     * This belongs to no single capability -- a project, a resource group, an
+     * IAM identity are the thing every other item in a cloud task sits inside.
+     * The wizard shows it once at the top of that task, which is the whole
+     * reason for grouping by login: it used to be repeated, in slightly
+     * different words, in each of the four sections that needed it.
      */
-    const Guide = ({ show = true, tone, icon: Icon, title, done, what, time, cost, children }: {
-        show?: boolean; tone: string; icon: React.ElementType; title: string;
-        done?: boolean; what?: React.ReactNode; time?: string; cost?: string;
-        children: React.ReactNode;
-    }) => {
-        if (!show) return null;
-        const t = TONES[tone] || TONES.blue;
-        return (
-            <div className={`rounded-xl border p-4 ${t.box}`}>
-                <div className="flex items-center gap-2 mb-2 flex-wrap">
-                    <Icon className={`w-4 h-4 ${t.icon}`} />
-                    <h4 className="font-semibold text-white text-sm">{title}</h4>
-                    {done && <Badge variant="success">Done</Badge>}
-                </div>
-                {what && <p className="text-xs text-white/55 leading-relaxed mb-2">{what}</p>}
-                {/* Stacked and top-aligned. The cost note is often a sentence
-                    rather than a figure -- the Google "you still need a card on
-                    file" caveat especially -- and a wrapped second line running
-                    back to the margin read as a separate item. */}
-                {(time || cost) && (
-                    <div className="flex flex-col gap-1 mb-3 text-[11px]">
-                        {time && (
-                            <span className="flex items-start gap-1.5 text-white/50">
-                                <Clock className="w-3 h-3 shrink-0 mt-0.5" aria-hidden="true" />
-                                <span>{time}</span>
-                            </span>
-                        )}
-                        {cost && (
-                            <span className="flex items-start gap-1.5 text-white/50">
-                                <DollarSign className="w-3 h-3 shrink-0 mt-0.5" aria-hidden="true" />
-                                <span>{cost}</span>
-                            </span>
-                        )}
-                    </div>
-                )}
-                <div className="space-y-2.5">{children}</div>
-            </div>
-        );
-    };
-
-    const cloudLabel = { google: 'Google Cloud', azure: 'Microsoft Azure', aws: 'AWS' }[setupCloud];
+    const renderFoundation = (cloud: 'google' | 'azure' | 'aws') => (
+        <div className="space-y-2.5">
+            <p className="text-[11px] uppercase tracking-wider text-white/45 font-semibold">First, the account</p>
+            {cloud === 'google' && <>
+                <InstructionStep num={1} check={<>a Project ID like <code className="bg-black/30 px-1 rounded">my-town-311-4821</code>.</>}>
+                    Go to <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">console.cloud.google.com</a> and make a new project. Copy its <strong className="text-white/90">Project ID</strong> — that is the short code, not the name you typed.
+                </InstructionStep>
+                <InstructionStep num={2}>
+                    Add a billing account under <strong className="text-white/90">Billing</strong>. Google asks for this even for the things it does not charge you for; without it the requests come back refused.
+                </InstructionStep>
+                <InstructionStep num={3} check={<>your service account listed under IAM &amp; Admin.</>}>
+                    Under <strong className="text-white/90">IAM &amp; Admin → Service Accounts</strong>, create one called <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pinpoint311</code>. This is a login for the software, so nothing is tied to your own account.
+                </InstructionStep>
+                <InstructionStep num={4} check={<>a file ending in <code className="bg-black/30 px-1 rounded">.json</code> in your Downloads.</>}>
+                    Open it, then <strong className="text-white/90">Keys → Add Key → Create new key → JSON</strong>. A file downloads. That file is what you paste into the boxes below.
+                </InstructionStep>
+                <Trouble>Google will not let you download that file again. Put a copy somewhere the town controls — a shared drive rather than your own laptop — and do not send it by email.</Trouble>
+            </>}
+            {cloud === 'azure' && <>
+                <InstructionStep num={1}>
+                    In the <a href="https://portal.azure.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">Azure Portal</a>, search for <strong className="text-white/90">Resource groups</strong> and create one called <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pinpoint311-rg</code>. Everything below goes in it, so it all sits together and bills together.
+                </InstructionStep>
+                <InstructionStep num={2} check={<>a region set. If your state has a rule about where data is held, pick one that satisfies it.</>}>
+                    Pick a region when it asks.
+                </InstructionStep>
+                <InstructionStep num={3}>
+                    Each thing below is a resource you create in that group. When you open one, its <strong className="text-white/90">Keys and Endpoint</strong> page has the two values the boxes here ask for.
+                </InstructionStep>
+            </>}
+            {cloud === 'aws' && <>
+                <InstructionStep num={1}>
+                    In the <a href="https://console.aws.amazon.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">AWS Console</a>, pick a <strong className="text-white/90">Region</strong> at the top right and use the same one throughout.
+                </InstructionStep>
+                <InstructionStep num={2}>
+                    Under <strong className="text-white/90">IAM → Users → Create user</strong>, make one called <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pinpoint311</code>. If Pinpoint runs on EC2 or ECS, create a role instead — then there is no key to look after at all.
+                </InstructionStep>
+                <InstructionStep num={3} check={<>an Access key ID and a Secret access key. The secret is shown once.</>}>
+                    If you made a user, go to <strong className="text-white/90">Security credentials → Create access key</strong> and choose the option for an application running outside AWS.
+                </InstructionStep>
+            </>}
+            <p className="text-xs text-white/45 leading-relaxed pl-9">
+                Each box below has a <strong className="text-white/70">Save &amp; Test</strong> button. It makes a real call and tells you either that it worked or exactly what went wrong, so you find out now rather than when a resident does.
+            </p>
+        </div>
+    );
 
     return (
         <div className="space-y-6">
@@ -505,7 +481,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         <BookOpen className="w-5 h-5 text-indigo-400" />
                         <div className="text-left">
                             <h3 className="font-semibold text-white">Setup Instructions</h3>
-                            <p className="text-white/50 text-xs">Step-by-step, in plain language — answer a few questions and see only your steps</p>
+                            <p className="text-white/50 text-xs">Answer a few questions, then work through one thing at a time</p>
                         </div>
                     </div>
                     {expandedGuide === 'master' ? <ChevronUp className="w-5 h-5 text-white/50" /> : <ChevronDown className="w-5 h-5 text-white/50" />}
@@ -529,16 +505,15 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     in one sitting. */}
                                 <div className="rounded-xl border border-indigo-400/20 bg-indigo-500/[0.07] p-4">
                                     <p className="text-sm text-white/75 leading-relaxed">
-                                        <strong className="text-white">You do not have to do all of this.</strong> Only two things are
-                                        required to take reports: <strong className="text-white/90">staff sign-in</strong> and a{' '}
-                                        <strong className="text-white/90">map</strong>. Everything else can be added later, in any order,
-                                        and nothing breaks while it is switched off. Your progress is saved as you go, so it is fine to
-                                        stop and come back.
+                                        <strong className="text-white">You do not have to do all of this.</strong> Two things are needed
+                                        before the town can take reports — <strong className="text-white/90">staff sign-in</strong> and a{' '}
+                                        <strong className="text-white/90">map</strong>. Everything else can be added whenever you like, and
+                                        nothing breaks while it is switched off. What you save is kept, so you can stop and come back.
                                     </p>
                                     <p className="text-xs text-white/50 leading-relaxed mt-2">
-                                        Each step tells you what to look for so you know it worked. If a step mentions something
-                                        unfamiliar, the plain meaning is in brackets right after it. Where a value has a copy button,
-                                        use it rather than retyping.
+                                        Each step says what you should be looking at, so you can tell it worked. Where there is a copy
+                                        button, use it instead of retyping. You will be asked to sign in to one or two outside services;
+                                        the steps say exactly where to click.
                                     </p>
                                 </div>
 
@@ -547,7 +522,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     <p className="text-white/50 text-xs mb-3">Sign-in and maps are always shown — a town needs both before it can take a report.</p>
 
                                     <label className="text-[11px] uppercase tracking-wider text-white/50 font-semibold">1. Which company hosts your town's services?</label>
-                                    <p className="text-white/40 text-[11px] mt-0.5 mb-1">Most towns pick Google. If your staff already use Microsoft 365, Microsoft Azure may be easier. If you genuinely do not know, choose Google — you can change this later.</p>
+                                    <p className="text-white/40 text-[11px] mt-0.5 mb-1">If the town already uses Microsoft 365, pick Microsoft Azure. If you are not sure, pick Google — you can change it later.</p>
                                     <div className="flex flex-wrap gap-2 mt-1.5 mb-4">
                                         {(['google', 'azure', 'aws'] as const).map(c => (
                                             <button key={c} type="button" onClick={() => setSetupCloud(c)}
@@ -558,7 +533,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     </div>
 
                                     <label className="text-[11px] uppercase tracking-wider text-white/50 font-semibold">2. How will staff sign in?</label>
-                                    <p className="text-white/40 text-[11px] mt-0.5 mb-1">If your staff already sign in to Microsoft 365, Entra is less work than standing up a new service. Auth0 is the fastest from nothing.</p>
+                                    <p className="text-white/40 text-[11px] mt-0.5 mb-1">If your staff already sign in to Microsoft 365, you already have Entra and can use it. Auth0 is for when there is nothing in place yet.</p>
                                     <div className="flex flex-wrap gap-2 mt-1.5 mb-4">
                                         {(['auth0', 'entra', 'okta', 'oidc'] as const).map(c => (
                                             <button key={c} type="button" onClick={() => setSetupIdp(c)}
@@ -569,7 +544,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     </div>
 
                                     <label className="text-[11px] uppercase tracking-wider text-white/50 font-semibold">3. Which map provider?</label>
-                                    <p className="text-white/40 text-[11px] mt-0.5 mb-1">Google is the quickest to set up. Pick Esri if your county already publishes an ArcGIS basemap you are entitled to use.</p>
+                                    <p className="text-white/40 text-[11px] mt-0.5 mb-1">If the town or county already has an ArcGIS agreement, Esri lets you use it. Otherwise any of these will do.</p>
                                     <div className="flex flex-wrap gap-2 mt-1.5 mb-4">
                                         {(['google', 'esri', 'azure', 'apple'] as const).map(c => (
                                             <button key={c} type="button" onClick={() => setSetupMaps(c)}
@@ -580,14 +555,14 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     </div>
 
                                     <label className="text-[11px] uppercase tracking-wider text-white/50 font-semibold">4. Which extras do you want? (all optional)</label>
-                                    <p className="text-white/40 text-[11px] mt-0.5 mb-1">Tick anything that sounds useful — each one adds its own short guide below with what it does and what it costs. Untick it to hide the guide again.</p>
+                                    <p className="text-white/40 text-[11px] mt-0.5 mb-1">Tick anything you want. Each one is added to the list below, grouped with whatever else uses the same login. Untick to remove it again.</p>
                                     <div className="flex flex-wrap gap-2 mt-1.5">
                                         {([
                                             ['ai', 'AI triage'], ['translation', 'Translation'],
-                                            ['moderation', 'Content moderation'], ['redaction', 'Blur faces & plates'],
-                                            ['email', 'Email'], ['sms', 'Text / SMS'],
-                                            ['secrets', 'Secret storage + PII encryption'],
-                                            ['govtech', 'Town-system connector'], ['backups', 'Database backups'],
+                                            ['safety', 'Screening and blurring'],
+                                            ['email', 'Email'], ['sms', 'Text messages'],
+                                            ['secrets', 'Key management'],
+                                            ['govtech', 'Town-system connector'], ['backups', 'Backups'],
                                             ['errors', 'Crash reporting'],
                                         ] as const).map(([f, label]) => (
                                             <button key={f} type="button" onClick={() => toggleFeature(f)}
@@ -598,226 +573,26 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     </div>
                                 </div>
 
-                                {/* ── 1. Staff sign-in (always required) ── */}
-                                <Guide tone="orange" icon={Key} title="Staff sign-in" done={signInConfigured}
-                                    what={<>Residents never sign in — this is only for the clerks and staff who work the reports. Rather than Pinpoint storing staff passwords itself, an outside sign-in service handles that, which is what lets you require two-factor and switch off an ex-employee in one place.</>}
-                                    time={setupIdp === 'auth0' ? "About 20 minutes, and you only ever do it once" : "About 10 minutes if you already administer it"}
-                                    cost={setupIdp === 'auth0' ? "Auth0 is free up to 25,000 monthly logins — far more than a town's staff will use" : "Usually already covered by the licence your town has for it"}>
-                                    <InstructionStep num={1}>
-                                        <strong className="text-white/90">Check whether you already have this.</strong> If your staff sign in to Microsoft 365, you already run <strong className="text-white/90">Microsoft Entra ID</strong> and should pick that above — no new account, no new password for anyone, and your IT provider can do it in ten minutes. The same is true if the town uses Okta. Auth0 is the answer when there is nothing already in place.
-                                    </InstructionStep>
-                                    <InstructionStep num={2}>Register Pinpoint with {setupIdp === 'auth0' ? 'Auth0' : setupIdp === 'entra' ? 'Microsoft Entra ID' : setupIdp === 'okta' ? 'Okta' : 'your provider'} and collect its credentials. Do it here — the boxes are below each step.</InstructionStep>
-                                    <InlineProviderSetup onSaved={onRefresh} cap="identity" provider={setupIdp} />
-                                    <InstructionStep num={3}
-                                        check={<>"Always" selected under the policy setting, and at least one factor switched on.</>}
-                                    >Require a second step at login. This is the single most valuable thing on this page: it means a stolen or guessed staff password is not enough on its own to reach resident records. Every provider here can do it — in Auth0 it is <strong className="text-white/90">Security → Multi-factor Auth</strong>, in Entra it is a Conditional Access policy, in Okta it is a sign-on policy. Turn on an authenticator app or passkeys, and set the policy to apply always. Warn staff first: the next time they sign in they will be asked to set it up.</InstructionStep>
-                                    <Trouble>This is not something Pinpoint can switch on for you — it lives entirely in the sign-in service. It is also the one setting a state auditor is most likely to ask about, so it is worth doing on the day rather than later.</Trouble>
-                                    <InstructionStep num={4}
-                                        check={<>their name in Pinpoint's User Management list after they have signed in once.</>}
-                                    >Add your first staff member, in the sign-in service rather than here. <strong className="text-white/90">They have to sign in to Pinpoint once before you can give them a role</strong> — signing in is what creates their record. After that, open <strong className="text-white/90">User Management</strong> in Pinpoint, set them to Admin or Staff, and choose their department.</InstructionStep>
-                                </Guide>
-
-                                {/* ── 2. Cloud foundation (only if a cloud-backed feature is wanted) ── */}
-                                <Guide show={wants('ai') || wants('translation') || wants('secrets') || wants('moderation')}
-                                    tone="blue" icon={Cloud} title={`Set up ${cloudLabel} (foundation)`}>
-                                    <p className="text-xs text-white/45 -mt-1 mb-1">Do this once. Every {cloudLabel} feature you picked reuses this same project + credentials, so you won't repeat it per feature.</p>
-                                    {setupCloud === 'google' && <>
-                                        <InstructionStep num={1}>Create the project. At <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">console.cloud.google.com</a>, click the project dropdown (top bar) → <strong className="text-white/90">New Project</strong>, name it, and create. Copy the <strong className="text-white/90">Project ID</strong> (not the display name — it looks like <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">my-town-311-4821</code>).</InstructionStep>
-                                        <InstructionStep num={2}>Enable billing. <strong className="text-white/90">Billing → Link a billing account</strong>. Required even though most usage stays in the free tier — without it the APIs return 403.</InstructionStep>
-                                        <InstructionStep num={3}>Enable the APIs. Go to <strong className="text-white/90">APIs &amp; Services → Library</strong> and enable each of: {wants('ai') && <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Vertex AI API</code>}{wants('translation') && <> <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud Translation API</code></>}{wants('secrets') && <> <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud KMS API</code> <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Secret Manager API</code></>}{wants('moderation') && <> <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud Vision API</code> <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Cloud Natural Language API</code></>}. Search each by name and click <strong className="text-white/90">Enable</strong> (a minute each).</InstructionStep>
-                                        <InstructionStep num={4} check={<>pinpoint311 listed on the Service Accounts page.</>}>Create a <Term means="a login for the software rather than for a person, so nothing is tied to your personal account">service account</Term>. Go to <strong className="text-white/90">IAM &amp; Admin → Service Accounts → Create Service Account</strong>, name it <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pinpoint311</code>, and click Create &amp; Continue.</InstructionStep>
-                                        <InstructionStep num={5}>Grant roles for what you picked, then Done:
-                                            <ul className="mt-1.5 space-y-1 list-disc list-inside text-white/55 text-xs">
-                                                {wants('ai') && <li><code className="bg-black/30 px-1 rounded text-blue-300">Vertex AI User</code></li>}
-                                                {wants('translation') && <li><code className="bg-black/30 px-1 rounded text-blue-300">Cloud Translation API User</code></li>}
-                                                {wants('secrets') && <li><code className="bg-black/30 px-1 rounded text-blue-300">Cloud KMS CryptoKey Encrypter/Decrypter</code> + <code className="bg-black/30 px-1 rounded text-blue-300">Secret Manager Admin</code></li>}
-                                                {wants('moderation') && <li><code className="bg-black/30 px-1 rounded text-blue-300">Cloud Vision API User</code> (Natural Language needs no extra role)</li>}
-                                            </ul>
-                                        </InstructionStep>
-                                        <InstructionStep num={6} check={<>a file ending in <code className="bg-black/30 px-1 rounded">.json</code> in your Downloads folder.</>}>Download its key file. Open the service account you just made, then <strong className="text-white/90">Keys → Add Key → Create new key → JSON</strong>. A file downloads automatically. This single file is what you paste or upload into the cards further down the page.<br /><strong className="text-white/90">Google will not let you download it again.</strong> Save a copy somewhere your town controls — a shared drive, not just your laptop — and do not email it.</InstructionStep>
-                                    </>}
-                                    {setupCloud === 'azure' && <>
-                                        <InstructionStep num={1}>Create a resource group. In the <a href="https://portal.azure.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">Azure Portal</a> search <strong className="text-white/90">Resource groups → Create</strong>, name it <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pinpoint311-rg</code>, and pick a region (a US-Gov region if your jurisdiction requires it). Everything below goes in this group.</InstructionStep>
-                                        <InstructionStep num={2}>Note your <strong className="text-white/90">Subscription</strong> and <strong className="text-white/90">Tenant ID</strong> (Subscriptions / Microsoft Entra ID → Overview) — some resources ask for them.</InstructionStep>
-                                        <InstructionStep num={3}>You'll create one resource per feature you picked in the guides below ({wants('ai') && 'Azure OpenAI'}{wants('translation') && ', Translator'}{wants('secrets') && ', Key Vault'}{wants('moderation') && ', AI Content Safety'}). Each gives you an <strong className="text-white/90">Endpoint</strong> + <strong className="text-white/90">Key</strong> under its <strong className="text-white/90">Keys and Endpoint</strong> blade that you paste into the matching provider card. Create them in <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pinpoint311-rg</code> so they're easy to find and bill together.</InstructionStep>
-                                    </>}
-                                    {setupCloud === 'aws' && <>
-                                        <InstructionStep num={1}>Pick a region. In the <a href="https://console.aws.amazon.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">AWS Console</a> choose a <strong className="text-white/90">Region</strong> (top-right; e.g. <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">us-east-1</code>, or <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">us-gov-west-1</code> for GovCloud). Use the same region everywhere below.</InstructionStep>
-                                        <InstructionStep num={2}>Create an IAM identity. <strong className="text-white/90">IAM → Users → Create user</strong> (or a role if Pinpoint runs on EC2/ECS — a role avoids long-lived keys). Name it <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pinpoint311</code>.</InstructionStep>
-                                        <InstructionStep num={3}>Attach permissions for what you picked: {wants('ai') && <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">bedrock:InvokeModel</code>}{wants('translation') && <> <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">translate:TranslateText</code></>}{wants('secrets') && <> <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">secretsmanager:*</code> <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">kms:Encrypt/Decrypt</code></>}{wants('moderation') && <> <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">rekognition:DetectModerationLabels</code> <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">comprehend:DetectToxicContent</code></>}. Scope to specific resources for production.</InstructionStep>
-                                        <InstructionStep num={4}>If you used a user, create an <strong className="text-white/90">access key</strong> (Security credentials → Create access key → Application running outside AWS). Save the <strong className="text-white/90">Access key ID</strong> + <strong className="text-white/90">Secret access key</strong> — you'll enter them plus the region in the provider cards.</InstructionStep>
-                                    </>}
-                                    <p className="text-xs text-white/50 leading-relaxed pl-9"><em>Tip:</em> after entering credentials in any provider card, press <strong className="text-white/80">Save &amp; Test</strong> — Pinpoint makes a live call and shows a green check on success or the exact error (wrong role, API not enabled, bad region) so you can fix it before going live.</p>
-                                </Guide>
-
-                                {/* ── AI ── */}
-                                <Guide show={wants('ai')} tone="sky" icon={Sparkles} title="AI triage"
-                                    what={<>Reads each new report and suggests a category, a priority and the department it belongs to. A clerk still decides — the suggestion is a starting point, never an action.</>}
-                                    time="About 15 minutes once your cloud account exists"
-                                    cost="Cents per hundred reports on any of the three providers.">
-                                    <InstructionStep num={1}>Enable the model service in the cloud account you set up above, and give Pinpoint permission to call it — nothing more than that. A leaked key scoped to "ask the model a question" can run up a bill; the same key with a broad role can delete the project.</InstructionStep>
-                                    <InlineProviderSetup onSaved={onRefresh} cap="ai" provider={aiProvider}
-                                        note={<>Set up for <strong className="text-white/70">{{ vertex: 'Google Vertex AI', azure: 'Azure OpenAI', bedrock: 'AWS Bedrock' }[aiProvider]}</strong>, because that is the cloud you picked above. To use a different one, change the cloud at the top or use the AI Provider card further down.</>}
-                                    />
-                                    <Trouble>Model availability differs by region on every provider, and on AWS the models have to be requested before they can be used. If the picker is empty, that is usually why rather than a bad key.</Trouble>
-                                </Guide>
-
-                                {/* ── Translation ── */}
-                                <Guide show={wants('translation')} tone="cyan" icon={Languages} title="Translation"
-                                    what={<>Lets a resident file a report in their own language and read the replies in it, and lets staff work entirely in English. For many towns this is a Title VI obligation rather than a nicety.</>}
-                                    time="About 10 minutes"
-                                    cost="Free for a small town's volume on all three providers.">
-                                    <InstructionStep num={1}>Enable the translation service in the cloud account you set up above. {setupCloud === 'google' ? 'On Google it is an API to switch on.' : setupCloud === 'azure' ? 'On Azure it is a Translator resource to create.' : 'On AWS there is nothing to enable — it is on by default.'}</InstructionStep>
-                                    <InlineProviderSetup onSaved={onRefresh} cap="translation" provider={setupCloud} />
-                                </Guide>
-
-                                {/* ── Secrets + PII encryption ── */}
-                                <Guide show={wants('secrets')} tone="violet" icon={Lock} title="Secure storage for keys and resident data (recommended)"
-                                    what={<>Two related things. Your integration credentials move out of the database into your cloud's secret store, and the key that encrypts resident names, emails and phone numbers is held by your cloud's key service rather than derived from a setting in a file. Both are what an auditor means by "key management".</>}
-                                    time="About 20 minutes"
-                                    cost="Under a dollar a month.">
-                                    <InstructionStep num={1}>Create the key and the vault in the cloud account you set up above, and grant Pinpoint permission to <strong className="text-white/90">wrap and unwrap</strong> with that key — not just to read it.</InstructionStep>
-                                    <Trouble>Wrap and unwrap are the two permissions people miss, and missing them fails quietly: the key exists, the settings save, and resident data is encrypted with the application key instead. The health dashboard is the only place that says so — it will tell you the key manager you selected is not the one being used.</Trouble>
-                                    <InlineProviderSetup onSaved={onRefresh} cap="kms" provider={setupCloud} />
-                                    <InstructionStep num={2}>Once the vault is reachable, credentials already in the database move across on their own, within the hour. There is no button to press and nothing to remember.</InstructionStep>
-                                    <Trouble>Never delete or disable this key once resident data has been written under it. Every cloud enforces a waiting period and then destroys it permanently, and nobody — including the cloud provider — can recover what it protected.</Trouble>
-                                </Guide>
-
-                                {/* ── Email ── */}
-                                <Guide show={wants('email')} tone="violet" icon={Mail} title="Email notifications" done={smtpConfigured}
-                                    what={<>The confirmation a resident gets when they file, and the update when it is resolved. Without this, residents have no idea anything happened, and the phone calls come to you instead.</>}
-                                    time="About 15 minutes, longer if DNS records are involved"
-                                    cost="Free to a few dollars a month.">
-                                    <InstructionStep num={1}>Decide who sends. A dedicated town address like <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">311@yourtown.gov</code> rather than <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">noreply@</code> — residents reply to these, and a reply that goes nowhere is a complaint you never hear.</InstructionStep>
-                                    <InlineProviderSetup onSaved={onRefresh} cap="email" provider={emailProvider}
-                                        onChoose={setEmailOverride}
-                                        choices={[
-                                            { id: 'smtp', label: 'SMTP (your existing mail server)' },
-                                            { id: 'ses', label: 'Amazon SES' },
-                                            { id: 'acs', label: 'Azure Communication Services' },
-                                        ]}
-                                        note={<>How mail leaves the building is not a cloud decision — plenty of towns on Google send through SES. Starting on the one that suits {cloudLabel}; change it here if yours differs.</>}
-                                    />
-                                    <Trouble>Microsoft 365 and Google Workspace both block plain SMTP by default. If your IT provider says it is not allowed, they are right — Amazon SES or Azure Communication Services will be less work than getting an exception.</Trouble>
-                                </Guide>
-
-                                {/* ── SMS ── */}
-                                <Guide show={wants('sms')} tone="emerald" icon={MessageSquare} title="Text message notifications" done={smsConfigured}
-                                    what={<>The same updates by text, for residents who give a mobile number. Optional — email alone is a complete service.</>}
-                                    time="About 15 minutes, plus carrier registration"
-                                    cost="Around a cent per message.">
-                                    <InstructionStep num={1}>
-                                        <strong className="text-white/90">Start the carrier registration first, whichever provider you use.</strong> Texting US numbers from a business or government sender needs 10DLC registration, which identifies your town to the carriers. It is not a technical step and it is not quick — allow a couple of weeks. Unregistered messages are filtered heavily and often silently.
-                                    </InstructionStep>
-                                    <InlineProviderSetup onSaved={onRefresh} cap="sms" provider={smsProvider}
-                                        onChoose={setSmsOverride}
-                                        choices={[
-                                            { id: 'twilio', label: 'Twilio' },
-                                            { id: 'sns', label: 'Amazon SNS' },
-                                            { id: 'acs', label: 'Azure Communication Services' },
-                                            { id: 'http', label: 'Other (HTTP gateway)' },
-                                        ]}
-                                    />
-                                    <Trouble>Every provider starts you in a trial or sandbox that can only text numbers you have verified. Everything looks like it works — the send succeeds — and residents receive nothing. Leave it before launch.</Trouble>
-                                </Guide>
-
-                                {/* ── Content moderation ── */}
-                                <Guide show={wants('moderation')} tone="rose" icon={ImageIcon} title="Blocking abusive reports and photos"
-                                    what={<>Anything a resident submits can end up on a public municipal website. Offensive language is always screened, with or without this; turning it on adds checking of photos too, and catches abuse a word list misses.</>}
-                                    time="About 10 minutes once your cloud account exists"
-                                    cost="Fractions of a cent per report.">
-                                    <InstructionStep num={1}><strong className="text-white/90">Built in, no setup:</strong> resident text is always screened — explicit/abusive descriptions and comments are blocked at submission; mild profanity posts but is flagged for staff. This works with nothing configured and is not something you can switch off by accident.</InstructionStep>
-                                    {setupCloud === 'google' && (
-                                        <InstructionStep num={2} check={<>both APIs showing as Enabled in the API library.</>}>
-                                            <strong className="text-white/90">Add photo screening.</strong> In the Google project you created above, enable the <strong className="text-white/90">Cloud Vision</strong> and <strong className="text-white/90">Cloud Natural Language</strong> APIs. There is nothing to enter here — screening reuses the service account you already downloaded.
-                                        </InstructionStep>
-                                    )}
-                                    {setupCloud === 'azure' && <>
-                                        <InstructionStep num={2} check={<>an <strong className="text-white/90">Endpoint</strong> and two keys on the resource's Keys and Endpoint page.</>}>
-                                            <strong className="text-white/90">Add photo screening.</strong> In the Azure Portal, create an <strong className="text-white/90">Azure AI Content Safety</strong> resource in <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">pinpoint311-rg</code>. Open it, go to <strong className="text-white/90">Keys and Endpoint</strong>, and copy the endpoint and either key into the boxes below.
-                                        </InstructionStep>
-                                        <PlainSecrets fields={[
-                                            { key: 'AZURE_CONTENT_SAFETY_ENDPOINT', label: 'Content Safety endpoint', help: 'Looks like https://your-resource.cognitiveservices.azure.com/' },
-                                            { key: 'AZURE_CONTENT_SAFETY_KEY', label: 'Content Safety key', secret: true, help: 'Either KEY 1 or KEY 2 — they are interchangeable.' },
-                                        ]} />
-                                    </>}
-                                    {setupCloud === 'aws' && (
-                                        <InstructionStep num={2}>
-                                            <strong className="text-white/90">Add photo screening.</strong> On the IAM identity you created above, allow <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">rekognition:DetectModerationLabels</code> for images and <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">comprehend:DetectToxicContent</code> for text. Nothing to enter here — it reuses the AWS credentials you already have.
-                                        </InstructionStep>
-                                    )}
-                                    <InstructionStep num={3}>Leave the rest alone. Screening follows the cloud you picked at the top of this page automatically. If the cloud layer is not reachable, text still uses the built-in scan and photos fall back to the AI provider's own assessment, so nothing goes unchecked.</InstructionStep>
-                                </Guide>
-
-                                {/* ── Maps (always) ── */}
-                                <Guide tone="blue" icon={MapPin} title="Maps" done={mapsConfigured}
-                                    what={<>The map a resident drops a pin on, and the address lookup that turns what they type into a location your crews can find. Required — a 311 report without a location is not actionable.</>}
-                                    time="About 20 minutes"
-                                    cost="Google and Azure have free tiers a town will not exceed; Esri may already be covered by a county licence; Apple needs a paid developer membership.">
-                                    <InstructionStep num={1}>
-                                        <strong className="text-white/90">Ask your GIS department before you buy anything.</strong> If the town or county has an ArcGIS agreement — many New Jersey towns do — choose Esri above. You get the map free under that licence, and more importantly you can point address lookup at the county's own locator, which knows your street names, your address ranges and your recent subdivisions. A national geocoder does not.
-                                    </InstructionStep>
-                                    <InlineProviderSetup onSaved={onRefresh} cap="maps" provider={setupMaps} />
-                                    <InstructionStep num={2}
-                                        check={<>the address box offering suggestions as you type, and a pin appearing when you click the map.</>}
-                                    >Test it as a resident would. Open the resident portal in another tab and file a test report — the map failing is the one thing on this page a resident notices immediately.</InstructionStep>
-                                </Guide>
-
-                                {/* ── GovTech connector ── */}
-                                <Guide show={wants('govtech')} tone="amber" icon={Landmark} title="Connecting to a system the town already uses"
-                                    what={<>If your town already runs permitting or work-order software, Pinpoint can push reports into it so staff are not working in two places. You will need someone with an administrator login to that system, and possibly a call to the vendor for an API key.</>}
-                                    time="An hour or more, and usually a vendor email"
-                                    cost="No cost from Pinpoint. Some vendors charge for API access.">
-                                    <InstructionStep num={1}>Scroll to <strong className="text-white/90">Connect Your Other Town Systems</strong> below. Purpose-built connectors exist for <strong className="text-white/90">Accela</strong>, <strong className="text-white/90">Tyler</strong>, <strong className="text-white/90">CivicPlus/SeeClickFix</strong>, and any <strong className="text-white/90">Open311</strong> endpoint.</InstructionStep>
-                                    <InstructionStep num={2}>For anything else (Cityworks, SDL, Edmunds, GovPilot, FastTrackGov, Polimorphic…) use <strong className="text-white/90">Other REST System</strong> and enter the base URL + key from your vendor's API docs.</InstructionStep>
-                                    <InstructionStep num={3}>Each connector has a guided wizard and a <strong className="text-white/90">Check connection</strong> button — always run it (and a test report) before going live.</InstructionStep>
-                                </Guide>
-
-                                {/* ── Database backups ── */}
-                                {/* ── Photo redaction ── */}
-                                <Guide show={wants('redaction')} tone="rose" icon={ImageIcon} title="Blurring faces and licence plates" done={redactionConfigured}
-                                    what={<>Residents photograph potholes with cars parked beside them and neighbours walking past. Those people did not ask to be in a public record, and a 311 photo is one. This blurs faces and plates before the photo is stored.</>}
-                                    time="About 10 minutes"
-                                    cost="A dollar or two per thousand photos, or free if you run it on this server.">
-                                    <InstructionStep num={1}>Choose where detection happens. All three clouds do it well; the option that runs on this server finds fewer faces — particularly small or partly turned ones — but no photo ever leaves the building, which for some towns settles it.</InstructionStep>
-                                    <InlineProviderSetup onSaved={onRefresh} cap="redaction" provider={redactionProvider}
-                                        onChoose={setRedactionOverride}
-                                        choices={[
-                                            { id: 'local', label: 'On this server (no account, no cost)' },
-                                            { id: 'google', label: 'Google Cloud Vision' },
-                                            { id: 'azure', label: 'Azure Face + Vision' },
-                                            { id: 'aws', label: 'AWS Rekognition' },
-                                        ]}
-                                        note={<>A fresh install already blurs on this server, so photos are never stored unblurred while you decide. Pointing it at a cloud finds more.</>}
-                                    />
-                                    <Trouble>This is the one setting whose failure is invisible from inside Pinpoint: "found nobody in this photo" and "could not ask" both produce an unblurred picture and a green tick. After saving, file a test report with a photo of a face in it and look at the stored image.</Trouble>
-                                </Guide>
-
-                                {/* ── Error reporting ── */}
-                                <Guide show={wants('errors')} tone="violet" icon={AlertTriangle} title="Knowing when something breaks" done={sentryConfigured}
-                                    what={<>Without this, a page that crashes for a resident is something you hear about only if they phone. Browser crashes are already collected and shown under Browser errors in the admin console; this sends them somewhere off the server as well, so they survive a container restart.</>}
-                                    time="About 5 minutes"
-                                    cost="Sentry's free tier covers a town's volume comfortably.">
-                                    <InstructionStep num={1} check={<>a DSN that looks like <code className="bg-black/30 px-1 rounded">https://…@…ingest.sentry.io/…</code></>}>Create a free account at <a href="https://sentry.io" target="_blank" rel="noopener noreferrer" className="text-violet-300 underline underline-offset-2">sentry.io</a>, make a project, and copy its <strong className="text-white/90">DSN</strong> into the box below.</InstructionStep>
-                                    <PlainSecrets fields={[
-                                        { key: 'SENTRY_DSN', label: 'Sentry DSN', secret: true, help: 'Project Settings → Client Keys (DSN). Not a password — but it is still worth keeping to yourself.' },
-                                    ]} />
-                                    <InstructionStep num={2}><em className="text-white/50">Optional:</em> this is genuinely skippable. Crashes are still recorded in the admin console without it — Sentry adds alerting and keeps the history longer.</InstructionStep>
-                                </Guide>
-
-                                <Guide show={wants('backups')} tone="amber" icon={HardDrive} title="Automatic backups" done={backupConfigured}
-                                    what={<>Takes a nightly encrypted copy of everything and stores it off the server. Do this one. 311 reports are public records the town is legally required to keep, and a server can fail.</>}
-                                    time="About 20 minutes"
-                                    cost="A few dollars a month for storage.">
-                                    <InstructionStep num={1}>Provision an <strong className="text-white/90">S3-compatible</strong> bucket (AWS S3, Oracle Object Storage, MinIO, …) with put/get/list/delete permissions, and take an access key for it.</InstructionStep>
-                                    <InstructionStep num={2}
-                                        check={<>the passphrase shown once, with a box to tick confirming you have put a copy somewhere else.</>}
-                                    >Enter the bucket and keys in the <strong className="text-white/90">Database Backups</strong> card below, and press <strong className="text-white/90">Create backup passphrase</strong>. You are not asked to invent one — inventing a passphrase reliably produces either something guessable or something nobody can find again.</InstructionStep>
-                                    <Trouble>The one part nobody can automate is keeping a copy somewhere other than this server. A key held only inside the system it protects is worth nothing on the day that system is gone — which is the day a backup matters. A password manager, or a sealed envelope in the clerk's safe.</Trouble>
-                                    <div className="mt-3 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2">
-                                        <p className="text-amber-200/80 text-xs"><strong>⚠ Privacy note:</strong> Backups contain a full snapshot including resident PII. Retention deletes old backups, but PII anonymization only applies to the live database — not to existing backup files.</p>
-                                    </div>
-                                </Guide>
+                                <SetupWizard
+                                    cloud={setupCloud}
+                                    idp={setupIdp}
+                                    maps={setupMaps}
+                                    aiProvider={aiProvider}
+                                    emailProvider={emailProvider}
+                                    smsProvider={smsProvider}
+                                    redactionProvider={redactionProvider}
+                                    wanted={wantedFeatures}
+                                    isDone={itemDone}
+                                    secretValues={secretValues}
+                                    onSecretChange={(key, value) => setSecretValues(prev => ({ ...prev, [key]: value }))}
+                                    onSaveSecrets={async (keys) => { for (const k of keys) await handleSave(k); }}
+                                    savingSecret={savingKey}
+                                    isSecretConfigured={(key) => !!isConfigured(key)}
+                                    onRefresh={onRefresh}
+                                    publicOrigin={publicOrigin}
+                                    onChooseProvider={chooseProvider}
+                                    renderFoundation={renderFoundation}
+                                />
                             </div>
                         </motion.div>
                     )}

@@ -8,7 +8,7 @@ celery_app = Celery(
     broker=settings.redis_url,
     backend=settings.redis_url,
     include=["app.tasks.service_requests", "app.tasks.integrations", "app.tasks.road_data",
-             "app.tasks.storage"]
+             "app.tasks.storage", "app.tasks.connector_checks"]
 )
 
 celery_app.conf.update(
@@ -38,6 +38,18 @@ celery_app.conf.update(
         "monthly-road-refresh": {
             "task": "app.tasks.road_data.refresh_roads_monthly",
             "schedule": 60 * 60 * 24,  # checked daily, acts monthly
+            "options": {"queue": "default"}
+        },
+        # Test every configured connector once a day.
+        #
+        # "The credentials are stored" is a fact about our database and stays
+        # true forever; "the credentials work" is a fact about somebody else's
+        # service and stops being true without warning. Without this the only
+        # way to learn a key was revoked is an admin pressing Test, or a
+        # resident who never got their email.
+        "daily-connector-check": {
+            "task": "app.tasks.connector_checks.verify_connectors",
+            "schedule": 60 * 60 * 24,  # Every 24 hours
             "options": {"queue": "default"}
         },
         # Daily anchor of the audit hash-chain head (tamper-evidence beyond the DB)

@@ -32,13 +32,13 @@ function agoLabel(epochSeconds?: number | null): string {
 import type { Capability } from '../services/api';
 
 const CAPS: { key: Capability; title: string; blurb: string; icon: typeof Sparkles }[] = [
-    { key: 'ai', title: 'AI Provider', blurb: 'Where AI triage & the analytics assistant run. Each town brings its own key and pays only for what it uses.', icon: Sparkles },
+    { key: 'ai', title: 'AI Provider', blurb: 'Where AI triage and the analytics assistant run. Each town brings its own key.', icon: Sparkles },
     { key: 'translation', title: 'Translation Provider', blurb: 'Powers end-to-end translation across 100+ languages.', icon: Languages },
     { key: 'identity', title: 'Staff Sign-In (Identity)', blurb: 'The identity provider that authenticates staff and admins.', icon: KeyRound },
     // Maps is a capability like the rest, so switching one works the same way
     // as switching an AI or translation provider -- same card, same save, same
     // test button. A separate picker elsewhere would be a second thing to learn.
-    { key: 'maps', title: 'Maps Provider', blurb: 'Draws the map residents drop a pin on, and looks up addresses. Google is the simplest to set up; Esri suits a town whose county already publishes its own basemap.', icon: MapIcon },
+    { key: 'maps', title: 'Maps Provider', blurb: 'Draws the map residents drop a pin on, and looks up addresses.', icon: MapIcon },
     // Four capabilities whose provider switch the backend already honoured and
     // nothing surfaced. Email and text had one hand-written SMTP/Twilio card
     // between them; PII encryption and photo redaction had no UI at all, so
@@ -72,50 +72,44 @@ function Step({ n, children, aside }: { n: number; children: React.ReactNode; as
     );
 }
 
-/** The live-state pill shown next to "Configured".
+/** Whether it works, and when we last had evidence either way.
  *
- * Deliberately a second, separate badge. "Configured" is a fact about our own
- * database -- the credentials are stored -- and "working" is a fact about
- * someone else's service. Merging them into one badge forces the case where we
- * genuinely do not know to pick a colour, and it always picks green, which is
- * how a revoked key keeps a healthy tick for a month.
- *
- * So "unknown" is shown as unknown. It is not a failure and it is not success;
- * it means nothing has called this connector yet.
+ * The card used to show "Configured", which is a fact about our own database:
+ * it goes green the moment a credential is saved and stays green through the
+ * key being revoked, the card on file lapsing and the secret expiring. This
+ * answers the question a clerk is actually asking, and says how old the answer
+ * is -- because "working, checked three weeks ago" and "working, checked this
+ * morning" are different claims and only one of them is worth much.
  */
-function HealthPill({ health }: { health?: ConnectorHealth }) {
+function LiveState({ health }: { health?: ConnectorHealth }) {
     if (!health || health.status === 'unknown') {
-        return (
-            <span
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-medium bg-white/[0.06] text-white/50 border border-white/12"
-                title="Nothing has used this connector yet, so we cannot say whether it works."
-            >
-                <span className="w-1.5 h-1.5 rounded-full bg-white/35" aria-hidden="true" />
-                Not used yet
-            </span>
-        );
+        return <span className="text-white/40">not checked yet</span>;
     }
-    const tone = {
-        working: 'bg-emerald-500/15 text-emerald-300 border-emerald-400/25',
-        stale: 'bg-white/[0.06] text-white/55 border-white/12',
-        failing: 'bg-amber-500/15 text-amber-300 border-amber-400/25',
-        down: 'bg-red-500/15 text-red-300 border-red-400/30',
-    }[health.status];
-    const dot = {
-        working: 'bg-emerald-400', stale: 'bg-white/40',
-        failing: 'bg-amber-400', down: 'bg-red-400',
-    }[health.status];
-    const label = {
-        working: 'Working', stale: 'No recent use',
-        failing: 'Last call failed', down: `Failing (${health.consecutive_failures})`,
-    }[health.status];
+    const when = health.status === 'working' ? health.last_success_at : health.last_error_at;
+    const ago = when ? relativeTime(when) : null;
+    const [text, tone] = {
+        working: ['working', 'text-emerald-300/90'],
+        stale: ['not used recently', 'text-white/45'],
+        failing: ['last check failed', 'text-amber-300/90'],
+        down: [`failing (${health.consecutive_failures} in a row)`, 'text-red-300/90'],
+    }[health.status] as [string, string];
     return (
-        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-medium border ${tone}`}
-              title={health.summary}>
-            <span className={`w-1.5 h-1.5 rounded-full ${dot}`} aria-hidden="true" />
-            {label}
+        <span className={tone} title={health.last_error || health.summary}>
+            {text}{ago ? <span className="text-white/35"> · checked {ago}</span> : null}
         </span>
     );
+}
+
+/** "6 hours ago" from an ISO timestamp. */
+function relativeTime(iso: string): string {
+    const then = Date.parse(iso);
+    if (Number.isNaN(then)) return '';
+    const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+    if (mins < 2) return 'just now';
+    if (mins < 90) return `${mins} minutes ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 36) return `${hrs} hours ago`;
+    return `${Math.round(hrs / 24)} days ago`;
 }
 
 export interface CapStatus {
@@ -295,13 +289,11 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
      *
      * `undefined` means the endpoint did not tell us, which is not the same as
      * "no". Three capabilities used to omit this map entirely and every one of
-     * their cards claimed "Not configured" on a working connector -- so an
-     * absent answer now renders as unknown rather than as a confident negative,
-     * and the card cannot lie in that direction again if a future capability
-     * forgets to send it. */
+     * their cards claimed "Not configured" on a working connector. The status
+     * line now leads with what the last live check found, so an absent answer
+     * reads as "not checked yet" rather than as a confident negative. */
     const configuredState = catalog.configured?.[catalog.current_provider];
     const configured = configuredState === true;
-    const statusUnknown = configuredState === undefined;
     // null means "not touched yet", so an unconfigured card starts open and a
     // configured one starts closed, without overriding a deliberate click.
     /* In guided setup the parent's cursor wins until the clerk clicks a
@@ -356,73 +348,88 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-            className={`relative overflow-hidden rounded-3xl border p-6 transition-all duration-300 ${configured
-                ? 'bg-gradient-to-br from-green-500/10 via-emerald-500/5 to-teal-500/10 border-green-500/30 shadow-lg shadow-green-500/10'
-                : 'setup-panel border-transparent'}`}
+            /* The handcrafted card template, the same one the rest of the
+               console uses, rather than a green wash unique to this page. The
+               wash was doing a job the status line does better and said the
+               same thing three times -- tile, tint and badge all meaning
+               "configured", which is the least interesting fact here. */
+            className="premium-card overflow-hidden p-5"
         >
-            {configured && (
-                <div className="absolute inset-0 bg-gradient-to-r from-green-500/5 via-transparent to-emerald-500/5 pointer-events-none" aria-hidden="true" />
-            )}
 
             <div className="relative">
                 {/* Header — same shape as every other connector card: a large
                     gradient icon tile, the name, and a status pill on the right. */}
-                <button
-                    type="button"
-                    onClick={() => setOpen(v => (v === null ? !isOpen : !v))}
-                    aria-expanded={isOpen}
-                    aria-controls={`prov-${cap}`}
-                    className="w-full flex items-start justify-between gap-4 flex-wrap text-left rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
-                >
-                    <div className="flex items-center gap-4 min-w-0">
-                        <div className={`relative w-14 h-14 shrink-0 rounded-2xl flex items-center justify-center transition-all duration-300 ${configured
-                            ? 'bg-gradient-to-br from-green-400 to-emerald-500 shadow-lg shadow-green-500/30'
-                            : 'setup-tile'}`}>
-                            {configured ? <Check className="w-7 h-7 text-white" /> : <Icon className="w-7 h-7 text-white" />}
+                {/* Not one big button any more. "Test now" has to be its own
+                    control, and a button cannot live inside a button -- nesting
+                    them produces markup browsers silently restructure and
+                    screen readers announce wrongly. */}
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <button
+                        type="button"
+                        onClick={() => setOpen(v => (v === null ? !isOpen : !v))}
+                        aria-expanded={isOpen}
+                        aria-controls={`prov-${cap}`}
+                        className="flex items-center gap-3.5 min-w-0 flex-1 text-left rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                    >
+                        <div className="setup-tile relative w-11 h-11 shrink-0 rounded-xl flex items-center justify-center">
+                            <Icon className="w-5 h-5 text-white" />
                             {guided && step && !configured && (
-                                <span className="absolute -top-1.5 -left-1.5 w-6 h-6 rounded-full bg-primary-500 border-2 border-slate-900 text-[11px] font-bold text-white flex items-center justify-center">
+                                <span className="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full bg-primary-500 border-2 border-slate-900 text-[10px] font-bold text-white flex items-center justify-center">
                                     {step.index + 1}
                                 </span>
                             )}
                         </div>
                         <div className="min-w-0">
-                            <h3 className="font-bold text-lg text-white leading-tight">{title}</h3>
-                            <p className="text-white/50 text-sm truncate">
-                                {currentName}
-                                {cap === 'ai' && catalog.current_model ? ` · ${catalog.current_model}` : ''}
+                            <h3 className="font-semibold text-white leading-tight truncate">{title}</h3>
+                            {/* The one line worth reading at a glance: which
+                                provider, whether it works, and when we last had
+                                evidence. "Configured" answered none of those --
+                                it only ever meant a row exists in our database. */}
+                            <p className="text-white/45 text-xs truncate mt-0.5">
+                                {configured
+                                    ? <>
+                                        {currentName}
+                                        {cap === 'ai' && catalog.current_model ? ` · ${catalog.current_model}` : ''}
+                                        {' · '}<LiveState health={health} />
+                                      </>
+                                    : 'Not set up yet'}
                             </p>
                         </div>
-                    </div>
-                    <div className="flex items-center gap-2.5 shrink-0">
-                        {/* Live state sits beside stored-credentials state, not
-                            instead of it. They answer different questions and a
-                            clerk needs both: "we have the key" and "the key
-                            works" diverge exactly when it matters. */}
-                        {configured && <HealthPill health={health} />}
-                        {configured ? (
-                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-2xl text-xs font-semibold bg-gradient-to-r from-green-500/20 to-emerald-500/20 text-green-300 border border-green-500/30 shadow-lg shadow-green-500/10">
-                                <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" />
-                                Configured
-                            </span>
-                        ) : statusUnknown ? (
-                            <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 text-white/60 border border-white/20">
-                                Status unknown
-                            </span>
-                        ) : (
-                            <span className="inline-flex items-center px-3 py-1.5 rounded-2xl text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                                Not configured
-                            </span>
+                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                        {/* Only offered once there is something to test.
+                            Pressing it on an empty card would report a missing
+                            credential as a failure, which is true and useless. */}
+                        {configured && (
+                            <button
+                                type="button"
+                                onClick={handleTest}
+                                disabled={busy !== null}
+                                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-white/80 hover:text-white bg-white/[0.07] hover:bg-white/[0.13] border border-white/15 transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                            >
+                                {busy === 'test'
+                                    ? <><Loader2 className="w-3 h-3 animate-spin" /> Testing…</>
+                                    : 'Test now'}
+                            </button>
                         )}
-                        <motion.span
-                            animate={{ rotate: isOpen ? 180 : 0 }}
-                            transition={{ duration: 0.25 }}
-                            className="text-white/40"
-                            aria-hidden="true"
+                        <button
+                            type="button"
+                            onClick={() => setOpen(v => (v === null ? !isOpen : !v))}
+                            aria-expanded={isOpen}
+                            aria-controls={`prov-${cap}`}
+                            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-white/70 hover:text-white hover:bg-white/[0.08] border border-transparent hover:border-white/15 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
                         >
-                            <ChevronDown className="w-4 h-4" />
-                        </motion.span>
+                            {isOpen ? 'Close' : configured ? 'Edit' : 'Set up'}
+                            <motion.span
+                                animate={{ rotate: isOpen ? 180 : 0 }}
+                                transition={{ duration: 0.25 }}
+                                aria-hidden="true"
+                            >
+                                <ChevronDown className="w-3.5 h-3.5" />
+                            </motion.span>
+                        </button>
                     </div>
-                </button>
+                </div>
 
                 <p className="text-white/60 text-sm mb-4">{blurb}</p>
 

@@ -420,7 +420,7 @@ defineSteps('maps', 'apple', () => [
         body: (
             <>
                 This needs a paid <L href="https://developer.apple.com/programs/">Apple Developer
-                Program</L> membership (about $99/year) held by the town, not by a person. If you do not
+                Program</L> membership held by the town, not by a person. If you do not
                 have one, one of the other map providers will be much less work.
             </>
         ),
@@ -599,7 +599,7 @@ defineSteps('translation', 'azure', () => [
         body: (
             <>
                 In the <L href="https://portal.azure.com">Azure portal</L>, press <B>Create a
-                resource</B> and create a <B>Translator</B> resource. The free tier handles a
+                resource</B> and create a <B>Translator</B> resource. Pick the tier that suits a
                 small town's volume; note the <B>region</B> you pick, because it is part of the
                 credentials.
             </>
@@ -788,7 +788,7 @@ defineSteps('sms', 'sns', () => [
                 unregistered traffic heavily.
             </>
         ),
-        trouble: <>Start the 10DLC registration early. It is a carrier process, not an AWS one, and it can take a couple of weeks.</>,
+        trouble: <>Start the 10DLC registration early. It is a carrier process rather than an AWS one, and it is not immediate.</>,
     },
     {
         body: (
@@ -1199,7 +1199,7 @@ defineSteps('redaction', 'local', () => [
         body: (
             <>
                 <B>This is what you get if you choose nothing.</B> Detection runs on this server using
-                OpenCV, with no account, no key and no cost — and no resident photo ever leaves the
+                OpenCV, with no account and no key — and no resident photo ever leaves the
                 building, which is the real reason to keep it.
             </>
         ),

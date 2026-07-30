@@ -46,16 +46,55 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
     return settings
 
 
+async def public_origin(db) -> Optional[str]:
+    """The address residents actually use, or None if nothing has set one.
+
+    Setup instructions hand out callback and redirect URLs to paste into a
+    vendor console, and until now those were built from `window.location.origin`
+    -- whatever the admin happened to type into their own browser. An admin on
+    `http://10.0.0.7:3000`, or on a hostname that only resolves inside the
+    town's network, registered a URL the identity provider can never redirect
+    to. The password is accepted and the login then fails on the redirect, which
+    reads as a wrong secret rather than a wrong URL.
+
+    The deployment already knows its real address in two places, so this is a
+    lookup rather than a new setting: the township's `custom_domain`, and the
+    DOMAIN environment variable the compose file sets. Prefer the database,
+    because that is the one an admin can change without a redeploy.
+    """
+    domain = os.environ.get("DOMAIN", "").strip()
+    try:
+        from sqlalchemy import select
+
+        from app.models import SystemSettings
+
+        row = (await db.execute(select(SystemSettings).limit(1))).scalar_one_or_none()
+        if row and (row.custom_domain or "").strip():
+            domain = row.custom_domain.strip()
+    except Exception:
+        # Advisory only. A failure here falls back to the browser's origin,
+        # which is what happened before this existed.
+        pass
+
+    if not domain or domain == "localhost":
+        return None
+    if domain.startswith("http://") or domain.startswith("https://"):
+        return domain.rstrip("/")
+    return f"https://{domain}"
+
+
 @router.get("/config")
-async def get_deployment_config():
+async def get_deployment_config(db: AsyncSession = Depends(get_db)):
     """Deployment-mode flags (public). The setup UI uses managed_mode to show
     'Managed by your state' placeholders instead of the Google Cloud / Backups
-    / domain cards (A1)."""
+    / domain cards (A1), and public_origin to build the callback URLs it tells
+    an admin to paste into a vendor console."""
     from app.core.config import get_settings as get_app_settings
     app_settings = get_app_settings()
     return {
         "managed_mode": app_settings.managed_mode,
         "app_version": app_settings.app_version,
+        "public_origin": await public_origin(db),
     }
 
 
@@ -71,6 +110,52 @@ def _field_required(field: Dict[str, Any]) -> bool:
     if "required" in field:
         return bool(field["required"])
     return not str(field.get("label", "")).rstrip().endswith("(optional)")
+
+
+async def providers_for(capability: str) -> List[Dict[str, Any]]:
+    """The catalog for one capability, without going through its endpoint.
+
+    The eight catalog endpoints each import their own module and call its
+    `catalog_for_api`. That is fine for a request, but the daily connector sweep
+    needs the same lists with no request to hang them off, and copying the eight
+    imports into a task module would be a second place to update when a ninth
+    capability appears.
+    """
+    if capability in ("email", "sms", "kms", "redaction"):
+        from app.services.delivery_providers import catalog_for_api as delivery
+        return delivery(capability)
+    loaders = {
+        "ai": ("app.services.ai.registry", "catalog_for_api"),
+        "translation": ("app.services.translation_providers", "catalog_for_api"),
+        "identity": ("app.services.identity", "catalog_for_api"),
+        "maps": ("app.services.map_provider", "catalog_for_api"),
+    }
+    entry = loaders.get(capability)
+    if not entry:
+        return []
+    module, name = entry
+    return getattr(__import__(module, fromlist=[name]), name)()
+
+
+async def capability_is_configured(capability: str) -> bool:
+    """Whether the provider currently selected for this capability has its
+    credentials stored.
+
+    Used to decide what the daily sweep bothers testing. A town that has not set
+    up text messages has not made a mistake, and testing it would write a
+    failure that shows an amber badge on something deliberately switched off --
+    which is the noise that teaches people to ignore badges.
+    """
+    from app.services.secret_manager import get_secret
+
+    select_key = _PROVIDER_SELECT_KEY.get(capability)
+    if not select_key:
+        return False
+    current = ((await get_secret(select_key)) or "").strip().lower()
+    if not current or current in ("none", "off", "disabled"):
+        return False
+    providers = await providers_for(capability)
+    return (await _configured_map(providers)).get(current, False)
 
 
 async def _configured_map(providers: List[Dict[str, Any]]) -> Dict[str, bool]:

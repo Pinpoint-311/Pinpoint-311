@@ -1,0 +1,311 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Check, ChevronRight, Circle, AlertCircle } from 'lucide-react';
+
+import InlineProviderSetup from './InlineProviderSetup';
+import SecretField from './SecretField';
+import { buildPlan, type PlanInput, type PlanItem, type PlanTask } from './setupPlan';
+// Registers every provider's console walk as an import side effect.
+import './setupStepsContent';
+
+/**
+ * Setup, one login at a time.
+ *
+ * What this replaces was ten stacked panels, all open, each with a paragraph of
+ * prose above its boxes. Everything a town might ever configure was on screen
+ * at once, in capability order, so a town on Azure read Azure, Google, Azure,
+ * Azure, Azure. It was accurate and exhausting, and the person it is written
+ * for -- a township clerk who was handed this job, not an engineer -- has no
+ * way to tell from that page whether they are ten minutes from finished or two
+ * days.
+ *
+ * Two changes. The list on the left is grouped by the account you sign in to
+ * rather than by feature, so everything behind one login is one visit
+ * (setupPlan.ts does that arithmetic). And only one is open at a time, so the
+ * screen shows the thing you are doing and a list of what is left.
+ *
+ * Finishing advances you. Not on save -- on a save whose live test came back
+ * green, because being moved along past a credential that does not work is the
+ * exact failure this page exists to prevent.
+ */
+
+const STATUS_TONE = {
+    done: 'text-emerald-300',
+    todo: 'text-amber-300',
+    optional: 'text-white/35',
+} as const;
+
+export interface SetupWizardProps extends PlanInput {
+    /** Whether an item is already set up, from secrets the page has loaded. */
+    isDone: (itemId: string) => boolean;
+    /** Plain settings, saved through the page's own secret endpoint. */
+    secretValues: Record<string, string>;
+    onSecretChange: (key: string, value: string) => void;
+    onSaveSecrets: (keys: string[]) => Promise<void>;
+    savingSecret: string | null;
+    isSecretConfigured: (key: string) => boolean;
+    /** A save landed somewhere; refresh the page's own status. */
+    onRefresh: () => void;
+    /** The address residents use, for callback URLs. */
+    publicOrigin: string | null;
+    /** Switch a choice the questionnaire seeded but did not settle. */
+    onChooseProvider: (key: NonNullable<PlanItem['choiceKey']>, id: string) => void;
+    /** The cloud foundation walk, which belongs to no single capability. */
+    renderFoundation: (cloud: 'google' | 'azure' | 'aws') => React.ReactNode;
+    /** The town-systems connector, which has its own component further down. */
+    renderGovtech?: () => React.ReactNode;
+}
+
+export default function SetupWizard(props: SetupWizardProps) {
+    const { isDone, onRefresh, publicOrigin, onChooseProvider, renderFoundation } = props;
+
+    const tasks = useMemo(() => buildPlan(props), [
+        props.cloud, props.idp, props.maps, props.aiProvider,
+        props.emailProvider, props.smsProvider, props.redactionProvider, props.wanted,
+    ]);
+
+    const taskDone = (t: PlanTask) => t.items.every(i => isDone(i.id));
+
+    const [openId, setOpenId] = useState<string | null>(null);
+    /* Once a clerk clicks a row, their choice wins over the automatic one --
+     * being walked through setup should not mean losing the ability to go back
+     * and look at something already finished. */
+    const chosen = useRef(false);
+
+    // Land on the first unfinished task, once, when status first arrives.
+    useEffect(() => {
+        if (chosen.current || openId !== null || tasks.length === 0) return;
+        setOpenId((tasks.find(t => !taskDone(t)) ?? tasks[0]).id);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tasks.length]);
+
+    /** Move on, but only from a task that is genuinely finished. */
+    const advanceFrom = (taskId: string) => {
+        const index = tasks.findIndex(t => t.id === taskId);
+        if (index < 0) return;
+        const next = tasks.slice(index + 1).find(t => !taskDone(t));
+        setOpenId(next ? next.id : null);
+    };
+
+    const open = tasks.find(t => t.id === openId) ?? null;
+    const remaining = tasks.filter(t => !taskDone(t)).length;
+
+    return (
+        <div className="grid lg:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] gap-5">
+            {/* ── The list ── */}
+            <nav aria-label="Setup tasks" className="lg:sticky lg:top-4 self-start">
+                <p className="text-[11px] uppercase tracking-wider text-white/40 font-semibold mb-2.5 px-1">
+                    {remaining === 0 ? 'All done' : `${remaining} left`}
+                </p>
+                <ul className="space-y-1">
+                    {tasks.map(task => {
+                        const done = taskDone(task);
+                        const active = task.id === openId;
+                        const tone = done ? 'done' : task.required ? 'todo' : 'optional';
+                        return (
+                            <li key={task.id}>
+                                <button
+                                    type="button"
+                                    onClick={() => { chosen.current = true; setOpenId(active ? null : task.id); }}
+                                    aria-current={active ? 'step' : undefined}
+                                    className={`w-full text-left rounded-xl px-3 py-2.5 flex items-center gap-2.5 border transition-colors ${active
+                                        ? 'bg-white/[0.09] border-white/20'
+                                        : 'bg-white/[0.03] border-transparent hover:bg-white/[0.06]'}`}
+                                >
+                                    <span className={`shrink-0 ${STATUS_TONE[tone]}`} aria-hidden="true">
+                                        {done
+                                            ? <Check className="w-4 h-4" />
+                                            : <Circle className="w-4 h-4" strokeWidth={task.required ? 2.5 : 1.5} />}
+                                    </span>
+                                    <span className="min-w-0 flex-1">
+                                        <span className="block text-sm text-white/85 truncate">{task.title}</span>
+                                        <span className="block text-[11px] text-white/40 truncate">
+                                            {done ? 'Set up' : task.items.map(i => i.title).join(' · ')}
+                                        </span>
+                                    </span>
+                                    {active && <ChevronRight className="w-3.5 h-3.5 text-white/30 shrink-0" aria-hidden="true" />}
+                                </button>
+                            </li>
+                        );
+                    })}
+                </ul>
+            </nav>
+
+            {/* ── The one you are on ── */}
+            <div className="min-w-0">
+                <AnimatePresence mode="wait">
+                    {open ? (
+                        <motion.section
+                            key={open.id}
+                            initial={{ opacity: 0, y: 8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -6 }}
+                            transition={{ duration: 0.18 }}
+                            className="setup-panel p-5 sm:p-6"
+                        >
+                            <h3 className="font-semibold text-white text-base">{open.title}</h3>
+                            <p className="text-sm text-white/55 leading-relaxed mt-1">{open.blurb}</p>
+
+                            {open.foundation && (
+                                <div className="mt-4 pt-4 border-t border-white/[0.07]">
+                                    {renderFoundation(open.foundation)}
+                                </div>
+                            )}
+
+                            <div className="mt-4 space-y-5">
+                                {open.items.map(item => (
+                                    <TaskItem
+                                        key={item.id}
+                                        item={item}
+                                        {...props}
+                                        onDone={(verified) => {
+                                            onRefresh();
+                                            /* Only when the whole task is finished, and only on a
+                                             * green test. Advancing after one item of four would
+                                             * leave the other three behind. */
+                                            if (verified && open.items.every(i => i.id === item.id || isDone(i.id))) {
+                                                advanceFrom(open.id);
+                                            }
+                                        }}
+                                        publicOrigin={publicOrigin}
+                                        onChooseProvider={onChooseProvider}
+                                    />
+                                ))}
+                                {open.vendor === 'govtech' && props.renderGovtech?.()}
+                            </div>
+                        </motion.section>
+                    ) : (
+                        <motion.div
+                            key="done"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            className="setup-panel p-6 text-center"
+                        >
+                            <div className="w-12 h-12 mx-auto rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/25">
+                                <Check className="w-6 h-6 text-white" strokeWidth={2.5} />
+                            </div>
+                            <p className="text-white/80 mt-3.5">Everything you picked is set up.</p>
+                            <p className="text-white/45 text-sm mt-1.5">
+                                Pick anything from the list to look at it again, or change it later on the cards below.
+                            </p>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            </div>
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
+
+/** One thing inside a task: a provider with a catalog, plain settings, or both. */
+function TaskItem({
+    item, onDone, publicOrigin, onChooseProvider,
+    secretValues, onSecretChange, onSaveSecrets, savingSecret, isSecretConfigured,
+}: {
+    item: PlanItem;
+    onDone: (verified: boolean) => void;
+    publicOrigin: string | null;
+    onChooseProvider: (key: NonNullable<PlanItem['choiceKey']>, id: string) => void;
+} & Pick<SetupWizardProps,
+    'secretValues' | 'onSecretChange' | 'onSaveSecrets' | 'savingSecret' | 'isSecretConfigured'>) {
+    return (
+        <div>
+            <h4 className="text-sm font-semibold text-white/90">{item.title}</h4>
+            <p className="text-xs text-white/50 leading-relaxed mt-0.5 mb-2.5">{item.blurb}</p>
+
+            {item.cap && item.provider && (
+                <InlineProviderSetup
+                    cap={item.cap}
+                    provider={item.provider}
+                    choices={item.choices}
+                    onChoose={item.choiceKey ? (id) => onChooseProvider(item.choiceKey!, id) : undefined}
+                    onSaved={onDone}
+                    publicOrigin={publicOrigin}
+                />
+            )}
+
+            {item.secrets && (
+                <PlainSecrets
+                    fields={item.secrets}
+                    values={secretValues}
+                    onChange={onSecretChange}
+                    onSave={onSaveSecrets}
+                    saving={savingSecret}
+                    isConfigured={isSecretConfigured}
+                    onSaved={() => onDone(false)}
+                    /* Spacing only when it follows a provider block, so an item
+                     * that is only settings does not start with a gap. */
+                    className={item.cap ? 'mt-3' : ''}
+                />
+            )}
+        </div>
+    );
+}
+
+/**
+ * Boxes for settings that belong to no provider card.
+ *
+ * A few things here -- the backup bucket, Azure's Content Safety pair, the
+ * Sentry key -- have no capability catalog behind them, and were previously
+ * printed as bare environment-variable names in the middle of a sentence. That
+ * is not an instruction a clerk can act on: it reads as something to hand to
+ * IT, and it was the only place on this page asking anyone to edit a file.
+ */
+function PlainSecrets({
+    fields, values, onChange, onSave, saving, isConfigured, onSaved, className = '',
+}: {
+    fields: { key: string; label: string; secret?: boolean; help?: string }[];
+    values: Record<string, string>;
+    onChange: (key: string, value: string) => void;
+    onSave: (keys: string[]) => Promise<void>;
+    saving: string | null;
+    isConfigured: (key: string) => boolean;
+    onSaved: () => void;
+    className?: string;
+}) {
+    const pending = fields.filter(f => values[f.key]).map(f => f.key);
+    const allStored = fields.every(f => isConfigured(f.key));
+
+    return (
+        <div className={`rounded-xl border border-white/10 bg-white/[0.03] p-3.5 ${className}`}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
+                {fields.map(f => (
+                    <SecretField
+                        key={f.key}
+                        label={f.label}
+                        secret={f.secret}
+                        help={f.help}
+                        savedHint={isConfigured(f.key)}
+                        value={values[f.key] || ''}
+                        onChange={(v) => onChange(f.key, v)}
+                    />
+                ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2.5 mt-3 pt-3 border-t border-white/[0.07]">
+                <button
+                    type="button"
+                    onClick={async () => { await onSave(pending); onSaved(); }}
+                    disabled={pending.length === 0 || saving !== null}
+                    className="inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-semibold text-white bg-primary-500 hover:bg-primary-400 border border-primary-400/50 transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                >
+                    {saving ? 'Saving…' : 'Save'}
+                </button>
+                {allStored && (
+                    <span className="text-[11px] text-emerald-300/80 inline-flex items-center gap-1.5">
+                        <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                        Saved. Leave a box blank to keep what is stored.
+                    </span>
+                )}
+                {/* These have no live test, and saying so is better than a green
+                    tick that only means the value reached the database. */}
+                {!allStored && pending.length === 0 && (
+                    <span className="text-[11px] text-white/35 inline-flex items-center gap-1.5">
+                        <AlertCircle className="w-3.5 h-3.5" aria-hidden="true" />
+                        Not filled in yet.
+                    </span>
+                )}
+            </div>
+        </div>
+    );
+}

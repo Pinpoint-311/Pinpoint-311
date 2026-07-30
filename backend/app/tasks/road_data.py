@@ -71,95 +71,46 @@ def should_swap(existing_count: int, incoming_count: int) -> Tuple[bool, Optiona
     return True, None
 
 
-def extract_boundary_geometry(boundary: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    if not isinstance(boundary, dict):
-        return None
-    btype = boundary.get("type")
-    if btype in ("Polygon", "MultiPolygon", "GeometryCollection"):
-        return boundary
-    if btype == "Feature":
-        return boundary.get("geometry")
-    if btype == "FeatureCollection" and boundary.get("features"):
-        features = boundary["features"]
-        if len(features) == 1:
-            return features[0].get("geometry")
-        return {
-            "type": "GeometryCollection",
-            "geometries": [f.get("geometry") for f in features if f.get("geometry")]
-        }
-    return None
-
-def boundary_bbox(geojson: Dict[str, Any]) -> Optional[Tuple[float, float, float, float]]:
-    """(minx, miny, maxx, maxy) of a boundary, for the fetch envelope."""
-    coordinates: List[List[float]] = []
-
-    def walk(node: Any) -> None:
-        if isinstance(node, (list, tuple)):
-            if len(node) == 2 and all(isinstance(v, (int, float)) for v in node):
-                coordinates.append([float(node[0]), float(node[1])])
-            else:
-                for child in node:
-                    walk(child)
-        elif isinstance(node, dict):
-            for v in node.values():
-                walk(v)
-
-    walk(geojson)
-    if not coordinates:
-        return None
-    xs = [c[0] for c in coordinates]
-    ys = [c[1] for c in coordinates]
-    return min(xs), min(ys), max(xs), max(ys)
-
-
-STATE_NAME_MAP = {
-    "ALABAMA": "AL", "ALASKA": "AK", "ARIZONA": "AZ", "ARKANSAS": "AR", "CALIFORNIA": "CA",
-    "COLORADO": "CO", "CONNECTICUT": "CT", "DELAWARE": "DE", "FLORIDA": "FL", "GEORGIA": "GA",
-    "HAWAII": "HI", "IDAHO": "ID", "ILLINOIS": "IL", "INDIANA": "IN", "IOWA": "IA",
-    "KANSAS": "KS", "KENTUCKY": "KY", "LOUISIANA": "LA", "MAINE": "ME", "MARYLAND": "MD",
-    "MASSACHUSETTS": "MA", "MICHIGAN": "MI", "MINNESOTA": "MN", "MISSISSIPPI": "MS",
-    "MISSOURI": "MO", "MONTANA": "MT", "NEBRASKA": "NE", "NEVADA": "NV", "NEW HAMPSHIRE": "NH",
-    "NEW JERSEY": "NJ", "NEW MEXICO": "NM", "NEW YORK": "NY", "NORTH CAROLINA": "NC",
-    "NORTH DAKOTA": "ND", "OHIO": "OH", "OKLAHOMA": "OK", "OREGON": "OR", "PENNSYLVANIA": "PA",
-    "RHODE ISLAND": "RI", "SOUTH CAROLINA": "SC", "SOUTH DAKOTA": "SD", "TENNESSEE": "TN",
-    "TEXAS": "TX", "UTAH": "UT", "VERMONT": "VT", "VIRGINIA": "VA", "WASHINGTON": "WA",
-    "WEST VIRGINIA": "WV", "WISCONSIN": "WI", "WYOMING": "WY", "DISTRICT OF COLUMBIA": "DC"
-}
-
-def _resolve_state_code(boundary: Optional[Dict[str, Any]], settings_state: Optional[str]) -> Optional[str]:
-    if settings_state and len(settings_state.strip()) == 2:
-        return settings_state.strip().upper()
-    display = ""
-    if isinstance(boundary, dict):
-        if "features" in boundary and boundary["features"]:
-            props = boundary["features"][0].get("properties", {})
-            display = props.get("display_name") or props.get("name") or ""
-        display = display or boundary.get("display_name") or boundary.get("name") or ""
-    upper_disp = display.upper()
-    for sname, scode in STATE_NAME_MAP.items():
-        if sname in upper_disp:
-            return scode
-    return settings_state or "DEFAULT"
+from app.services.boundary_geo import (  # re-exported: long-standing import path
+    STATE_NAME_MAP,
+    boundary_bbox,
+    boundary_centre,
+    extract_boundary_geometry,
+    resolve_state,
+    state_from_name,
+)
 
 
 async def _load_boundary_and_state(db) -> Tuple[Optional[Dict[str, Any]], Optional[str], str]:
+    """The boundary, the state it is in, and the town's name.
+
+    The state is looked up from the boundary's coordinates rather than read off
+    its name -- see boundary_geo.resolve_state for why the name was not good
+    enough, and why a wrong answer here hands a town its neighbour's streets.
+
+    The answer is written back to settings, so the network lookup happens once
+    per boundary rather than on every monthly refresh.
+    """
     from app.models import SystemSettings
 
     row = (await db.execute(select(SystemSettings).limit(1))).scalar_one_or_none()
     if not row:
         return None, None, "pinpoint"
-    settings_boundary = getattr(row, "township_boundary", None)
-    raw_state = getattr(row, "state_code", None) or getattr(row, "state", None)
-    resolved_state = _resolve_state_code(settings_boundary, raw_state)
-    return settings_boundary, resolved_state, getattr(row, "township_name", "pinpoint") or "pinpoint" 
-    from app.models import SystemSettings
 
-    row = (await db.execute(select(SystemSettings).limit(1))).scalar_one_or_none()
-    if not row:
-        return None, None, "pinpoint"
-    settings_boundary = getattr(row, "township_boundary", None)
-    state_code = getattr(row, "state_code", None) or getattr(row, "state", None)
-    return settings_boundary, state_code, getattr(row, "township_name", "pinpoint") or "pinpoint"
+    boundary = getattr(row, "township_boundary", None)
+    saved = getattr(row, "state_code", None) or getattr(row, "state", None)
+    resolved = await resolve_state(boundary, saved)
+
+    if resolved and resolved != (saved or "").strip().upper():
+        if hasattr(row, "state_code"):
+            try:
+                row.state_code = resolved
+                await db.commit()
+            except Exception as exc:
+                logger.info("could not cache the resolved state: %s", exc)
+
+    township = getattr(row, "township_name", "pinpoint") or "pinpoint"
+    return boundary, resolved, township
 
 
 async def seed_roads_for_boundary(db, *, force: bool = False) -> Dict[str, Any]:
@@ -183,7 +134,10 @@ async def seed_roads_for_boundary(db, *, force: bool = False) -> Dict[str, Any]:
         return {"ok": False, "reason": "township boundary has no coordinates"}
 
     entry = resolve_source(state_code)
-    status.state_code = (state_code or "")[:2] or None
+    # Only a real two-letter code. Truncating whatever arrived here is how
+    # "DEFAULT" became "DE" and the roads page told a New Jersey town its
+    # source was Delaware.
+    status.state_code = state_code if (state_code and len(state_code) == 2) else None
     status.source_name = entry.get("name")
     status.endpoint = entry.get("url")
     status.source_id = entry.get("schema")
