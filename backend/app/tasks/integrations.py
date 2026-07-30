@@ -332,8 +332,20 @@ def push_request_to_integrations(self, request_id: int):
                     connector = await build_connector_for(integration)
                     if "push" not in connector.capabilities:
                         continue
-                    record = await connector.push_request(
-                        _build_payload(sr, integration.config or {}, await _dept_name(db, sr))
+                    # Behind the breaker. Without it a vendor that is properly
+                    # down makes every queued report pay the full retry budget --
+                    # three attempts and up to eight seconds of backoff each --
+                    # before failing anyway, and the worker pool fills behind a
+                    # service that is not coming back this minute. This also
+                    # records the outcome, so the admin badge reflects real
+                    # pushes rather than only whenever someone pressed Test.
+                    from app.services.circuit_breaker import guard
+                    payload = _build_payload(sr, integration.config or {}, await _dept_name(db, sr))
+                    record = await guard(
+                        f"govtech:{integration.platform}",
+                        lambda: connector.push_request(payload),
+                        db=db,
+                        provider=integration.platform,
                     )
                     link = IntegrationLink(
                         integration_id=integration.id,
@@ -385,7 +397,13 @@ def push_status_to_integrations(self, request_id: int, notes: str = None):
                     connector = await build_connector_for(integration)
                     if "push_status" not in connector.capabilities:
                         continue
-                    await connector.push_status(link.external_id, sr.status, notes)
+                    from app.services.circuit_breaker import guard
+                    await guard(
+                        f"govtech:{integration.platform}",
+                        lambda: connector.push_status(link.external_id, sr.status, notes),
+                        db=db,
+                        provider=integration.platform,
+                    )
                     link.external_status = connector.map_status_out(sr.status)
                     link.last_pushed_at = datetime.utcnow()
                     link.sync_error = None
