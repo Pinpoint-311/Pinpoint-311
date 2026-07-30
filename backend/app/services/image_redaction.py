@@ -637,14 +637,21 @@ async def settings() -> Tuple[Optional[str], bool, bool]:
     on a municipal website is a harm a town incurs by doing nothing, and the
     default should not be the harmful one.
 
-    Plates default off. The detector guesses (see `plate_like`), the failure
-    mode is a blurred house number on an otherwise useful report, and a town
-    should opt into that knowingly.
+    Plates now default on too, for the same reason as faces: a plate published
+    on a municipal website is a harm the town causes by leaving a setting alone,
+    and the privacy-protecting state should be the one you get without acting.
+
+    This is a deliberate reversal. Plates were off because the detector guesses
+    (see `plate_like`) and its failure is a blurred house number on an otherwise
+    useful report -- a real cost, but one a clerk can see and correct, whereas
+    the published plate is one nobody notices until it matters. A town that
+    would rather have the house numbers can switch plates off on the Photo
+    Redaction card, which is reachable now that the card exists.
     """
     provider = await resolve_provider()
     if not provider:
         return (None, False, False)
-    return (provider, await _flag(REDACT_FACES_KEY, True), await _flag(REDACT_PLATES_KEY, False))
+    return (provider, await _flag(REDACT_FACES_KEY, True), await _flag(REDACT_PLATES_KEY, True))
 
 
 # --------------------------------------------------------------------------
