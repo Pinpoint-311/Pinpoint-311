@@ -619,6 +619,15 @@ class ApiClient {
         return this.request(`/system/providers/${capability}/test`, { method: 'POST' });
     }
 
+    /** Which provider each capability is on, and which of its providers have
+     *  their credentials stored. One request rather than eight, and answered
+     *  per provider — "maps is configured" is not the same question as "Esri is
+     *  configured", and conflating them made the setup guide skip a provider
+     *  that had no credentials at all. */
+    async getProviderStatus(): Promise<ProviderStatusMap> {
+        return this.request<ProviderStatusMap>('/system/providers/status');
+    }
+
     /** Whether this server already has an identity on its cloud, in which case
      *  the credential boxes for that cloud should be left empty rather than
      *  filled — the platform issues a short-lived token instead. */
@@ -1550,6 +1559,12 @@ export interface HealthSummary {
 /** An identity attached to the compute by the cloud itself. When present, the
  *  listed keys need no value — and leaving them empty is the better answer, not
  *  merely an allowed one. */
+/** Per capability: the provider in use, and which providers are set up. */
+export type ProviderStatusMap = Record<string, {
+    current_provider: string | null;
+    configured: Record<string, boolean>;
+}>;
+
 export interface CloudIdentity {
     attached: boolean;
     provider: string | null;

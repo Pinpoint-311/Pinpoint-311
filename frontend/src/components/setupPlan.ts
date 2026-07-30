@@ -32,7 +32,7 @@ export type Vendor =
     | 'auth0' | 'okta' | 'oidc'
     | 'esri' | 'apple'
     | 'twilio' | 'smtp' | 'http'
-    | 'sentry' | 'storage' | 'local' | 'govtech';
+    | 'sentry' | 'storage' | 'local';
 
 export const VENDOR_LABEL: Record<Vendor, string> = {
     google: 'Google Cloud',
@@ -49,7 +49,6 @@ export const VENDOR_LABEL: Record<Vendor, string> = {
     sentry: 'Sentry',
     storage: 'Your backup storage',
     local: 'This server',
-    govtech: "Your town's other systems",
 };
 
 /* Entra is administered in the Azure portal, so a town on Azure that uses it
@@ -76,11 +75,10 @@ export interface PlanItem {
     provider?: string;
     /** Settings with no capability card, entered as plain boxes. */
     secrets?: { key: string; label: string; secret?: boolean; help?: string }[];
-    /** Alternatives offered inline, where the cloud answer does not decide it. */
-    choices?: { id: string; label: string }[];
-    /** Which questionnaire answer this item's provider comes from, so a picker
-     *  can write back to the right piece of state. */
-    choiceKey?: 'email' | 'sms' | 'redaction' | 'maps' | 'idp';
+    /* No `choices` here on purpose. Every provider decision is made once, in
+     * the questionnaire at the top, so a task never asks again -- asking twice
+     * is how a clerk ends up with a section configured for one provider and a
+     * questionnaire that says another. */
     /** Required to take a report at all. */
     required?: boolean;
 }
@@ -118,7 +116,7 @@ const VENDOR_ORDER: Vendor[] = [
     'azure', 'google', 'aws',           // the clouds
     'esri', 'apple',                    // maps, when it is its own vendor
     'smtp', 'twilio', 'http',           // delivery, when it is its own vendor
-    'local', 'storage', 'govtech', 'sentry',
+    'local', 'storage', 'sentry',
 ];
 
 export function buildPlan(input: PlanInput): PlanTask[] {
@@ -188,13 +186,6 @@ export function buildPlan(input: PlanInput): PlanTask[] {
             title: 'Screening and blurring',
             blurb: 'Screens what residents write, and blurs faces and number plates in the photos they send. Abusive text is always screened, with or without this.',
             cap: 'redaction', provider: input.redactionProvider,
-            choiceKey: 'redaction',
-            choices: [
-                { id: 'local', label: 'On this server' },
-                { id: 'google', label: 'Google Cloud Vision' },
-                { id: 'azure', label: 'Azure Face + Vision' },
-                { id: 'aws', label: 'AWS Rekognition' },
-            ],
             secrets: cloud === 'azure' ? [
                 { key: 'AZURE_CONTENT_SAFETY_ENDPOINT', label: 'Content Safety endpoint', help: 'Keys and Endpoint blade of an Azure AI Content Safety resource.' },
                 { key: 'AZURE_CONTENT_SAFETY_KEY', label: 'Content Safety key', secret: true, help: 'Either KEY 1 or KEY 2 — they are interchangeable.' },
@@ -208,12 +199,6 @@ export function buildPlan(input: PlanInput): PlanTask[] {
             title: 'Email notifications',
             blurb: 'Sends residents a confirmation when they file, and an update when the job is done.',
             cap: 'email', provider: input.emailProvider,
-            choiceKey: 'email',
-            choices: [
-                { id: 'smtp', label: 'SMTP (your existing mail server)' },
-                { id: 'ses', label: 'Amazon SES' },
-                { id: 'acs', label: 'Azure Communication Services' },
-            ],
         });
     }
 
@@ -223,13 +208,6 @@ export function buildPlan(input: PlanInput): PlanTask[] {
             title: 'Text message notifications',
             blurb: 'The same updates by text, for residents who give a mobile number. Email on its own is fine too.',
             cap: 'sms', provider: input.smsProvider,
-            choiceKey: 'sms',
-            choices: [
-                { id: 'twilio', label: 'Twilio' },
-                { id: 'sns', label: 'Amazon SNS' },
-                { id: 'acs', label: 'Azure Communication Services' },
-                { id: 'http', label: 'Other (HTTP gateway)' },
-            ],
         });
     }
 
@@ -248,13 +226,6 @@ export function buildPlan(input: PlanInput): PlanTask[] {
         });
     }
 
-    if (want('govtech')) {
-        add('govtech', {
-            id: 'govtech',
-            title: 'Connecting a system the town already uses',
-            blurb: 'Sends reports into permitting or work-order software the town already runs, so staff are not typing things twice.',
-        });
-    }
 
     if (want('errors')) {
         add('sentry', {

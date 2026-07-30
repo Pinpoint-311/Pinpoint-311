@@ -2147,62 +2147,120 @@ export default function AdminConsole() {
                         )}
                         {/* Departments Tab */}
                         {currentTab === 'departments' && (
+                            /* Same shape as Service Categories: title with a
+                             * subtitle, a gradient action button, a row of stat
+                             * cards, then the grid. The two pages list the same
+                             * kind of thing and sat next to each other in the
+                             * sidebar looking unrelated. */
                             <div className="space-y-6">
                                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                                    <h1 className="text-xl sm:text-2xl font-bold text-white">Departments</h1>
+                                    <div>
+                                        <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Departments</h1>
+                                        <p className="text-sm text-white/50 mt-1">The teams reports are assigned to, and where their notifications go</p>
+                                    </div>
                                     <Button
-                                        className="w-full sm:w-auto"
                                         leftIcon={<Plus className="w-4 h-4" />}
                                         onClick={() => {
                                             setEditingDepartment(null);
                                             setNewDepartment({ name: '', description: '', routing_email: '' });
                                             setShowDepartmentModal(true);
                                         }}
+                                        className="w-full sm:w-auto bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-500/25"
                                     >
                                         Add Department
                                     </Button>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-500/10 to-blue-600/5 border border-blue-500/20 backdrop-blur-sm shadow-xl">
+                                        <div className="flex items-center gap-3.5">
+                                            <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center shrink-0">
+                                                <Building2 className="w-5 h-5 text-blue-400" />
+                                            </div>
+                                            <div>
+                                                <p className="text-2xl font-bold text-white">{departments.length}</p>
+                                                <p className="text-xs text-blue-300/70">Departments</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border border-emerald-500/20 backdrop-blur-sm shadow-xl">
+                                        <div className="flex items-center gap-3.5">
+                                            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center shrink-0">
+                                                <Mail className="w-5 h-5 text-emerald-400" />
+                                            </div>
+                                            <div>
+                                                <p className="text-2xl font-bold text-white">{departments.filter(d => d.routing_email).length}</p>
+                                                <p className="text-xs text-emerald-300/70">With routing email</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {/* A department with no email is not broken --
+                                        reports still route to it in the console --
+                                        but nobody is told, so it is worth counting. */}
+                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-500/10 to-amber-600/5 border border-amber-500/20 backdrop-blur-sm shadow-xl">
+                                        <div className="flex items-center gap-3.5">
+                                            <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                                                <AlertCircle className="w-5 h-5 text-amber-400" />
+                                            </div>
+                                            <div>
+                                                <p className="text-2xl font-bold text-white">{departments.filter(d => !d.routing_email).length}</p>
+                                                <p className="text-xs text-amber-300/70">No email set</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                                     {departments.map((dept) => (
-                                        <Card key={dept.id} className="relative group">
+                                        <div key={dept.id} className="premium-card group relative p-5">
                                             <div className="flex items-start gap-4">
-                                                <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center text-blue-300">
-                                                    <Building2 className="w-6 h-6" />
+                                                <div className="setup-tile w-12 h-12 rounded-2xl flex items-center justify-center shrink-0">
+                                                    <Building2 className="w-6 h-6 text-white" />
                                                 </div>
-                                                <div className="flex-1">
-                                                    <h3 className="font-semibold text-white">{dept.name}</h3>
+                                                <div className="min-w-0 flex-1">
+                                                    <h3 className="font-semibold text-white truncate">{dept.name}</h3>
                                                     <p className="text-sm text-white/50 mt-1">{dept.description || 'No description'}</p>
-                                                    {dept.routing_email && (
-                                                        <p className="text-xs text-white/30 mt-2 font-mono">{dept.routing_email}</p>
+                                                    {dept.routing_email ? (
+                                                        <p className="text-xs text-white/40 mt-2 font-mono truncate">{dept.routing_email}</p>
+                                                    ) : (
+                                                        <p className="text-xs text-amber-300/70 mt-2 inline-flex items-center gap-1.5">
+                                                            <AlertCircle className="w-3 h-3 shrink-0" aria-hidden="true" />
+                                                            No routing email — nobody is notified
+                                                        </p>
                                                     )}
                                                 </div>
-                                                <div className="flex gap-1">
+                                                {/* Visible on focus as well as hover: keyboard
+                                                    users never trigger hover, and these were the
+                                                    only way to edit a department. */}
+                                                <div className="flex gap-1 shrink-0">
                                                     <button
                                                         onClick={() => handleEditDepartment(dept)}
-                                                        className="opacity-0 group-hover:opacity-100 p-2 hover:bg-white/10 rounded-lg transition-all"
+                                                        className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-2 hover:bg-white/10 rounded-lg transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
                                                         aria-label={`Edit ${dept.name} department`}
                                                     >
                                                         <Edit className="w-4 h-4 text-white/60" aria-hidden="true" />
                                                     </button>
                                                     <button
                                                         onClick={() => handleDeleteDepartment(dept.id)}
-                                                        className="opacity-0 group-hover:opacity-100 p-2 hover:bg-red-500/20 rounded-lg transition-all"
+                                                        className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-2 hover:bg-red-500/20 rounded-lg transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
                                                         aria-label={`Delete ${dept.name} department`}
                                                     >
                                                         <Trash2 className="w-4 h-4 text-red-400" aria-hidden="true" />
                                                     </button>
                                                 </div>
                                             </div>
-                                        </Card>
+                                        </div>
                                     ))}
                                 </div>
 
                                 {departments.length === 0 && (
-                                    <Card className="text-center py-8">
+                                    <div className="premium-card text-center py-10 px-6">
                                         <Building2 className="w-12 h-12 mx-auto text-white/20 mb-3" />
-                                        <p className="text-white/50">No departments yet. Add your first department to organize staff.</p>
-                                    </Card>
+                                        <p className="text-white/60">No departments yet.</p>
+                                        <p className="text-white/40 text-sm mt-1">
+                                            Add one to organise staff and route reports to the right team.
+                                        </p>
+                                    </div>
                                 )}
                             </div>
                         )}
