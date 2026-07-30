@@ -471,3 +471,21 @@ export interface ConnectorHealthReport {
     connectors: ConnectorHealth[];
     needs_attention: string[];
 }
+
+
+/** A browser crash, as the admin console shows it.
+ *
+ * `occurrences` matters: identical crashes collapse onto one row, so a render
+ * loop reads as "seen 400 times" rather than burying every other fault under
+ * 400 identical entries. */
+export interface ClientErrorEntry {
+    id: number;
+    kind: string;
+    message: string;
+    stack: string | null;
+    component_stack: string | null;
+    url: string | null;
+    occurrences: number;
+    first_seen_at: string | null;
+    last_seen_at: string | null;
+}

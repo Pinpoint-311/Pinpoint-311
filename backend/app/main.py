@@ -453,6 +453,11 @@ from pydantic import BaseModel
 from typing import Optional
 import logging
 
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_db
+
 client_error_logger = logging.getLogger("client_errors")
 
 class ClientError(BaseModel):
@@ -468,7 +473,7 @@ class ClientError(BaseModel):
     userAgent: Optional[str] = None
 
 @app.post("/api/system/client-errors", status_code=204)
-async def log_client_error(error: ClientError):
+async def log_client_error(error: ClientError, db: AsyncSession = Depends(get_db)):
     """Log frontend errors for monitoring."""
     import re
     def sanitize(text):
@@ -495,4 +500,19 @@ async def log_client_error(error: ClientError):
         # it names the component tree rather than minified frames.
         detail += f"\n  components: {sanitize(error.componentStack)[:800]}"
     client_error_logger.error(detail)
+
+    # Also persisted, so it reaches somebody. The log line above only helps a
+    # deployment with a Sentry DSN or an operator reading container logs;
+    # neither describes a town running this on its own server, which is exactly
+    # the deployment the error screen was promising a report to.
+    from app.services import client_errors
+    await client_errors.record(
+        db,
+        kind=error.type,
+        message=error.message,
+        stack=error.stack,
+        component_stack=error.componentStack,
+        url=error.url,
+        user_agent=error.userAgent,
+    )
     return Response(status_code=204)

@@ -13,6 +13,7 @@ import {
     UserCreate,
     UserUpdate,
     ConnectorHealthReport,
+    ClientErrorEntry,
     ServiceCreate,
     Department,
     RequestComment,
@@ -472,6 +473,12 @@ class ApiClient {
             method: 'POST',
             body: JSON.stringify(data),
         });
+    }
+
+    /** Browser crashes staff and residents have hit. The error screen promises
+     *  a report; this is where that promise is kept. */
+    async getClientErrors(limit = 50): Promise<{ errors: ClientErrorEntry[] }> {
+        return this.request<{ errors: ClientErrorEntry[] }>(`/system/client-errors?limit=${limit}`);
     }
 
     /** What each connector is actually doing, as opposed to whether its

@@ -105,6 +105,40 @@ async def _configured_map(providers: List[Dict[str, Any]]) -> Dict[str, bool]:
     return out
 
 
+@router.get("/client-errors")
+async def list_client_errors(
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Browser crashes residents and staff have hit.
+
+    The error screen promises a report. Without this the promise resolved to a
+    line in a container log, which for a self-hosted town is the same as
+    nowhere. Identical crashes are collapsed with a count, so a render loop
+    shows as one row seen 400 times rather than burying every other fault.
+    """
+    from app.services import client_errors
+
+    rows = await client_errors.recent(db, limit=min(max(limit, 1), 200))
+    return {
+        "errors": [
+            {
+                "id": r.id,
+                "kind": r.kind,
+                "message": r.message,
+                "stack": r.stack,
+                "component_stack": r.component_stack,
+                "url": r.url,
+                "occurrences": r.occurrences,
+                "first_seen_at": r.first_seen_at.isoformat() if r.first_seen_at else None,
+                "last_seen_at": r.last_seen_at.isoformat() if r.last_seen_at else None,
+            }
+            for r in rows
+        ],
+    }
+
+
 @router.get("/connectors/health")
 async def connector_health_report(
     db: AsyncSession = Depends(get_db),
