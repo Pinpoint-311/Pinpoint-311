@@ -15,6 +15,10 @@ correctly, which is what made the difference easy to miss.
 
 import pytest
 
+# CI installs only the crypto + HTTP libraries, so the pydantic stack this
+# schema is built on may be absent. Same guard the rest of the suite uses.
+pytest.importorskip("pydantic")
+
 from app.schemas import UserUpdate
 
 

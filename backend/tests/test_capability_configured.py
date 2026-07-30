@@ -12,6 +12,8 @@ and it makes the setup checklist permanently incomplete.
 
 import pytest
 
+pytest.importorskip("fastapi")  # system.py pulls in the whole API stack
+
 from app.api.system import _configured_map, _field_required
 
 

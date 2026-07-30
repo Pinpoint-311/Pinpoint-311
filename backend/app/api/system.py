@@ -377,6 +377,9 @@ async def save_provider(
             entry = cache.get(provider_id) or {}
             allowed_models |= {m["id"] for m in entry.get("models", []) if m.get("id")}
         except Exception:
+            # Discovery is an *additional* source of valid model ids. If the
+            # cache can't be read, fall back to validating against the curated
+            # list alone rather than rejecting the save.
             pass
         if allowed_models and body.model not in allowed_models:
             raise HTTPException(status_code=400, detail=f"Unknown model for {provider_id}: {body.model}")
@@ -618,6 +621,8 @@ async def set_cloud_profile(
                     "encrypted database until GOOGLE_CLOUD_PROJECT and credentials are set."
                 )
         except Exception:
+            # This block only decides whether to add an advisory warning. Failing
+            # to determine reachability is not a reason to fail the profile switch.
             pass
     elif p["secrets"] == "aws":
         try:
@@ -628,6 +633,8 @@ async def set_cloud_profile(
                     "secrets stay in the encrypted database until then."
                 )
         except Exception:
+            # As above: advisory only, so an unavailable check stays silent
+            # rather than blocking the switch.
             pass
 
     # KMS migration safety: existing PII is unwrapped by the KMS tag stored in
@@ -651,6 +658,9 @@ async def set_cloud_profile(
         from app.core import pii_crypto
         pii_crypto.clear_caches()
     except Exception:
+        # Best-effort. A stale cached DEK means the next PII write re-wraps
+        # under the old KMS, which the migration warning above already covers;
+        # it is not worth failing an otherwise-applied profile over.
         pass
 
     from app.core.sanitize import sanitize_for_log
@@ -1697,6 +1707,8 @@ async def get_advanced_statistics(
             if float(effective) >= 8:
                 aging_high_priority_count += 1
         except (TypeError, ValueError):
+            # A non-numeric priority in ai_analysis is bad data, not a high
+            # priority. Skip the row rather than counting or raising on it.
             pass
     
     # ========== Trends ==========
@@ -1863,6 +1875,8 @@ async def get_heatmap_data(
             if cached:
                 return json.loads(cached)
     except Exception:
+        # Cache read is an optimisation; on any failure fall through and
+        # recompute from the database.
         pass
 
     # All request coordinates (for "reports" heatmap)
@@ -1916,6 +1930,8 @@ async def get_heatmap_data(
         if redis_client:
             await redis_client.setex(cache_key, STATS_CACHE_TTL, json.dumps(result))
     except Exception:
+        # Failing to cache costs the next caller a recompute. The result is
+        # already correct and must still be returned.
         pass
 
     return result
