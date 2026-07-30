@@ -39,7 +39,7 @@ function probeIdentity(): Promise<CloudIdentity | null> {
 }
 
 export default function InlineProviderSetup({
-    cap, provider, choices, onChoose, onSaved, note,
+    cap, provider, choices, onChoose, onSaved, note, publicOrigin,
 }: {
     cap: Capability;
     /** The provider to set up, from the questionnaire. */
@@ -49,10 +49,16 @@ export default function InlineProviderSetup({
      *  Omitted means the questionnaire already decided and this shows no picker. */
     choices?: { id: string; label: string }[];
     onChoose?: (id: string) => void;
-    /** Tell the page a save landed, so progress chips and "Done" badges move. */
-    onSaved?: () => void;
+    /** Told whether the live test passed, not merely that a save happened.
+     *  The wizard advances on this, and moving somebody past a credential that
+     *  does not work is the whole failure mode being designed out. */
+    onSaved?: (verified: boolean) => void;
     /** A sentence above the steps, where the choice needs explaining. */
     note?: React.ReactNode;
+    /** The address residents use, for callback URLs pasted into a vendor
+     *  console. null means nothing has configured a domain, so the steps fall
+     *  back to this browser's origin and say so. */
+    publicOrigin?: string | null;
 }) {
     const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
     const [identity, setIdentity] = useState<CloudIdentity | null>(null);
@@ -64,7 +70,7 @@ export default function InlineProviderSetup({
     const [copied, setCopied] = useState<string | null>(null);
 
     const ctx: StepContext = {
-        origin: window.location.origin,
+        origin: publicOrigin || window.location.origin,
         copy: (text, id) => {
             navigator.clipboard?.writeText(text).then(
                 () => { setCopied(id); setTimeout(() => setCopied(null), 1600); },
@@ -100,25 +106,28 @@ export default function InlineProviderSetup({
 
     if (error) {
         return (
-            <div className="ml-9 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-200 flex items-start gap-2">
+            <div className="rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-200 flex items-start gap-2">
                 <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
                 <span>{error} You can still set this up on the card further down the page.</span>
             </div>
         );
     }
     if (!catalog) {
-        return <div className="ml-9 h-20 rounded-lg bg-white/[0.03] animate-pulse" aria-busy="true" />;
+        return <div className="h-20 rounded-lg bg-white/[0.03] animate-pulse" aria-busy="true" />;
     }
 
     const active: ProviderInfo | undefined = catalog.providers.find(p => p.provider === provider);
     if (!active) {
         return (
-            <div className="ml-9 rounded-lg border border-amber-400/25 bg-amber-500/[0.07] px-3 py-2 text-xs text-amber-100/80">
+            <div className="rounded-lg border border-amber-400/25 bg-amber-500/[0.07] px-3 py-2 text-xs text-amber-100/80">
                 This deployment does not offer that option. Use the card further down the page to pick one it does.
             </div>
         );
     }
 
+    // Only identity hands out a redirect URI, so only identity needs the
+    // warning; showing it above an API-key box would be noise.
+    const needsCallbackUrl = cap === 'identity';
     const alreadySet = catalog.configured?.[provider] === true;
     const isCurrent = catalog.current_provider === provider;
 
@@ -140,18 +149,37 @@ export default function InlineProviderSetup({
             // Save and verify are one action here. A guide that says "saved"
             // and leaves a clerk to discover later that the key was wrong is
             // the failure this whole page exists to avoid.
-            setResult(await api.testProvider(cap));
-            onSaved?.();
+            const verified = await api.testProvider(cap);
+            setResult(verified);
+            onSaved?.(verified.ok);
         } catch (e: any) {
             setResult({ ok: false, detail: e?.message || 'Save failed' });
+            onSaved?.(false);
         } finally {
             setBusy(null);
         }
     };
 
     return (
-        <div className="ml-9 rounded-xl border border-white/10 bg-white/[0.03] p-3.5">
+        <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3.5">
             {note && <p className="text-xs text-white/50 leading-relaxed mb-3">{note}</p>}
+
+            {/* A callback URL is the one value on this page that has to match
+                something outside it exactly. If nobody has told Pinpoint its own
+                address, the steps below are quoting this browser's -- fine on a
+                laptop pointed at the real site, wrong from an internal
+                hostname, and the resulting failure looks like a bad password. */}
+            {!publicOrigin && needsCallbackUrl && (
+                <div className="mb-3 rounded-lg border border-amber-400/25 bg-amber-500/[0.07] px-3 py-2 flex items-start gap-2">
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-300/80 mt-0.5 shrink-0" aria-hidden="true" />
+                    <p className="text-[11px] text-amber-100/80 leading-relaxed">
+                        The address below is the one you are using right now
+                        (<code className="bg-black/30 px-1 rounded">{window.location.origin}</code>).
+                        If residents reach this site at a different address, set the town's domain in
+                        Settings first — the address you register here has to be the one they use.
+                    </p>
+                </div>
+            )}
 
             {choices && choices.length > 1 && (
                 <div className="flex flex-wrap gap-2 mb-3.5">

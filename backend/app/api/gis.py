@@ -122,6 +122,73 @@ async def get_boundary(
 
 
 @router.post("/boundaries")
+
+async def persist_boundary(db, geojson_data: dict, name: str = None,
+                           center_lat: float = None, center_lng: float = None) -> dict:
+    """Store a boundary and fetch the roads inside it.
+
+    Three endpoints accept a boundary -- an uploaded file, a Census lookup, and
+    the built-in search -- and only the last one did this. The other two loaded
+    the shape into an in-memory helper and returned "success", which meant the
+    boundary vanished on the next restart and no roads were ever fetched for it.
+    Nothing said so: the map drew, because the browser had the file it had just
+    uploaded, and the roads were missing only later, when a resident's report
+    could not be matched to a street.
+
+    So all three go through here.
+    """
+    from app.models import SystemSettings
+
+    result = await db.execute(select(SystemSettings).limit(1))
+    settings = result.scalar_one_or_none()
+    if not settings:
+        settings = SystemSettings()
+        db.add(settings)
+
+    boundary_data = normalize_boundary(geojson_data, name)
+    if center_lat is not None and center_lng is not None:
+        boundary_data["center"] = {"lat": center_lat, "lng": center_lng}
+
+    settings.township_boundary = boundary_data
+    await db.commit()
+
+    # Roads follow the boundary, always. Queued when a worker is available so
+    # the upload returns promptly; run inline otherwise, because a deployment
+    # without Celery should still end up with roads rather than silently not.
+    try:
+        from app.tasks.road_data import seed_roads
+        seed_roads.delay(force=True)
+        seeding = "queued"
+    except Exception as exc:
+        logger.warning("Could not queue road seeding, running inline: %s", exc)
+        try:
+            outcome = await seed_roads_for_boundary(db, force=True)
+            seeding = "done" if outcome.get("ok") else f"failed: {outcome.get('reason')}"
+        except Exception as inline_exc:
+            logger.warning("Inline road seeding failed: %s", inline_exc)
+            seeding = "failed"
+
+    return {"boundary": boundary_data, "seeding": seeding}
+
+
+def normalize_boundary(geojson_data: dict, name: str = None) -> dict:
+    """Any of the shapes a boundary arrives in, as a FeatureCollection."""
+    if not isinstance(geojson_data, dict) or "type" not in geojson_data:
+        return geojson_data
+    if geojson_data["type"] in ("Polygon", "MultiPolygon"):
+        return {
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "geometry": geojson_data,
+                "properties": {"name": name or "Township Boundary"},
+            }],
+        }
+    if geojson_data["type"] == "Feature":
+        return {"type": "FeatureCollection", "features": [geojson_data]}
+    return geojson_data
+
+
 async def upload_boundary(
     name: str,
     file: UploadFile = File(...),
@@ -136,8 +203,13 @@ async def upload_boundary(
         api_key = await get_google_api_key(db)
         service = get_boundary_service(api_key)
         service.load_boundary_from_geojson(name, geojson)
-        
-        return {"status": "success", "message": f"Boundary '{name}' loaded"}
+
+        outcome = await persist_boundary(db, geojson, name)
+        return {
+            "status": "success",
+            "message": f"Boundary '{name}' loaded",
+            "road_seeding": outcome["seeding"],
+        }
     except json.JSONDecodeError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -360,8 +432,13 @@ async def save_census_boundary(
             }
         
         service.load_boundary_from_geojson(name, geojson_data)
-        
-        return {"status": "success", "message": f"Boundary '{name}' saved successfully"}
+
+        outcome = await persist_boundary(db, geojson_data, name)
+        return {
+            "status": "success",
+            "message": f"Boundary '{name}' saved successfully",
+            "road_seeding": outcome["seeding"],
+        }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -489,40 +566,14 @@ async def save_township_boundary(
             await db.commit()
             return {"status": "success", "message": "Township boundary and road segments cleared"}
         
-        # Normalize to FeatureCollection if needed
-        boundary_data = geojson_data
-        if "type" in geojson_data:
-            if geojson_data["type"] in ["Polygon", "MultiPolygon"]:
-                boundary_data = {
-                    "type": "FeatureCollection",
-                    "features": [{
-                        "type": "Feature",
-                        "geometry": geojson_data,
-                        "properties": {"name": name or "Township Boundary"}
-                    }]
-                }
-            elif geojson_data["type"] == "Feature":
-                boundary_data = {
-                    "type": "FeatureCollection",
-                    "features": [geojson_data]
-                }
-        
-        # Add center coordinates if provided
-        if center_lat is not None and center_lng is not None:
-            boundary_data["center"] = {"lat": center_lat, "lng": center_lng}
-        
-        settings.township_boundary = boundary_data
-        await db.commit()
-        
-        # Trigger background road seeding for this boundary
-        try:
-            from app.tasks.road_data import seed_roads
-            seed_roads.delay(force=True)
-        except Exception as seed_err:
-            logger.warning("Failed to trigger async seed_roads task: %s", seed_err)
-
-        
-        return {"status": "success", "message": "Township boundary saved successfully"}
+        # One implementation for all three boundary paths -- see
+        # persist_boundary for why the other two used to skip the roads.
+        outcome = await persist_boundary(db, geojson_data, name, center_lat, center_lng)
+        return {
+            "status": "success",
+            "message": "Township boundary saved successfully",
+            "road_seeding": outcome["seeding"],
+        }
         
     except Exception as e:
         raise HTTPException(
