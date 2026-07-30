@@ -647,6 +647,14 @@ export default function AdminConsole() {
     }, [settings]);
 
     useEffect(() => {
+        // Always load maps config & township boundary so map features work on any tab
+        api.getMapsConfig().then(mapsConfig => {
+            if (mapsConfig.google_maps_api_key) setMapsApiKey(mapsConfig.google_maps_api_key);
+            if (mapsConfig.township_boundary) setTownshipBoundary(mapsConfig.township_boundary);
+        }).catch(err => console.warn("Maps config load warning:", err));
+    }, []);
+
+    useEffect(() => {
         loadTabData();
     }, [currentTab]);
 
