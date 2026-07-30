@@ -42,7 +42,15 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [localSmsProvider, setLocalSmsProvider] = useState<string>('none');
     const [savingSmsProvider, setSavingSmsProvider] = useState(false);
     const userModifiedSms = useRef(false);
+    /* The guide starts open on a fresh install and closed once the required
+     * integrations are in. It is a first-run document: hidden behind a click it
+     * is missed by the person who needs it most, and left open forever it pushes
+     * the actual controls off the screen for everyone else.
+     *
+     * null means "not decided yet" so the effect below can set it once the
+     * config has loaded, without overriding a deliberate click afterwards. */
     const [expandedGuide, setExpandedGuide] = useState<string | null>(null);
+    const guideAutoSet = useRef(false);
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
     // Setup Instructions chooser: the guide shows ONLY the steps for the cloud
@@ -154,6 +162,13 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * and a bar reading 33% told it the opposite. The headline now answers the
      * first question and the count answers the second. */
     const completedCount = setupSteps.filter(s => s.done).length;
+
+    useEffect(() => {
+        // secrets arrives as a prop; an empty array means it has not loaded yet.
+        if (guideAutoSet.current || secrets.length === 0) return;
+        guideAutoSet.current = true;
+        if (!signInConfigured || !mapsConfigured) setExpandedGuide('master');
+    }, [secrets.length, signInConfigured, mapsConfigured]);
 
     // Toggle helper for collapsible instruction panels
     const toggleGuide = (id: string) => setExpandedGuide(prev => prev === id ? null : id);
@@ -600,51 +615,17 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
 
             {/* Required Integrations */}
-            <CollapsibleSection id="sec-database" title="Database" icon={Shield} accent="primary" subtitle="Connection status — set from DATABASE_URL, not here" defaultOpen={true}>
-                <div className="grid grid-cols-1 gap-4">
-                    {/* The Auth0 card that used to live here has been removed.
-                        Sign-in is a pluggable capability with four providers
-                        (Auth0, Entra, Okta, and generic OIDC for anything else),
-                        and this card wrote the same three AUTH0_* secrets the
-                        Staff Sign-In card already owns -- while implying Auth0
-                        was the only option. The callback URL a town has to
-                        register is in the Staff sign-in guide above, with a copy
-                        button. */}
+            {/* Order is the flow itself: the two required integrations live in
+                Service Providers, so it goes first. Optional extras next. The
+                town's own systems after that, because connecting one presumes
+                the basics work. Database last -- it is read-only status set from
+                DATABASE_URL, there is nothing to do there, and it used to sit
+                open above everything that actually needed attention. */}
 
-                    {/* Database - usually auto-configured */}
-                    <Card className="h-full">
-                        <div className="flex items-start justify-between mb-4">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center">
-                                    <Database className="w-5 h-5 text-purple-400" />
-                                </div>
-                                <div>
-                                    <h3 className="font-semibold text-white">PostgreSQL Database</h3>
-                                    <p className="text-gray-300 text-xs">Primary data storage</p>
-                                </div>
-                            </div>
-                            <Badge variant="success">Auto-configured</Badge>
-                        </div>
-                        <p className="text-gray-300 text-sm">
-                            Database connection is configured via <code className="bg-white/10 px-1 rounded break-all">DATABASE_URL</code> environment variable in docker-compose.yml.
-                        </p>
-                        <div className="mt-4 flex items-center gap-2 text-green-400 text-sm">
-                            <CheckCircle className="w-4 h-4" />
-                            Connected and operational
-                        </div>
-                    </Card>
+            {/* 1 — Required + core capabilities: sign-in, maps, AI, translation */}
+            <div id="sec-providers"><ServiceProviders /></div>
 
-                    {/* The Google Maps card that used to live here has been
-                        removed. Maps is a pluggable capability now, so this page
-                        showed a second, Google-only copy of the same two fields
-                        writing to the same two secrets -- with worse help text
-                        than the provider catalog carries, and no way to pick
-                        Esri, Apple or Azure. One place to configure a map. */}
-                </div>
-            </CollapsibleSection>
-
-            {/* Optional Integrations */}
-            <CollapsibleSection id="sec-optional" title="Optional Integrations" icon={Cloud} subtitle="SMS, email, cloud services, monitoring, and backups" defaultOpen={false}>
+            <CollapsibleSection id="sec-optional" title="Notifications & Extras" icon={Cloud} subtitle="Email, text messages, cloud services, error reporting, backups — none required to take reports" defaultOpen={false}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* SMS Notifications - Premium Card */}
                     <motion.div
@@ -1509,17 +1490,60 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 </div>
             </CollapsibleSection>
 
+
+            {/* 3 — The town's own systems */}
+            <GovtechIntegrations />
+
+            <CollapsibleSection id="sec-database" title="Database" icon={Database} subtitle="Read-only status. Configured by your host through DATABASE_URL, not on this page." defaultOpen={false}>
+                <div className="grid grid-cols-1 gap-4">
+                    {/* The Auth0 card that used to live here has been removed.
+                        Sign-in is a pluggable capability with four providers
+                        (Auth0, Entra, Okta, and generic OIDC for anything else),
+                        and this card wrote the same three AUTH0_* secrets the
+                        Staff Sign-In card already owns -- while implying Auth0
+                        was the only option. The callback URL a town has to
+                        register is in the Staff sign-in guide above, with a copy
+                        button. */}
+
+                    {/* Database - usually auto-configured */}
+                    <Card className="h-full">
+                        <div className="flex items-start justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center">
+                                    <Database className="w-5 h-5 text-purple-400" />
+                                </div>
+                                <div>
+                                    <h3 className="font-semibold text-white">PostgreSQL Database</h3>
+                                    <p className="text-gray-300 text-xs">Primary data storage</p>
+                                </div>
+                            </div>
+                            <Badge variant="success">Auto-configured</Badge>
+                        </div>
+                        <p className="text-gray-300 text-sm">
+                            Database connection is configured via <code className="bg-white/10 px-1 rounded break-all">DATABASE_URL</code> environment variable in docker-compose.yml.
+                        </p>
+                        <div className="mt-4 flex items-center gap-2 text-green-400 text-sm">
+                            <CheckCircle className="w-4 h-4" />
+                            Connected and operational
+                        </div>
+                    </Card>
+
+                    {/* The Google Maps card that used to live here has been
+                        removed. Maps is a pluggable capability now, so this page
+                        showed a second, Google-only copy of the same two fields
+                        writing to the same two secrets -- with worse help text
+                        than the provider catalog carries, and no way to pick
+                        Esri, Apple or Azure. One place to configure a map. */}
+                </div>
+            </CollapsibleSection>
+
+            {/* Optional Integrations */}
             {saveMessage && (
                 <div className="rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-sm text-white/80">
                     {saveMessage}
                 </div>
             )}
 
-            {/* Pluggable service providers (AI / translation / identity) */}
-            <div id="sec-providers"><ServiceProviders /></div>
-
-            {/* GovTech Platform Connections */}
-            <GovtechIntegrations />
 
             {/* Help Link — dark surface (not the translucent glass-card, whose
                 white veil dropped these blues below AA contrast) with light text. */}

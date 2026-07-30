@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 from typing import List
 
 from app.db.session import get_db
-from app.models import User
+from app.models import User, Department
 from app.schemas import UserCreate, UserResponse, UserUpdate
 from app.core.auth import get_password_hash, get_current_admin, get_current_staff
 
@@ -172,6 +172,23 @@ async def update_user(
         raise HTTPException(status_code=404, detail="User not found")
     
     update_data = user_data.model_dump(exclude_unset=True)
+
+    # Departments are a many-to-many relationship, not a column. The loop below
+    # used to setattr "department_ids" straight onto the ORM object, which binds
+    # a stray Python attribute and never touches the join table -- the request
+    # returned 200 with the user's old departments and the edit silently
+    # vanished. create_user always did this correctly; update_user did not.
+    department_ids = update_data.pop("department_ids", None)
+    if department_ids is not None:
+        result = await db.execute(
+            select(Department).where(Department.id.in_(department_ids))
+        )
+        found = list(result.scalars().all())
+        if len(found) != len(set(department_ids)):
+            raise HTTPException(status_code=400, detail="One or more departments do not exist")
+        # Assigned wholesale, so an empty list genuinely clears them.
+        user.departments = found
+
     for field, value in update_data.items():
         if value is not None:
             if field == "role":

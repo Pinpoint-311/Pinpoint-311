@@ -74,6 +74,7 @@ import {
     Eye,
     EyeOff,
     CircleCheck,
+    Pencil,
 } from 'lucide-react';
 import { Button, Card, Modal, Input, Select, Badge, AccordionSection } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
@@ -416,6 +417,54 @@ export default function AdminConsole() {
         role: 'staff' as 'staff' | 'admin',
         department_ids: [] as number[],
     });
+
+    /* Editing an existing staff member.
+     *
+     * Separate from newUser rather than reusing it: the two are genuinely
+     * different forms. Creating needs a username and a password; editing must
+     * not offer either, because the username is what the audit log and the
+     * identity provider key off -- renaming it orphans history instead of
+     * correcting it -- and passwords have their own reset flow. */
+    const [editingUser, setEditingUser] = useState<User | null>(null);
+    const [editUser, setEditUser] = useState({
+        email: '',
+        full_name: '',
+        phone: '',
+        role: 'staff' as 'staff' | 'admin' | 'researcher',
+        is_active: true,
+        department_ids: [] as number[],
+    });
+
+    const openEditUser = (u: User) => {
+        setEditingUser(u);
+        setEditUser({
+            email: u.email || '',
+            full_name: u.full_name || '',
+            phone: (u as any).phone || '',
+            role: (u.role as 'staff' | 'admin' | 'researcher') || 'staff',
+            is_active: (u as any).is_active !== false,
+            department_ids: (u.departments || []).map(d => d.id),
+        });
+    };
+
+    const handleUpdateUser = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editingUser) return;
+        try {
+            await api.updateUser(editingUser.id, {
+                email: editUser.email,
+                full_name: editUser.full_name,
+                phone: editUser.phone,
+                role: editUser.role,
+                is_active: editUser.is_active,
+                department_ids: editUser.department_ids,
+            });
+            setEditingUser(null);
+            loadTabData();
+        } catch (err: any) {
+            alert(err?.message || 'Could not save changes');
+        }
+    };
 
     // Services state
     const [services, setServices] = useState<ServiceDefinition[]>([]);
@@ -1811,6 +1860,13 @@ export default function AdminConsole() {
                                                             )}
                                                         </div>
                                                         <button
+                                                            onClick={() => openEditUser(u)}
+                                                            className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors"
+                                                            title={`Edit ${u.full_name || u.username}`}
+                                                        >
+                                                            <Pencil className="w-4 h-4" />
+                                                        </button>
+                                                        <button
                                                             onClick={() => handleDeleteUser(u.id)}
                                                             disabled={u.id === user?.id}
                                                             className={`p-2 rounded-lg ${u.id === user?.id
@@ -1888,6 +1944,13 @@ export default function AdminConsole() {
                                                     {/* Actions */}
                                                     <div className="col-span-1 flex justify-end">
                                                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                            <button
+                                                                onClick={() => openEditUser(u)}
+                                                                className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors"
+                                                                title={`Edit ${u.full_name || u.username}`}
+                                                            >
+                                                                <Pencil className="w-4 h-4" />
+                                                            </button>
                                                             <button
                                                                 onClick={() => handleDeleteUser(u.id)}
                                                                 disabled={u.id === user?.id}
@@ -3043,6 +3106,98 @@ export default function AdminConsole() {
                     <div className="flex justify-end gap-3 pt-4">
                         <Button variant="ghost" onClick={() => setShowDepartmentModal(false)}>Cancel</Button>
                         <Button type="submit">{editingDepartment ? 'Save Changes' : 'Create Department'}</Button>
+                    </div>
+                </form>
+            </Modal>
+
+            {/* Edit User Modal.
+
+                Username and password are absent on purpose. The username keys
+                the audit log and the identity provider, so renaming it orphans
+                history rather than correcting it; passwords have their own
+                reset action. Everything else about a staff member changes over
+                time -- people move department, change surname, get a new phone,
+                leave -- and none of it was editable before this. */}
+            <Modal isOpen={!!editingUser} onClose={() => setEditingUser(null)}
+                title={`Edit ${editingUser?.full_name || editingUser?.username || 'user'}`}>
+                <form onSubmit={handleUpdateUser} className="space-y-4">
+                    <div className="rounded-lg bg-white/5 border border-white/10 px-3 py-2">
+                        <p className="text-xs text-white/40">Username</p>
+                        <p className="text-sm text-white/70 font-mono">@{editingUser?.username}</p>
+                        <p className="text-[11px] text-white/35 mt-1">
+                            Cannot be changed — it is how this person&apos;s history is recorded.
+                        </p>
+                    </div>
+                    <Input
+                        label="Full name"
+                        value={editUser.full_name}
+                        onChange={(e) => setEditUser((p) => ({ ...p, full_name: e.target.value }))}
+                        placeholder="Jane Doe"
+                    />
+                    <Input
+                        label="Email"
+                        type="email"
+                        value={editUser.email}
+                        onChange={(e) => setEditUser((p) => ({ ...p, email: e.target.value }))}
+                        placeholder="jane@township.gov"
+                    />
+                    <Input
+                        label="Phone (for text alerts)"
+                        value={editUser.phone}
+                        onChange={(e) => setEditUser((p) => ({ ...p, phone: e.target.value }))}
+                        placeholder="+1 555 010 0000"
+                    />
+                    <Select
+                        label="Role"
+                        value={editUser.role}
+                        onChange={(e) => setEditUser((p) => ({ ...p, role: e.target.value as 'staff' | 'admin' | 'researcher' }))}
+                        options={[
+                            { value: 'staff', label: 'Staff — works reports' },
+                            { value: 'admin', label: 'Admin — full access, including this page' },
+                            { value: 'researcher', label: 'Researcher — read-only, anonymised data' },
+                        ]}
+                    />
+                    <div>
+                        <p className="text-sm text-white/60 mb-1.5">Departments</p>
+                        <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                            {departments.map((dept) => (
+                                <label key={dept.id} className="flex items-center gap-2 text-sm text-white/80 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={editUser.department_ids.includes(dept.id)}
+                                        onChange={(e) => setEditUser((p) => e.target.checked
+                                            ? { ...p, department_ids: [...p.department_ids, dept.id] }
+                                            : { ...p, department_ids: p.department_ids.filter(id => id !== dept.id) })}
+                                        className="rounded"
+                                    />
+                                    {dept.name}
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+                    {/* Deactivating rather than deleting is what a records system
+                        wants: the person keeps their history and simply cannot
+                        sign in. Deleting is still available on the row. */}
+                    <label className="flex items-start gap-2.5 text-sm text-white/80 cursor-pointer rounded-lg bg-white/[0.03] border border-white/10 px-3 py-2.5">
+                        <input
+                            type="checkbox"
+                            checked={editUser.is_active}
+                            onChange={(e) => setEditUser((p) => ({ ...p, is_active: e.target.checked }))}
+                            className="rounded mt-0.5"
+                            disabled={editingUser?.id === user?.id}
+                        />
+                        <span>
+                            Active
+                            <span className="block text-[11px] text-white/40">
+                                {editingUser?.id === user?.id
+                                    ? 'You cannot deactivate your own account.'
+                                    : 'Unticking keeps all their history but stops them signing in.'}
+                            </span>
+                        </span>
+                    </label>
+                    <div className="flex justify-end gap-3 pt-4">
+                        <Button variant="ghost" onClick={() => setEditingUser(null)}>Cancel</Button>
+                        <Button type="submit">Save Changes</Button>
                     </div>
                 </form>
             </Modal>
