@@ -223,13 +223,13 @@ function SidebarItem({ icon: Icon, label, isActive, onClick }: SidebarItemProps)
 
 // ============ Drag-and-Drop Service Reorder ============
 
-function SortableServiceCard({ service, onEdit, onDelete }: {
+function SortableServiceRow({ service, onEdit, onDelete }: {
     service: ServiceDefinition;
     onEdit: (s: ServiceDefinition) => void;
     onDelete: (id: number) => void;
 }) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: service.id });
-    
+
     const style = {
         transform: CSS.Transform.toString(transform),
         transition,
@@ -240,75 +240,86 @@ function SortableServiceCard({ service, onEdit, onDelete }: {
     const getModeBadge = (mode?: string) => {
         if (mode === 'third_party') return (
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-purple-500/20 to-indigo-500/20 text-purple-300 border border-purple-500/30 shadow-sm">
-                <ExternalLink className="w-3.5 h-3.5" /> 3rd Party
+                <ExternalLink className="w-3 h-3" /> 3rd Party
             </span>
         );
         if (mode === 'road_based') return (
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30 shadow-sm">
-                <GitFork className="w-3.5 h-3.5" /> Road-Based
+                <GitFork className="w-3 h-3" /> Road-Based
             </span>
         );
         return (
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-emerald-500/20 to-teal-500/20 text-emerald-300 border border-emerald-500/30 shadow-sm">
-                <Building2 className="w-3.5 h-3.5" /> Municipality
+                <Building2 className="w-3 h-3" /> Municipality
             </span>
         );
     };
 
     return (
-        <div ref={setNodeRef} style={style} className={`group ${isDragging ? 'relative z-50' : ''}`}>
-            <div className={`relative p-5 rounded-2xl bg-white/[0.03] backdrop-blur-xl border border-white/10 hover:border-primary-500/40 hover:bg-white/[0.05] shadow-xl hover:shadow-[0_0_30px_rgba(99,102,241,0.12)] transition-all duration-300 ${isDragging ? 'ring-2 ring-primary-500 shadow-2xl scale-[1.02]' : ''}`}>
-                {/* Drag handle */}
-                <button
-                    {...attributes}
-                    {...listeners}
-                    className="absolute top-4 right-4 p-1.5 rounded-lg text-white/20 hover:text-white/80 hover:bg-white/10 cursor-grab active:cursor-grabbing transition-colors touch-none z-10"
-                    aria-label={`Drag to reorder ${service.service_name}`}
-                >
-                    <GripVertical className="w-4 h-4" />
-                </button>
+        <div
+            ref={setNodeRef}
+            style={style}
+            className={`px-4 md:px-6 py-4 hover:bg-white/[0.04] transition-all duration-200 group flex items-center justify-between gap-4 ${isDragging ? 'bg-white/10 ring-1 ring-primary-500 z-50' : ''}`}
+        >
+            <div className="grid grid-cols-12 gap-4 items-center w-full">
+                {/* CATEGORY (Avatar + Name + Code) */}
+                <div className="col-span-12 md:col-span-4 flex items-center gap-3.5">
+                    {/* Drag Handle */}
+                    <button
+                        {...attributes}
+                        {...listeners}
+                        className="p-1 rounded text-white/20 hover:text-white/70 hover:bg-white/10 cursor-grab active:cursor-grabbing transition-colors touch-none shrink-0"
+                        aria-label={`Drag to reorder ${service.service_name}`}
+                    >
+                        <GripVertical className="w-4 h-4" />
+                    </button>
 
-                <div className="flex items-start gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500/20 to-indigo-600/15 border border-primary-500/30 flex items-center justify-center text-primary-300 shrink-0 shadow-lg">
-                        <Grid3X3 className="w-6 h-6" />
+                    {/* Avatar Icon */}
+                    <div className="relative w-10 h-10 rounded-xl bg-gradient-to-br from-primary-400 to-indigo-600 flex items-center justify-center font-bold text-white shadow-md shadow-primary-900/40 shrink-0">
+                        {service.service_name.charAt(0).toUpperCase()}
+                        <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-slate-900 shadow-md shadow-emerald-900/70" />
                     </div>
 
-                    <div className="flex-1 min-w-0 pr-8">
-                        <div className="flex items-center gap-2.5 flex-wrap">
-                            <h3 className="font-bold text-white text-base tracking-tight">{service.service_name}</h3>
-                            <span className="text-[11px] font-mono font-medium text-white/50 bg-white/5 border border-white/10 px-2 py-0.5 rounded-md tracking-wider">{service.service_code}</span>
-                        </div>
-                        <p className="text-xs text-white/60 mt-1.5 line-clamp-2 leading-relaxed">{service.description || 'No description provided.'}</p>
-                        
-                        <div className="flex items-center gap-2.5 mt-3.5 flex-wrap">
-                            {getModeBadge(service.routing_mode)}
-                            {service.assigned_department && (
-                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-white/5 border border-white/10 text-white/80">
-                                    <Users className="w-3.5 h-3.5 text-white/40" />
-                                    {service.assigned_department.name}
-                                </span>
-                            )}
-                        </div>
+                    <div className="min-w-0">
+                        <p className="font-semibold text-white text-sm truncate">{service.service_name}</p>
+                        <p className="text-xs font-mono text-white/40">@{service.service_code.toLowerCase()}</p>
                     </div>
                 </div>
 
-                <div className="flex items-center justify-between mt-4 pt-3.5 border-t border-white/10">
-                    <span className="text-[11px] text-white/40 font-medium">Drag handle to reorder portal list</span>
-                    <div className="flex items-center gap-2">
-                        <button
-                            onClick={() => onEdit(service)}
-                            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-primary-500/20 border border-primary-500/30 text-xs font-semibold text-primary-200 hover:bg-primary-500/30 hover:border-primary-400 transition-all shadow-md"
-                        >
-                            <Edit className="w-3.5 h-3.5" /> Configure Routing
-                        </button>
-                        <button
-                            onClick={() => onDelete(service.id)}
-                            className="p-1.5 hover:bg-red-500/20 border border-transparent hover:border-red-500/30 rounded-xl text-white/30 hover:text-red-300 transition-all"
-                            aria-label={`Delete ${service.service_name}`}
-                        >
-                            <Trash2 className="w-4 h-4" />
-                        </button>
-                    </div>
+                {/* DESCRIPTION */}
+                <div className="col-span-12 md:col-span-3 text-xs text-white/60 truncate">
+                    {service.description || <span className="text-white/30 italic">No description</span>}
+                </div>
+
+                {/* ROUTING MODE */}
+                <div className="col-span-6 md:col-span-2 flex md:justify-center">
+                    {getModeBadge(service.routing_mode)}
+                </div>
+
+                {/* DEPARTMENT */}
+                <div className="col-span-6 md:col-span-2 text-xs text-white/60">
+                    {service.assigned_department ? (
+                        <span className="text-white/80 font-medium">{service.assigned_department.name}</span>
+                    ) : (
+                        <span className="text-white/30 italic">No department</span>
+                    )}
+                </div>
+
+                {/* ACTIONS */}
+                <div className="col-span-12 md:col-span-1 flex items-center justify-end gap-1.5">
+                    <button
+                        onClick={() => onEdit(service)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary-500/20 border border-primary-500/30 text-xs font-semibold text-primary-200 hover:bg-primary-500/30 hover:border-primary-400 transition-all shadow-md shrink-0"
+                    >
+                        <Edit className="w-3.5 h-3.5" /> Configure
+                    </button>
+                    <button
+                        onClick={() => onDelete(service.id)}
+                        className="p-1.5 hover:bg-red-500/20 text-white/30 hover:text-red-300 rounded-xl transition-all shrink-0"
+                        title="Delete Category"
+                    >
+                        <Trash2 className="w-4 h-4" />
+                    </button>
                 </div>
             </div>
         </div>
@@ -387,91 +398,72 @@ function ServiceCategoriesTab({ services, setServices, loadTabData, setShowServi
                 </Button>
             </div>
 
-            {/* 3 Premium Stat Cards (Matching Users Management Page) */}
+            {/* 3 Premium Stat Cards (Matching User Management Page) */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border border-emerald-500/20 backdrop-blur-sm shadow-xl">
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-500/10 to-blue-600/5 border border-blue-500/20 backdrop-blur-sm shadow-xl">
                     <div className="flex items-center gap-3.5">
-                        <div className="w-11 h-11 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center shrink-0">
-                            <Building2 className="w-5 h-5 text-emerald-400" />
+                        <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center shrink-0">
+                            <Building2 className="w-5 h-5 text-blue-400" />
                         </div>
                         <div>
                             <p className="text-2xl font-bold text-white">{municipalCount}</p>
-                            <p className="text-xs font-medium text-emerald-300/80">Municipality (Handled In-House)</p>
+                            <p className="text-xs text-blue-300/70">Municipality</p>
                         </div>
                     </div>
                 </div>
                 <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-500/10 to-amber-600/5 border border-amber-500/20 backdrop-blur-sm shadow-xl">
                     <div className="flex items-center gap-3.5">
-                        <div className="w-11 h-11 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center shrink-0">
+                        <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
                             <GitFork className="w-5 h-5 text-amber-400" />
                         </div>
                         <div>
                             <p className="text-2xl font-bold text-white">{roadBasedCount}</p>
-                            <p className="text-xs font-medium text-amber-300/80">Road-Based (GIS Spatial)</p>
+                            <p className="text-xs text-amber-300/70">Road-Based</p>
                         </div>
                     </div>
                 </div>
-                <div className="p-4 rounded-2xl bg-gradient-to-br from-purple-500/10 to-purple-600/5 border border-purple-500/20 backdrop-blur-sm shadow-xl">
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border border-emerald-500/20 backdrop-blur-sm shadow-xl">
                     <div className="flex items-center gap-3.5">
-                        <div className="w-11 h-11 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center shrink-0">
-                            <ExternalLink className="w-5 h-5 text-purple-400" />
+                        <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center shrink-0">
+                            <ExternalLink className="w-5 h-5 text-emerald-400" />
                         </div>
                         <div>
                             <p className="text-2xl font-bold text-white">{thirdPartyCount}</p>
-                            <p className="text-xs font-medium text-purple-300/80">3rd Party (Outside Redirects)</p>
+                            <p className="text-xs text-emerald-300/70">3rd Party</p>
                         </div>
                     </div>
                 </div>
             </div>
 
-            {/* Filter & Search Bar */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-xl">
-                <div className="relative w-full sm:w-80">
-                    <input
-                        type="text"
-                        placeholder="Filter categories or codes..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full h-9 pl-9 pr-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 text-xs focus:outline-none focus:border-primary-400 focus:bg-white/10"
-                    />
-                    <Grid3X3 className="w-4 h-4 text-white/40 absolute left-3 top-2.5" />
-                </div>
-
-                <div className="flex items-center gap-1.5 w-full sm:w-auto overflow-x-auto">
-                    {[
-                        { id: 'all', label: `All (${services.length})` },
-                        { id: 'township', label: `Municipality (${municipalCount})` },
-                        { id: 'road_based', label: `Road-Based (${roadBasedCount})` },
-                        { id: 'third_party', label: `3rd Party (${thirdPartyCount})` },
-                    ].map((tab) => (
-                        <button
-                            key={tab.id}
-                            onClick={() => setFilterMode(tab.id)}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${filterMode === tab.id
-                                ? 'bg-primary-500/20 border border-primary-500/40 text-primary-200 shadow-md'
-                                : 'text-white/50 hover:text-white/80 hover:bg-white/5 border border-transparent'
-                                }`}
-                        >
-                            {tab.label}
-                        </button>
-                    ))}
-                </div>
-            </div>
-
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                <SortableContext items={filteredServices.map(s => s.id)} strategy={rectSortingStrategy}>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {filteredServices.map((service) => (
-                            <SortableServiceCard
-                                key={service.id}
-                                service={service}
-                                onEdit={handleEditService}
-                                onDelete={handleDeleteService}
-                            />
-                        ))}
+            {/* Premium Table Layout (Identical to User Management Page) */}
+            <div className="rounded-2xl bg-white/[0.03] backdrop-blur-xl border border-white/10 overflow-hidden shadow-2xl">
+                {/* Table Header */}
+                <div className="hidden md:block px-6 py-4 border-b border-white/10 bg-gradient-to-r from-white/[0.05] to-transparent">
+                    <div className="grid grid-cols-12 gap-4 items-center">
+                        <div className="col-span-4 text-xs font-semibold text-white/50 uppercase tracking-wider">Category</div>
+                        <div className="col-span-3 text-xs font-semibold text-white/50 uppercase tracking-wider">Description</div>
+                        <div className="col-span-2 text-xs font-semibold text-white/50 uppercase tracking-wider text-center">Routing Mode</div>
+                        <div className="col-span-2 text-xs font-semibold text-white/50 uppercase tracking-wider">Department</div>
+                        <div className="col-span-1 text-xs font-semibold text-white/50 uppercase tracking-wider text-right">Actions</div>
                     </div>
-                </SortableContext>
-            </DndContext>
+                </div>
+
+                {/* Table Body with DndContext */}
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                    <SortableContext items={filteredServices.map(s => s.id)} strategy={rectSortingStrategy}>
+                        <div className="divide-y divide-white/5">
+                            {filteredServices.map((service) => (
+                                <SortableServiceRow
+                                    key={service.id}
+                                    service={service}
+                                    onEdit={handleEditService}
+                                    onDelete={handleDeleteService}
+                                />
+                            ))}
+                        </div>
+                    </SortableContext>
+                </DndContext>
+            </div>
         </div>
     );
 }
