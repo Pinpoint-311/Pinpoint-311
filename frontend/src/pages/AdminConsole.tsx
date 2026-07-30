@@ -3773,18 +3773,148 @@ export default function AdminConsole() {
                                 </ul>
                             )}
 
-                            {/* Third Party Redirect Message */}
-                            <div className="space-y-2 pt-2 border-t border-white/10">
-                                <label className="block text-sm font-medium text-white/70">Third Party Redirect Message</label>
+                            {/* 3rd Party Jurisdictions (e.g. State Highways, County Roads) */}
+                            <div className="space-y-3 pt-4 border-t border-white/10">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                    <div>
+                                        <label className="block text-xs font-bold uppercase tracking-wider text-white">3rd Party Jurisdictions & Agencies</label>
+                                        <p className="text-xs text-white/50">Add multiple 3rd party agencies for non-municipal roads (e.g. State DOT, County Roads Dept).</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setServiceRouting(p => ({
+                                            ...p,
+                                            routing_config: {
+                                                ...p.routing_config,
+                                                third_party_contacts: [
+                                                    ...(p.routing_config.third_party_contacts || []),
+                                                    { name: '', jurisdiction_type: 'State DOT', phone: '', url: '', message: '' }
+                                                ]
+                                            }
+                                        }))}
+                                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500/20 to-orange-500/20 border border-amber-500/30 text-xs font-bold text-amber-300 hover:bg-amber-500/30 transition-all shadow-md shrink-0"
+                                    >
+                                        <Plus className="w-4 h-4" /> Add Jurisdiction
+                                    </button>
+                                </div>
+
+                                {(serviceRouting.routing_config.third_party_contacts || []).map((jurisdiction: any, idx: number) => (
+                                    <div key={idx} className="p-4 rounded-2xl bg-white/[0.04] border border-white/15 space-y-3 shadow-lg">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
+                                                <GitFork className="w-3.5 h-3.5" /> Jurisdiction #{idx + 1}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                aria-label="Remove jurisdiction"
+                                                onClick={() => {
+                                                    const updated = (serviceRouting.routing_config.third_party_contacts || []).filter((_: any, i: number) => i !== idx);
+                                                    setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, third_party_contacts: updated } }));
+                                                }}
+                                                className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="block text-[11px] font-semibold text-white/60 mb-1">Agency Name</label>
+                                                <input
+                                                    placeholder="e.g. PennDOT / State Highways"
+                                                    value={jurisdiction.name || ''}
+                                                    onChange={(e) => {
+                                                        const updated = [...(serviceRouting.routing_config.third_party_contacts || [])];
+                                                        updated[idx] = { ...updated[idx], name: e.target.value };
+                                                        setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, third_party_contacts: updated } }));
+                                                    }}
+                                                    className="w-full h-9 rounded-xl bg-white/10 border border-white/20 text-white px-3 text-xs focus:outline-none focus:border-amber-400"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[11px] font-semibold text-white/60 mb-1">Road Classification</label>
+                                                <select
+                                                    value={jurisdiction.jurisdiction_type || 'State DOT'}
+                                                    onChange={(e) => {
+                                                        const updated = [...(serviceRouting.routing_config.third_party_contacts || [])];
+                                                        updated[idx] = { ...updated[idx], jurisdiction_type: e.target.value };
+                                                        setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, third_party_contacts: updated } }));
+                                                    }}
+                                                    className="w-full h-9 rounded-xl bg-slate-900 border border-white/20 text-white px-3 text-xs focus:outline-none focus:border-amber-400"
+                                                >
+                                                    <option value="State DOT">State Highway (State DOT)</option>
+                                                    <option value="County DPW">County Road (County DPW)</option>
+                                                    <option value="Interstate / Turnpike">Interstate / Turnpike Authority</option>
+                                                    <option value="Private / HOA">Private / HOA Road</option>
+                                                    <option value="Adjacent Municipality">Adjacent Municipality</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="block text-[11px] font-semibold text-white/60 mb-1">Phone Number</label>
+                                                <input
+                                                    placeholder="e.g. 1-800-FIX-ROAD"
+                                                    value={jurisdiction.phone || ''}
+                                                    onChange={(e) => {
+                                                        const updated = [...(serviceRouting.routing_config.third_party_contacts || [])];
+                                                        updated[idx] = { ...updated[idx], phone: e.target.value };
+                                                        setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, third_party_contacts: updated } }));
+                                                    }}
+                                                    className="w-full h-9 rounded-xl bg-white/10 border border-white/20 text-white px-3 text-xs focus:outline-none focus:border-amber-400"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[11px] font-semibold text-white/60 mb-1">Portal / Redirect Link</label>
+                                                <input
+                                                    placeholder="e.g. https://customercare.penndot.gov"
+                                                    value={jurisdiction.url || ''}
+                                                    onChange={(e) => {
+                                                        const updated = [...(serviceRouting.routing_config.third_party_contacts || [])];
+                                                        updated[idx] = { ...updated[idx], url: e.target.value };
+                                                        setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, third_party_contacts: updated } }));
+                                                    }}
+                                                    className="w-full h-9 rounded-xl bg-white/10 border border-white/20 text-white px-3 text-xs focus:outline-none focus:border-amber-400"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-[11px] font-semibold text-white/60 mb-1">Custom Redirect Message</label>
+                                            <input
+                                                placeholder="e.g. State-maintained routes are handled directly by PennDOT."
+                                                value={jurisdiction.message || ''}
+                                                onChange={(e) => {
+                                                    const updated = [...(serviceRouting.routing_config.third_party_contacts || [])];
+                                                    updated[idx] = { ...updated[idx], message: e.target.value };
+                                                    setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, third_party_contacts: updated } }));
+                                                }}
+                                                className="w-full h-9 rounded-xl bg-white/10 border border-white/20 text-white px-3 text-xs focus:outline-none focus:border-amber-400"
+                                            />
+                                        </div>
+                                    </div>
+                                ))}
+
+                                {(serviceRouting.routing_config.third_party_contacts || []).length === 0 && (
+                                    <div className="p-4 rounded-2xl bg-white/[0.02] border border-dashed border-white/15 text-center text-xs text-white/40">
+                                        No 3rd party jurisdictions added yet. Click "+ Add Jurisdiction" above to configure State DOT, County DPW, or Turnpike authorities.
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Default Fallback Redirect Message */}
+                            <div className="space-y-2 pt-3 border-t border-white/10">
+                                <label className="block text-xs font-bold uppercase tracking-wider text-white/70">General Fallback Redirect Message</label>
                                 <textarea
                                     rows={2}
-                                    placeholder="This road is maintained by the County..."
+                                    placeholder="This road is maintained by an external agency (State / County)..."
                                     value={serviceRouting.routing_config.third_party_message}
                                     onChange={(e) => setServiceRouting(p => ({
                                         ...p,
                                         routing_config: { ...p.routing_config, third_party_message: e.target.value }
                                     }))}
-                                    className="w-full rounded-lg bg-white/10 border border-white/20 text-white px-3 py-2"
+                                    className="w-full rounded-2xl bg-white/10 border border-white/20 text-white px-3 py-2 text-xs focus:outline-none focus:border-amber-400"
                                 />
                             </div>
                         </div>
