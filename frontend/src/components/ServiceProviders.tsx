@@ -889,6 +889,15 @@ export default function ServiceProviders({ show, extras, instructions }: {
 
     const ALWAYS = new Set<Capability>(['identity', 'maps']);
     const visible = CAPS.filter(c => !show || ALWAYS.has(c.key) || show.has(c.key));
+
+    /* Order matters, and not only for readability.
+     *
+     * A credential saved before the secret store is reachable lands in the
+     * encrypted database instead, and until now nothing said so. The store is
+     * made reachable by the cloud credentials entered under Other settings, so
+     * anything asking for a key has to come after the town has had the chance
+     * to enter those -- which is what the ordering note below tells them, since
+     * the bootstrap card itself lives outside this list. */
     const loaded = visible.filter(c => statuses[c.key]);
     const onDefaultCount = (loaded || []).filter(c => statuses[c.key]?.onDefault).length;
     const configuredCount = (loaded || []).filter(c => statuses[c.key]?.configured).length;
@@ -968,6 +977,12 @@ export default function ServiceProviders({ show, extras, instructions }: {
                             <p className="text-white/50 text-xs mt-0.5">
                                 One at a time, in order. Save it and the next one opens.
                             </p>
+                            {configuredCount === 0 && (
+                                <p className="text-amber-200/80 text-xs mt-1.5 leading-relaxed">
+                                    Enter your cloud credentials first, under <strong className="text-amber-100">Other settings</strong> below.
+                                    Keys saved before that go into the encrypted database rather than your secret store.
+                                </p>
+                            )}
                         </div>
                         <button
                             type="button"

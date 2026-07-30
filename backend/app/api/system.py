@@ -321,17 +321,31 @@ _PROVIDER_SELECT_KEY = {
 }
 
 
-async def _persist_secret(db: AsyncSession, key_name: str, value: str):
-    """Write a secret to the configured store (Secret Manager / Key Vault when
-    available) and always keep an encrypted DB copy — same path as /secrets."""
+async def _persist_secret(db: AsyncSession, key_name: str, value: str) -> bool:
+    """Write a secret to the configured store and keep an encrypted DB copy.
+
+    Returns whether the external store took it. That return value matters: when
+    the store is not reachable yet, set_secret returns False and logs at DEBUG,
+    which nothing raises the level for -- so the secret quietly lived only in
+    the database and the town had no way to know. It is a real ordering trap,
+    because the credentials that make Secret Manager reachable are themselves
+    entered on this page: anything saved before them lands in the database and
+    stays there until somebody happens to run the migration.
+
+    The caller surfaces this rather than swallowing it.
+    """
     from app.core.encryption import encrypt
     from app.core.managed import reject_platform_key_writes
     from app.services.secret_manager import set_secret, clear_cache
     reject_platform_key_writes(key_name)
+    # These two are deliberately database-only: they are what makes the secret
+    # store reachable in the first place, so storing them in it is circular.
     bootstrap_keys = {"GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT"}
+    stored_externally = key_name in bootstrap_keys
     if value and key_name not in bootstrap_keys:
         try:
             if await set_secret(key_name, value):
+                stored_externally = True
                 clear_cache()
         except Exception as e:
             from app.core.sanitize import sanitize_for_log
@@ -345,6 +359,7 @@ async def _persist_secret(db: AsyncSession, key_name: str, value: str):
     else:
         db.add(SystemSecret(key_name=key_name, key_value=enc, is_configured=bool(value)))
     await db.commit()
+    return stored_externally
 
 
 class ProviderSaveRequest(BaseModel):
@@ -414,9 +429,16 @@ async def save_provider(
     await _persist_secret(db, _PROVIDER_SELECT_KEY[capability], provider_id)
     if capability == "ai" and body.model:
         await _persist_secret(db, "AI_MODEL", body.model)
+    # Track where each credential actually landed. A False here is not an
+    # error -- the encrypted database is a supported store -- but it is
+    # something the town has to be told, because the usual cause is saving
+    # this card before the credentials that make the secret store reachable,
+    # and the fix (enter those, then re-save) is only obvious if you know.
+    db_only: List[str] = []
     for key, value in (body.settings or {}).items():
         if value:  # blank = keep existing
-            await _persist_secret(db, key, value)
+            if not await _persist_secret(db, key, value):
+                db_only.append(key)
     from app.services.secret_manager import clear_cache
     clear_cache()
     # Shape findings are advisory and never block: a rule is a heuristic about
@@ -425,10 +447,23 @@ async def save_provider(
     # discoverable, the first is a dead end.
     from app.services.credential_checks import inspect_settings
     findings = inspect_settings(body.settings)
+    warnings = [{"key": f.key, "severity": f.severity, "message": f.message} for f in findings]
+    if db_only:
+        from app.services.secret_manager import _secrets_provider
+        warnings.append({
+            "key": db_only[0],
+            "severity": "info",
+            "message": (
+                f"Saved, but stored in the encrypted database rather than "
+                f"{ {'azure': 'Azure Key Vault', 'aws': 'AWS Secrets Manager'}.get(_secrets_provider(), 'Google Secret Manager') }"
+                " — it is not reachable yet. Finish the cloud credentials above, then press"
+                " Save & Test here again to move them across."
+            ),
+        })
     return {
         "ok": True,
         "provider": provider_id,
-        "warnings": [{"key": f.key, "severity": f.severity, "message": f.message} for f in findings],
+        "warnings": warnings,
     }
 
 
