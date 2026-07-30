@@ -4,6 +4,7 @@ import {
     Sparkles, Languages, KeyRound, CheckCircle, AlertCircle,
     ChevronDown, Loader2, Check, ShieldCheck, RefreshCw,
     Cloud, MapPin, Lock, Info, Map as MapIcon,
+    Mail, MessageSquare, Image as ImageIcon,
 } from 'lucide-react';
 
 import { CollapsibleSection } from './ui';
@@ -23,7 +24,7 @@ function agoLabel(epochSeconds?: number | null): string {
     return `${Math.round(hrs / 24)}d ago`;
 }
 
-type Capability = 'ai' | 'translation' | 'identity' | 'maps';
+import type { Capability } from '../services/api';
 
 const CAPS: { key: Capability; title: string; blurb: string; icon: typeof Sparkles }[] = [
     { key: 'ai', title: 'AI Provider', blurb: 'Where AI triage & the analytics assistant run. Each town brings its own key and pays only for what it uses.', icon: Sparkles },
@@ -33,6 +34,14 @@ const CAPS: { key: Capability; title: string; blurb: string; icon: typeof Sparkl
     // as switching an AI or translation provider -- same card, same save, same
     // test button. A separate picker elsewhere would be a second thing to learn.
     { key: 'maps', title: 'Maps Provider', blurb: 'Draws the map residents drop a pin on, and looks up addresses. Google is the simplest to set up; Esri suits a town whose county already publishes its own basemap.', icon: MapIcon },
+    // Four capabilities whose provider switch the backend already honoured and
+    // nothing surfaced. Email and text had one hand-written SMTP/Twilio card
+    // between them; PII encryption and photo redaction had no UI at all, so
+    // face and plate blurring was a shipped feature a town could not turn on.
+    { key: 'email', title: 'Email', blurb: 'Sends confirmations and status updates to residents. SMTP works with the mail server your town already has.', icon: Mail },
+    { key: 'sms', title: 'Text Messages', blurb: 'Optional text alerts. Residents who give a mobile number get updates without checking email.', icon: MessageSquare },
+    { key: 'kms', title: 'PII Encryption (KMS)', blurb: 'Which key service wraps the key that encrypts resident personal information. Cloud KMS is stronger than the application key.', icon: Lock },
+    { key: 'redaction', title: 'Photo Redaction', blurb: 'Blurs faces and licence plates in resident photos before they are stored, so a municipal site never publishes them.', icon: ImageIcon },
 ];
 
 /** A numbered section heading inside a provider card.
