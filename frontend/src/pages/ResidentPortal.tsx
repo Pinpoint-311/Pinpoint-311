@@ -984,6 +984,7 @@ export default function ResidentPortal() {
                                         message={blockMessage}
                                         messageIsDefault={blockMessageIsDefault}
                                         contacts={blockContacts}
+                                        serviceName={selectedService.service_name}
                                     />
                                 )}
 
@@ -1095,6 +1096,7 @@ export default function ResidentPortal() {
                                                         messageIsDefault={blockMessageIsDefault}
                                                         contacts={blockContacts}
                                                         roadName={detectedRoad?.name}
+                                                        serviceName={selectedService.service_name}
                                                     />
                                                 )}
 
