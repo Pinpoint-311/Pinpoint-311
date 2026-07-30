@@ -83,6 +83,7 @@ import { useDialog } from '../components/DialogProvider';
 import { api, MapLayer } from '../services/api';
 import { User, ServiceDefinition, SystemSettings, SystemSecret, Department } from '../types';
 import { usePageNavigation } from '../hooks/usePageNavigation';
+import ClientErrorPanel from '../components/ClientErrorPanel';
 import OperationsPanel from '../components/OperationsPanel';
 import RoadListInput from '../components/RoadListInput';
 import RoadCorridorMap from '../components/RoadCorridorMap';
@@ -3059,7 +3060,15 @@ export default function AdminConsole() {
 
                         {/* System Health Tab */}
                         {currentTab === 'health' && (
-                            <OperationsPanel />
+                            <div className="space-y-6">
+                                <OperationsPanel />
+                                {/* The other half of the error screen's promise.
+                                    Everything above is what the server knows
+                                    about itself; this is what broke in
+                                    somebody's browser, which nothing in the
+                                    product surfaced before. */}
+                                <ClientErrorPanel />
+                            </div>
                         )}
 
                         {/* Audit Logs - part of Compliance */}

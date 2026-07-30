@@ -966,3 +966,41 @@ class ConnectorHealth(Base):
     total_failures = Column(Integer, default=0, nullable=False)
 
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ClientErrorLog(Base):
+    """A crash in someone's browser, kept where an administrator can see it.
+
+    These were only ever written to the application log. That is fine if a
+    Sentry DSN is configured and somebody watches it; for a self-hosted town it
+    means the error screen says "reported" and the report goes into a container
+    log that nobody will ever read, and that is rotated away in days.
+
+    So they are persisted and shown in the admin console. Bounded on write --
+    see prune_client_errors -- because this is written by an endpoint the public
+    can reach and unbounded growth would be a denial-of-service with extra
+    steps.
+
+    Deliberately no user id and no request body: a crash report needs the stack
+    and the route, not who was looking at what. `url` is stored because the
+    route is most of the diagnosis, and it is already visible in the access log.
+    """
+
+    __tablename__ = "client_error_log"
+
+    id = Column(Integer, primary_key=True)
+    kind = Column(String(64))                      # react_error_boundary | window_error | ...
+    message = Column(Text, nullable=False)
+    stack = Column(Text)
+    component_stack = Column(Text)
+    url = Column(String(500))
+    user_agent = Column(String(300))
+
+    # Identical crashes collapse onto one row with a count. A render loop
+    # produces hundreds of the same error, and a list of hundreds of identical
+    # rows hides every other fault on the page.
+    fingerprint = Column(String(64), index=True)
+    occurrences = Column(Integer, default=1, nullable=False)
+
+    first_seen_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
