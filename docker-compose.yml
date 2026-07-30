@@ -225,6 +225,7 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@localhost}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
+      - ${TENANT_CADDY_PATH:-/home/ubuntu/centralizedhosting/tenants/_caddy}:/etc/caddy/tenants
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
