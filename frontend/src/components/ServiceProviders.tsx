@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -823,7 +824,7 @@ function CloudEnvironment({ onApplied }: { onApplied: () => void }) {
     );
 }
 
-export default function ServiceProviders({ show }: {
+export default function ServiceProviders({ show, extras }: {
     /* Which capabilities the town said it wants, from the setup questions.
      * Undefined means "no answer yet", which shows everything -- an absent
      * answer must not read as "wanted nothing", the same distinction the
@@ -833,6 +834,13 @@ export default function ServiceProviders({ show }: {
      * them, so hiding them behind a question would let someone opt out of
      * having a working system. */
     show?: Set<Capability>;
+    /* The settings that are not a provider choice -- the Google Cloud
+     * credentials, error reporting, database backups. They lived in a second
+     * collapsible section beside this one, which meant two places to look for
+     * "the thing I have not configured yet" and a Setup Progress bar counting
+     * across both. Rendered here instead, after the capability cards, so the
+     * page has one list. */
+    extras?: ReactNode;
 } = {}) {
     const [recheckToken, setRecheckToken] = useState(0);
     /* One request for the whole section rather than one per card: the endpoint
@@ -978,6 +986,19 @@ export default function ServiceProviders({ show }: {
                         step={{ index: i, total: visible.length, active: i === cursor }} />
                 ))}
             </div>
+
+            {extras && (
+                <div className="mt-8">
+                    <div className="flex items-center gap-3 mb-4">
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-white/45">Other settings</h3>
+                        <div className="h-px flex-1 bg-white/10" />
+                    </div>
+                    {/* Not provider choices -- there is nothing to pick between --
+                        so these render without a provider row rather than being
+                        given invented alternatives the backend cannot route to. */}
+                    {extras}
+                </div>
+            )}
         </CollapsibleSection>
     );
 }
