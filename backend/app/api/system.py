@@ -422,6 +422,18 @@ async def test_provider(
     """
     from app.services import connector_health
 
+    # Validate before anything else, the way save_provider does. Without this,
+    # `capability` is an unvalidated path segment that reaches
+    # connector_health._row(), which creates a row for whatever name it is
+    # given -- so any admin request could insert arbitrary junk rows into a
+    # table the setup page renders. It also kept the raw segment out of the
+    # 400 body below.
+    if capability not in _PROVIDER_SELECT_KEY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown capability. Expected one of: {', '.join(sorted(_PROVIDER_SELECT_KEY))}.",
+        )
+
     async def _remember(outcome: dict) -> dict:
         try:
             if outcome.get("ok"):
@@ -461,7 +473,7 @@ async def test_provider(
                 return await _remember({"ok": False, "detail": "No identity provider is configured."})
             meta = await get_oidc_metadata(cfg)
             return await _remember({"ok": bool(meta.get("authorization_endpoint")), "detail": f"Discovered {cfg['provider']} endpoints at {cfg['issuer_base']}"})
-        raise HTTPException(status_code=400, detail=f"Test not supported for: {capability}")
+        raise HTTPException(status_code=400, detail="A live test is not available for this capability.")
     except HTTPException:
         raise
     except Exception as e:
