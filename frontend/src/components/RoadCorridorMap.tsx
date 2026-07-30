@@ -133,7 +133,19 @@ export default function RoadCorridorMap({
         };
     }, [apiKey]);
 
-    const styleFor = useCallback((feature: GeoFeature): VectorStyle => {
+    /* Two layers, drawn one on top of the other.
+     *
+     * These were referenced by restyle() and by the layer setup but never
+     * actually written, so the corridor map threw a ReferenceError the moment it
+     * rendered. `vite build` does not typecheck, so it shipped. Reconstructed
+     * from what the two call sites and the surrounding code require: a wide
+     * translucent band showing how far the corridor reaches, and a thin solid
+     * line showing the road itself through it.
+     */
+
+    /** The corridor band: wide and see-through, so you can still read the
+     *  basemap and the road underneath it. */
+    const bufferStyleFor = useCallback((feature: GeoFeature): VectorStyle => {
         const id = String(feature.properties?.feature_id ?? '');
         const off = excludedRef.current.has(id);
         return {
@@ -142,9 +154,21 @@ export default function RoadCorridorMap({
             // pixels, so this is indicative rather than a true buffer -- but it
             // makes the setting legible instead of abstract.
             strokeWidth: off ? 2 : Math.max(3, Math.round(corridorMetres / 3)),
-            strokeOpacity: off ? 0.35 : 0.85,
+            strokeOpacity: off ? 0.18 : 0.3,
         };
     }, [corridorMetres]);
+
+    /** The centreline: thin and opaque, and unaffected by the width slider --
+     *  the road does not move when the corridor widens, only the band does. */
+    const centerlineStyleFor = useCallback((feature: GeoFeature): VectorStyle => {
+        const id = String(feature.properties?.feature_id ?? '');
+        const off = excludedRef.current.has(id);
+        return {
+            strokeColor: off ? EXCLUDED : INCLUDED,
+            strokeWidth: off ? 1.5 : 2.5,
+            strokeOpacity: off ? 0.45 : 1,
+        };
+    }, []);
 
     /** Re-evaluate the existing layer rather than refetching: the geometry has
      *  not changed, only which pieces count. */
@@ -223,7 +247,7 @@ export default function RoadCorridorMap({
         // roadKey rather than the array so a re-render with equal contents does
         // not refetch the whole town's geometry.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [roadKey, ready, styleFor, toggleSegment]);
+    }, [roadKey, ready, bufferStyleFor, centerlineStyleFor, toggleSegment]);
 
     // Draggable handles at the trim boundaries of the selected stretch.
     useEffect(() => {
