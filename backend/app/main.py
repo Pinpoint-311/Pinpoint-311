@@ -475,10 +475,12 @@ class ClientError(BaseModel):
 @app.post("/api/system/client-errors", status_code=204)
 async def log_client_error(error: ClientError, db: AsyncSession = Depends(get_db)):
     """Log frontend errors for monitoring."""
-    import re
+    # The shared sanitizer rather than a local one: it strips the full control
+    # range, not just \r\n, and it is the barrier the rest of the codebase uses.
+    from app.core.sanitize import sanitize_for_log
+
     def sanitize(text):
-        if not text: return text
-        return re.sub(r'[\r\n]+', ' ', str(text))
+        return sanitize_for_log(text, max_length=2000) if text else text
 
     # The stack goes in the same ERROR record, not a separate debug() call.
     #
