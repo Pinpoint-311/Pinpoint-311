@@ -10,9 +10,10 @@ import {
     Clock, DollarSign,
 } from 'lucide-react';
 
-import { Card, Button, Input, Select, Badge, CollapsibleSection } from './ui';
+import { Card, Button, Input, Badge, CollapsibleSection } from './ui';
 import { SystemSecret } from '../types';
 import { api } from '../services/api';
+import type { Capability } from '../services/api';
 import GovtechIntegrations from './GovtechIntegrations';
 import ServiceProviders from './ServiceProviders';
 
@@ -39,9 +40,6 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [savingKey, setSavingKey] = useState<string | null>(null);
 
     const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
-    const [localSmsProvider, setLocalSmsProvider] = useState<string>('none');
-    const [savingSmsProvider, setSavingSmsProvider] = useState(false);
-    const userModifiedSms = useRef(false);
     /* The guide starts open on a fresh install and closed once the required
      * integrations are in. It is a first-run document: hidden behind a click it
      * is missed by the person who needs it most, and left open forever it pushes
@@ -58,9 +56,16 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [setupCloud, setSetupCloud] = useState<'google' | 'azure' | 'aws'>('google');
     const [setupIdp, setSetupIdp] = useState<'auth0' | 'entra' | 'okta' | 'oidc'>('auth0');
     const [setupMaps, setSetupMaps] = useState<'google' | 'esri' | 'azure' | 'apple'>('google');
-    const [wantedFeatures, setWantedFeatures] = useState<Set<string>>(
-        new Set(['ai', 'secrets', 'email'])
-    );
+    /* Everything on, untick to hide.
+     *
+     * This started as opt-in with three ticked, which quietly set the default
+     * for every town that never touched it: a page that asks what you want,
+     * pre-answered "not much". A town that never opens this question should end
+     * up with the whole platform switched on, not the three we happened to
+     * pre-tick -- so the list below is every feature, and a town removes what
+     * it genuinely does not want. */
+    const ALL_FEATURES = ['ai', 'translation', 'moderation', 'email', 'sms', 'secrets', 'govtech', 'backups'];
+    const [wantedFeatures, setWantedFeatures] = useState<Set<string>>(new Set(ALL_FEATURES));
     const toggleFeature = (f: string) =>
         setWantedFeatures(prev => {
             const next = new Set(prev);
@@ -68,6 +73,72 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             return next;
         });
     const wants = (f: string) => wantedFeatures.has(f);
+
+    /* The setup questions are asked in feature terms ("AI triage", "Secret
+     * storage + PII encryption") and the provider cards are keyed by
+     * capability. This is the one mapping between them. `secrets` covers the
+     * KMS card because the same question is what a town answers about where
+     * keys and resident data are protected, and `moderation` covers photo
+     * redaction for the same reason -- both are about screening what gets
+     * stored. */
+    const FEATURE_TO_CAPABILITY: Record<string, Capability> = {
+        ai: 'ai', translation: 'translation', email: 'email',
+        sms: 'sms', secrets: 'kms', moderation: 'redaction',
+    };
+    const wantedCapabilities = new Set<Capability>(
+        Object.entries(FEATURE_TO_CAPABILITY)
+            .filter(([feature]) => wantedFeatures.has(feature))
+            .map(([, capability]) => capability),
+    );
+
+    /* What to do to obtain the credentials for a given provider, shown inside
+     * the card immediately above the boxes.
+     *
+     * Short on purpose. The long guide above still exists for someone starting
+     * from nothing; this is the reminder you want when you are already looking
+     * at the field and have forgotten which console page the value is on. Keyed
+     * by capability and provider so switching provider switches the reminder,
+     * the same way the fields themselves switch.
+     *
+     * Returning null is normal -- a provider that needs no explanation beyond
+     * its field labels should not be given filler. */
+    const cardInstructions = (cap: Capability, provider: string): React.ReactNode => {
+        const K: Record<string, React.ReactNode> = {
+            'ai:vertex': <>Enable <strong className="text-white/85">Vertex AI API</strong> in Google Cloud, then use the project ID and service-account JSON from the Google Cloud step above.</>,
+            'ai:azure': <>Create an <strong className="text-white/85">Azure OpenAI</strong> resource and deploy a vision-capable model. The deployment name is what goes in the third box, not the model name.</>,
+            'ai:bedrock': <>In <strong className="text-white/85">Bedrock → Model access</strong>, enable the models you want first — a region alone is not enough if nothing is enabled in it.</>,
+            'translation:google': <>Nothing new to fetch. Enable <strong className="text-white/85">Cloud Translation API</strong> and reuse the same project as AI.</>,
+            'translation:azure': <>Create a <strong className="text-white/85">Translator</strong> resource; its Key and Region are on the resource's Keys and Endpoint page.</>,
+            'translation:aws': <>No resource to create. Amazon Translate works with the region and credentials you already use.</>,
+            'identity:auth0': <>Applications → your app → Settings. Add <code className="bg-black/30 px-1 rounded text-[11px]">{window.location.origin}/api/auth/callback</code> as an Allowed Callback URL first, or sign-in fails after the password.</>,
+            'identity:entra': <>App registrations → your app. Overview holds both IDs; the secret <em>Value</em> (not the Secret ID) is under Certificates &amp; secrets and is shown only once.</>,
+            'identity:okta': <>The Issuer is your Okta domain, e.g. <code className="bg-black/30 px-1 rounded text-[11px]">https://your-org.okta.com</code>. Assign the app to a staff group or nobody can sign in.</>,
+            'identity:oidc': <>Enter the issuer itself. If your provider's docs show a URL ending <code className="bg-black/30 px-1 rounded text-[11px]">/.well-known/openid-configuration</code>, leave that part off.</>,
+            'maps:google': <>Enable Maps JavaScript, Geocoding and Places, attach billing, then restrict the key to <code className="bg-black/30 px-1 rounded text-[11px]">{window.location.origin}/*</code>. Without billing the key looks fine and the map stays grey.</>,
+            'maps:esri': <>An API key from ArcGIS Location Platform. Check whether your county's licence already covers you before buying one.</>,
+            'maps:azure': <>Azure Maps account → Authentication → Primary Key.</>,
+            'maps:apple': <>Needs a paid Apple Developer account. Paste the whole <code className="bg-black/30 px-1 rounded text-[11px]">.p8</code> file including its BEGIN and END lines.</>,
+            'email:smtp': <>Your existing mail server. For Microsoft 365 or Google Workspace this needs an <strong className="text-white/85">app password</strong>, not the account password.</>,
+            'email:ses': <>SES refuses to send from an address or domain you have not verified in its console first.</>,
+            'email:acs': <>The endpoint and key are on the Communication Services resource, under Keys.</>,
+            'sms:none': <>Nothing to enter. Residents still get email updates.</>,
+            'sms:twilio': <>Account SID and Auth Token are on the Twilio console home page. The number must be one you own there, in <code className="bg-black/30 px-1 rounded text-[11px]">+1XXXXXXXXXX</code> form.</>,
+            'sms:sns': <>Uses your existing AWS credentials. New AWS accounts are sandboxed for SMS — request production access or only verified numbers receive anything.</>,
+            'sms:acs': <>The same Communication Services resource as email, plus a number provisioned in it.</>,
+            'sms:http': <>For a gateway not listed here. Not certified against any particular vendor, so send a test before relying on it.</>,
+            'kms:google': <>Enable <strong className="text-white/85">Cloud KMS API</strong>. The three boxes only name the key inside your project; leave them blank for the defaults.</>,
+            'kms:azure': <>Key Vault URL and key name, plus an app registration that can wrap and unwrap with it.</>,
+            'kms:aws': <>A KMS key ID or ARN in the same region as the rest of your AWS setup.</>,
+            'kms:local': <>Nothing to enter. Resident data is still encrypted, using the application's own key rather than a cloud key service.</>,
+            'redaction:local': <>Nothing to enter — detection runs here and no photo leaves the building. Less accurate than the cloud detectors.</>,
+        };
+        const cloud = K[`${cap}:${provider}`];
+        if (cloud) return cloud;
+        if (cap === 'redaction') {
+            return <>No new credentials — this reuses the {provider === 'google' ? 'Google Cloud' : provider === 'aws' ? 'AWS' : 'Azure'} keys you entered above. Both toggles are on by default; plate detection guesses, and what it occasionally blurs is a house number.</>;
+        }
+        return null;
+    };
 
     // Managed (state-hosted) mode: infrastructure cards are locked because the
     // state's orchestrator owns those keys (Google Cloud, Backups, domain).
@@ -124,12 +195,6 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         || (isConfigured('AWS_REGION') && (isConfigured('SES_FROM_EMAIL') || isConfigured('SMTP_FROM_EMAIL')))
         || (isConfigured('ACS_ENDPOINT') && isConfigured('ACS_ACCESS_KEY'));
 
-    // Sync local SMS provider state with secrets (only if user hasn't modified)
-    useEffect(() => {
-        if (smsProviderFromSecrets && !userModifiedSms.current) {
-            setLocalSmsProvider(smsProviderFromSecrets);
-        }
-    }, [smsProviderFromSecrets]);
     const sentryConfigured = isConfigured('SENTRY_DSN');
     const gcpConfigured = isConfigured('GOOGLE_CLOUD_PROJECT');
     // Same trap as sign-in: maps is a pluggable capability with four providers,
@@ -141,8 +206,19 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         || isConfigured('AZURE_MAPS_KEY')
         || (isConfigured('APPLE_MAPKIT_TEAM_ID') && isConfigured('APPLE_MAPKIT_KEY_ID')
             && isConfigured('APPLE_MAPKIT_PRIVATE_KEY'));
-    const smsConfigured = !!(localSmsProvider && localSmsProvider !== 'none');
+    // Read straight from the stored provider: the Text Messages card writes it,
+    // and 'none' is a real value there rather than an absence.
+    const smsConfigured = !!(smsProviderFromSecrets && smsProviderFromSecrets !== 'none');
     const backupConfigured = isConfigured('BACKUP_S3_BUCKET') && isConfigured('BACKUP_S3_ACCESS_KEY') && isConfigured('BACKUP_S3_SECRET_KEY') && isConfigured('BACKUP_ENCRYPTION_KEY');
+    // The capabilities that gained a card. Each is "done" when any one of its
+    // providers has the credentials that provider needs, so a town on Azure is
+    // not marked incomplete for having no Google key.
+    const aiConfigured = isConfigured('VERTEX_AI_PROJECT') || isConfigured('AZURE_OPENAI_API_KEY') || isConfigured('AWS_REGION');
+    const translationConfigured = isConfigured('GOOGLE_CLOUD_PROJECT') || isConfigured('AZURE_TRANSLATOR_KEY') || isConfigured('AWS_REGION');
+    const kmsConfigured = isConfigured('KMS_KEY_ID') || isConfigured('AZURE_KEYVAULT_URL') || isConfigured('AWS_KMS_KEY_ID');
+    // Redaction needs no credentials of its own -- it reuses the cloud ones --
+    // so it counts as set up once a detector has been chosen.
+    const redactionConfigured = isConfigured('REDACTION_PROVIDER');
 
     // Setup progress calculation. In managed mode the platform-managed steps
     // (Google Cloud, DB Backups) are excluded — the state handles them, so
@@ -153,6 +229,10 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         ...(managedMode ? [] : [{ label: 'Google Cloud', done: !!gcpConfigured, required: false }]),
         { label: 'Map provider', done: !!mapsConfigured, required: false },
         { label: 'SMS Alerts', done: smsConfigured, required: false },
+        { label: 'AI triage', done: !!aiConfigured, required: false },
+        { label: 'Translation', done: !!translationConfigured, required: false },
+        { label: 'PII encryption', done: !!kmsConfigured, required: false },
+        { label: 'Photo redaction', done: !!redactionConfigured, required: false },
         ...(managedMode ? [] : [{ label: 'DB Backups', done: !!backupConfigured, required: false }]),
     ];
 
@@ -304,7 +384,13 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                     </div>
                     <div>
                         <h2 className="font-semibold text-white">Setup Progress</h2>
-                        <p className="text-white/50 text-xs">{completedCount} of {setupSteps.length} integrations configured</p>
+                        <p className="text-white/50 text-xs">
+                            {completedCount} of {setupSteps.length} integrations configured{' · '}
+                            <span className="text-white/70 font-medium">{Math.round((completedCount / setupSteps.length) * 100)}%</span>
+                            {completedCount < setupSteps.length && (
+                                <span className="text-white/40">{' · '}{setupSteps.length - completedCount} left</span>
+                            )}
+                        </p>
                     </div>
                 </div>
 
@@ -580,7 +666,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     what={<>Sends the resident a confirmation when they file, and an update when staff change the status. Without it a resident has no way to know anything happened, which is the most common complaint about 311 systems.</>}
                                     time="About 15 minutes"
                                     cost="Free at a town's volume with most providers.">
-                                    <InstructionStep num={1}><strong className="text-white/90">Any cloud — SMTP:</strong> use SendGrid, Gmail App Passwords, or your org relay. Host <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">smtp.sendgrid.net</code> / <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">587</code>, then fill the <strong className="text-white/90">Email (SMTP)</strong> card below.</InstructionStep>
+                                    <InstructionStep num={1}><strong className="text-white/90">Any cloud — SMTP:</strong> use SendGrid, Gmail App Passwords, or your org relay. Host <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">smtp.sendgrid.net</code> / <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">587</code>, then fill the <strong className="text-white/90">Email</strong> card in Service Providers, picking <strong className="text-white/90">SMTP</strong>.</InstructionStep>
                                     {setupCloud === 'azure' && <InstructionStep num={2}><strong className="text-white/90">Or native Azure:</strong> create an <strong className="text-white/90">Azure Communication Services</strong> resource, connect an email domain, and use its connection string (provider "acs").</InstructionStep>}
                                     {setupCloud === 'aws' && <InstructionStep num={2}><strong className="text-white/90">Or native AWS:</strong> verify a sender/domain in <strong className="text-white/90">Amazon SES</strong> and use SES (provider "ses") with your region + credentials.</InstructionStep>}
                                 </Guide>
@@ -661,6 +747,26 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 </Guide>
 
                                 {/* ── Database backups ── */}
+                                {/* ── Photo redaction ── */}
+                                <Guide show={wants('moderation')} tone="rose" icon={ImageIcon} title="Blurring faces and licence plates" done={redactionConfigured}
+                                    what={<>Residents photograph the pothole and the neighbour walking past it. This finds faces and plates before the photo is stored, so the municipal site never publishes them. It runs on the way in — the unblurred original is never saved.</>}
+                                    time="About 2 minutes"
+                                    cost={setupCloud === 'google' ? "Roughly a tenth of a cent per photo on Cloud Vision." : "A fraction of a cent per photo, or nothing at all on your own server."}>
+                                    <InstructionStep num={1}>Open <strong className="text-white/90">Service Providers → Photo Redaction</strong> and pick a detector. The cloud ones reuse the credentials you already entered — there is no new key. <strong className="text-white/90">On this server</strong> needs no account at all and no photo leaves the building, at some cost in accuracy.</InstructionStep>
+                                    <InstructionStep num={2} check={<>a face blurred in the photo on the request you just filed.</>}>Faces and plates are both on by default. Save, then file a test report with a photo of a person or a car and open it in the staff view.</InstructionStep>
+                                    <Trouble>Plate detection guesses, and what it occasionally guesses wrong is a house number. If your crews work from those, switch <strong className="text-white/90">Blur licence plates</strong> off on the same card — faces stay on.</Trouble>
+                                </Guide>
+
+                                {/* ── Error reporting ── */}
+                                <Guide tone="violet" icon={AlertTriangle} title="Knowing when something breaks" done={sentryConfigured}
+                                    what={<>Without this, a page that crashes for a resident is something you hear about only if they phone. Browser crashes are already collected and shown under Browser errors in the admin console; this sends them somewhere off the server as well, so they survive a container restart.</>}
+                                    time="About 5 minutes"
+                                    cost="Sentry's free tier covers a town's volume comfortably.">
+                                    <InstructionStep num={1} check={<>a DSN that looks like <code className="bg-black/30 px-1 rounded">https://…@…ingest.sentry.io/…</code></>}>Create a free account at <a href="https://sentry.io" target="_blank" rel="noopener noreferrer" className="text-violet-300 underline underline-offset-2">sentry.io</a>, make a project, and copy its <strong className="text-white/90">DSN</strong>.</InstructionStep>
+                                    <InstructionStep num={2}>Paste it into the <strong className="text-white/90">Sentry</strong> card under Other settings, and save.</InstructionStep>
+                                    <InstructionStep num={3}><em className="text-white/50">Optional:</em> this is genuinely skippable. Crashes are still recorded in the admin console without it — Sentry adds alerting and keeps the history longer.</InstructionStep>
+                                </Guide>
+
                                 <Guide show={wants('backups')} tone="amber" icon={HardDrive} title="Automatic backups" done={backupConfigured}
                                     what={<>Takes a nightly encrypted copy of everything and stores it off the server. Do this one. 311 reports are public records the town is legally required to keep, and a server can fail.</>}
                                     time="About 20 minutes"
@@ -689,872 +795,551 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 open above everything that actually needed attention. */}
 
             {/* 1 — Required + core capabilities: sign-in, maps, AI, translation */}
-            <div id="sec-providers"><ServiceProviders /></div>
-
-            <CollapsibleSection id="sec-optional" title="Notifications & Extras" icon={Cloud} subtitle="Email, text messages, cloud services, error reporting, backups — none required to take reports" defaultOpen={false}>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {/* SMS Notifications - Premium Card */}
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.1 }}
-                        className={`relative rounded-3xl border p-6 transition-all duration-300 ${localSmsProvider && localSmsProvider !== 'none'
-                            ? 'bg-gradient-to-br from-emerald-500/10 via-green-500/5 to-teal-500/10 border-emerald-500/30 shadow-lg shadow-emerald-500/10'
-                            : 'setup-panel border-transparent'
-                            }`}
-                    >
-
-                        {/* Glow effect when configured */}
-                        {localSmsProvider && localSmsProvider !== 'none' && (
-                            <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/5 via-transparent to-teal-500/5 pointer-events-none" />
-                        )}
-
-                        <div className="relative">
-                            <div className="flex items-start justify-between mb-4">
-                                <div className="flex items-center gap-4">
-                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${localSmsProvider && localSmsProvider !== 'none'
-                                        ? 'bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg shadow-emerald-500/30'
-                                        : 'setup-tile'
-                                        }`}>
-                                        <MessageSquare className="w-7 h-7 text-white" />
-                                    </div>
-                                    <div>
-                                        <h3 className="font-bold text-lg text-white">SMS Notifications</h3>
-                                        <p className="text-white/50 text-sm">Text alerts to residents</p>
-                                    </div>
-                                </div>
-                                {localSmsProvider && localSmsProvider !== 'none' ? (
-                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-emerald-500/20 to-teal-500/20 text-emerald-300 border border-emerald-500/30 shadow-lg shadow-emerald-500/10">
-                                        <CheckCircle className="w-3.5 h-3.5" />
-                                        Active
-                                    </span>
-                                ) : (
-                                    <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 text-white/50 border border-white/10">
-                                        Disabled
-                                    </span>
-                                )}
-                            </div>
-
-                            {/* SMS Provider Selection */}
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="text-sm text-white/60 mb-2 block">Provider</label>
-                                    <div className="flex gap-2">
-                                        <Select
-                                            options={[
-                                                { value: 'none', label: 'Disabled' },
-                                                { value: 'twilio', label: 'Twilio' },
-                                                { value: 'http', label: 'Custom HTTP API' },
-                                            ]}
-                                            value={localSmsProvider}
-                                            onChange={(e) => {
-                                                userModifiedSms.current = true; // Mark as user-modified
-                                                setLocalSmsProvider(e.target.value);
-                                            }}
-                                        />
-                                        <Button
-                                            size="sm"
-                                            disabled={savingSmsProvider || localSmsProvider === (smsProviderFromSecrets || 'none')}
-                                            onClick={async () => {
-                                                setSavingSmsProvider(true);
-                                                try {
-                                                    await onSaveSecret('SMS_PROVIDER', localSmsProvider);
-
-                                                    // Sync with modules if available
-                                                    const wasEnabled = (smsProviderFromSecrets || 'none') !== 'none';
-                                                    const isEnabled = localSmsProvider !== 'none';
-                                                    if (modules && onUpdateModules && wasEnabled !== isEnabled) {
-                                                        await onUpdateModules({ ...modules, sms_alerts: isEnabled });
-                                                    }
-
-                                                    userModifiedSms.current = false; // Reset flag after successful save
-                                                } catch (err) {
-                                                    console.error('Failed to save SMS provider:', err);
-                                                }
-                                                setSavingSmsProvider(false);
-                                            }}
-                                            className="bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 whitespace-nowrap"
-                                        >
-                                            {savingSmsProvider ? 'Saving...' : 'Save'}
-                                        </Button>
-                                    </div>
-                                </div>
-
-
-                                {/* Twilio Configuration Fields */}
-                                {localSmsProvider === 'twilio' && (
-                                    <div className="space-y-3 pt-2 border-t border-white/10">
+            {/* Only the capabilities the town asked for. The question above is
+                the single place that decides what this page shows, so answering
+                it once removes the steps and the inputs together rather than
+                leaving inputs for providers whose instructions are hidden. */}
+            <div id="sec-providers">
+                <ServiceProviders
+                    show={wantedCapabilities}
+                    instructions={cardInstructions}
+                    extras={
+                        <>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {/* Google Cloud - Premium Card (locked in managed mode: the state owns these keys) */}
+                            {managedMode ? (
+                                <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6">
+                                    <div className="flex items-center gap-4 mb-2">
+                                        <div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-white/10">
+                                            <Cloud className="w-7 h-7 text-white/50" />
+                                        </div>
                                         <div>
-                                            <label className="text-sm text-white/60 mb-1.5 block">Account SID</label>
-                                            <div className="flex gap-2">
-                                                <Input
-                                                    type="text"
-                                                    placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                                                    value={secretValues['TWILIO_ACCOUNT_SID'] || ''}
-                                                    onChange={(e) => setSecretValues(p => ({ ...p, 'TWILIO_ACCOUNT_SID': e.target.value }))}
-                                                    className="flex-1 text-sm"
-                                                />
+                                            <h3 className="font-bold text-lg text-white/70">Google Cloud</h3>
+                                            <p className="text-white/40 text-sm">AI, encryption &amp; translation infrastructure</p>
+                                        </div>
+                                        <span className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-white/10 text-white/60 border border-white/15">
+                                            <Shield className="w-3.5 h-3.5" />
+                                            Managed by your state
+                                        </span>
+                                    </div>
+                                    <p className="text-white/50 text-sm">
+                                        Cloud project, KMS encryption keys, and secrets storage are provisioned and maintained by your state hosting program. Nothing to configure here.
+                                    </p>
+                                </div>
+                            ) : (
+                            <motion.div
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: 0.3 }}
+                                className={`relative rounded-3xl border p-6 transition-all duration-300 ${gcpConfigured
+                                    ? 'bg-gradient-to-br from-blue-500/10 via-cyan-500/5 to-sky-500/10 border-blue-500/30 shadow-lg shadow-blue-500/10'
+                                    : 'setup-panel border-transparent'
+                                    }`}
+                            >
+                                {gcpConfigured && (
+                                    <div className="absolute inset-0 bg-gradient-to-r from-blue-500/5 via-transparent to-cyan-500/5 pointer-events-none" />
+                                )}
+
+                                <div className="relative">
+                                    <div className="flex items-start justify-between mb-4">
+                                        <div className="flex items-center gap-4">
+                                            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${gcpConfigured
+                                                ? 'bg-gradient-to-br from-blue-400 to-cyan-500 shadow-lg shadow-blue-500/30'
+                                                : 'setup-tile'
+                                                }`}>
+                                                <Cloud className="w-7 h-7 text-white" />
+                                            </div>
+                                            <div>
+                                                <h3 className="font-bold text-lg text-white">Google Cloud</h3>
+                                                <p className="text-white/50 text-sm">AI, KMS, Secrets, Translation</p>
                                             </div>
                                         </div>
-                                        <div>
-                                            <label className="text-sm text-white/60 mb-1.5 block">Auth Token</label>
-                                            <Input
-                                                type="password"
-                                                placeholder="Your Twilio auth token"
-                                                value={secretValues['TWILIO_AUTH_TOKEN'] || ''}
-                                                onChange={(e) => setSecretValues(p => ({ ...p, 'TWILIO_AUTH_TOKEN': e.target.value }))}
-                                                className="text-sm"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="text-sm text-white/60 mb-1.5 block">From Phone Number</label>
-                                            <Input
-                                                type="text"
-                                                placeholder="+1234567890"
-                                                value={secretValues['TWILIO_PHONE_NUMBER'] || ''}
-                                                onChange={(e) => setSecretValues(p => ({ ...p, 'TWILIO_PHONE_NUMBER': e.target.value }))}
-                                                className="text-sm"
-                                            />
-                                        </div>
-                                        <Button
-                                            size="sm"
-                                            className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700"
-                                            onClick={async () => {
-                                                if (secretValues['TWILIO_ACCOUNT_SID']) await handleSave('TWILIO_ACCOUNT_SID');
-                                                if (secretValues['TWILIO_AUTH_TOKEN']) await handleSave('TWILIO_AUTH_TOKEN');
-                                                if (secretValues['TWILIO_PHONE_NUMBER']) await handleSave('TWILIO_PHONE_NUMBER');
-                                            }}
-                                            disabled={!secretValues['TWILIO_ACCOUNT_SID'] || savingKey !== null}
-
-                                        >
-                                            {savingKey ? 'Saving...' : 'Save Twilio Credentials'}
-                                        </Button>
-                                    </div>
-                                )}
-
-                                {/* Custom HTTP Configuration Fields */}
-                                {localSmsProvider === 'http' && (
-                                    <div className="space-y-3 pt-2 border-t border-white/10">
-                                        <div>
-                                            <label className="text-sm text-white/60 mb-1.5 block">API Endpoint URL</label>
-                                            <Input
-                                                type="text"
-                                                placeholder="https://your-sms-api.com/send"
-                                                value={secretValues['SMS_HTTP_ENDPOINT'] || ''}
-                                                onChange={(e) => setSecretValues(p => ({ ...p, 'SMS_HTTP_ENDPOINT': e.target.value }))}
-                                                className="text-sm"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="text-sm text-white/60 mb-1.5 block">API Key (optional)</label>
-                                            <Input
-                                                type="password"
-                                                placeholder="Your API key"
-                                                value={secretValues['SMS_HTTP_API_KEY'] || ''}
-                                                onChange={(e) => setSecretValues(p => ({ ...p, 'SMS_HTTP_API_KEY': e.target.value }))}
-                                                className="text-sm"
-                                            />
-                                        </div>
-                                        <Button
-                                            size="sm"
-                                            className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700"
-                                            onClick={async () => {
-                                                if (secretValues['SMS_HTTP_ENDPOINT']) await handleSave('SMS_HTTP_ENDPOINT');
-                                                if (secretValues['SMS_HTTP_API_KEY']) await handleSave('SMS_HTTP_API_KEY');
-                                            }}
-                                            disabled={!secretValues['SMS_HTTP_ENDPOINT'] || savingKey !== null}
-                                        >
-                                            {savingKey ? 'Saving...' : 'Save HTTP Settings'}
-                                        </Button>
-                                    </div>
-                                )}
-
-                                {/* Module sync indicator */}
-                                {modules && (
-                                    <div className={`flex items-center gap-2 text-xs ${modules.sms_alerts ? 'text-emerald-400' : 'text-white/40'}`}>
-                                        {modules.sms_alerts ? (
-                                            <>
-                                                <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                                                Module enabled in Feature Settings
-                                            </>
+                                        {gcpConfigured ? (
+                                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-blue-500/20 to-cyan-500/20 text-blue-300 border border-blue-500/30 shadow-lg shadow-blue-500/10">
+                                                <CheckCircle className="w-3.5 h-3.5" />
+                                                Configured
+                                            </span>
                                         ) : (
-                                            <>
-                                                <div className="w-2 h-2 rounded-full bg-white/30" />
-                                                Module disabled in Feature Settings
-                                            </>
+                                            <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 text-white/50 border border-white/10">
+                                                Optional
+                                            </span>
                                         )}
                                     </div>
-                                )}
-                            </div>
-                        </div>
-                    </motion.div>
 
-
-                    {/* Email SMTP - Premium Card */}
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.2 }}
-                        className={`relative rounded-3xl border p-6 transition-all duration-300 ${smtpConfigured
-                            ? 'bg-gradient-to-br from-violet-500/10 via-purple-500/5 to-fuchsia-500/10 border-violet-500/30 shadow-lg shadow-violet-500/10'
-                            : 'setup-panel border-transparent'
-                            }`}
-                    >
-                        {smtpConfigured && (
-                            <div className="absolute inset-0 bg-gradient-to-r from-violet-500/5 via-transparent to-fuchsia-500/5 pointer-events-none" />
-                        )}
-
-                        <div className="relative">
-                            <div className="flex items-start justify-between mb-4">
-                                <div className="flex items-center gap-4">
-                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${smtpConfigured
-                                        ? 'bg-gradient-to-br from-violet-400 to-purple-500 shadow-lg shadow-violet-500/30'
-                                        : 'setup-tile'
-                                        }`}>
-                                        <Mail className="w-7 h-7 text-white" />
-                                    </div>
-                                    <div>
-                                        <h3 className="font-bold text-lg text-white">Email (SMTP)</h3>
-                                        <p className="text-white/50 text-sm">Outgoing notifications</p>
-                                    </div>
-                                </div>
-                                {smtpConfigured ? (
-                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-violet-500/20 to-purple-500/20 text-violet-300 border border-violet-500/30 shadow-lg shadow-violet-500/10">
-                                        <CheckCircle className="w-3.5 h-3.5" />
-                                        Configured
-                                    </span>
-                                ) : (
-                                    <span className="inline-flex items-center px-3 py-1.5 rounded-2xl text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                                        <AlertCircle className="w-3.5 h-3.5 mr-1" />
-                                        Setup Required
-                                    </span>
-                                )}
-                            </div>
-
-                            {!smtpConfigured || secretValues['SMTP_HOST'] !== undefined ? (
-                                <div className="space-y-3">
-                                    <div className="flex gap-2">
-                                        <Input
-                                            type="text"
-                                            placeholder="SMTP Host (e.g., smtp.gmail.com)"
-                                            value={secretValues['SMTP_HOST'] || ''}
-                                            onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_HOST': e.target.value }))}
-                                            className="flex-1 text-sm"
-                                        />
-                                        <Input
-                                            type="text"
-                                            placeholder="Port"
-                                            value={secretValues['SMTP_PORT'] || ''}
-                                            onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_PORT': e.target.value }))}
-                                            className="w-20 text-sm"
-                                        />
-                                    </div>
-                                    <Input
-                                        type="text"
-                                        placeholder="From Email Address"
-                                        value={secretValues['SMTP_FROM_EMAIL'] || ''}
-                                        onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_FROM_EMAIL': e.target.value }))}
-                                        className="text-sm"
-                                    />
-                                    <div className="flex gap-2">
-                                        <Input
-                                            type="text"
-                                            placeholder="Username"
-                                            value={secretValues['SMTP_USERNAME'] || ''}
-                                            onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_USERNAME': e.target.value }))}
-                                            className="flex-1 text-sm"
-                                        />
-                                        <Input
-                                            type="password"
-                                            placeholder="Password"
-                                            value={secretValues['SMTP_PASSWORD'] || ''}
-                                            onChange={(e) => setSecretValues(p => ({ ...p, 'SMTP_PASSWORD': e.target.value }))}
-                                            className="flex-1 text-sm"
-                                        />
-                                    </div>
-                                    <Button
-                                        size="sm"
-                                        className="w-full bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700"
-                                        onClick={async () => {
-                                            if (secretValues['SMTP_HOST']) await handleSave('SMTP_HOST');
-                                            if (secretValues['SMTP_PORT']) await handleSave('SMTP_PORT');
-                                            if (secretValues['SMTP_FROM_EMAIL']) await handleSave('SMTP_FROM_EMAIL');
-                                            if (secretValues['SMTP_USERNAME']) await handleSave('SMTP_USERNAME');
-                                            if (secretValues['SMTP_PASSWORD']) await handleSave('SMTP_PASSWORD');
-
-                                            // Auto-enable email module when SMTP is configured
-                                            if (modules && onUpdateModules && secretValues['SMTP_HOST']) {
-                                                await onUpdateModules({ ...modules, email_notifications: true });
-                                            }
-                                        }}
-                                        disabled={!secretValues['SMTP_HOST'] || savingKey !== null}
-                                    >
-                                        {savingKey ? 'Saving...' : 'Save SMTP Settings'}
-                                    </Button>
-                                </div>
-                            ) : (
-                                <div className="space-y-3">
-                                    <div className="flex items-center gap-2">
-                                        <div className="flex-1 h-10 rounded-xl bg-violet-500/20 border border-violet-500/30 flex items-center px-4">
-                                            <CheckCircle className="w-4 h-4 text-violet-400 mr-2" />
-                                            <span className="text-violet-200 text-sm">SMTP configured and ready</span>
-                                        </div>
-                                        <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, 'SMTP_HOST': '' }))}>
-                                            Change
-                                        </Button>
-                                    </div>
-
-                                    {/* Module sync indicator */}
-                                    {modules && (
-                                        <div className={`flex items-center gap-2 text-xs ${modules.email_notifications ? 'text-violet-400' : 'text-white/40'}`}>
-                                            {modules.email_notifications ? (
-                                                <>
-                                                    <div className="w-2 h-2 rounded-full bg-violet-400 animate-pulse" />
-                                                    Module enabled in Feature Settings
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <div className="w-2 h-2 rounded-full bg-white/30" />
-                                                    Module disabled in Feature Settings
-                                                </>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    </motion.div>
-
-                    {/* Google Cloud - Premium Card (locked in managed mode: the state owns these keys) */}
-                    {managedMode ? (
-                        <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6">
-                            <div className="flex items-center gap-4 mb-2">
-                                <div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-white/10">
-                                    <Cloud className="w-7 h-7 text-white/50" />
-                                </div>
-                                <div>
-                                    <h3 className="font-bold text-lg text-white/70">Google Cloud</h3>
-                                    <p className="text-white/40 text-sm">AI, encryption &amp; translation infrastructure</p>
-                                </div>
-                                <span className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-white/10 text-white/60 border border-white/15">
-                                    <Shield className="w-3.5 h-3.5" />
-                                    Managed by your state
-                                </span>
-                            </div>
-                            <p className="text-white/50 text-sm">
-                                Cloud project, KMS encryption keys, and secrets storage are provisioned and maintained by your state hosting program. Nothing to configure here.
-                            </p>
-                        </div>
-                    ) : (
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.3 }}
-                        className={`relative rounded-3xl border p-6 transition-all duration-300 ${gcpConfigured
-                            ? 'bg-gradient-to-br from-blue-500/10 via-cyan-500/5 to-sky-500/10 border-blue-500/30 shadow-lg shadow-blue-500/10'
-                            : 'setup-panel border-transparent'
-                            }`}
-                    >
-                        {gcpConfigured && (
-                            <div className="absolute inset-0 bg-gradient-to-r from-blue-500/5 via-transparent to-cyan-500/5 pointer-events-none" />
-                        )}
-
-                        <div className="relative">
-                            <div className="flex items-start justify-between mb-4">
-                                <div className="flex items-center gap-4">
-                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${gcpConfigured
-                                        ? 'bg-gradient-to-br from-blue-400 to-cyan-500 shadow-lg shadow-blue-500/30'
-                                        : 'setup-tile'
-                                        }`}>
-                                        <Cloud className="w-7 h-7 text-white" />
-                                    </div>
-                                    <div>
-                                        <h3 className="font-bold text-lg text-white">Google Cloud</h3>
-                                        <p className="text-white/50 text-sm">AI, KMS, Secrets, Translation</p>
-                                    </div>
-                                </div>
-                                {gcpConfigured ? (
-                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-blue-500/20 to-cyan-500/20 text-blue-300 border border-blue-500/30 shadow-lg shadow-blue-500/10">
-                                        <CheckCircle className="w-3.5 h-3.5" />
-                                        Configured
-                                    </span>
-                                ) : (
-                                    <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 text-white/50 border border-white/10">
-                                        Optional
-                                    </span>
-                                )}
-                            </div>
-
-                            <p className="text-white/60 text-sm mb-4">
-                                Enables AI analysis (Vertex AI), PII encryption (Cloud KMS), multi-language translation, and secure secrets storage.
-                                See the <strong className="text-blue-300">Setup Instructions</strong> above for a full walkthrough.
-                            </p>
-
-                            {/* Manual configuration fields */}
-                            {!gcpConfigured || secretValues['GOOGLE_CLOUD_PROJECT'] !== undefined ? (
-                                <div className="space-y-3">
-                                    <div>
-                                        <label className="text-sm text-white/60 mb-1.5 block">GCP Project ID</label>
-                                        <div className="flex gap-2">
-                                            <Input
-                                                type="text"
-                                                placeholder="my-municipality-project"
-                                                value={secretValues['GOOGLE_CLOUD_PROJECT'] || ''}
-                                                onChange={(e) => setSecretValues(p => ({ ...p, 'GOOGLE_CLOUD_PROJECT': e.target.value }))}
-                                                className="flex-1 text-sm"
-                                            />
-                                            <Button
-                                                size="sm"
-                                                className="bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700"
-                                                onClick={() => handleSave('GOOGLE_CLOUD_PROJECT')}
-                                                disabled={!secretValues['GOOGLE_CLOUD_PROJECT'] || savingKey === 'GOOGLE_CLOUD_PROJECT'}
-                                            >
-                                                {savingKey === 'GOOGLE_CLOUD_PROJECT' ? '...' : 'Save'}
-                                            </Button>
-                                        </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-3 gap-2">
-                                        <div>
-                                            <label className="text-xs text-white/50 mb-1 block">KMS Location</label>
-                                            <Input
-                                                type="text"
-                                                placeholder="us-central1"
-                                                value={secretValues['KMS_LOCATION'] || ''}
-                                                onChange={(e) => setSecretValues(p => ({ ...p, 'KMS_LOCATION': e.target.value }))}
-                                                className="text-xs"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="text-xs text-white/50 mb-1 block">KMS Key Ring</label>
-                                            <Input
-                                                type="text"
-                                                placeholder="pinpoint311-keyring"
-                                                value={secretValues['KMS_KEY_RING'] || ''}
-                                                onChange={(e) => setSecretValues(p => ({ ...p, 'KMS_KEY_RING': e.target.value }))}
-                                                className="text-xs"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="text-xs text-white/50 mb-1 block">KMS Key ID</label>
-                                            <Input
-                                                type="text"
-                                                placeholder="pii-encryption-key"
-                                                value={secretValues['KMS_KEY_ID'] || ''}
-                                                onChange={(e) => setSecretValues(p => ({ ...p, 'KMS_KEY_ID': e.target.value }))}
-                                                className="text-xs"
-                                            />
-                                        </div>
-                                    </div>
-
-                                    <Button
-                                        size="sm"
-                                        className="w-full bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700"
-                                        onClick={async () => {
-                                            if (secretValues['GOOGLE_CLOUD_PROJECT']) await handleSave('GOOGLE_CLOUD_PROJECT');
-                                            if (secretValues['KMS_LOCATION']) await handleSave('KMS_LOCATION');
-                                            if (secretValues['KMS_KEY_RING']) await handleSave('KMS_KEY_RING');
-                                            if (secretValues['KMS_KEY_ID']) await handleSave('KMS_KEY_ID');
-
-                                            // Auto-enable AI module when GCP is configured
-                                            if (modules && onUpdateModules && secretValues['GOOGLE_CLOUD_PROJECT']) {
-                                                await onUpdateModules({ ...modules, ai_analysis: true });
-                                            }
-                                        }}
-                                        disabled={!secretValues['GOOGLE_CLOUD_PROJECT'] || savingKey !== null}
-                                    >
-                                        {savingKey ? 'Saving...' : 'Save GCP Settings'}
-                                    </Button>
-
-                                    <p className="text-white/40 text-xs">
-                                        KMS fields are optional — the platform defaults to <code className="bg-black/20 px-1 rounded">us-central1</code> / <code className="bg-black/20 px-1 rounded">pinpoint311-keyring</code> / <code className="bg-black/20 px-1 rounded">pii-encryption-key</code> if left blank. These must match your KMS key ring and key names exactly, or PII encryption silently falls back to local (Fernet) encryption.
+                                    <p className="text-white/60 text-sm mb-4">
+                                        Enables AI analysis (Vertex AI), PII encryption (Cloud KMS), multi-language translation, and secure secrets storage.
+                                        See the <strong className="text-blue-300">Setup Instructions</strong> above for a full walkthrough.
                                     </p>
 
-                                    {/* Divider */}
-                                    <div className="border-t border-white/10 my-4" />
-
-                                    {/* GCP Service Account JSON */}
-                                    <div>
-                                        <label className="text-sm text-white/60 mb-1.5 block flex items-center gap-2">
-                                            <Key className="w-4 h-4 text-amber-400" />
-                                            GCP Service Account JSON
-                                            {isConfigured('GCP_SERVICE_ACCOUNT_JSON') && <CheckCircle className="w-3.5 h-3.5 text-green-400" />}
-                                        </label>
-                                        <textarea
-                                            placeholder='{"type": "service_account", "project_id": "...", ...}'
-                                            value={secretValues['GCP_SERVICE_ACCOUNT_JSON'] || ''}
-                                            onChange={(e) => setSecretValues(p => ({ ...p, 'GCP_SERVICE_ACCOUNT_JSON': e.target.value }))}
-                                            rows={4}
-                                            className="w-full text-sm bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white placeholder-white/30 focus:outline-none focus:border-blue-500/50 resize-none font-mono"
-                                        />
-                                        <div className="flex gap-2 mt-2">
-                                            <label className="flex-1 cursor-pointer">
-                                                <div className="h-9 rounded-lg border border-dashed border-white/20 flex items-center justify-center text-white/40 text-xs hover:border-white/40 transition-colors">
-                                                    📁 Or drop / select a .json key file
+                                    {/* Manual configuration fields */}
+                                    {!gcpConfigured || secretValues['GOOGLE_CLOUD_PROJECT'] !== undefined ? (
+                                        <div className="space-y-3">
+                                            <div>
+                                                <label className="text-sm text-white/60 mb-1.5 block">GCP Project ID</label>
+                                                <div className="flex gap-2">
+                                                    <Input
+                                                        type="text"
+                                                        placeholder="my-municipality-project"
+                                                        value={secretValues['GOOGLE_CLOUD_PROJECT'] || ''}
+                                                        onChange={(e) => setSecretValues(p => ({ ...p, 'GOOGLE_CLOUD_PROJECT': e.target.value }))}
+                                                        className="flex-1 text-sm"
+                                                    />
+                                                    <Button
+                                                        size="sm"
+                                                        className="bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700"
+                                                        onClick={() => handleSave('GOOGLE_CLOUD_PROJECT')}
+                                                        disabled={!secretValues['GOOGLE_CLOUD_PROJECT'] || savingKey === 'GOOGLE_CLOUD_PROJECT'}
+                                                    >
+                                                        {savingKey === 'GOOGLE_CLOUD_PROJECT' ? '...' : 'Save'}
+                                                    </Button>
                                                 </div>
-                                                <input
-                                                    type="file"
-                                                    accept=".json"
-                                                    className="hidden"
-                                                    onChange={(e) => {
-                                                        const file = e.target.files?.[0];
-                                                        if (file) {
-                                                            const reader = new FileReader();
-                                                            reader.onload = (ev) => {
-                                                                setSecretValues(p => ({ ...p, 'GCP_SERVICE_ACCOUNT_JSON': ev.target?.result as string || '' }));
-                                                            };
-                                                            reader.readAsText(file);
+                                            </div>
+
+                                            <div className="grid grid-cols-3 gap-2">
+                                                <div>
+                                                    <label className="text-xs text-white/50 mb-1 block">KMS Location</label>
+                                                    <Input
+                                                        type="text"
+                                                        placeholder="us-central1"
+                                                        value={secretValues['KMS_LOCATION'] || ''}
+                                                        onChange={(e) => setSecretValues(p => ({ ...p, 'KMS_LOCATION': e.target.value }))}
+                                                        className="text-xs"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs text-white/50 mb-1 block">KMS Key Ring</label>
+                                                    <Input
+                                                        type="text"
+                                                        placeholder="pinpoint311-keyring"
+                                                        value={secretValues['KMS_KEY_RING'] || ''}
+                                                        onChange={(e) => setSecretValues(p => ({ ...p, 'KMS_KEY_RING': e.target.value }))}
+                                                        className="text-xs"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs text-white/50 mb-1 block">KMS Key ID</label>
+                                                    <Input
+                                                        type="text"
+                                                        placeholder="pii-encryption-key"
+                                                        value={secretValues['KMS_KEY_ID'] || ''}
+                                                        onChange={(e) => setSecretValues(p => ({ ...p, 'KMS_KEY_ID': e.target.value }))}
+                                                        className="text-xs"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <Button
+                                                size="sm"
+                                                className="w-full bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700"
+                                                onClick={async () => {
+                                                    if (secretValues['GOOGLE_CLOUD_PROJECT']) await handleSave('GOOGLE_CLOUD_PROJECT');
+                                                    if (secretValues['KMS_LOCATION']) await handleSave('KMS_LOCATION');
+                                                    if (secretValues['KMS_KEY_RING']) await handleSave('KMS_KEY_RING');
+                                                    if (secretValues['KMS_KEY_ID']) await handleSave('KMS_KEY_ID');
+
+                                                    // Auto-enable AI module when GCP is configured
+                                                    if (modules && onUpdateModules && secretValues['GOOGLE_CLOUD_PROJECT']) {
+                                                        await onUpdateModules({ ...modules, ai_analysis: true });
+                                                    }
+                                                }}
+                                                disabled={!secretValues['GOOGLE_CLOUD_PROJECT'] || savingKey !== null}
+                                            >
+                                                {savingKey ? 'Saving...' : 'Save GCP Settings'}
+                                            </Button>
+
+                                            <p className="text-white/40 text-xs">
+                                                KMS fields are optional — the platform defaults to <code className="bg-black/20 px-1 rounded">us-central1</code> / <code className="bg-black/20 px-1 rounded">pinpoint311-keyring</code> / <code className="bg-black/20 px-1 rounded">pii-encryption-key</code> if left blank. These must match your KMS key ring and key names exactly, or PII encryption silently falls back to local (Fernet) encryption.
+                                            </p>
+
+                                            {/* Divider */}
+                                            <div className="border-t border-white/10 my-4" />
+
+                                            {/* GCP Service Account JSON */}
+                                            <div>
+                                                <label className="text-sm text-white/60 mb-1.5 block flex items-center gap-2">
+                                                    <Key className="w-4 h-4 text-amber-400" />
+                                                    GCP Service Account JSON
+                                                    {isConfigured('GCP_SERVICE_ACCOUNT_JSON') && <CheckCircle className="w-3.5 h-3.5 text-green-400" />}
+                                                </label>
+                                                <textarea
+                                                    placeholder='{"type": "service_account", "project_id": "...", ...}'
+                                                    value={secretValues['GCP_SERVICE_ACCOUNT_JSON'] || ''}
+                                                    onChange={(e) => setSecretValues(p => ({ ...p, 'GCP_SERVICE_ACCOUNT_JSON': e.target.value }))}
+                                                    rows={4}
+                                                    className="w-full text-sm bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white placeholder-white/30 focus:outline-none focus:border-blue-500/50 resize-none font-mono"
+                                                />
+                                                <div className="flex gap-2 mt-2">
+                                                    <label className="flex-1 cursor-pointer">
+                                                        <div className="h-9 rounded-lg border border-dashed border-white/20 flex items-center justify-center text-white/40 text-xs hover:border-white/40 transition-colors">
+                                                            📁 Or drop / select a .json key file
+                                                        </div>
+                                                        <input
+                                                            type="file"
+                                                            accept=".json"
+                                                            className="hidden"
+                                                            onChange={(e) => {
+                                                                const file = e.target.files?.[0];
+                                                                if (file) {
+                                                                    const reader = new FileReader();
+                                                                    reader.onload = (ev) => {
+                                                                        setSecretValues(p => ({ ...p, 'GCP_SERVICE_ACCOUNT_JSON': ev.target?.result as string || '' }));
+                                                                    };
+                                                                    reader.readAsText(file);
+                                                                }
+                                                            }}
+                                                        />
+                                                    </label>
+                                                    <Button
+                                                        size="sm"
+                                                        className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
+                                                        onClick={() => handleSave('GCP_SERVICE_ACCOUNT_JSON')}
+                                                        disabled={!secretValues['GCP_SERVICE_ACCOUNT_JSON'] || savingKey === 'GCP_SERVICE_ACCOUNT_JSON'}
+                                                    >
+                                                        {savingKey === 'GCP_SERVICE_ACCOUNT_JSON' ? 'Saving...' : 'Save Key'}
+                                                    </Button>
+                                                </div>
+                                                <p className="text-white/30 text-xs mt-1">Required for Vertex AI analysis, multi-language translation, and secure secrets storage</p>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            <div className="flex items-center gap-2">
+                                                <div className="flex-1 h-10 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center px-4">
+                                                    <CheckCircle className="w-4 h-4 text-blue-400 mr-2" />
+                                                    <span className="text-blue-200 text-sm">GCP configured and ready</span>
+                                                </div>
+                                                <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, 'GOOGLE_CLOUD_PROJECT': '' }))}>
+                                                    Change
+                                                </Button>
+                                            </div>
+
+                                            {/* Module sync indicator */}
+                                            {modules && (
+                                                <div className={`flex items-center gap-2 text-xs ${modules.ai_analysis ? 'text-blue-400' : 'text-white/40'}`}>
+                                                    {modules.ai_analysis ? (
+                                                        <>
+                                                            <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+                                                            AI Analysis module enabled
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <div className="w-2 h-2 rounded-full bg-white/30" />
+                                                            AI Analysis module disabled
+                                                        </>
+                                                    )}
+                                                </div>
+                                            )}
+
+                                            {/* Migrate Secrets to GCP */}
+                                            <div className="border-t border-white/10 pt-3 mt-3">
+                                                <Button
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    className="w-full text-xs text-white/50 hover:text-white hover:bg-white/10"
+                                                    onClick={async () => {
+                                                        try {
+                                                            setSaveMessage('Migrating secrets to GCP...');
+                                                            const result = await api.migrateToSecretManager();
+                                                            setSaveMessage(
+                                                                `✅ Migrated: ${result.migrated} keys. Scrubbed from DB: ${result.scrubbed}.` +
+                                                                (result.failed > 0 ? ` Failed: ${result.failed}` : '')
+                                                            );
+                                                        } catch (err: any) {
+                                                            setSaveMessage(`❌ ${err.message || 'Migration failed'}`);
                                                         }
                                                     }}
-                                                />
-                                            </label>
-                                            <Button
-                                                size="sm"
-                                                className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
-                                                onClick={() => handleSave('GCP_SERVICE_ACCOUNT_JSON')}
-                                                disabled={!secretValues['GCP_SERVICE_ACCOUNT_JSON'] || savingKey === 'GCP_SERVICE_ACCOUNT_JSON'}
-                                            >
-                                                {savingKey === 'GCP_SERVICE_ACCOUNT_JSON' ? 'Saving...' : 'Save Key'}
-                                            </Button>
-                                        </div>
-                                        <p className="text-white/30 text-xs mt-1">Required for Vertex AI analysis, multi-language translation, and secure secrets storage</p>
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="space-y-3">
-                                    <div className="flex items-center gap-2">
-                                        <div className="flex-1 h-10 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center px-4">
-                                            <CheckCircle className="w-4 h-4 text-blue-400 mr-2" />
-                                            <span className="text-blue-200 text-sm">GCP configured and ready</span>
-                                        </div>
-                                        <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, 'GOOGLE_CLOUD_PROJECT': '' }))}>
-                                            Change
-                                        </Button>
-                                    </div>
+                                                >
+                                                    Vault Local Secrets to GCP Identity
+                                                </Button>
+                                                <p className="text-white/30 text-[10px] mt-1 text-center">
+                                                    Moves database-encrypted API keys into Secret Manager
+                                                </p>
+                                            </div>
 
-                                    {/* Module sync indicator */}
-                                    {modules && (
-                                        <div className={`flex items-center gap-2 text-xs ${modules.ai_analysis ? 'text-blue-400' : 'text-white/40'}`}>
-                                            {modules.ai_analysis ? (
-                                                <>
-                                                    <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-                                                    AI Analysis module enabled
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <div className="w-2 h-2 rounded-full bg-white/30" />
-                                                    AI Analysis module disabled
-                                                </>
-                                            )}
+                                            {/* Re-encrypt PII after KMS key rotation */}
+                                            <div className="border-t border-white/10 pt-3 mt-1">
+                                                <Button
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    className="w-full text-xs text-white/50 hover:text-white hover:bg-white/10"
+                                                    onClick={async () => {
+                                                        try {
+                                                            setSaveMessage('Re-encrypting PII data...');
+                                                            const result = await api.reencryptPii();
+                                                            setSaveMessage(
+                                                                `✅ Done: ${result.reencrypted}/${result.total} rows re-encrypted` +
+                                                                (result.migrated_from_fernet > 0 ? `, ${result.migrated_from_fernet} migrated from Fernet` : '') +
+                                                                (result.errors > 0 ? `, ${result.errors} errors` : '')
+                                                            );
+                                                        } catch (err: any) {
+                                                            setSaveMessage(`❌ ${err.message || 'Re-encryption failed'}`);
+                                                        }
+                                                    }}
+                                                >
+                                                    🔐 Re-encrypt All PII Data (after key rotation)
+                                                </Button>
+                                                <p className="text-white/30 text-[10px] mt-1 text-center">
+                                                    Migrates historical PII to the current primary KMS key version
+                                                </p>
+                                            </div>
                                         </div>
                                     )}
-
-                                    {/* Migrate Secrets to GCP */}
-                                    <div className="border-t border-white/10 pt-3 mt-3">
-                                        <Button
-                                            size="sm"
-                                            variant="ghost"
-                                            className="w-full text-xs text-white/50 hover:text-white hover:bg-white/10"
-                                            onClick={async () => {
-                                                try {
-                                                    setSaveMessage('Migrating secrets to GCP...');
-                                                    const result = await api.migrateToSecretManager();
-                                                    setSaveMessage(
-                                                        `✅ Migrated: ${result.migrated} keys. Scrubbed from DB: ${result.scrubbed}.` +
-                                                        (result.failed > 0 ? ` Failed: ${result.failed}` : '')
-                                                    );
-                                                } catch (err: any) {
-                                                    setSaveMessage(`❌ ${err.message || 'Migration failed'}`);
-                                                }
-                                            }}
-                                        >
-                                            Vault Local Secrets to GCP Identity
-                                        </Button>
-                                        <p className="text-white/30 text-[10px] mt-1 text-center">
-                                            Moves database-encrypted API keys into Secret Manager
-                                        </p>
-                                    </div>
-
-                                    {/* Re-encrypt PII after KMS key rotation */}
-                                    <div className="border-t border-white/10 pt-3 mt-1">
-                                        <Button
-                                            size="sm"
-                                            variant="ghost"
-                                            className="w-full text-xs text-white/50 hover:text-white hover:bg-white/10"
-                                            onClick={async () => {
-                                                try {
-                                                    setSaveMessage('Re-encrypting PII data...');
-                                                    const result = await api.reencryptPii();
-                                                    setSaveMessage(
-                                                        `✅ Done: ${result.reencrypted}/${result.total} rows re-encrypted` +
-                                                        (result.migrated_from_fernet > 0 ? `, ${result.migrated_from_fernet} migrated from Fernet` : '') +
-                                                        (result.errors > 0 ? `, ${result.errors} errors` : '')
-                                                    );
-                                                } catch (err: any) {
-                                                    setSaveMessage(`❌ ${err.message || 'Re-encryption failed'}`);
-                                                }
-                                            }}
-                                        >
-                                            🔐 Re-encrypt All PII Data (after key rotation)
-                                        </Button>
-                                        <p className="text-white/30 text-[10px] mt-1 text-center">
-                                            Migrates historical PII to the current primary KMS key version
-                                        </p>
-                                    </div>
                                 </div>
+                            </motion.div>
                             )}
-                        </div>
-                    </motion.div>
-                    )}
 
 
-                    {/* Sentry Error Tracking - Premium Card */}
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.4 }}
-                        className={`relative rounded-3xl border p-6 transition-all duration-300 ${sentryConfigured
-                            ? 'bg-gradient-to-br from-rose-500/10 via-red-500/5 to-orange-500/10 border-rose-500/30 shadow-lg shadow-rose-500/10'
-                            : 'setup-panel border-transparent'
-                            }`}
-                    >
-                        {sentryConfigured && (
-                            <div className="absolute inset-0 bg-gradient-to-r from-rose-500/5 via-transparent to-orange-500/5 pointer-events-none" />
-                        )}
-
-                        <div className="relative">
-                            <div className="flex items-start justify-between mb-4">
-                                <div className="flex items-center gap-4">
-                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${sentryConfigured
-                                        ? 'bg-gradient-to-br from-rose-400 to-orange-500 shadow-lg shadow-rose-500/30'
-                                        : 'setup-tile'
-                                        }`}>
-                                        <AlertTriangle className="w-7 h-7 text-white" />
-                                    </div>
-                                    <div>
-                                        <h3 className="font-bold text-lg text-white">Sentry</h3>
-                                        <p className="text-white/50 text-sm">Error monitoring</p>
-                                    </div>
-                                </div>
-                                {sentryConfigured ? (
-                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-rose-500/20 to-orange-500/20 text-rose-300 border border-rose-500/30 shadow-lg shadow-rose-500/10">
-                                        <CheckCircle className="w-3.5 h-3.5" />
-                                        Active
-                                    </span>
-                                ) : (
-                                    <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 text-white/50 border border-white/10">
-                                        Optional
-                                    </span>
+                            {/* Sentry Error Tracking - Premium Card */}
+                            <motion.div
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: 0.4 }}
+                                className={`relative rounded-3xl border p-6 transition-all duration-300 ${sentryConfigured
+                                    ? 'bg-gradient-to-br from-rose-500/10 via-red-500/5 to-orange-500/10 border-rose-500/30 shadow-lg shadow-rose-500/10'
+                                    : 'setup-panel border-transparent'
+                                    }`}
+                            >
+                                {sentryConfigured && (
+                                    <div className="absolute inset-0 bg-gradient-to-r from-rose-500/5 via-transparent to-orange-500/5 pointer-events-none" />
                                 )}
-                            </div>
 
-                            {!sentryConfigured || secretValues['SENTRY_DSN'] !== undefined ? (
-                                <div className="flex gap-2">
-                                    <Input
-                                        type="text"
-                                        placeholder="https://xxx@sentry.io/xxx"
-                                        value={secretValues['SENTRY_DSN'] || ''}
-                                        onChange={(e) => setSecretValues(p => ({ ...p, 'SENTRY_DSN': e.target.value }))}
-                                        className="flex-1 text-sm"
-                                    />
-                                    <Button
-                                        size="sm"
-                                        className="bg-gradient-to-r from-rose-500 to-orange-500 hover:from-rose-600 hover:to-orange-600"
-                                        onClick={() => handleSave('SENTRY_DSN')}
-                                        disabled={!secretValues['SENTRY_DSN'] || savingKey === 'SENTRY_DSN'}
-                                    >
-                                        Save
-                                    </Button>
-                                </div>
-                            ) : (
-                                <div className="flex items-center gap-2">
-                                    <div className="flex-1 h-10 rounded-xl bg-rose-500/20 border border-rose-500/30 flex items-center px-4">
-                                        <CheckCircle className="w-4 h-4 text-rose-400 mr-2" />
-                                        <span className="text-rose-200 text-sm">Monitoring active</span>
+                                <div className="relative">
+                                    <div className="flex items-start justify-between mb-4">
+                                        <div className="flex items-center gap-4">
+                                            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${sentryConfigured
+                                                ? 'bg-gradient-to-br from-rose-400 to-orange-500 shadow-lg shadow-rose-500/30'
+                                                : 'setup-tile'
+                                                }`}>
+                                                <AlertTriangle className="w-7 h-7 text-white" />
+                                            </div>
+                                            <div>
+                                                <h3 className="font-bold text-lg text-white">Sentry</h3>
+                                                <p className="text-white/50 text-sm">Error monitoring</p>
+                                            </div>
+                                        </div>
+                                        {sentryConfigured ? (
+                                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-rose-500/20 to-orange-500/20 text-rose-300 border border-rose-500/30 shadow-lg shadow-rose-500/10">
+                                                <CheckCircle className="w-3.5 h-3.5" />
+                                                Active
+                                            </span>
+                                        ) : (
+                                            <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 text-white/50 border border-white/10">
+                                                Optional
+                                            </span>
+                                        )}
                                     </div>
-                                    <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, 'SENTRY_DSN': '' }))}>
-                                        Change
-                                    </Button>
-                                </div>
-                            )}
-                        </div>
-                    </motion.div>
 
-                    {/* Database Backups - Premium Card (locked in managed mode: the state owns backups) */}
-                    {managedMode ? (
-                        <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6">
-                            <div className="flex items-center gap-4 mb-2">
-                                <div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-white/10">
-                                    <HardDrive className="w-7 h-7 text-white/50" />
-                                </div>
-                                <div>
-                                    <h3 className="font-bold text-lg text-white/70">Database Backups</h3>
-                                    <p className="text-white/40 text-sm">Encrypted off-site backups</p>
-                                </div>
-                                <span className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-white/10 text-white/60 border border-white/15">
-                                    <Shield className="w-3.5 h-3.5" />
-                                    Managed by your state
-                                </span>
-                            </div>
-                            <p className="text-white/50 text-sm">
-                                Automated encrypted backups run under your state hosting program's disaster-recovery plan. Nothing to configure here.
-                            </p>
-                        </div>
-                    ) : (
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.5 }}
-                        className={`relative rounded-3xl border p-6 transition-all duration-300 ${backupConfigured
-                            ? 'bg-gradient-to-br from-amber-500/10 via-yellow-500/5 to-orange-500/10 border-amber-500/30 shadow-lg shadow-amber-500/10'
-                            : 'setup-panel border-transparent'
-                            }`}
-                    >
-                        {backupConfigured && (
-                            <div className="absolute inset-0 bg-gradient-to-r from-amber-500/5 via-transparent to-orange-500/5 pointer-events-none" />
-                        )}
-
-                        <div className="relative">
-                            <div className="flex items-start justify-between mb-4">
-                                <div className="flex items-center gap-4">
-                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${backupConfigured
-                                        ? 'bg-gradient-to-br from-amber-400 to-orange-500 shadow-lg shadow-amber-500/30'
-                                        : 'setup-tile'
-                                        }`}>
-                                        <HardDrive className="w-7 h-7 text-white" />
-                                    </div>
-                                    <div>
-                                        <h3 className="font-bold text-lg text-white">Database Backups</h3>
-                                        <p className="text-white/50 text-sm">Encrypted S3-compatible storage</p>
-                                    </div>
-                                </div>
-                                {backupConfigured ? (
-                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30 shadow-lg shadow-amber-500/10">
-                                        <CheckCircle className="w-3.5 h-3.5" />
-                                        Configured
-                                    </span>
-                                ) : (
-                                    <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 text-white/50 border border-white/10">
-                                        Optional
-                                    </span>
-                                )}
-                            </div>
-
-                            <p className="text-white/60 text-sm mb-4">
-                                Backups are encrypted with AES-256 and stored in your S3-compatible bucket. Backup cleanup follows your configured retention policy.
-                                See the <strong className="text-amber-300">Setup Instructions</strong> above for provider-specific guidance.
-                            </p>
-
-                            {!backupConfigured || secretValues['BACKUP_S3_BUCKET'] !== undefined ? (
-                                <div className="space-y-3">
-                                    <div>
-                                        <label className="text-sm text-white/60 mb-1.5 block">S3 Bucket Name</label>
+                                    {!sentryConfigured || secretValues['SENTRY_DSN'] !== undefined ? (
                                         <div className="flex gap-2">
                                             <Input
                                                 type="text"
-                                                placeholder="my-backup-bucket"
-                                                value={secretValues['BACKUP_S3_BUCKET'] || ''}
-                                                onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_BUCKET': e.target.value }))}
+                                                placeholder="https://xxx@sentry.io/xxx"
+                                                value={secretValues['SENTRY_DSN'] || ''}
+                                                onChange={(e) => setSecretValues(p => ({ ...p, 'SENTRY_DSN': e.target.value }))}
                                                 className="flex-1 text-sm"
                                             />
+                                            <Button
+                                                size="sm"
+                                                className="bg-gradient-to-r from-rose-500 to-orange-500 hover:from-rose-600 hover:to-orange-600"
+                                                onClick={() => handleSave('SENTRY_DSN')}
+                                                disabled={!secretValues['SENTRY_DSN'] || savingKey === 'SENTRY_DSN'}
+                                            >
+                                                Save
+                                            </Button>
                                         </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <div>
-                                            <label className="text-xs text-white/50 mb-1 block">Access Key</label>
-                                            <Input
-                                                type="text"
-                                                placeholder="AKIA..."
-                                                value={secretValues['BACKUP_S3_ACCESS_KEY'] || ''}
-                                                onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_ACCESS_KEY': e.target.value }))}
-                                                className="text-sm"
-                                            />
+                                    ) : (
+                                        <div className="flex items-center gap-2">
+                                            <div className="flex-1 h-10 rounded-xl bg-rose-500/20 border border-rose-500/30 flex items-center px-4">
+                                                <CheckCircle className="w-4 h-4 text-rose-400 mr-2" />
+                                                <span className="text-rose-200 text-sm">Monitoring active</span>
+                                            </div>
+                                            <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, 'SENTRY_DSN': '' }))}>
+                                                Change
+                                            </Button>
                                         </div>
-                                        <div>
-                                            <label className="text-xs text-white/50 mb-1 block">Secret Key</label>
-                                            <Input
-                                                type="password"
-                                                placeholder="Your S3 secret key"
-                                                value={secretValues['BACKUP_S3_SECRET_KEY'] || ''}
-                                                onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_SECRET_KEY': e.target.value }))}
-                                                className="text-sm"
-                                            />
-                                        </div>
-                                    </div>
+                                    )}
+                                </div>
+                            </motion.div>
 
-                                    <div>
-                                        <label className="text-sm text-white/60 mb-1.5 block">Encryption Passphrase</label>
-                                        <Input
-                                            type="password"
-                                            placeholder="Strong passphrase for AES-256 encryption"
-                                            value={secretValues['BACKUP_ENCRYPTION_KEY'] || ''}
-                                            onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_ENCRYPTION_KEY': e.target.value }))}
-                                            className="text-sm"
-                                        />
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <div>
-                                            <label className="text-xs text-white/50 mb-1 block">S3 Endpoint <span className="text-white/30">(optional)</span></label>
-                                            <Input
-                                                type="text"
-                                                placeholder="https://... (non-AWS only)"
-                                                value={secretValues['BACKUP_S3_ENDPOINT'] || ''}
-                                                onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_ENDPOINT': e.target.value }))}
-                                                className="text-xs"
-                                            />
+                            {/* Database Backups - Premium Card (locked in managed mode: the state owns backups) */}
+                            {managedMode ? (
+                                <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6">
+                                    <div className="flex items-center gap-4 mb-2">
+                                        <div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-white/10">
+                                            <HardDrive className="w-7 h-7 text-white/50" />
                                         </div>
                                         <div>
-                                            <label className="text-xs text-white/50 mb-1 block">Region <span className="text-white/30">(optional)</span></label>
-                                            <Input
-                                                type="text"
-                                                placeholder="us-ashburn-1"
-                                                value={secretValues['BACKUP_S3_REGION'] || ''}
-                                                onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_REGION': e.target.value }))}
-                                                className="text-xs"
-                                            />
+                                            <h3 className="font-bold text-lg text-white/70">Database Backups</h3>
+                                            <p className="text-white/40 text-sm">Encrypted off-site backups</p>
                                         </div>
+                                        <span className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-white/10 text-white/60 border border-white/15">
+                                            <Shield className="w-3.5 h-3.5" />
+                                            Managed by your state
+                                        </span>
                                     </div>
-
-                                    <Button
-                                        size="sm"
-                                        className="w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
-                                        onClick={async () => {
-                                            if (secretValues['BACKUP_S3_BUCKET']) await handleSave('BACKUP_S3_BUCKET');
-                                            if (secretValues['BACKUP_S3_ACCESS_KEY']) await handleSave('BACKUP_S3_ACCESS_KEY');
-                                            if (secretValues['BACKUP_S3_SECRET_KEY']) await handleSave('BACKUP_S3_SECRET_KEY');
-                                            if (secretValues['BACKUP_ENCRYPTION_KEY']) await handleSave('BACKUP_ENCRYPTION_KEY');
-                                            if (secretValues['BACKUP_S3_ENDPOINT']) await handleSave('BACKUP_S3_ENDPOINT');
-                                            if (secretValues['BACKUP_S3_REGION']) await handleSave('BACKUP_S3_REGION');
-                                        }}
-                                        disabled={!secretValues['BACKUP_S3_BUCKET'] || !secretValues['BACKUP_ENCRYPTION_KEY'] || savingKey !== null}
-                                    >
-                                        {savingKey ? 'Saving...' : 'Save Backup Settings'}
-                                    </Button>
-
-                                    <p className="text-white/40 text-xs">
-                                        Endpoint and Region are optional — only needed for non-AWS providers (Oracle, MinIO, etc.).
+                                    <p className="text-white/50 text-sm">
+                                        Automated encrypted backups run under your state hosting program's disaster-recovery plan. Nothing to configure here.
                                     </p>
                                 </div>
                             ) : (
-                                <div className="space-y-3">
-                                    <div className="flex items-center gap-2">
-                                        <div className="flex-1 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center px-4">
-                                            <CheckCircle className="w-4 h-4 text-amber-400 mr-2" />
-                                            <span className="text-amber-200 text-sm">Backup storage configured</span>
+                            <motion.div
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: 0.5 }}
+                                className={`relative rounded-3xl border p-6 transition-all duration-300 ${backupConfigured
+                                    ? 'bg-gradient-to-br from-amber-500/10 via-yellow-500/5 to-orange-500/10 border-amber-500/30 shadow-lg shadow-amber-500/10'
+                                    : 'setup-panel border-transparent'
+                                    }`}
+                            >
+                                {backupConfigured && (
+                                    <div className="absolute inset-0 bg-gradient-to-r from-amber-500/5 via-transparent to-orange-500/5 pointer-events-none" />
+                                )}
+
+                                <div className="relative">
+                                    <div className="flex items-start justify-between mb-4">
+                                        <div className="flex items-center gap-4">
+                                            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${backupConfigured
+                                                ? 'bg-gradient-to-br from-amber-400 to-orange-500 shadow-lg shadow-amber-500/30'
+                                                : 'setup-tile'
+                                                }`}>
+                                                <HardDrive className="w-7 h-7 text-white" />
+                                            </div>
+                                            <div>
+                                                <h3 className="font-bold text-lg text-white">Database Backups</h3>
+                                                <p className="text-white/50 text-sm">Encrypted S3-compatible storage</p>
+                                            </div>
                                         </div>
-                                        <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, 'BACKUP_S3_BUCKET': '' }))}>
-                                            Change
-                                        </Button>
+                                        {backupConfigured ? (
+                                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30 shadow-lg shadow-amber-500/10">
+                                                <CheckCircle className="w-3.5 h-3.5" />
+                                                Configured
+                                            </span>
+                                        ) : (
+                                            <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 text-white/50 border border-white/10">
+                                                Optional
+                                            </span>
+                                        )}
                                     </div>
+
+                                    <p className="text-white/60 text-sm mb-4">
+                                        Backups are encrypted with AES-256 and stored in your S3-compatible bucket. Backup cleanup follows your configured retention policy.
+                                        See the <strong className="text-amber-300">Setup Instructions</strong> above for provider-specific guidance.
+                                    </p>
+
+                                    {!backupConfigured || secretValues['BACKUP_S3_BUCKET'] !== undefined ? (
+                                        <div className="space-y-3">
+                                            <div>
+                                                <label className="text-sm text-white/60 mb-1.5 block">S3 Bucket Name</label>
+                                                <div className="flex gap-2">
+                                                    <Input
+                                                        type="text"
+                                                        placeholder="my-backup-bucket"
+                                                        value={secretValues['BACKUP_S3_BUCKET'] || ''}
+                                                        onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_BUCKET': e.target.value }))}
+                                                        className="flex-1 text-sm"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <div>
+                                                    <label className="text-xs text-white/50 mb-1 block">Access Key</label>
+                                                    <Input
+                                                        type="text"
+                                                        placeholder="AKIA..."
+                                                        value={secretValues['BACKUP_S3_ACCESS_KEY'] || ''}
+                                                        onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_ACCESS_KEY': e.target.value }))}
+                                                        className="text-sm"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs text-white/50 mb-1 block">Secret Key</label>
+                                                    <Input
+                                                        type="password"
+                                                        placeholder="Your S3 secret key"
+                                                        value={secretValues['BACKUP_S3_SECRET_KEY'] || ''}
+                                                        onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_SECRET_KEY': e.target.value }))}
+                                                        className="text-sm"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div>
+                                                <label className="text-sm text-white/60 mb-1.5 block">Encryption Passphrase</label>
+                                                <Input
+                                                    type="password"
+                                                    placeholder="Strong passphrase for AES-256 encryption"
+                                                    value={secretValues['BACKUP_ENCRYPTION_KEY'] || ''}
+                                                    onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_ENCRYPTION_KEY': e.target.value }))}
+                                                    className="text-sm"
+                                                />
+                                            </div>
+
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <div>
+                                                    <label className="text-xs text-white/50 mb-1 block">S3 Endpoint <span className="text-white/30">(optional)</span></label>
+                                                    <Input
+                                                        type="text"
+                                                        placeholder="https://... (non-AWS only)"
+                                                        value={secretValues['BACKUP_S3_ENDPOINT'] || ''}
+                                                        onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_ENDPOINT': e.target.value }))}
+                                                        className="text-xs"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs text-white/50 mb-1 block">Region <span className="text-white/30">(optional)</span></label>
+                                                    <Input
+                                                        type="text"
+                                                        placeholder="us-ashburn-1"
+                                                        value={secretValues['BACKUP_S3_REGION'] || ''}
+                                                        onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_REGION': e.target.value }))}
+                                                        className="text-xs"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <Button
+                                                size="sm"
+                                                className="w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
+                                                onClick={async () => {
+                                                    if (secretValues['BACKUP_S3_BUCKET']) await handleSave('BACKUP_S3_BUCKET');
+                                                    if (secretValues['BACKUP_S3_ACCESS_KEY']) await handleSave('BACKUP_S3_ACCESS_KEY');
+                                                    if (secretValues['BACKUP_S3_SECRET_KEY']) await handleSave('BACKUP_S3_SECRET_KEY');
+                                                    if (secretValues['BACKUP_ENCRYPTION_KEY']) await handleSave('BACKUP_ENCRYPTION_KEY');
+                                                    if (secretValues['BACKUP_S3_ENDPOINT']) await handleSave('BACKUP_S3_ENDPOINT');
+                                                    if (secretValues['BACKUP_S3_REGION']) await handleSave('BACKUP_S3_REGION');
+                                                }}
+                                                disabled={!secretValues['BACKUP_S3_BUCKET'] || !secretValues['BACKUP_ENCRYPTION_KEY'] || savingKey !== null}
+                                            >
+                                                {savingKey ? 'Saving...' : 'Save Backup Settings'}
+                                            </Button>
+
+                                            <p className="text-white/40 text-xs">
+                                                Endpoint and Region are optional — only needed for non-AWS providers (Oracle, MinIO, etc.).
+                                            </p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            <div className="flex items-center gap-2">
+                                                <div className="flex-1 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center px-4">
+                                                    <CheckCircle className="w-4 h-4 text-amber-400 mr-2" />
+                                                    <span className="text-amber-200 text-sm">Backup storage configured</span>
+                                                </div>
+                                                <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, 'BACKUP_S3_BUCKET': '' }))}>
+                                                    Change
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
+                            </motion.div>
                             )}
                         </div>
-                    </motion.div>
-                    )}
-                </div>
-            </CollapsibleSection>
+                        </>
+                    }
+                />
+            </div>
+
 
 
             {/* 3 — The town's own systems */}

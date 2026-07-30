@@ -286,6 +286,23 @@ async def refresh_ai_models(
     return {"provider": provider, **result}
 
 
+@router.get("/{capability}/catalog", include_in_schema=False)
+async def get_capability_catalog(capability: str, _: User = Depends(get_current_admin)):
+    """Catalog for the capabilities added after the first four, which each had
+    their own near-identical route. Declared before /ai/catalog would shadow it
+    Registered after every hand-written catalog route, because FastAPI takes the
+    first match: declared earlier, this would shadow /ai/catalog and 404 it."""
+    from app.services.delivery_providers import _CATALOGS, catalog_for_api, normalize_provider
+    if capability not in _CATALOGS:
+        raise HTTPException(status_code=404, detail="Unknown capability")
+    from app.services.secret_manager import get_secret
+    from app.services.delivery_providers import _DEFAULTS
+    current = normalize_provider(capability, await get_secret(_PROVIDER_SELECT_KEY[capability]))
+    providers = catalog_for_api(capability)
+    return {"current_provider": current, "default_provider": _DEFAULTS[capability],
+            "providers": providers, "configured": await _configured_map(providers)}
+
+
 # ---- Unified provider save + test (AI / translation / identity) ----
 
 _PROVIDER_SELECT_KEY = {
@@ -293,6 +310,14 @@ _PROVIDER_SELECT_KEY = {
     "translation": "TRANSLATION_PROVIDER",
     "identity": "IDENTITY_PROVIDER",
     "maps": "MAP_PROVIDER",
+    # Four capabilities whose provider switch already existed in the dispatch
+    # code and had no catalog, so nothing surfaced them: notifications went out
+    # through a hand-written SMTP/Twilio card, and KMS and photo redaction could
+    # only be changed by setting a secret by hand.
+    "email": "EMAIL_PROVIDER",
+    "sms": "SMS_PROVIDER",
+    "kms": "KMS_PROVIDER",
+    "redaction": "REDACTION_PROVIDER",
 }
 
 
@@ -341,6 +366,9 @@ def _capability_catalog(capability: str) -> Dict:
     if capability == "maps":
         from app.services.map_provider import MAP_CATALOG
         return MAP_CATALOG
+    if capability in ("email", "sms", "kms", "redaction"):
+        from app.services.delivery_providers import _CATALOGS
+        return _CATALOGS[capability]
     return {}
 
 

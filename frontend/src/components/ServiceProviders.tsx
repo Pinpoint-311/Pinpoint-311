@@ -1,9 +1,11 @@
+import type { ReactNode } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Sparkles, Languages, KeyRound, CheckCircle, AlertCircle,
     ChevronDown, Loader2, Check, ShieldCheck, RefreshCw,
     Cloud, MapPin, Lock, Info, Map as MapIcon,
+    Mail, MessageSquare, Image as ImageIcon,
 } from 'lucide-react';
 
 import { CollapsibleSection } from './ui';
@@ -23,7 +25,7 @@ function agoLabel(epochSeconds?: number | null): string {
     return `${Math.round(hrs / 24)}d ago`;
 }
 
-type Capability = 'ai' | 'translation' | 'identity' | 'maps';
+import type { Capability } from '../services/api';
 
 const CAPS: { key: Capability; title: string; blurb: string; icon: typeof Sparkles }[] = [
     { key: 'ai', title: 'AI Provider', blurb: 'Where AI triage & the analytics assistant run. Each town brings its own key and pays only for what it uses.', icon: Sparkles },
@@ -33,6 +35,14 @@ const CAPS: { key: Capability; title: string; blurb: string; icon: typeof Sparkl
     // as switching an AI or translation provider -- same card, same save, same
     // test button. A separate picker elsewhere would be a second thing to learn.
     { key: 'maps', title: 'Maps Provider', blurb: 'Draws the map residents drop a pin on, and looks up addresses. Google is the simplest to set up; Esri suits a town whose county already publishes its own basemap.', icon: MapIcon },
+    // Four capabilities whose provider switch the backend already honoured and
+    // nothing surfaced. Email and text had one hand-written SMTP/Twilio card
+    // between them; PII encryption and photo redaction had no UI at all, so
+    // face and plate blurring was a shipped feature a town could not turn on.
+    { key: 'email', title: 'Email', blurb: 'Sends confirmations and status updates to residents. SMTP works with the mail server your town already has.', icon: Mail },
+    { key: 'sms', title: 'Text Messages', blurb: 'Optional text alerts. Residents who give a mobile number get updates without checking email.', icon: MessageSquare },
+    { key: 'kms', title: 'PII Encryption (KMS)', blurb: 'Which key service wraps the key that encrypts resident personal information. Cloud KMS is stronger than the application key.', icon: Lock },
+    { key: 'redaction', title: 'Photo Redaction', blurb: 'Blurs faces and licence plates in resident photos before they are stored, so a municipal site never publishes them.', icon: ImageIcon },
 ];
 
 /** A numbered section heading inside a provider card.
@@ -113,10 +123,22 @@ export interface CapStatus {
     configured?: boolean;
 }
 
-function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus, health }: {
+function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus, health, step, guided, instructions }: {
     cap: Capability; title: string; blurb: string; icon: typeof Sparkles; delay: number;
     recheckToken: number; reloadToken: number; onStatus: (cap: Capability, s: CapStatus) => void;
     health?: ConnectorHealth;
+    /* Guided setup: the parent walks one capability at a time, so it decides
+     * which card is open rather than each card deciding for itself. `step` is
+     * the position in that walk, shown so a clerk can see where they are; it is
+     * undefined once setup is done and the page is just cards again. */
+    step?: { index: number; total: number; active: boolean };
+    guided?: boolean;
+    /* How to obtain the credentials for the provider currently selected,
+     * rendered immediately above the boxes they go into. The instructions used
+     * to sit in one long document at the top of the page, three thousand pixels
+     * from the fields, so following step four meant scrolling away from the
+     * instruction to find the box and back again to read the next one. */
+    instructions?: (provider: string) => ReactNode;
 }) {
     const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
     const [selected, setSelected] = useState<string>('');
@@ -267,7 +289,10 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const statusUnknown = configuredState === undefined;
     // null means "not touched yet", so an unconfigured card starts open and a
     // configured one starts closed, without overriding a deliberate click.
-    const isOpen = open === null ? !configured : open;
+    /* In guided setup the parent's cursor wins until the clerk clicks a
+     * header, at which point their click wins -- being walked through setup
+     * should not mean losing the ability to jump back to something. */
+    const isOpen = open !== null ? open : (guided ? !!step?.active : !configured);
 
     const handleSave = async () => {
         if (!active) return;
@@ -329,16 +354,21 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                     gradient icon tile, the name, and a status pill on the right. */}
                 <button
                     type="button"
-                    onClick={() => setOpen(v => (v === null ? configured : !v))}
+                    onClick={() => setOpen(v => (v === null ? !isOpen : !v))}
                     aria-expanded={isOpen}
                     aria-controls={`prov-${cap}`}
                     className="w-full flex items-start justify-between gap-4 flex-wrap text-left rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
                 >
                     <div className="flex items-center gap-4 min-w-0">
-                        <div className={`w-14 h-14 shrink-0 rounded-2xl flex items-center justify-center transition-all duration-300 ${configured
+                        <div className={`relative w-14 h-14 shrink-0 rounded-2xl flex items-center justify-center transition-all duration-300 ${configured
                             ? 'bg-gradient-to-br from-green-400 to-emerald-500 shadow-lg shadow-green-500/30'
                             : 'setup-tile'}`}>
-                            <Icon className="w-7 h-7 text-white" />
+                            {configured ? <Check className="w-7 h-7 text-white" /> : <Icon className="w-7 h-7 text-white" />}
+                            {guided && step && !configured && (
+                                <span className="absolute -top-1.5 -left-1.5 w-6 h-6 rounded-full bg-primary-500 border-2 border-slate-900 text-[11px] font-bold text-white flex items-center justify-center">
+                                    {step.index + 1}
+                                </span>
+                            )}
                         </div>
                         <div className="min-w-0">
                             <h3 className="font-bold text-lg text-white leading-tight">{title}</h3>
@@ -562,6 +592,16 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 {active && (active?.credential_fields || []).length > 0 && (
                     <div>
                     <Step n={cap === 'ai' ? 3 : 2}>Credentials</Step>
+                    {instructions?.(selected) && (
+                        <div className="mb-3 rounded-2xl bg-white/[0.05] border border-white/10 px-4 py-3">
+                            <p className="text-[11px] uppercase tracking-wider text-white/45 font-semibold mb-1.5">
+                                How to get these
+                            </p>
+                            <div className="text-sm text-white/70 leading-relaxed space-y-1.5">
+                                {instructions(selected)}
+                            </div>
+                        </div>
+                    )}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
                         {active.credential_fields.map(f => {
                             const alreadySet = !!(catalog.configured?.[selected] && selected === catalog.current_provider);
@@ -800,7 +840,26 @@ function CloudEnvironment({ onApplied }: { onApplied: () => void }) {
     );
 }
 
-export default function ServiceProviders() {
+export default function ServiceProviders({ show, extras, instructions }: {
+    /* Which capabilities the town said it wants, from the setup questions.
+     * Undefined means "no answer yet", which shows everything -- an absent
+     * answer must not read as "wanted nothing", the same distinction the
+     * configured badges make between unknown and no.
+     *
+     * Sign-in and maps are never filtered: a town cannot take a report without
+     * them, so hiding them behind a question would let someone opt out of
+     * having a working system. */
+    show?: Set<Capability>;
+    /* The settings that are not a provider choice -- the Google Cloud
+     * credentials, error reporting, database backups. They lived in a second
+     * collapsible section beside this one, which meant two places to look for
+     * "the thing I have not configured yet" and a Setup Progress bar counting
+     * across both. Rendered here instead, after the capability cards, so the
+     * page has one list. */
+    extras?: ReactNode;
+    /** Per-capability, per-provider "how to get these credentials". */
+    instructions?: (cap: Capability, provider: string) => ReactNode;
+} = {}) {
     const [recheckToken, setRecheckToken] = useState(0);
     /* One request for the whole section rather than one per card: the endpoint
      * returns every connector, and four parallel calls on page load for data
@@ -828,9 +887,31 @@ export default function ServiceProviders() {
         setStatuses(prev => ({ ...prev, [cap]: { ...prev[cap], ...s } }));
     }, []);
 
-    const loaded = CAPS.filter(c => statuses[c.key]);
+    const ALWAYS = new Set<Capability>(['identity', 'maps']);
+    const visible = CAPS.filter(c => !show || ALWAYS.has(c.key) || show.has(c.key));
+    const loaded = visible.filter(c => statuses[c.key]);
     const onDefaultCount = (loaded || []).filter(c => statuses[c.key]?.onDefault).length;
     const configuredCount = (loaded || []).filter(c => statuses[c.key]?.configured).length;
+
+    /* Guided setup versus the plain card list.
+     *
+     * Derived rather than stored: guided while anything the town asked for
+     * still has no credentials, cards once it all does. A stored "I am done"
+     * flag would let a half-finished town dismiss the guidance it still needs,
+     * and would need a migration to carry a boolean that the data already
+     * answers.
+     *
+     * `manualMode` is the override -- somebody adding text messages a year
+     * later wants the steps back, and somebody who knows the product wants them
+     * gone. Null means "follow the data". */
+    const [manualMode, setManualMode] = useState<'guided' | 'cards' | null>(null);
+    const everythingConfigured = loaded.length > 0 && configuredCount === loaded.length;
+    const guided = manualMode ? manualMode === 'guided' : !everythingConfigured;
+
+    // The cursor: the first thing still missing credentials. It moves on its own
+    // as each one is saved, because `configured` comes back from the reload the
+    // save already triggers.
+    const cursor = visible.findIndex(c => statuses[c.key] && !statuses[c.key]?.configured);
     const verifiedCount = (loaded || []).filter(c => statuses[c.key]?.verified === true).length;
     const failedCount = (loaded || []).filter(c => statuses[c.key]?.verified === false).length;
 
@@ -875,13 +956,68 @@ export default function ServiceProviders() {
                 width, and at a third of the page they were squeezed into
                 unusable slivers. The connector cards this matches are
                 full-width for the same reason. */}
+            {guided && loaded.length > 0 && (
+                <div className="setup-panel p-4 mb-4 relative">
+                    <div className="relative flex items-center justify-between gap-4 flex-wrap">
+                        <div className="min-w-0">
+                            <p className="text-sm font-semibold text-white">
+                                {everythingConfigured
+                                    ? 'Everything is set up'
+                                    : `Step ${Math.max(0, cursor) + 1} of ${visible.length} — ${visible[Math.max(0, cursor)]?.title}`}
+                            </p>
+                            <p className="text-white/50 text-xs mt-0.5">
+                                One at a time, in order. Save it and the next one opens.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setManualMode('cards')}
+                            className="text-xs text-white/60 hover:text-white underline underline-offset-2 shrink-0"
+                        >
+                            Skip the guide
+                        </button>
+                    </div>
+                    <div className="relative h-1.5 rounded-full bg-white/10 overflow-hidden mt-3">
+                        <div
+                            className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-teal-400 transition-all duration-500"
+                            style={{ width: `${(configuredCount / Math.max(1, loaded.length)) * 100}%` }}
+                        />
+                    </div>
+                </div>
+            )}
+
+            {!guided && !everythingConfigured && (
+                <button
+                    type="button"
+                    onClick={() => setManualMode('guided')}
+                    className="mb-4 text-xs text-white/60 hover:text-white underline underline-offset-2"
+                >
+                    Walk me through what is left
+                </button>
+            )}
+
             <div className="relative grid grid-cols-1 gap-4">
-                {CAPS.map((c, i) => (
+                {visible.map((c, i) => (
                     <CapabilityCard key={c.key} cap={c.key} title={c.title} blurb={c.blurb} icon={c.icon} delay={i * 0.08}
                         recheckToken={recheckToken} reloadToken={reloadToken} onStatus={onStatus}
-                        health={health[c.key]} />
+                        health={health[c.key]} guided={guided}
+                        instructions={instructions ? (provider) => instructions(c.key, provider) : undefined}
+                        step={{ index: i, total: visible.length, active: i === cursor }} />
                 ))}
             </div>
+
+            {extras && (
+                <div className="mt-8">
+                    <div className="flex items-center gap-3 mb-4">
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-white/45">Other settings</h3>
+                        <div className="h-px flex-1 bg-white/10" />
+                    </div>
+                    {/* Not provider choices -- there is nothing to pick between --
+                        so these render without a provider row rather than being
+                        given invented alternatives the backend cannot route to. */}
+                    {extras}
+                </div>
+            )}
         </CollapsibleSection>
     );
 }
