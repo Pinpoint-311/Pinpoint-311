@@ -3707,34 +3707,7 @@ export default function AdminConsole() {
                                 </div>
                             )}
 
-                            {/* Single RoadListInput Fallback if no multi-agency contacts added */}
-                            {(serviceRouting.routing_config.third_party_contacts || []).length === 0 && (
-                                serviceRouting.routing_config.default_handler === 'township' ? (
-                                    <RoadListInput
-                                        id="routing-exclusion-list"
-                                        label="Roads handled by another agency"
-                                        tone="danger"
-                                        hint="Reports on these roads are redirected instead of filed."
-                                        value={serviceRouting.routing_config.exclusion_list}
-                                        onChange={(value) => setServiceRouting(p => ({
-                                            ...p,
-                                            routing_config: { ...p.routing_config, exclusion_list: value }
-                                        }))}
-                                    />
-                                ) : (
-                                    <RoadListInput
-                                        id="routing-inclusion-list"
-                                        label="Roads this town maintains"
-                                        tone="success"
-                                        hint="These always stay with the town, even where another agency claims the road."
-                                        value={serviceRouting.routing_config.inclusion_list}
-                                        onChange={(value) => setServiceRouting(p => ({
-                                            ...p,
-                                            routing_config: { ...p.routing_config, inclusion_list: value }
-                                        }))}
-                                    />
-                                )
-                            )}
+
 
 
 
