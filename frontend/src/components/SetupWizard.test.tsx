@@ -23,8 +23,14 @@ import { createRoot, type Root } from 'react-dom/client';
  */
 
 vi.mock('./InlineProviderSetup', () => ({
-    default: ({ cap, provider }: { cap: string; provider: string }) =>
-        React.createElement('div', { 'data-setup': `${cap}:${provider}` }),
+    default: ({ cap, provider, onSaved }: { cap: string; provider: string; onSaved?: (v: boolean) => void }) =>
+        React.createElement('div', { 'data-setup': `${cap}:${provider}` },
+            React.createElement('button', {
+                'data-pass': `${cap}`, onClick: () => onSaved?.(true),
+            }, 'pass'),
+            React.createElement('button', {
+                'data-fail': `${cap}`, onClick: () => onSaved?.(false),
+            }, 'fail')),
 }));
 
 let SetupWizard: typeof import('./SetupWizard').default;
@@ -163,5 +169,96 @@ describe('the task list', () => {
         };
         await render({ status, maps: 'esri' });
         expect(text()).not.toContain('Everything you picked is set up');
+    });
+});
+
+
+describe('one item open at a time', () => {
+    /* Grouping by login turned four visits into one and then put all four on
+     * the screen at once: the Azure task rendered about six thousand pixels
+     * tall while the rail said "1 left". Items collapse for the same reason
+     * tasks do. */
+    const AZURE_WORK = { wanted: new Set(['ai', 'translation', 'secrets']) };
+
+    const itemHeaders = () =>
+        Array.from(container.querySelectorAll<HTMLButtonElement>('section button[aria-expanded]'));
+    const expandedItems = () => itemHeaders().filter(b => b.getAttribute('aria-expanded') === 'true');
+    const openSetup = () => container.querySelector('[data-setup]')?.getAttribute('data-setup');
+
+    it('shows every item but expands only one', async () => {
+        await render({ ...AZURE_WORK, status: {} });
+        // Sign-in, AI, translation and key management are all one Azure trip.
+        expect(itemHeaders().length).toBe(4);
+        expect(expandedItems().length).toBe(1);
+    });
+
+    it('opens the first unfinished item', async () => {
+        await render({ ...AZURE_WORK, status: {} });
+        expect(openSetup()).toBe('identity:entra');
+    });
+
+    it('skips past items already set up', async () => {
+        await render({
+            ...AZURE_WORK,
+            status: statusFor({ identity: ['entra'], ai: ['azure'], maps: ['google'] }),
+        });
+        expect(openSetup()).toBe('translation:azure');
+    });
+
+    it('opens the next item when one is finished and verified', async () => {
+        await render({ ...AZURE_WORK, status: {} });
+        expect(openSetup()).toBe('identity:entra');
+
+        await act(async () => {
+            container.querySelector<HTMLButtonElement>('[data-pass="identity"]')!.click();
+        });
+        expect(openSetup()).toBe('ai:azure');
+    });
+
+    it('does not move on when the test failed', async () => {
+        /* The whole point of advancing on the test rather than the save.
+         * Moving somebody past a credential that does not work reads as
+         * confirmation that it does. */
+        await render({ ...AZURE_WORK, status: {} });
+        await act(async () => {
+            container.querySelector<HTMLButtonElement>('[data-fail="identity"]')!.click();
+        });
+        expect(openSetup()).toBe('identity:entra');
+    });
+
+    it('collapses and expands on click', async () => {
+        await render({ ...AZURE_WORK, status: {} });
+        const [first, second] = itemHeaders();
+
+        await act(async () => { second.click(); });
+        expect(openSetup()).toBe('ai:azure');
+
+        await act(async () => { itemHeaders()[1].click(); });   // same one again
+        expect(expandedItems().length).toBe(0);
+
+        await act(async () => { itemHeaders()[0].click(); });
+        expect(openSetup()).toBe('identity:entra');
+        expect(first).toBeTruthy();
+    });
+
+    it('leaves the task once its last item passes', async () => {
+        // Only sign-in is outstanding in the Azure task; maps is a separate one.
+        await render({
+            ...AZURE_WORK,
+            status: statusFor({ ai: ['azure'], translation: ['azure'], kms: ['azure'] }),
+        });
+        expect(openSetup()).toBe('identity:entra');
+
+        await act(async () => {
+            container.querySelector<HTMLButtonElement>('[data-pass="identity"]')!.click();
+        });
+
+        /* Asserted on the rail, not the panel. Crossing to another task swaps
+         * the panel through AnimatePresence `mode="wait"`, which holds the
+         * outgoing one until its exit animation finishes -- and jsdom produces
+         * no frames, so it never does. The rail is outside that animation and
+         * says which task is current. */
+        const current = rows().find(r => r.getAttribute('aria-current') === 'step');
+        expect(current?.textContent).toContain('Google Cloud');
     });
 });

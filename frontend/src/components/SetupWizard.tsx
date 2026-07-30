@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Check, ChevronRight, Circle, AlertCircle } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Circle, AlertCircle } from 'lucide-react';
 
 import InlineProviderSetup from './InlineProviderSetup';
 import SecretField from './SecretField';
@@ -133,6 +133,36 @@ export default function SetupWizard(props: SetupWizardProps) {
 
     const open = openTask;
 
+    /* One item open inside the task, for the same reason one task is open in
+     * the rail. Grouping by login turned four visits into one, and then put
+     * everything from all four on the screen together: the Azure task rendered
+     * about six thousand pixels tall while the rail said "1 left". That is the
+     * same wall in a new place.
+     *
+     * Reset when the task changes, then filled in by the effect below. */
+    const [openItemId, setOpenItemId] = useState<string | null>(null);
+    const itemChosen = useRef(false);
+    useEffect(() => { setOpenItemId(null); itemChosen.current = false; }, [openId]);
+    useEffect(() => {
+        if (!open || itemChosen.current || openItemId !== null) return;
+        const next = open.items.find(i => !itemDone(i));
+        setOpenItemId((next ?? open.items[0])?.id ?? null);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [openId, status, open?.items.length]);
+
+    /** Finishing an item opens the next one, or moves on to the next task. */
+    const advanceItem = (fromId: string) => {
+        if (!open) return;
+        const index = open.items.findIndex(i => i.id === fromId);
+        const next = open.items.slice(index + 1).find(i => !itemDone(i))
+            ?? open.items.find(i => i.id !== fromId && !itemDone(i));
+        if (next) {
+            setOpenItemId(next.id);
+        } else {
+            advanceFrom(open.id);
+        }
+    };
+
     return (
         <div className="grid lg:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] gap-5">
             {/* ── The list ── */}
@@ -197,19 +227,24 @@ export default function SetupWizard(props: SetupWizardProps) {
                             )}
 
                             <div className="mt-4 space-y-5">
-                                {open.items.map(item => (
+                                {open.items.map((item, i) => (
                                     <TaskItem
                                         key={item.id}
                                         item={item}
+                                        index={i + 1}
+                                        total={open.items.length}
+                                        done={itemDone(item)}
+                                        expanded={item.id === openItemId}
+                                        onToggle={() => {
+                                            itemChosen.current = true;
+                                            setOpenItemId(item.id === openItemId ? null : item.id);
+                                        }}
                                         {...props}
                                         onDone={(verified) => {
                                             onRefresh();
-                                            /* Only when the whole task is finished, and only on a
-                                             * green test. Advancing after one item of four would
-                                             * leave the other three behind. */
-                                            if (verified && open.items.every(i => i.id === item.id || itemDone(i))) {
-                                                advanceFrom(open.id);
-                                            }
+                                            // Only on a green test: moving somebody past a
+                                            // credential that does not work reads as confirmation.
+                                            if (verified) advanceItem(item.id);
                                         }}
                                         publicOrigin={publicOrigin}
                                     />
@@ -261,41 +296,80 @@ export default function SetupWizard(props: SetupWizardProps) {
 
 /** One thing inside a task: a provider with a catalog, plain settings, or both. */
 function TaskItem({
-    item, onDone, publicOrigin,
+    item, index, total, done, expanded, onToggle, onDone, publicOrigin,
     secretValues, onSecretChange, onSaveSecrets, savingSecret, isSecretConfigured,
 }: {
     item: PlanItem;
+    index: number;
+    total: number;
+    done: boolean;
+    expanded: boolean;
+    onToggle: () => void;
     onDone: (verified: boolean) => void;
     publicOrigin: string | null;
 } & Pick<SetupWizardProps,
     'secretValues' | 'onSecretChange' | 'onSaveSecrets' | 'savingSecret' | 'isSecretConfigured'>) {
     return (
-        <div>
-            <h4 className="text-sm font-semibold text-white/90">{item.title}</h4>
-            <p className="text-xs text-white/50 leading-relaxed mt-0.5 mb-2.5">{item.blurb}</p>
-
-            {item.cap && item.provider && (
-                <InlineProviderSetup
-                    cap={item.cap}
-                    provider={item.provider}
-                    onSaved={onDone}
-                    publicOrigin={publicOrigin}
+        <div className={`rounded-2xl border transition-colors ${expanded
+            ? 'border-white/15 bg-white/[0.04]'
+            : 'border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.04]'}`}>
+            <button
+                type="button"
+                onClick={onToggle}
+                aria-expanded={expanded}
+                className="w-full text-left px-4 py-3 flex items-center gap-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+            >
+                <span
+                    className={`shrink-0 w-6 h-6 rounded-full border text-[11px] font-semibold flex items-center justify-center ${done
+                        ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300'
+                        : 'bg-white/10 border-white/15 text-white/60'}`}
+                    aria-hidden="true"
+                >
+                    {done ? <Check className="w-3.5 h-3.5" /> : index}
+                </span>
+                <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-white/90 truncate">{item.title}</span>
+                    {/* The one-line summary stays visible when collapsed, so the
+                        list reads as a plan rather than as a row of headings. */}
+                    <span className="block text-[11px] text-white/45 truncate">
+                        {done ? 'Set up' : item.blurb}
+                    </span>
+                </span>
+                <span className="text-[10px] uppercase tracking-wider text-white/30 shrink-0 hidden sm:block">
+                    {index} of {total}
+                </span>
+                <ChevronDown
+                    className={`w-4 h-4 text-white/35 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`}
+                    aria-hidden="true"
                 />
-            )}
+            </button>
 
-            {item.secrets && (
-                <PlainSecrets
-                    fields={item.secrets}
-                    values={secretValues}
-                    onChange={onSecretChange}
-                    onSave={onSaveSecrets}
-                    saving={savingSecret}
-                    isConfigured={isSecretConfigured}
-                    onSaved={() => onDone(false)}
-                    /* Spacing only when it follows a provider block, so an item
-                     * that is only settings does not start with a gap. */
-                    className={item.cap ? 'mt-3' : ''}
-                />
+            {/* No blurb repeated inside: it is already in the header above,
+                which stays visible while expanded. */}
+            {expanded && (
+                <div className="px-4 pb-4 pt-1">
+                    {item.cap && item.provider && (
+                        <InlineProviderSetup
+                            cap={item.cap}
+                            provider={item.provider}
+                            onSaved={onDone}
+                            publicOrigin={publicOrigin}
+                        />
+                    )}
+
+                    {item.secrets && (
+                        <PlainSecrets
+                            fields={item.secrets}
+                            values={secretValues}
+                            onChange={onSecretChange}
+                            onSave={onSaveSecrets}
+                            saving={savingSecret}
+                            isConfigured={isSecretConfigured}
+                            onSaved={() => onDone(false)}
+                            className={item.cap ? 'mt-3' : ''}
+                        />
+                    )}
+                </div>
             )}
         </div>
     );
