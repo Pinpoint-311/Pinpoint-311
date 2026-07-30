@@ -605,12 +605,29 @@ async def _flag(key: str, default: bool) -> bool:
 
 
 async def resolve_provider() -> Optional[str]:
-    """Which detector to use, or None for "redaction is off".
+    """Which detector to use, or None only when a town has switched it off.
 
     Falls through to the moderation provider and then the AI provider, so a town
     that has already pasted one set of cloud credentials gets redaction without
-    configuring a second thing. `local` is never chosen implicitly -- OpenCV
-    quality is low enough that it should be a decision, not a default.
+    configuring a second thing.
+
+    `local` used to be excluded from that fall-through, on the reasoning that
+    OpenCV quality is low enough to deserve a decision rather than a default.
+    The reasoning compares local against a cloud detector. The actual
+    alternative, on a deployment with no cloud credentials, is **no detection at
+    all** -- and against that, imperfect detection wins every time.
+
+    It also contradicted `settings()` twelve lines below, which turns faces and
+    plates on by default and says why: "publishing a stranger's face on a
+    municipal website is a harm a town incurs by doing nothing, and the default
+    should not be the harmful one." Both toggles defaulted on, and then the
+    provider resolved to None and neither did anything. A fresh install stored
+    every resident photo unmodified while the Photo Redaction card displayed
+    Google Cloud Vision, because the catalog default said so.
+
+    So local is now the floor. Off is still reachable -- explicitly, by choosing
+    it -- which is the difference between a town deciding not to blur and a town
+    not knowing it wasn't.
     """
     from app.services.secret_manager import get_secret
 
@@ -627,7 +644,11 @@ async def resolve_provider() -> Optional[str]:
         return None
 
     ai = ((await get_secret("AI_PROVIDER")) or "").strip().lower()
-    return {"vertex": "google", "azure": "azure", "bedrock": "aws"}.get(ai)
+    derived = {"vertex": "google", "azure": "azure", "bedrock": "aws"}.get(ai)
+    # Nothing indicates a cloud. Detection on this server needs no account and
+    # no key, and sends no photo anywhere, so there is no reason for the answer
+    # to be "none".
+    return derived or "local"
 
 
 async def settings() -> Tuple[Optional[str], bool, bool]:
