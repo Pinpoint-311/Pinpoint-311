@@ -312,8 +312,52 @@ the cached data key, because a long-running worker would otherwise keep
 reporting the state of the world from before the key broke — for the whole
 window. See `_kms_check` in `app/services/proactive_health.py`.
 
+### The controls guard the key, not the account
+
+Worth being precise, because it is easy to read the list below and conclude the
+problem is solved. Every control there stops somebody deleting the *key*. None
+of them survives losing the *account* that holds it, and the timelines are all
+quiet ones:
+
+| Path | What happens | Window |
+|---|---|---|
+| Azure subscription cancelled | Subscription deleted, resources with it | ~90 days after cancellation |
+| AWS account closed | Resources deleted after the post-closure period | 90 days |
+| Google project deleted | Takes the key ring; material erased | 30-day destruction window, erased within 45 days |
+
+A `kms:ScheduleKeyDeletion` deny does not apply, because closing an account is
+not that call. Purge protection protects a key inside a vault, not a vault
+inside a subscription that no longer exists.
+
+For a municipality this is the likelier ending than a mis-click: a card that
+expires between budget cycles, a subscription opened on a departing employee's
+personal account, a purchasing gap nobody notices until the disable notice
+arrives. The controls for it are unglamorous — the account in the town's name on
+a town payment method, more than one administrator, billing alerts to a shared
+address that is still monitored after somebody leaves.
+
+Two more paths that are *not* deletion and are recoverable, but break decryption
+identically and silently:
+
+- **An expiry set on the Azure key.** Key Vault keys support an `exp` attribute,
+  after which cryptographic operations are refused. Azure Policy actively
+  recommends setting one ("Key Vault keys should have an expiration date"), so a
+  well-meaning security review can break PII decryption without deleting
+  anything. The key still exists and the date can be extended.
+- **The Azure client secret expiring.** Same symptom, different cause, also
+  fixable in minutes once identified.
+
+In both cases the `_kms_check` alert fires, which is most of the value: the
+failure is recoverable but only if somebody knows it is happening.
+
 ### Prevention, in order of value
 
+0. **Protect the container.** Google: place a lien on the project
+   (`gcloud alpha resource-manager liens create --restrictions=resourcemanager.projects.delete`),
+   which blocks deletion until the lien is removed. Azure: add a `CanNotDelete`
+   lock on the vault — locks override user permissions, and an attempt to delete
+   the enclosing resource group fails whole rather than half-completing. AWS has
+   no equivalent for account closure; billing hygiene is the only control.
 1. **Deny the deletion, do not merely avoid it.** On AWS, add an explicit deny
    for `kms:ScheduleKeyDeletion` and `kms:DisableKey` in the key policy — an
    explicit deny cannot be overridden by any allow, including the account root.
