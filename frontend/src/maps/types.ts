@@ -110,6 +110,7 @@ export interface MarkerOptions {
     dropAnimation?: boolean;
     /** The handle is passed back so popups can anchor to the marker itself. */
     onClick?: (e: MapPointerEvent, marker: MarkerHandle) => void;
+    onDrag?: (position: LatLng) => void;
     onDragEnd?: (position: LatLng) => void;
 }
 

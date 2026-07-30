@@ -13,7 +13,7 @@ import {
     createMap,
     fractionAlongLine,
     legacyMapProviderConfig,
-    pointAtFraction,
+    pointAtFraction, subPathByFractions,
 } from '../maps';
 
 /**
@@ -66,6 +66,8 @@ export default function RoadCorridorMap({
     // A ref rather than state so a redraw never closes over a stale set.
     const excludedRef = useRef(new Set(excludedFeatureIds));
     const handleLayerRef = useRef<MarkerLayer | null>(null);
+    const canvasOverlayRef = useRef<CanvasOverlayHandle | null>(null);
+    const hasFittedBoundsRef = useRef<Record<string, boolean>>({});
     // The clicked stretch, and its vertices, so handles can be placed along it.
     const [selected, setSelected] = useState<{ id: string; name: string; path: LatLng[] } | null>(null);
     // feature id -> vertices, kept from the fetch. GeoFeature deliberately does
@@ -76,6 +78,7 @@ export default function RoadCorridorMap({
     useEffect(() => { trimsRef.current = trims; }, [trims]);
 
     const [ready, setReady] = useState(false);
+    const [zoomLevel, setZoomLevel] = useState(13);
     const [loading, setLoading] = useState(false);
     const [segmentCount, setSegmentCount] = useState(0);
     const [unavailable, setUnavailable] = useState(false);
@@ -99,6 +102,11 @@ export default function RoadCorridorMap({
             .then(renderer => {
                 if (cancelled) { renderer.destroy(); return; }
                 rendererRef.current = renderer;
+
+                renderer.onBoundsChange?.(() => {
+                    const z = renderer.getZoom();
+                    if (typeof z === "number") setZoomLevel(z);
+                });
 
                 if (townshipBoundary) {
                     try {
@@ -133,19 +141,21 @@ export default function RoadCorridorMap({
         };
     }, [apiKey]);
 
-    /* Two layers, drawn one on top of the other.
-     *
-     * These were referenced by restyle() and by the layer setup but never
-     * actually written, so the corridor map threw a ReferenceError the moment it
-     * rendered. `vite build` does not typecheck, so it shipped. Reconstructed
-     * from what the two call sites and the surrounding code require: a wide
-     * translucent band showing how far the corridor reaches, and a thin solid
-     * line showing the road itself through it.
-     */
+        const bufferStyleFor = useCallback((feature: GeoFeature): VectorStyle => {
+        const id = String(feature.properties?.feature_id ?? "");
+        const off = excludedRef.current.has(id);
+        const lat = 40.73;
+        const metersPerPixel = (156543.03392 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoomLevel || 15);
+        const bufferPx = Math.max(4, Math.round(corridorMetres / metersPerPixel));
+        return {
+            strokeColor: off ? "#64748b" : "#ef4444",
+            strokeWidth: off ? 4 : bufferPx,
+            strokeOpacity: 0.0,
+            strokeDasharray: off ? "4,4" : "6,6",
+        };
+    }, [corridorMetres, zoomLevel]);
 
-    /** The corridor band: wide and see-through, so you can still read the
-     *  basemap and the road underneath it. */
-    const bufferStyleFor = useCallback((feature: GeoFeature): VectorStyle => {
+    const centerlineStyleFor = useCallback((feature: GeoFeature): VectorStyle => {
         const id = String(feature.properties?.feature_id ?? '');
         const off = excludedRef.current.has(id);
         return {
@@ -154,21 +164,9 @@ export default function RoadCorridorMap({
             // pixels, so this is indicative rather than a true buffer -- but it
             // makes the setting legible instead of abstract.
             strokeWidth: off ? 2 : Math.max(3, Math.round(corridorMetres / 3)),
-            strokeOpacity: off ? 0.18 : 0.3,
+            strokeOpacity: 0.0,
         };
     }, [corridorMetres]);
-
-    /** The centreline: thin and opaque, and unaffected by the width slider --
-     *  the road does not move when the corridor widens, only the band does. */
-    const centerlineStyleFor = useCallback((feature: GeoFeature): VectorStyle => {
-        const id = String(feature.properties?.feature_id ?? '');
-        const off = excludedRef.current.has(id);
-        return {
-            strokeColor: off ? EXCLUDED : INCLUDED,
-            strokeWidth: off ? 1.5 : 2.5,
-            strokeOpacity: off ? 0.45 : 1,
-        };
-    }, []);
 
     /** Re-evaluate the existing layer rather than refetching: the geometry has
      *  not changed, only which pieces count. */
@@ -201,7 +199,7 @@ export default function RoadCorridorMap({
             centerlineLayerRef.current = null;
         setSegmentCount(0);
 
-        if (!roadList.length) return;
+        if (!roadList || !roadList.length) return;
 
         let cancelled = false;
         setLoading(true);
@@ -209,14 +207,14 @@ export default function RoadCorridorMap({
             .then(collection => {
                 if (cancelled || !rendererRef.current) return;
                 setUnavailable(collection.available === false);
-                setSegmentCount(collection.features.length);
+                setSegmentCount((collection?.features || []).length);
                 pathsRef.current = new Map(
                     collection.features.map(f => [
                         String(f.properties.feature_id),
                         (f.geometry.coordinates || []).map(([lng, lat]) => ({ lat, lng })),
                     ]),
                 );
-                if (!collection.features.length) return;
+                if (!collection?.features?.length) return;
 
                 bufferLayerRef.current = rendererRef.current.addGeoJsonLayer({
                     data: collection,
@@ -237,8 +235,13 @@ export default function RoadCorridorMap({
                     },
                 });
 
-                const bounds = boundsOfGeoJson(collection);
-                if (bounds) rendererRef.current.fitBounds(bounds, { padding: 40 });
+                if (!hasFittedBoundsRef.current[roadKey]) {
+                    const bounds = boundsOfGeoJson(collection);
+                    if (bounds) {
+                        rendererRef.current.fitBounds(bounds, { padding: 40 });
+                        hasFittedBoundsRef.current[roadKey] = true;
+                    }
+                }
             })
             .catch(() => !cancelled && setUnavailable(true))
             .finally(() => !cancelled && setLoading(false));
@@ -249,22 +252,117 @@ export default function RoadCorridorMap({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [roadKey, ready, bufferStyleFor, centerlineStyleFor, toggleSegment]);
 
+
+    // Dynamic Canvas Overlay for crisp zoom-scaled striped buffer & live trim rendering
+    useEffect(() => {
+        const renderer = rendererRef.current;
+        if (!renderer || !ready) return;
+
+        canvasOverlayRef.current?.remove();
+        canvasOverlayRef.current = renderer.addCanvasOverlay({
+            draw: (ctx, view) => {
+                const lat = view.bounds ? (view.bounds.north + view.bounds.south) / 2 : 40.73;
+                const metersPerPixel = (156543.03392 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, view.zoom || 15);
+                const bufferPx = Math.max(4, Math.round(corridorMetres / metersPerPixel));
+
+                // 1. Draw Striped Translucent Buffer & Red Centerline for active road features
+                pathsRef.current.forEach((path, id) => {
+                    if (path.length < 2) return;
+                    if (excludedRef.current.has(id)) return;
+
+                    const trim = trimsRef.current[id] || { start: 0, end: 1 };
+                    const isTrimmed = trim.start > 0.001 || trim.end < 0.999;
+                    const activeSubPath = subPathByFractions(path, trim.start, trim.end);
+
+                    // If segment is trimmed, draw the untrimmed full path in faint muted grey
+                    if (isTrimmed) {
+                        ctx.save();
+                        ctx.beginPath();
+                        path.forEach((p, idx) => {
+                            const pt = view.project(p);
+                            if (isNaN(pt.x) || isNaN(pt.y)) return;
+                            if (idx === 0) ctx.moveTo(pt.x, pt.y);
+                            else ctx.lineTo(pt.x, pt.y);
+                        });
+                        ctx.setLineDash([4, 4]);
+                        ctx.strokeStyle = "rgba(100, 116, 139, 0.35)";
+                        ctx.lineWidth = 3;
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+
+                    // Draw Red Striped Buffer along activeSubPath
+                    if (activeSubPath.length >= 2) {
+                        ctx.save();
+                        ctx.beginPath();
+                        activeSubPath.forEach((p, idx) => {
+                            const pt = view.project(p);
+                            if (isNaN(pt.x) || isNaN(pt.y)) return;
+                            if (idx === 0) ctx.moveTo(pt.x, pt.y);
+                            else ctx.lineTo(pt.x, pt.y);
+                        });
+                        ctx.setLineDash([12, 8]);
+                        ctx.strokeStyle = "rgba(239, 68, 68, 0.40)";
+                        ctx.lineWidth = bufferPx;
+                        ctx.lineCap = "round";
+                        ctx.lineJoin = "round";
+                        ctx.stroke();
+
+                        // Draw Red Centerline along activeSubPath
+                        ctx.setLineDash([]);
+                        ctx.strokeStyle = "rgba(239, 68, 68, 0.95)";
+                        ctx.lineWidth = 4;
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+                });
+
+                // 2. Draw Active Highlighted Trim Polyline for selected segment
+                if (selected && selected.path.length >= 2) {
+                    const trim = trimsRef.current[selected.id] || { start: 0, end: 1 };
+                    const sub = subPathByFractions(selected.path, trim.start, trim.end);
+
+                    if (sub.length >= 2) {
+                        ctx.save();
+                        ctx.beginPath();
+                        sub.forEach((p, idx) => {
+                            const pt = view.project(p);
+                            if (isNaN(pt.x) || isNaN(pt.y)) return;
+                            if (idx === 0) ctx.moveTo(pt.x, pt.y);
+                            else ctx.lineTo(pt.x, pt.y);
+                        });
+                        ctx.setLineDash([8, 6]);
+                        ctx.strokeStyle = "rgba(251, 191, 36, 0.55)";
+                        ctx.lineWidth = bufferPx + 4;
+                        ctx.lineCap = "round";
+                        ctx.lineJoin = "round";
+                        ctx.stroke();
+
+                        ctx.setLineDash([]);
+                        ctx.strokeStyle = "rgba(251, 191, 36, 1.0)";
+                        ctx.lineWidth = 6;
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+                }
+            },
+        });
+    }, [ready, corridorMetres, selected, roadKey]);
+
     // Draggable handles at the trim boundaries of the selected stretch.
     useEffect(() => {
         const renderer = rendererRef.current;
         handleLayerRef.current?.remove();
         handleLayerRef.current = null;
-        if (!renderer || !ready || !selected || selected.path.length < 2) return;
+        if (!renderer || !ready || !selected || (selected?.path || []).length < 2) return;
 
         const trim = trims[selected.id] || { start: 0, end: 1 };
         const layer = renderer.createMarkerLayer();
 
-        const commit = (which: 'start' | 'end') => (position: LatLng) => {
+        const handleDrag = (which: 'start' | 'end') => (position: LatLng) => {
             const fraction = fractionAlongLine(selected.path, position);
             const current = trimsRef.current[selected.id] || { start: 0, end: 1 };
             const next = { ...current, [which]: fraction };
-            // Dragging the handles across each other is a normal thing to do
-            // and should mean "the other way round", not an empty rule.
             const ordered = next.start <= next.end
                 ? next
                 : { start: next.end, end: next.start };
@@ -272,7 +370,14 @@ export default function RoadCorridorMap({
             const updated = { ...trimsRef.current };
             if (ordered.start <= 0.001 && ordered.end >= 0.999) delete updated[selected.id];
             else updated[selected.id] = ordered;
-            onTrimsChange(updated);
+
+            trimsRef.current = updated;
+            canvasOverlayRef.current?.redraw();
+        };
+
+        const handleDragEnd = (which: 'start' | 'end') => (position: LatLng) => {
+            handleDrag(which)(position);
+            onTrimsChange({ ...trimsRef.current });
         };
 
         const markers = (['start', 'end'] as const).flatMap(which => {
@@ -282,7 +387,7 @@ export default function RoadCorridorMap({
                 draggable: true,
                 icon: {
                     type: 'circle' as const,
-                    radius: 8,
+                    radius: 9,
                     fillColor: '#fbbf24',
                     fillOpacity: 1,
                     strokeColor: '#78350f',
@@ -290,15 +395,16 @@ export default function RoadCorridorMap({
                 },
                 title: which === 'start' ? 'Drag: where this rule starts' : 'Drag: where this rule ends',
                 zIndex: 200,
-                onDragEnd: commit(which),
+                onDrag: handleDrag(which),
+                onDragEnd: handleDragEnd(which),
             }] : [];
         });
 
         layer.setMarkers(markers);
         handleLayerRef.current = layer;
-    }, [selected, trims, ready, onTrimsChange]);
+    }, [selected?.id, ready]);
 
-    const excludedCount = excludedFeatureIds.length;
+    const excludedCount = (excludedFeatureIds || []).length;
     const selectedExcluded = selected ? excludedFeatureIds.includes(selected.id) : false;
     const selectedTrim = selected ? trims[selected.id] : undefined;
 
@@ -333,14 +439,9 @@ export default function RoadCorridorMap({
                     </div>
                 )}
                 {unavailable && (
-                    <div className="absolute inset-0 flex items-center justify-center text-center px-6">
-                        <div>
-                            <MapPin className="w-7 h-7 mx-auto mb-2 text-white/25" aria-hidden="true" />
-                            <p className="text-sm text-white/50">Road data hasn&apos;t loaded for this town yet.</p>
-                            <p className="text-xs text-white/35 mt-1">
-                                Rules still work — you just can&apos;t preview them here.
-                            </p>
-                        </div>
+                    <div className="absolute top-3 left-3 z-10 flex items-center gap-2 rounded-lg bg-slate-900/80 backdrop-blur-md border border-white/10 px-3 py-1.5 text-xs text-white/70 shadow-lg pointer-events-none">
+                        <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0" aria-hidden="true" />
+                        <span>Road data loading for this boundary...</span>
                     </div>
                 )}
             </div>

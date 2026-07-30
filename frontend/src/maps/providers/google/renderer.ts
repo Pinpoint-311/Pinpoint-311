@@ -196,6 +196,11 @@ class GoogleMarkerLayer implements MarkerLayer {
                 options.onClick!({ position: handle.getPosition() }, handle);
             });
         }
+        if (options.onDrag) {
+            native.addListener('drag', () => {
+                options.onDrag!(handle.getPosition());
+            });
+        }
         if (options.onDragEnd) {
             native.addListener('dragend', () => {
                 options.onDragEnd!(handle.getPosition());
