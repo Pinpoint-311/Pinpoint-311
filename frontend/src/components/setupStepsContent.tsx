@@ -840,9 +840,9 @@ defineSteps('sms', 'http', () => [
     {
         body: (
             <>
-                For a gateway that is not listed — a regional carrier, a state contract, or an existing
-                notification system. Pinpoint sends a POST with a JSON body containing the destination
-                number and the message text, and treats any 2xx response as delivered.
+                For a gateway not listed here — a regional carrier, a state contract, an existing
+                notification system. Pinpoint POSTs JSON with the number and the message, and treats
+                any 2xx as delivered.
             </>
         ),
     },
@@ -876,13 +876,11 @@ defineSteps('sms', 'http', () => [
  */
 const ACCOUNT_SURVIVES = (
     <>
-        <B>Finally, the boring one that matters most.</B> Every protection above guards the key. None
-        of them guards the <em>account</em> — and an account closed for non-payment takes the key with
-        it after about 90 days, whatever is set on the key itself. So: the cloud account must be in the
-        town's name on a town payment method, not an individual's; more than one person must be an
-        administrator; and billing alerts must go to a shared address that is still monitored after
-        somebody leaves. For most towns that is the realistic way this data gets lost — not a
-        mis-click, a lapsed card between budget cycles.
+        <B>The boring one that matters most.</B> Everything above protects the key. Nothing protects
+        the <em>account</em>, and a closed account takes the key with it. So put the cloud account in
+        the town's name on a town payment method, make more than one person an administrator, and send
+        billing alerts to a shared address. This, not a mis-click, is how towns actually lose the
+        data — a lapsed card between budget cycles.
     </>
 );
 
@@ -928,36 +926,24 @@ defineSteps('kms', 'google', () => [
     {
         body: (
             <>
-                <B>Then make it hard to destroy.</B> Google will not let you delete a key or a key ring
-                at all — only <em>destroy a key version</em>, which is enough to lose the data. Two
-                things to do now, while you are already here:
-                <span className="mt-2 grid gap-1.5">
-                    <span className="text-white/50 text-xs">
-                        Set the key's <B>destroy scheduled duration</B> to the longest you can — the
-                        default is 24 hours, and it can go to 120 days. That is the length of the window
-                        in which somebody can undo the mistake.
-                    </span>
-                    <span className="text-white/50 text-xs">
-                        Make sure day-to-day accounts do not hold{' '}
-                        <C>cloudkms.cryptoKeyVersions.destroy</C>. Encrypter/Decrypter does not include
-                        it — so if you followed the previous step exactly, Pinpoint already cannot
-                        destroy its own key. Check that a human administrator's role does not either.
-                    </span>
-                </span>
+                <B>Make it hard to destroy.</B> Keys and key rings cannot be deleted, but a key{' '}
+                <em>version</em> can be destroyed, which loses the data just as well. Set the key's{' '}
+                <B>destroy scheduled duration</B> to the longest available — it defaults to 24 hours
+                and goes to 120 days. That is how long somebody has to undo a mistake. Then check no
+                everyday account holds <C>cloudkms.cryptoKeyVersions.destroy</C>.
             </>
         ),
-        trouble: <>Rotating this key is safe and good practice — old versions stay and keep decrypting old rows. <B>Destroying</B> a version is the fatal one, and the two sit next to each other in the console. Once a version is destroyed, Google cannot recover it for you, for law enforcement, or for anyone.</>,
+        trouble: <>Rotating is safe — old versions stay and keep decrypting old rows. <B>Destroying</B> a version is the fatal one, and the two sit next to each other in the console. Google cannot recover a destroyed version for anyone.</>,
     },
     {
         body: (
             <>
-                <B>Protect the project, not just the key.</B> None of the above survives the project
-                being deleted — that takes the key ring with it. Place a <B>lien</B> on the project,
-                which blocks deletion outright until somebody removes the lien:
+                <B>Protect the project too.</B> Deleting the project takes the key ring with it, whatever
+                is set on the key. A <B>lien</B> blocks that until somebody removes the lien:
                 <span className="mt-2 block"><C>gcloud alpha resource-manager liens create --project=YOUR_PROJECT --restrictions=resourcemanager.projects.delete --reason="Holds the Pinpoint 311 PII encryption key"</C></span>
             </>
         ),
-        trouble: <>Ask whoever manages your Google Cloud billing to run it if you do not have the command line. It is one command, it is free, and it is the difference between a mis-click being an inconvenience and being permanent.</>,
+        trouble: <>No command line? Ask whoever manages your Google Cloud billing to run it. It is free, and it is the difference between a mis-click being an inconvenience and being permanent.</>,
     },
     {
         body: <>{ACCOUNT_SURVIVES}</>,
@@ -968,68 +954,42 @@ defineSteps('kms', 'azure', () => [
     {
         body: (
             <>
-                In the <L href="https://portal.azure.com">Azure portal</L> create a <B>Key Vault</B>.
-                Turn on <B>soft delete</B> and <B>purge protection</B> — both are offered during
-                creation, and they are what stops an accidental deletion becoming permanent.
+                In the <L href="https://portal.azure.com">Azure portal</L>, create a <B>Key Vault</B>.
+                Turn on <B>soft delete</B> and <B>purge protection</B> while creating it.
             </>
         ),
-        trouble: <>Purge protection cannot be turned on later on some configurations, and it is exactly the setting a town regrets not having. Take it now.</>,
+        trouble: <>Take purge protection now. On some configurations it cannot be turned on later, and it is the only setting that makes an accidental deletion survivable.</>,
+    },
+    {
+        body: <>Open <B>Objects → Keys → Generate/Import</B> and create an <B>RSA</B> key. 2048 or 4096, either is fine. Note its name.</>,
+        check: <>the key listed, status Enabled.</>,
     },
     {
         body: (
             <>
-                Open <B>Objects → Keys → Generate/Import</B> and create an <B>RSA</B> key. 2048 is fine;
-                4096 is fine too. Note the key's name.
+                Give Pinpoint access. Under <B>Microsoft Entra ID → App registrations → New
+                registration</B>, register an app and create a client secret for it. Then grant that app{' '}
+                <B>Get</B>, <B>Wrap Key</B> and <B>Unwrap Key</B> on the vault — in <B>Access
+                policies</B>, or the <B>Key Vault Crypto User</B> role if the vault uses Azure RBAC.
             </>
         ),
-        check: <>the key listed with status Enabled.</>,
+        trouble: <>Wrap and Unwrap are the two people miss. Get on its own is not enough, and the failure is silent.</>,
     },
     {
-        body: (
-            <>
-                Register an application for Pinpoint (<B>Microsoft Entra ID → App registrations → New
-                registration</B>), create a client secret for it under{' '}
-                <B>Certificates &amp; secrets</B>, and grant that application <B>Get</B>, <B>Wrap Key</B>{' '}
-                and <B>Unwrap Key</B> on the vault — under <B>Access policies</B>, or as the{' '}
-                <B>Key Vault Crypto User</B> role if your vault uses Azure RBAC.
-            </>
-        ),
-        trouble: <>Wrap and Unwrap are the two that matter and they are easy to miss in a long checklist of permissions. Get alone is not enough.</>,
-    },
-    {
-        body: (
-            <>
-                Then fill these in. The vault URL is the full{' '}
-                <C>https://yourvault.vault.azure.net/</C> address from the vault's overview page.
-            </>
-        ),
+        body: <>Fill these in. The vault URL is the <C>https://yourvault.vault.azure.net/</C> address on the vault's overview page.</>,
         fields: ['AZURE_KEYVAULT_URL', 'AZURE_KEYVAULT_KEY', 'AZURE_TENANT_ID', 'AZURE_KEYVAULT_CLIENT_ID', 'AZURE_KEYVAULT_CLIENT_SECRET'],
-        trouble: <>The client secret has an expiry date. Put it in the town's calendar with a month's notice: when it lapses, resident data stops decrypting, and nothing about that failure points at a calendar. Azure will not warn you.</>,
+        trouble: <>The client secret expires. Put the date in the town's calendar with a month's notice — when it lapses, resident data stops decrypting and nothing about that failure points at a calendar.</>,
     },
     {
         body: (
             <>
-                <B>Last, lock the vault down.</B> Confirm <B>soft delete</B> and <B>purge protection</B>{' '}
-                are both showing as enabled on the vault's Properties page — with them on, a deleted key
-                is recoverable for the retention period and cannot be permanently purged early, even by
-                an administrator, even deliberately. Then check that the everyday accounts your staff use
-                do not hold <B>Delete</B> or <B>Purge</B> on keys; a service principal certainly should
-                not.
+                Lock it down. On <B>Properties</B>, confirm soft delete and purge protection are both
+                enabled. Then under <B>Settings → Locks</B> add a lock of type <B>Delete</B>, which
+                stops anyone deleting the vault even with permission to.
             </>
         ),
-        check: <>Soft delete: Enabled, and Purge protection: Enabled, on Properties.</>,
-        trouble: <>This is the step to insist on. Purge protection cannot be switched on later in some configurations, and it is the only setting that makes an accidental deletion survivable rather than final.</>,
-    },
-    {
-        body: (
-            <>
-                <B>Then lock the vault itself.</B> On the vault, open <B>Settings → Locks</B> and add a
-                lock of type <B>Delete</B>. An Azure lock overrides user permissions — with it in place
-                nobody can delete the vault, and an attempt to delete the whole resource group fails
-                rather than half-completing.
-            </>
-        ),
-        check: <>a lock listed on the vault, type Delete.</>,
+        check: <>Soft delete: Enabled, Purge protection: Enabled, and a Delete lock on the vault.</>,
+        trouble: <>Also check that everyday staff accounts do not hold Delete or Purge on keys.</>,
     },
     {
         body: <>{ACCOUNT_SURVIVES}</>,
@@ -1061,16 +1021,15 @@ defineSteps('kms', 'aws', () => [
     {
         body: (
             <>
-                <B>Then make deletion impossible rather than merely inadvisable.</B> AWS has no
-                "protect from deletion" switch, so you do it in the key policy: add a statement that{' '}
-                <B>denies</B> <C>kms:ScheduleKeyDeletion</C> and <C>kms:DisableKey</C> to everyone. An
-                explicit deny in AWS cannot be overridden by any allow, including the account root — so
-                the deletion simply cannot be started, by anyone, by accident or otherwise. If you ever
-                genuinely need to retire the key, an administrator edits the policy first, which is one
-                deliberate step where there was none.
+                <B>Make deletion impossible, not just inadvisable.</B> AWS has no switch for this, so
+                do it in the key policy: add a statement that <B>denies</B>{' '}
+                <C>kms:ScheduleKeyDeletion</C> and <C>kms:DisableKey</C> to everyone. An explicit deny
+                beats every allow, including the account root, so nobody can start a deletion. To
+                retire the key later, an administrator edits the policy first — one deliberate step
+                where there was none.
             </>
         ),
-        trouble: <>Do this rather than relying on care. The console offers deletion from the same page as everything else, the default waiting period is 30 days, and the key stops working the moment deletion is <em>scheduled</em> — so resident data breaks at the start of the window, not the end. It can be cancelled inside those 30 days; after that, the data is unrecoverable by you and by AWS.</>,
+        trouble: <>The key stops working the moment deletion is <em>scheduled</em>, not when the 30 days end — so resident data breaks at the start of the window. It can be cancelled inside those 30 days. After that the data is <B>unrecoverable</B>, by you and by AWS.</>,
     },
     {
         body: <>{ACCOUNT_SURVIVES}</>,
@@ -1096,27 +1055,25 @@ defineSteps('kms', 'aws', () => [
  */
 const UNCONFIGURED_DETECTOR = (
     <>
-        If the credentials are missing or wrong, this fails <em>quietly</em>. The detector returns no
-        faces, Pinpoint blurs nothing, the photo is stored, and the card still shows redaction as on —
-        because "found nobody" and "could not ask" look identical from here. Check the Photo Redaction
-        line on the health dashboard after saving, and do the test below.
+        Wrong credentials fail <em>quietly</em>: the detector finds nothing, nothing is blurred, the
+        photo is stored, and the card still reads as on — "found nobody" and "could not ask" look
+        identical from here. Check the Photo Redaction line on the health dashboard, then do the test
+        below.
     </>
 );
 
 const VERIFY_WITH_A_PHOTO = (
     <>
-        <B>Test it once, with a real photo.</B> Open the resident portal, file a test report with a
-        picture that has a recognisable face in it, then look at the stored image in the staff
-        dashboard. Thirty seconds, and it is the only thing that actually proves this is working.
-        Delete the test report afterwards.
+        <B>Test it once, with a real photo.</B> File a test report from the resident portal with a
+        recognisable face in the picture, then look at the stored image in the staff dashboard. It is
+        the only thing that proves this works. Delete the test report afterwards.
     </>
 );
 
 const REDACTION_CHOICE = (
     <>
-        Faces and licence plates are both on by default. Residents photograph potholes with cars parked
-        beside them and neighbours walking past, and neither of those people asked to be in a public
-        record.
+        Faces and licence plates are both on by default — residents photograph potholes with cars and
+        neighbours in shot, and none of those people asked to be in a public record.
     </>
 );
 

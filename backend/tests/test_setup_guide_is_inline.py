@@ -103,7 +103,7 @@ def test_the_wizard_only_advances_on_a_passing_test():
     advancing at all: it reads as confirmation."""
     wizard = _read(WIZARD)
     assert "onSaved={onRefresh}" not in wizard, "advancing on save rather than on a passing test"
-    assert "verified &&" in wizard, "nothing gates the advance on the test result"
+    assert "if (verified) advanceItem" in wizard, "nothing gates the advance on the test result"
     assert "advanceFrom" in wizard
 
 
@@ -291,3 +291,44 @@ def test_esri_is_offered_rather_than_pushed():
     guide_text = _read(GUIDE)
     assert "before you buy anything" not in guide_text
     assert "choose Esri above" not in guide_text
+
+
+# ---------------------------------------------------------------------------
+# The wall
+# ---------------------------------------------------------------------------
+
+def test_only_one_item_is_open_inside_a_task():
+    """Grouping by login turned four visits into one and then put all four on
+    the screen at once. The Azure task rendered about six thousand pixels tall
+    while the rail said "1 left" -- the same wall, moved.
+
+    Items collapse for the same reason tasks do, and advance on the same rule:
+    a save whose live test came back green.
+    """
+    wizard = _read(WIZARD)
+    assert "openItemId" in wizard, "every item in a task is expanded at once"
+    assert "expanded={item.id === openItemId}" in wizard
+    assert "advanceItem" in wizard, "finishing an item does not open the next"
+    assert "if (verified) advanceItem" in wizard, (
+        "items advance on save rather than on a passing test"
+    )
+
+
+def test_no_console_walk_runs_away_with_itself():
+    """A cap on how long any one provider's instructions can get.
+
+    Not arbitrary: the three key-management walks were 456, 465 and 559 words,
+    and two of the Azure steps restated what step one had already said. Prose at
+    that length stops being instructions and becomes something to skim, which is
+    how the warnings inside it get missed.
+    """
+    import re
+
+    source = _read(CONTENT)
+    offenders = []
+    for m in re.finditer(r"defineSteps\(\s*'([a-z]+)'\s*,\s*'([a-z0-9]+)'", source):
+        end = source.index("\n]);", m.start())
+        words = len(re.sub(r"<[^>]+>", " ", source[m.start():end]).split())
+        if words > 400:
+            offenders.append(f"{m.group(1)}:{m.group(2)} is {words} words")
+    assert not offenders, "console walks have grown back:\n" + "\n".join(offenders)
