@@ -3,6 +3,7 @@ import { AlertTriangle, Loader2, MapPin, RotateCcw, X } from 'lucide-react';
 
 import { api } from '../services/api';
 import {
+    CanvasOverlayHandle,
     GeoFeature,
     GeoJsonLayerHandle,
     LatLng,
@@ -90,6 +91,7 @@ export default function RoadCorridorMap({
 
     useEffect(() => {
         let cancelled = false;
+        let unsubscribeIdle: (() => void) | undefined;
         const container = containerRef.current;
         const config = legacyMapProviderConfig(apiKey);
         if (!container || !config) return;
@@ -103,7 +105,12 @@ export default function RoadCorridorMap({
                 if (cancelled) { renderer.destroy(); return; }
                 rendererRef.current = renderer;
 
-                renderer.onBoundsChange?.(() => {
+                // `idle` is the renderer-agnostic "camera has settled" event, and
+                // every provider implements it. The previous call was to
+                // onBoundsChange, which nothing implements -- so with optional
+                // chaining it silently never fired and zoomLevel stayed at its
+                // initial 13 for the life of the map.
+                unsubscribeIdle = renderer.on('idle', () => {
                     const z = renderer.getZoom();
                     if (typeof z === "number") setZoomLevel(z);
                 });
@@ -134,6 +141,7 @@ export default function RoadCorridorMap({
 
         return () => {
             cancelled = true;
+            unsubscribeIdle?.();
             rendererRef.current?.destroy();
             rendererRef.current = null;
             bufferLayerRef.current = null;
@@ -151,7 +159,6 @@ export default function RoadCorridorMap({
             strokeColor: off ? "#64748b" : "#ef4444",
             strokeWidth: off ? 4 : bufferPx,
             strokeOpacity: 0.0,
-            strokeDasharray: off ? "4,4" : "6,6",
         };
     }, [corridorMetres, zoomLevel]);
 
