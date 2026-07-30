@@ -16,6 +16,7 @@ import { api } from '../services/api';
 import type { Capability } from '../services/api';
 import GovtechIntegrations from './GovtechIntegrations';
 import ServiceProviders from './ServiceProviders';
+import StorageStatusLine from './StorageStatusLine';
 
 
 interface ModulesState {
@@ -38,6 +39,11 @@ interface SetupIntegrationsPageProps {
 export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh, modules, onUpdateModules }: SetupIntegrationsPageProps) {
     const [secretValues, setSecretValues] = useState<Record<string, string>>({});
     const [savingKey, setSavingKey] = useState<string | null>(null);
+    // The backup passphrase is generated rather than invented, shown once, and
+    // gated on someone confirming they have put a copy somewhere else. See the
+    // /setup/backup-key endpoint for why that last part cannot be automated.
+    const [backupKey, setBackupKey] = useState<string | null>(null);
+    const [backupKeyAcknowledged, setBackupKeyAcknowledged] = useState(false);
 
     const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
     /* The guide starts open on a fresh install and closed once the required
@@ -981,57 +987,16 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                                 </div>
                                             )}
 
-                                            {/* Migrate Secrets to GCP */}
+                                            {/* Where the stored data lives.
+                                                *
+                                                * This used to be two buttons -- "Vault Local Secrets to
+                                                * GCP Identity" and "Re-encrypt All PII Data (after key
+                                                * rotation)" -- which asked a clerk to recognise the need
+                                                * for work they had no way to know about. Both now run on
+                                                * a schedule, so all that is left is one sentence, shown
+                                                * only while there is something in flight. */}
                                             <div className="border-t border-white/10 pt-3 mt-3">
-                                                <Button
-                                                    size="sm"
-                                                    variant="ghost"
-                                                    className="w-full text-xs text-white/50 hover:text-white hover:bg-white/10"
-                                                    onClick={async () => {
-                                                        try {
-                                                            setSaveMessage('Migrating secrets to GCP...');
-                                                            const result = await api.migrateToSecretManager();
-                                                            setSaveMessage(
-                                                                `✅ Migrated: ${result.migrated} keys. Scrubbed from DB: ${result.scrubbed}.` +
-                                                                (result.failed > 0 ? ` Failed: ${result.failed}` : '')
-                                                            );
-                                                        } catch (err: any) {
-                                                            setSaveMessage(`❌ ${err.message || 'Migration failed'}`);
-                                                        }
-                                                    }}
-                                                >
-                                                    Vault Local Secrets to GCP Identity
-                                                </Button>
-                                                <p className="text-white/30 text-[10px] mt-1 text-center">
-                                                    Moves database-encrypted API keys into Secret Manager
-                                                </p>
-                                            </div>
-
-                                            {/* Re-encrypt PII after KMS key rotation */}
-                                            <div className="border-t border-white/10 pt-3 mt-1">
-                                                <Button
-                                                    size="sm"
-                                                    variant="ghost"
-                                                    className="w-full text-xs text-white/50 hover:text-white hover:bg-white/10"
-                                                    onClick={async () => {
-                                                        try {
-                                                            setSaveMessage('Re-encrypting PII data...');
-                                                            const result = await api.reencryptPii();
-                                                            setSaveMessage(
-                                                                `✅ Done: ${result.reencrypted}/${result.total} rows re-encrypted` +
-                                                                (result.migrated_from_fernet > 0 ? `, ${result.migrated_from_fernet} migrated from Fernet` : '') +
-                                                                (result.errors > 0 ? `, ${result.errors} errors` : '')
-                                                            );
-                                                        } catch (err: any) {
-                                                            setSaveMessage(`❌ ${err.message || 'Re-encryption failed'}`);
-                                                        }
-                                                    }}
-                                                >
-                                                    🔐 Re-encrypt All PII Data (after key rotation)
-                                                </Button>
-                                                <p className="text-white/30 text-[10px] mt-1 text-center">
-                                                    Migrates historical PII to the current primary KMS key version
-                                                </p>
+                                                <StorageStatusLine />
                                             </div>
                                         </div>
                                     )}
@@ -1217,13 +1182,62 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
                                             <div>
                                                 <label className="text-sm text-white/60 mb-1.5 block">Encryption Passphrase</label>
-                                                <Input
-                                                    type="password"
-                                                    placeholder="Strong passphrase for AES-256 encryption"
-                                                    value={secretValues['BACKUP_ENCRYPTION_KEY'] || ''}
-                                                    onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_ENCRYPTION_KEY': e.target.value }))}
-                                                    className="text-sm"
-                                                />
+                                                {!backupKey ? (
+                                                    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                                                        <p className="text-white/50 text-xs mb-2.5">
+                                                            {isConfigured('BACKUP_ENCRYPTION_KEY')
+                                                                ? "A passphrase is already set and backups are being encrypted with it. Creating a new one means older backups can only be restored with the old passphrase — so only do this if the current one has been exposed."
+                                                                : "Backups are encrypted before they leave this server. We'll create the passphrase for you — you don't need to think one up."}
+                                                        </p>
+                                                        <Button
+                                                            size="sm"
+                                                            variant="ghost"
+                                                            className="w-full border border-white/15 hover:bg-white/10"
+                                                            onClick={async () => {
+                                                                try {
+                                                                    const { key } = await api.generateBackupKey();
+                                                                    setBackupKey(key);
+                                                                } catch (err: any) {
+                                                                    setSaveMessage(`❌ ${err.message || 'Could not create a passphrase'}`);
+                                                                }
+                                                            }}
+                                                        >
+                                                            {isConfigured('BACKUP_ENCRYPTION_KEY')
+                                                                ? 'Replace backup passphrase'
+                                                                : 'Create backup passphrase'}
+                                                        </Button>
+                                                    </div>
+                                                ) : (
+                                                    <div className="rounded-xl border border-amber-400/30 bg-amber-500/[0.07] p-3 space-y-2.5">
+                                                        <p className="text-amber-100/90 text-xs leading-relaxed">
+                                                            This is shown once. Put a copy somewhere that is <strong>not this
+                                                            server</strong> — a password manager, or a sealed envelope in the
+                                                            clerk's safe. Without it, a backup cannot be restored, and that is the
+                                                            one thing we cannot do for you.
+                                                        </p>
+                                                        <div className="flex items-center gap-2">
+                                                            <code className="flex-1 bg-black/40 rounded-lg px-3 py-2 text-[11px] text-amber-200 break-all select-all">
+                                                                {backupKey}
+                                                            </code>
+                                                            <Button
+                                                                size="sm"
+                                                                variant="ghost"
+                                                                onClick={() => navigator.clipboard?.writeText(backupKey)}
+                                                            >
+                                                                Copy
+                                                            </Button>
+                                                        </div>
+                                                        <label className="flex items-start gap-2 text-xs text-white/70 cursor-pointer">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={backupKeyAcknowledged}
+                                                                onChange={(e) => setBackupKeyAcknowledged(e.target.checked)}
+                                                                className="mt-0.5 accent-amber-400"
+                                                            />
+                                                            I have saved a copy of this passphrase somewhere off this server.
+                                                        </label>
+                                                    </div>
+                                                )}
                                             </div>
 
                                             <div className="grid grid-cols-2 gap-2">
@@ -1256,11 +1270,14 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                                     if (secretValues['BACKUP_S3_BUCKET']) await handleSave('BACKUP_S3_BUCKET');
                                                     if (secretValues['BACKUP_S3_ACCESS_KEY']) await handleSave('BACKUP_S3_ACCESS_KEY');
                                                     if (secretValues['BACKUP_S3_SECRET_KEY']) await handleSave('BACKUP_S3_SECRET_KEY');
-                                                    if (secretValues['BACKUP_ENCRYPTION_KEY']) await handleSave('BACKUP_ENCRYPTION_KEY');
+                                                    // The passphrase is stored by the endpoint that
+                                                    // generates it, so there is nothing to save here.
                                                     if (secretValues['BACKUP_S3_ENDPOINT']) await handleSave('BACKUP_S3_ENDPOINT');
                                                     if (secretValues['BACKUP_S3_REGION']) await handleSave('BACKUP_S3_REGION');
                                                 }}
-                                                disabled={!secretValues['BACKUP_S3_BUCKET'] || !secretValues['BACKUP_ENCRYPTION_KEY'] || savingKey !== null}
+                                                disabled={!secretValues['BACKUP_S3_BUCKET']
+                                                    || !(backupKeyAcknowledged || (!backupKey && isConfigured('BACKUP_ENCRYPTION_KEY')))
+                                                    || savingKey !== null}
                                             >
                                                 {savingKey ? 'Saving...' : 'Save Backup Settings'}
                                             </Button>

@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request, Query
+from fastapi import (APIRouter, BackgroundTasks, Depends, HTTPException, status, UploadFile,
+                     File, Request, Query)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from typing import Any, List, Optional, Dict
@@ -391,6 +392,7 @@ def _capability_catalog(capability: str) -> Dict:
 async def save_provider(
     capability: str,
     body: ProviderSaveRequest,
+    background: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin),
 ):
@@ -454,12 +456,20 @@ async def save_provider(
             "key": db_only[0],
             "severity": "info",
             "message": (
-                f"Saved, but stored in the encrypted database rather than "
+                f"Saved and encrypted in the database. "
                 f"{ {'azure': 'Azure Key Vault', 'aws': 'AWS Secrets Manager'}.get(_secrets_provider(), 'Google Secret Manager') }"
-                " — it is not reachable yet. Finish the cloud credentials above, then press"
-                " Save & Test here again to move them across."
+                " is not reachable yet — once you finish the cloud credentials above,"
+                " this moves across on its own. Nothing further to do here."
             ),
         })
+    else:
+        # The store took everything, which means it is reachable -- and this may
+        # be the moment it became reachable, if what was just saved were the
+        # cloud credentials themselves. Sweep anything entered earlier across
+        # now rather than leaving it for the hourly pass. Scheduled after the
+        # response so a slow store cannot make Save feel broken.
+        from app.services.storage_maintenance import vault_secrets as _vault
+        background.add_task(_vault)
     return {
         "ok": True,
         "provider": provider_id,

@@ -683,119 +683,108 @@ async def verify_setup(
     return results
 
 
+@router.post("/backup-key")
+async def generate_backup_key(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Generate the backup passphrase, store it, and return it once.
+
+    The field used to say "Strong passphrase for AES-256 encryption" and leave
+    a town to invent one, which reliably produces either something guessable or
+    something nobody can find again. Generating it removes both failure modes.
+
+    The one part that cannot be automated is the copy kept somewhere else: a key
+    held only inside the system it protects is worth nothing the day that system
+    is gone, which is exactly the day a backup matters. So this returns the
+    value in the clear, once, for the page to show and have acknowledged -- and
+    stores it through the normal path, so it lands in the secret store like any
+    other credential.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    from app.api.system import _persist_secret
+    from app.services.storage_maintenance import generated_backup_key
+
+    key = generated_backup_key()
+    await _persist_secret(db, "BACKUP_ENCRYPTION_KEY", key)
+
+    await AuditService.log_event(
+        db=db,
+        event_type="backup_key_generated",
+        success=True,
+        user_id=current_user.id,
+        username=current_user.username,
+        # Deliberately no key material, not even a prefix.
+        details={"length": len(key)},
+    )
+    return {"key": key}
+
+
+@router.get("/storage-status")
+async def storage_status(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """What, if anything, is not yet on the storage this town has chosen.
+
+    This exists so the setup page can say nothing at all in the normal case.
+    Secrets are vaulted and PII is re-wrapped on a schedule (see
+    `app.tasks.storage`), so the only thing worth showing a clerk is the case
+    where those jobs cannot finish -- a store that has stopped answering, or
+    rows whose old key is gone. Read-only, and `summary` swallows its own
+    errors, so this cannot fail a page load.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    from app.services.storage_status import summary
+
+    return await summary(db)
+
+
 @router.post("/reencrypt-pii")
 async def reencrypt_pii(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Re-encrypt all PII data using the current primary KMS key version.
+    """Re-wrap PII onto the current key immediately, instead of waiting.
 
-    After KMS key rotation, historical PII remains encrypted with old key versions.
-    This endpoint decrypts each value (KMS transparently handles old versions)
-    and re-encrypts with the current primary key version.
+    The nightly task does this unprompted and in batches, which is how it
+    normally happens; this stays for the operator who has just rotated a key and
+    wants it done now, and for support to be able to trigger a pass.
 
-    Also handles Fernet→KMS migration for dev data (gAAAA → kms:).
-
-    Admin only. Processes in batches of 100.
+    Rewritten to share that task's implementation. It previously required Google
+    Cloud KMS specifically -- a town on Azure or AWS got a 400 telling them to
+    "configure GCP first" -- and it loaded every request id in the database
+    before doing anything, including the rows that were already fine.
     """
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    from app.core.encryption import decrypt_pii, encrypt_pii, KMS_ENCRYPTED_PREFIX, ENCRYPTED_PREFIX, _is_kms_available
-    from app.models import ServiceRequest
+    from app.services.storage_maintenance import rewrap_pii as _rewrap
 
-    if not _is_kms_available():
-        raise HTTPException(
-            status_code=400,
-            detail="Google Cloud KMS is not configured. Configure GCP first."
-        )
+    totals = {"rows": 0, "fields": 0, "errors": 0}
+    for _ in range(20):
+        result = await _rewrap(db)
+        totals["rows"] += result.get("rows", 0)
+        totals["fields"] += result.get("fields", 0)
+        totals["errors"] += result.get("errors", 0)
+        if result.get("status") != "ok" or not result.get("remaining"):
+            break
 
-    # Count total rows with PII
-    count_result = await db.execute(
-        select(ServiceRequest.id).where(
-            (ServiceRequest._first_name_encrypted.isnot(None)) |
-            (ServiceRequest._last_name_encrypted.isnot(None)) |
-            (ServiceRequest._email_encrypted.isnot(None)) |
-            (ServiceRequest._phone_encrypted.isnot(None))
-        )
-    )
-    all_ids = [row[0] for row in count_result.all()]
-    total = len(all_ids)
-
-    reencrypted = 0
-    errors = 0
-    migrated_from_fernet = 0
-    batch_size = 100
-
-    for i in range(0, total, batch_size):
-        batch_ids = all_ids[i:i + batch_size]
-        batch_result = await db.execute(
-            select(ServiceRequest).where(ServiceRequest.id.in_(batch_ids))
-        )
-        rows = batch_result.scalars().all()
-
-        for row in rows:
-            try:
-                changed = False
-                pii_columns = [
-                    ("_first_name_encrypted", row._first_name_encrypted),
-                    ("_last_name_encrypted", row._last_name_encrypted),
-                    ("_email_encrypted", row._email_encrypted),
-                    ("_phone_encrypted", row._phone_encrypted),
-                ]
-
-                for col_name, encrypted_val in pii_columns:
-                    if not encrypted_val:
-                        continue
-
-                    is_fernet = encrypted_val.startswith(ENCRYPTED_PREFIX) and not encrypted_val.startswith(KMS_ENCRYPTED_PREFIX)
-
-                    # Decrypt (KMS handles old key versions transparently; Fernet uses app key)
-                    plaintext = decrypt_pii(encrypted_val)
-                    if not plaintext:
-                        continue  # Decryption failed, skip
-
-                    # Re-encrypt with current primary KMS key
-                    new_encrypted = encrypt_pii(plaintext)
-                    if new_encrypted != encrypted_val:
-                        setattr(row, col_name, new_encrypted)
-                        changed = True
-                        if is_fernet:
-                            migrated_from_fernet += 1
-
-                if changed:
-                    reencrypted += 1
-            except Exception as e:
-                logger.warning(f"Re-encryption failed for row {row.id}: {e}")
-                errors += 1
-
-        await db.commit()
-
-    # Audit log
     await AuditService.log_event(
         db=db,
         event_type="pii_reencryption",
         success=True,
         user_id=current_user.id,
         username=current_user.username,
-        details={
-            "total_rows": total,
-            "reencrypted": reencrypted,
-            "migrated_from_fernet": migrated_from_fernet,
-            "errors": errors,
-        }
+        details=totals,
     )
+    logger.info("PII re-wrap: %s rows, %s fields, %s errors",
+                totals["rows"], totals["fields"], totals["errors"])
 
-    logger.info(
-        f"PII re-encryption complete: {reencrypted}/{total} rows re-encrypted, "
-        f"{migrated_from_fernet} migrated from Fernet, {errors} errors"
-    )
-
-    return {
-        "total": total,
-        "reencrypted": reencrypted,
-        "migrated_from_fernet": migrated_from_fernet,
-        "errors": errors,
-    }
+    # `reencrypted` is kept in the response shape for existing callers.
+    return {"reencrypted": totals["rows"], **totals}
 
