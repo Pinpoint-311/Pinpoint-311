@@ -179,14 +179,17 @@ def test_the_rejection_does_not_echo_the_path_segment():
 
 
 def test_the_allow_list_covers_every_capability_the_endpoint_handles():
-    """If a new branch is added to test_provider, the allow-list must admit it,
-    or the capability becomes unreachable behind a 400."""
-    import inspect
+    """If a new check is added, the allow-list must admit it, or the capability
+    becomes unreachable behind a 400.
 
+    This used to scrape `if capability == "` lines out of test_provider's
+    source. That broke the day the endpoint was refactored into a dispatch
+    table -- the property it cared about got *stronger*, and the test failed
+    anyway, because it was asserting the shape of the code rather than the
+    thing the code has to be true about. Reads the table now.
+    """
     from app.api import system
 
-    src = inspect.getsource(system.test_provider)
-    handled = {line.split('"')[1] for line in src.splitlines()
-               if line.strip().startswith('if capability == "')}
-    assert handled, "expected to find the per-capability branches"
+    handled = set(system._CAPABILITY_TESTS)
+    assert handled, "expected to find the per-capability checks"
     assert handled <= set(system._PROVIDER_SELECT_KEY), handled - set(system._PROVIDER_SELECT_KEY)

@@ -497,6 +497,95 @@ async def save_provider(
 # never goes green teaches people to ignore badges.
 
 
+async def _test_ai(db) -> dict:
+    from app.services.ai import get_ai_provider
+    provider = await get_ai_provider(db)
+    if not provider:
+        return {"ok": False, "detail": "No AI provider is configured. Enter the required fields and save first."}
+    result = await provider.complete_json('Reply with {"priority_score": 5}. This is a connection test.')
+    # Reachability and auth, not whether a trivial prompt produced parseable
+    # JSON. Providers set `_reachable` when the API answered at all.
+    reachable = isinstance(result, dict) and ("_error" not in result or bool(result.get("_reachable")))
+    if reachable:
+        return {"ok": True, "detail": f"{provider.provider}/{provider.model} reachable and authenticated"}
+    return {"ok": False, "detail": f"Call failed: {result.get('_error', 'unknown')[:200]}"}
+
+
+async def _test_translation(db) -> dict:
+    from app.services.translation_providers import get_translation_provider
+    provider = await get_translation_provider()
+    if not provider:
+        return {"ok": False, "detail": "No translation provider is configured."}
+    out = await provider.translate(["hello"], "en", "es")
+    return {"ok": bool(out), "detail": f"Translated sample → {out[0]}" if out else "No translation returned"}
+
+
+async def _test_identity(db) -> dict:
+    from app.services.identity import resolve_identity_config, get_oidc_metadata
+    cfg = await resolve_identity_config(db)
+    if not cfg:
+        return {"ok": False, "detail": "No identity provider is configured."}
+    meta = await get_oidc_metadata(cfg)
+    return {"ok": bool(meta.get("authorization_endpoint")),
+            "detail": f"Discovered {cfg['provider']} endpoints at {cfg['issuer_base']}"}
+
+
+async def _test_kms(db=None) -> dict:
+    """Wrap a throwaway key and see which service actually did it.
+
+    The most valuable check on the page. A KMS that stops answering does not
+    raise -- pii_crypto falls back to the application key and carries on -- so
+    "is the key I selected the one encrypting resident data" is a question
+    nothing else asks out loud. `probe_backend` rather than `active_backend`,
+    because the latter reads the data key this process cached at startup and
+    would answer for the world as it was then.
+    """
+    from app.core import pii_crypto
+    from app.core.encryption import _kms_provider
+
+    selected = _kms_provider()
+    actual = pii_crypto.probe_backend()
+    if actual == selected:
+        label = {"google": "Google Cloud KMS", "azure": "Azure Key Vault",
+                 "aws": "AWS KMS", "local": "the application key"}.get(actual, actual)
+        return {"ok": True, "detail": f"Wrapped a test key with {label}."}
+    return {"ok": False, "detail": (
+        f"Selected {selected}, but a test key was wrapped with {actual}. Resident "
+        f"data is not being encrypted with the key you chose — check the "
+        f"credentials and that the key still exists.")}
+
+
+async def _test_redaction(db=None) -> dict:
+    """Can the chosen detector answer, and is it the chosen one?
+
+    A detector with no credentials returns the same empty result as a photo
+    with nobody in it, so this is the only place the difference is visible.
+    """
+    from app.services.image_redaction import effective_provider, resolve_provider
+
+    selected = await resolve_provider()
+    if not selected:
+        return {"ok": True, "detail": "Photo redaction is switched off, as configured."}
+    actual, degraded_from = await effective_provider(selected)
+    if degraded_from == actual:
+        return {"ok": False, "detail": (
+            "No detector is available, so photos would be stored without blurring. "
+            "On-server detection needs no account — this usually means OpenCV is missing.")}
+    if degraded_from:
+        return {"ok": False, "detail": (
+            f"{degraded_from} has no usable credentials, so blurring is falling back to "
+            f"on-server detection. Photos are still redacted, less accurately.")}
+    return {"ok": True, "detail": f"{actual} is available and will blur faces and plates."}
+
+
+async def _test_email(db=None) -> dict:
+    return await _test_delivery("email")
+
+
+async def _test_sms(db=None) -> dict:
+    return await _test_delivery("sms")
+
+
 def _unverifiable(detail: str) -> dict:
     """A result that is shown but not written to connector health."""
     return {"ok": False, "detail": detail, "recorded": False}
@@ -661,6 +750,23 @@ async def _test_delivery(capability: str) -> dict:
         f"Save, then send yourself one from a request to confirm delivery.")
 
 
+# One table, so the set of capabilities the endpoint accepts and the set it can
+# actually test cannot drift apart. They did: the accept-list was widened when
+# maps, email, SMS, encryption and redaction got catalogs, and five of eight
+# cards then answered "a live test is not available for this capability" -- a
+# button whose whole job is to say whether something works, saying it could not.
+_CAPABILITY_TESTS = {
+    "ai": _test_ai,
+    "translation": _test_translation,
+    "identity": _test_identity,
+    "maps": lambda db=None: _test_maps(),
+    "email": _test_email,
+    "sms": _test_sms,
+    "kms": _test_kms,
+    "redaction": _test_redaction,
+}
+
+
 @router.post("/providers/{capability}/test")
 @_cost_limiter.limit("10/minute")  # live paid-API call — bound the cost
 async def test_provider(
@@ -702,83 +808,19 @@ async def test_provider(
             pass
         return outcome
 
-    try:
-        if capability == "ai":
-            from app.services.ai import get_ai_provider
-            provider = await get_ai_provider(db)
-            if not provider:
-                return await _remember({"ok": False, "detail": "No AI provider is configured. Enter the required fields and save first."})
-            result = await provider.complete_json('Reply with {"priority_score": 5}. This is a connection test.')
-            # A connection test verifies reachability + auth, not that the model
-            # emits parseable JSON. Providers flag `_reachable` when the API
-            # responded (200) even if a trivial prompt yielded no usable output.
-            reachable = isinstance(result, dict) and ("_error" not in result or bool(result.get("_reachable")))
-            if reachable:
-                return await _remember({"ok": True, "detail": f"{provider.provider}/{provider.model} reachable and authenticated"})
-            return await _remember({"ok": False, "detail": f"Call failed: {result.get('_error', 'unknown')[:200]}"})
-        if capability == "translation":
-            from app.services.translation_providers import get_translation_provider
-            provider = await get_translation_provider()
-            if not provider:
-                return await _remember({"ok": False, "detail": "No translation provider is configured."})
-            out = await provider.translate(["hello"], "en", "es")
-            return await _remember({"ok": bool(out), "detail": f"Translated sample → {out[0]}" if out else "No translation returned"})
-        if capability == "identity":
-            from app.services.identity import resolve_identity_config, get_oidc_metadata
-            cfg = await resolve_identity_config(db)
-            if not cfg:
-                return await _remember({"ok": False, "detail": "No identity provider is configured."})
-            meta = await get_oidc_metadata(cfg)
-            return await _remember({"ok": bool(meta.get("authorization_endpoint")), "detail": f"Discovered {cfg['provider']} endpoints at {cfg['issuer_base']}"})
-        if capability == "kms":
-            # The most valuable test on this page. A KMS that stops answering
-            # does not raise -- pii_crypto falls back to the application key and
-            # carries on -- so "is the key I selected the one encrypting
-            # resident data" is a question nothing else answers out loud.
-            from app.core import pii_crypto
-            from app.core.encryption import _kms_provider
-            selected = _kms_provider()
-            actual = pii_crypto.probe_backend()
-            if actual == selected:
-                label = {"google": "Google Cloud KMS", "azure": "Azure Key Vault",
-                         "aws": "AWS KMS", "local": "the application key"}.get(actual, actual)
-                return await _remember({"ok": True, "detail": f"Wrapped a test key with {label}."})
-            return await _remember({
-                "ok": False,
-                "detail": (
-                    f"Selected {selected}, but a test key was wrapped with "
-                    f"{actual}. Resident data is not being encrypted with the key "
-                    f"you chose — check the credentials and that the key still exists."
-                ),
-            })
-
-        if capability == "redaction":
-            # Also worth a real test: a detector with no credentials returns the
-            # same empty result as a photo with nobody in it.
-            from app.services.image_redaction import effective_provider, resolve_provider
-            selected = await resolve_provider()
-            if not selected:
-                return await _remember({"ok": True, "detail": "Photo redaction is switched off, as configured."})
-            actual, degraded_from = await effective_provider(selected)
-            if degraded_from == actual:
-                return await _remember({"ok": False, "detail": (
-                    "No detector is available, so photos would be stored without blurring. "
-                    "On-server detection needs no account — this usually means OpenCV is missing.")})
-            if degraded_from:
-                return await _remember({"ok": False, "detail": (
-                    f"{degraded_from} has no usable credentials, so blurring is falling back to "
-                    f"on-server detection. Photos are still redacted, less accurately.")})
-            return await _remember({"ok": True, "detail": f"{actual} is available and will blur faces and plates."})
-
-        if capability == "maps":
-            outcome = await _test_maps()
-            return await _remember(outcome) if outcome.get("recorded", True) else outcome
-
-        if capability in ("email", "sms"):
-            outcome = await _test_delivery(capability)
-            return await _remember(outcome) if outcome.get("recorded", True) else outcome
-
+    check = _CAPABILITY_TESTS.get(capability)
+    if check is None:
+        # Cannot happen while the accept-list is derived from this table, and
+        # a test asserts that it is. Kept as a real branch rather than an
+        # assertion because a 400 is a better failure than a 500.
         raise HTTPException(status_code=400, detail="A live test is not available for this capability.")
+
+    try:
+        outcome = await check(db)
+        # An outcome we could not verify is shown but not written to connector
+        # health: "we cannot check this from here" is not "this is broken", and
+        # a red badge that can never go green teaches people to ignore badges.
+        return outcome if outcome.get("recorded") is False else await _remember(outcome)
     except HTTPException:
         raise
     except Exception as e:
