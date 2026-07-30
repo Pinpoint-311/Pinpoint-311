@@ -990,15 +990,45 @@ defineSteps('redaction', 'aws', () => [
     { body: REDACTION_CHOICE, fields: ['REDACT_FACES', 'REDACT_PLATES'] },
 ]);
 
+// Azure is the only redaction backend with credentials of its own. Google and
+// AWS reuse what was entered elsewhere; Azure needs two separate resources,
+// because Microsoft splits face detection and text reading across them.
+
 defineSteps('redaction', 'azure', () => [
     {
         body: (
             <>
-                In the <L href="https://portal.azure.com">Azure portal</L> create a{' '}
-                <B>Computer Vision</B> resource (listed under Azure AI services), and use its key and
-                endpoint. If you already have a multi-service Azure AI resource, that works too.
+                <B>Read this before choosing Azure.</B> Faces and plates come from two different Azure
+                services, so you create two resources, and the face one is gated: Microsoft keeps the{' '}
+                <B>Face API</B> behind a Limited Access review under its Responsible AI Standard.
+                Detection — returning rectangles, which is all Pinpoint does — is the least restricted
+                use, but the subscription still has to be approved before it will answer. If you only
+                want plates, you can skip the face resource entirely.
             </>
         ),
+        trouble: <>If your town cannot get through that review, pick a different detector. Google and Amazon have no equivalent gate, and the on-server option has none at all.</>,
+    },
+    {
+        body: (
+            <>
+                For faces: in the <L href="https://portal.azure.com">Azure portal</L> create a <B>Face</B>{' '}
+                resource (under Azure AI services), then open{' '}
+                <B>Resource Management → Keys and Endpoint</B> and copy <B>KEY 1</B> and the endpoint.
+            </>
+        ),
+        fields: ['AZURE_FACE_ENDPOINT', 'AZURE_FACE_KEY'],
+    },
+    {
+        body: (
+            <>
+                For plates: create a <B>Computer Vision</B> resource — Microsoft also lists this as{' '}
+                <B>Azure AI Vision</B>, and the two names refer to the same thing. Copy its key and
+                endpoint from the same place. Plates are found by reading the text in the photo, which
+                is why this is a separate service from the one that finds faces.
+            </>
+        ),
+        fields: ['AZURE_VISION_ENDPOINT', 'AZURE_VISION_KEY'],
+        trouble: <>A multi-service Azure AI resource covers the vision half, but not Face — that one is always its own resource.</>,
     },
     { body: REDACTION_CHOICE, fields: ['REDACT_FACES', 'REDACT_PLATES'] },
 ]);

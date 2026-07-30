@@ -234,9 +234,31 @@ REDACTION_CATALOG: Dict[str, Dict[str, Any]] = {
     },
     "azure": {
         "name": "Azure AI Vision",
-        "description": "Microsoft's detector, using your Azure credentials.",
+        # Google and AWS reuse credentials entered elsewhere -- vision_annotate
+        # takes the GCP service account, _aws_kwargs takes the AWS keys. Azure
+        # does not: `_azure_face_creds` and `_azure_vision_creds` read four keys
+        # of their own, because Face and Vision are separate resources with
+        # separate endpoints and separate keys.
+        #
+        # Those four were read by the dispatch code and offered by no card, so
+        # selecting Azure here stored a provider choice, reported success, and
+        # then found no credentials and blurred nothing -- with no error and
+        # nowhere on the page to fix it.
+        "description": (
+            "Microsoft's detector. Needs two Azure resources of its own — AI Face for faces and "
+            "AI Vision for plates — which are not the same endpoint and not the same key."
+        ),
         "boundary": "Azure — Government available",
-        "credential_fields": list(_REDACTION_TOGGLES),
+        "credential_fields": list(_REDACTION_TOGGLES) + [
+            {"key": "AZURE_FACE_ENDPOINT", "label": "Face endpoint", "required": False},
+            {"key": "AZURE_FACE_KEY", "label": "Face key", "required": False, "secret": True},
+            {"key": "AZURE_VISION_ENDPOINT", "label": "Vision endpoint", "required": False},
+            {"key": "AZURE_VISION_KEY", "label": "Vision key", "required": False, "secret": True},
+        ],
+        "field_help": {
+            "AZURE_FACE_ENDPOINT": "Only needed if you are blurring faces. Microsoft gates the Face API behind a Limited Access review — detection is the least restricted operation, but the subscription still has to be approved before it will serve traffic.",
+            "AZURE_VISION_ENDPOINT": "Only needed if you are blurring plates. Plates are found by reading text in the photo.",
+        },
     },
     "local": {
         "name": "On this server (no cloud)",
