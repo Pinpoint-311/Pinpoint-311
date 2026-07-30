@@ -3600,7 +3600,22 @@ export default function AdminConsole() {
                                 <Route className="w-4 h-4" /> Road-Based Routing
                             </h4>
 
-
+                            {/* Default Handler */}
+                            <div className="space-y-2">
+                                <label className="block text-xs font-bold uppercase tracking-wider text-white/70">Default Handler</label>
+                                <select
+                                    value={serviceRouting.routing_config.default_handler}
+                                    onChange={(e) => setServiceRouting(p => ({
+                                        ...p,
+                                        routing_config: { ...p.routing_config, default_handler: e.target.value as any }
+                                    }))}
+                                    className="w-full h-11 rounded-2xl bg-white/[0.08] border border-white/20 text-white px-4 text-sm focus:outline-none focus:border-amber-400"
+                                    aria-label="Default handler"
+                                >
+                                    <option value="township">Municipality handles by default</option>
+                                    <option value="third_party">Third party handles by default</option>
+                                </select>
+                            </div>
 
                             {/* Municipality Department */}
                             <div className="space-y-2">
