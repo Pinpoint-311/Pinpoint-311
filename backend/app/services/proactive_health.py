@@ -271,6 +271,62 @@ async def _kms_check() -> Dict[str, Any]:
                       "Could not determine which key is encrypting resident data.")
 
 
+async def _redaction_check() -> Dict[str, Any]:
+    """Is the detector a town chose the one actually blurring its photos?
+
+    Redaction fails more quietly than anything else here. A cloud detector with
+    no credentials returns an empty result, and so does a photo of an empty
+    street -- the two are the same value. Photos get stored, the card stays
+    green, and nobody finds out until a resident's face is on the public map.
+
+    The dispatch now degrades to on-server detection rather than to nothing, so
+    the harm is contained. But degraded is still not what the town selected: it
+    is paying for Azure and getting OpenCV, which finds fewer faces. That is
+    worth a warning rather than silence.
+    """
+    try:
+        from app.services.image_redaction import (
+            _usable, effective_provider, resolve_provider,
+        )
+
+        selected = await resolve_provider()
+        if not selected:
+            return _check("redaction", "Photo redaction", "ok", "off",
+                          "Photo redaction is switched off, as configured.")
+
+        actual, degraded_from = await effective_provider(selected)
+
+        if degraded_from == actual:
+            return _check(
+                "redaction", "Photo redaction", "critical", "none",
+                "No detector is available — resident photos are being stored "
+                "without blurring faces or licence plates.",
+                action=(
+                    "Check the Photo Redaction card. On-server detection needs no "
+                    "account and works anywhere, so this usually means the image is "
+                    "missing OpenCV rather than that a credential is wrong."
+                ),
+            )
+
+        if degraded_from:
+            return _check(
+                "redaction", "Photo redaction", "warning", actual,
+                f"Blurring is running on this server because {degraded_from} has no "
+                f"usable credentials. Photos are still redacted, less accurately.",
+                action=(
+                    f"Fix the {degraded_from} credentials on the Photo Redaction card, "
+                    f"or choose on-server detection so the page matches what is running."
+                ),
+            )
+
+        return _check("redaction", "Photo redaction", "ok", actual,
+                      f"Faces and plates are being blurred using {actual}.")
+    except Exception:
+        logger.debug("Redaction health probe failed", exc_info=True)
+        return _check("redaction", "Photo redaction", "unknown", None,
+                      "Could not determine which detector is redacting photos.")
+
+
 async def collect_checks(db) -> List[Dict[str, Any]]:
     """Run all proactive checks. Never raises; failed probes return 'unknown'."""
     checks = [
@@ -280,6 +336,7 @@ async def collect_checks(db) -> List[Dict[str, Any]]:
         await _backup_age_check(),
         await _redis_check(),
         await _kms_check(),
+        await _redaction_check(),
     ]
     return checks
 
