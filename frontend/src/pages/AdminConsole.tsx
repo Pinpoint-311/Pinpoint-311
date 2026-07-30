@@ -23,6 +23,8 @@ import {
     Mail,
     MessageSquare,
     Building2,
+    ExternalLink,
+    GitFork,
     Edit,
     Phone,
     UserCheck,
