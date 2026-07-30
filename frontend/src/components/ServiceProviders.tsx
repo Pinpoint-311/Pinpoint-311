@@ -1,4 +1,8 @@
 import type { ReactNode } from 'react';
+import { claimedFields, stepsFor } from './setupSteps';
+// Registers every provider's steps as a side effect of importing it.
+import './setupStepsContent';
+import type { StepContext } from './setupSteps';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -10,7 +14,7 @@ import {
 
 import { CollapsibleSection } from './ui';
 import SecretField from './SecretField';
-import { api, ProviderCatalog, ProviderInfo, ProviderModelSpec, CloudProfileState } from '../services/api';
+import { api, ProviderCatalog, ProviderInfo, ProviderModelSpec, CloudProfileState, CloudIdentity } from '../services/api';
 import type { ConnectorHealth } from '../types';
 
 // Relative "updated Xh ago" from an epoch-seconds timestamp.
@@ -123,22 +127,27 @@ export interface CapStatus {
     configured?: boolean;
 }
 
-function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus, health, step, guided, instructions }: {
+/** Cloud names for a heading, kept out of the render so the three places that
+ *  need them cannot drift apart. */
+const CLOUD_LABEL: Record<string, string> = {
+    google: 'Google Cloud',
+    azure: 'Azure',
+    aws: 'AWS',
+};
+
+function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus, health, step, guided, identity }: {
     cap: Capability; title: string; blurb: string; icon: typeof Sparkles; delay: number;
     recheckToken: number; reloadToken: number; onStatus: (cap: Capability, s: CapStatus) => void;
     health?: ConnectorHealth;
+    /* Fetched once by the parent and passed down: the probe is a metadata call
+     * and the answer is the same for every card on the page. */
+    identity?: CloudIdentity | null;
     /* Guided setup: the parent walks one capability at a time, so it decides
      * which card is open rather than each card deciding for itself. `step` is
      * the position in that walk, shown so a clerk can see where they are; it is
      * undefined once setup is done and the page is just cards again. */
     step?: { index: number; total: number; active: boolean };
     guided?: boolean;
-    /* How to obtain the credentials for the provider currently selected,
-     * rendered immediately above the boxes they go into. The instructions used
-     * to sit in one long document at the top of the page, three thousand pixels
-     * from the fields, so following step four meant scrolling away from the
-     * instruction to find the box and back again to read the next one. */
-    instructions?: (provider: string) => ReactNode;
 }) {
     const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
     const [selected, setSelected] = useState<string>('');
@@ -148,6 +157,20 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const [result, setResult] = useState<{ ok: boolean; detail: string } | null>(null);
     const [error, setError] = useState<string | null>(null);
     // Live model discovery (AI only)
+    // Copy targets inside steps: a callback URL retyped by hand is the single
+    // most common reason sign-in fails after the password is accepted.
+    const [copied, setCopied] = useState<string | null>(null);
+    const stepCtx: StepContext = {
+        origin: window.location.origin,
+        copy: (text, id) => {
+            navigator.clipboard?.writeText(text).then(
+                () => { setCopied(id); setTimeout(() => setCopied(null), 1600); },
+                () => { /* clipboard blocked; the value is visible and selectable */ },
+            );
+        },
+        copied,
+    };
+
     const [refreshingModels, setRefreshingModels] = useState(false);
     const [liveModels, setLiveModels] = useState<ProviderModelSpec[] | null>(null);
     const [modelsMeta, setModelsMeta] = useState<{ source?: string; fetched_at?: number | null } | null>(null);
@@ -589,38 +612,106 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 })()}
 
                 {/* Credential/config fields */}
-                {active && (active?.credential_fields || []).length > 0 && (
-                    <div>
-                    <Step n={cap === 'ai' ? 3 : 2}>Credentials</Step>
-                    {instructions?.(selected) && (
-                        <div className="mb-3 rounded-2xl bg-white/[0.05] border border-white/10 px-4 py-3">
-                            <p className="text-[11px] uppercase tracking-wider text-white/45 font-semibold mb-1.5">
-                                How to get these
-                            </p>
-                            <div className="text-sm text-white/70 leading-relaxed space-y-1.5">
-                                {instructions(selected)}
-                            </div>
-                        </div>
-                    )}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
-                        {active.credential_fields.map(f => {
-                            const alreadySet = !!(catalog.configured?.[selected] && selected === catalog.current_provider);
+                {active && (active?.credential_fields || []).length > 0 && (() => {
+                    const alreadySet = !!(catalog.configured?.[selected] && selected === catalog.current_provider);
+                    const field = (key: string) => {
+                        const f = active.credential_fields.find(x => x.key === key);
+                        if (!f) return null;  // catalog changed under the steps
+
+                        /* This server already has an identity on the cloud, so
+                         * this particular box needs no value -- and empty is the
+                         * better answer, not merely a permitted one: the
+                         * platform issues a token minutes at a time and rotates
+                         * it, so no long-lived secret exists to be mis-copied,
+                         * vaulted, or left to expire.
+                         *
+                         * It has to say so. Two of the three clouds already
+                         * behaved this way and nothing mentioned it, so every
+                         * town pasted a key into a box that did not need one. */
+                        if (identity?.skippable_keys?.includes(f.key)) {
                             return (
-                                <SecretField
-                                    key={f.key}
-                                    label={f.label}
-                                    secret={f.secret}
-                                    value={values[f.key] || ''}
-                                    onChange={(v) => setValues(p => ({ ...p, [f.key]: v }))}
-                                    placeholder={`Enter ${f.label.toLowerCase()}`}
-                                    help={active.field_help?.[f.key]}
-                                    savedHint={alreadySet}
-                                />
+                                <div key={f.key} className="mb-3 rounded-xl border border-emerald-400/25 bg-emerald-500/[0.07] px-3 py-2.5">
+                                    <div className="flex items-start gap-2">
+                                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-300 mt-0.5 shrink-0" />
+                                        <div>
+                                            <p className="text-xs text-emerald-100/90">
+                                                <span className="font-semibold">{f.label}</span> — nothing to enter.
+                                            </p>
+                                            <p className="text-[11px] text-white/45 mt-0.5">
+                                                This server already has an identity on {CLOUD_LABEL[identity.provider ?? ''] ?? 'your cloud'}
+                                                {identity.identity ? <> (<code className="bg-black/30 px-1 rounded">{identity.identity}</code>)</> : null}.
+                                                It signs in with that, so there is no key to create, copy, or renew.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
                             );
-                        })}
-                    </div>
-                    </div>
-                )}
+                        }
+
+                        return (
+                            <SecretField
+                                key={f.key}
+                                label={f.label}
+                                secret={f.secret}
+                                value={values[f.key] || ''}
+                                onChange={(v) => setValues(p => ({ ...p, [f.key]: v }))}
+                                placeholder={`Enter ${f.label.toLowerCase()}`}
+                                help={active.field_help?.[f.key]}
+                                savedHint={alreadySet}
+                            />
+                        );
+                    };
+
+                    /* Steps own the boxes they produce, so each instruction is
+                     * followed immediately by the inputs it just told you how to
+                     * obtain. A provider with no steps written yet falls back to
+                     * the plain list, which is what every provider had before. */
+                    const steps = stepsFor(cap, selected, stepCtx);
+                    const claimed = claimedFields(steps);
+                    const leftover = active.credential_fields.filter(f => !claimed.has(f.key));
+
+                    return (
+                        <div>
+                            <Step n={cap === 'ai' ? 3 : 2}>{steps.length ? 'Set it up' : 'Credentials'}</Step>
+
+                            {steps.map((st, i) => (
+                                <div key={i} className="mb-4">
+                                    <div className="flex gap-3">
+                                        <span className="mt-0.5 w-6 h-6 shrink-0 rounded-full bg-white/10 border border-white/15 text-[11px] font-semibold text-white/70 flex items-center justify-center">
+                                            {i + 1}
+                                        </span>
+                                        <div className="min-w-0 flex-1">
+                                            <div className="text-sm text-white/75 leading-relaxed">{st.body}</div>
+                                            {st.check && (
+                                                <p className="mt-1.5 text-xs text-emerald-300/75 flex items-start gap-1.5">
+                                                    <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+                                                    <span><span className="font-medium">You should see:</span> {st.check}</span>
+                                                </p>
+                                            )}
+                                            {st.trouble && (
+                                                <p className="mt-1.5 text-xs text-amber-200/75 flex items-start gap-1.5">
+                                                    <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+                                                    <span>{st.trouble}</span>
+                                                </p>
+                                            )}
+                                            {!!st.fields?.length && (
+                                                <div className="mt-2.5 grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
+                                                    {st.fields.map(field)}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+
+                            {leftover.length > 0 && (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
+                                    {leftover.map(f => field(f.key))}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })()}
 
                 <div className="flex flex-wrap items-center gap-2.5 pt-1 border-t border-white/5 mt-1">
                     <button
@@ -840,7 +931,7 @@ function CloudEnvironment({ onApplied }: { onApplied: () => void }) {
     );
 }
 
-export default function ServiceProviders({ show, extras, instructions }: {
+export default function ServiceProviders({ show, extras }: {
     /* Which capabilities the town said it wants, from the setup questions.
      * Undefined means "no answer yet", which shows everything -- an absent
      * answer must not read as "wanted nothing", the same distinction the
@@ -857,10 +948,21 @@ export default function ServiceProviders({ show, extras, instructions }: {
      * across both. Rendered here instead, after the capability cards, so the
      * page has one list. */
     extras?: ReactNode;
-    /** Per-capability, per-provider "how to get these credentials". */
-    instructions?: (cap: Capability, provider: string) => ReactNode;
 } = {}) {
     const [recheckToken, setRecheckToken] = useState(0);
+    /* Whether this server has an identity the cloud attached to it. Fetched
+     * once for the whole section -- the answer is the same for every card, and
+     * the probe is a metadata call that either answers instantly or times out.
+     * Failure is silent and reads as "no identity", which just means the cards
+     * ask for credentials the way they always did. */
+    const [identity, setIdentity] = useState<CloudIdentity | null>(null);
+    useEffect(() => {
+        let cancelled = false;
+        api.getCloudIdentity()
+            .then(i => { if (!cancelled) setIdentity(i); })
+            .catch(() => undefined);
+        return () => { cancelled = true; };
+    }, []);
     /* One request for the whole section rather than one per card: the endpoint
      * returns every connector, and four parallel calls on page load for data
      * that arrives together is wasteful.
@@ -889,6 +991,15 @@ export default function ServiceProviders({ show, extras, instructions }: {
 
     const ALWAYS = new Set<Capability>(['identity', 'maps']);
     const visible = CAPS.filter(c => !show || ALWAYS.has(c.key) || show.has(c.key));
+
+    /* Order matters, and not only for readability.
+     *
+     * A credential saved before the secret store is reachable lands in the
+     * encrypted database instead, and until now nothing said so. The store is
+     * made reachable by the cloud credentials entered under Other settings, so
+     * anything asking for a key has to come after the town has had the chance
+     * to enter those -- which is what the ordering note below tells them, since
+     * the bootstrap card itself lives outside this list. */
     const loaded = visible.filter(c => statuses[c.key]);
     const onDefaultCount = (loaded || []).filter(c => statuses[c.key]?.onDefault).length;
     const configuredCount = (loaded || []).filter(c => statuses[c.key]?.configured).length;
@@ -968,6 +1079,12 @@ export default function ServiceProviders({ show, extras, instructions }: {
                             <p className="text-white/50 text-xs mt-0.5">
                                 One at a time, in order. Save it and the next one opens.
                             </p>
+                            {configuredCount === 0 && (
+                                <p className="text-amber-200/80 text-xs mt-1.5 leading-relaxed">
+                                    Enter your cloud credentials first, under <strong className="text-amber-100">Other settings</strong> below.
+                                    Keys saved before that go into the encrypted database rather than your secret store.
+                                </p>
+                            )}
                         </div>
                         <button
                             type="button"
@@ -1000,8 +1117,7 @@ export default function ServiceProviders({ show, extras, instructions }: {
                 {visible.map((c, i) => (
                     <CapabilityCard key={c.key} cap={c.key} title={c.title} blurb={c.blurb} icon={c.icon} delay={i * 0.08}
                         recheckToken={recheckToken} reloadToken={reloadToken} onStatus={onStatus}
-                        health={health[c.key]} guided={guided}
-                        instructions={instructions ? (provider) => instructions(c.key, provider) : undefined}
+                        health={health[c.key]} guided={guided} identity={identity}
                         step={{ index: i, total: visible.length, active: i === cursor }} />
                 ))}
             </div>

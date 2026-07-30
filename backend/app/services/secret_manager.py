@@ -212,6 +212,43 @@ def _get_secret_from_gcp(secret_name: str, force_refresh: bool = False) -> Optio
         return None
 
 
+# Keys that must keep their encrypted database copy, and must never be scrubbed
+# out of it after a migration.
+#
+# Two reasons, and both end in the same silent failure.
+#
+# Circularity: the Azure Key Vault and AWS credentials below are the credentials
+# *for* the secret store. Moving them into the store they unlock leaves nothing
+# able to open it -- which is why GCP's two were already excluded, and the other
+# clouds' equivalents were not.
+#
+# Reader mismatch: KMS configuration is read by encryption._get_config_sync and
+# aws_kms._cfg, which look at the environment and then the database and never
+# consult Secret Manager at all. Migrating those keys therefore succeeded, and
+# verified, and then scrubbed the only copy anything could read. PII encryption
+# would quietly fall back to wrapping with the application SECRET_KEY -- no
+# error, no log above DEBUG, and nothing on the page to say the KMS a town
+# selected had stopped being used.
+DB_REQUIRED_KEYS = frozenset({
+    # Google bootstrap -- unlocks Secret Manager itself.
+    "GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT",
+    # Azure Key Vault's own credentials.
+    "AZURE_KEYVAULT_URL", "AZURE_KEYVAULT_KEY", "AZURE_KEYVAULT_CLIENT_ID",
+    "AZURE_KEYVAULT_CLIENT_SECRET", "AZURE_KEYVAULT_API_VERSION",
+    "AZURE_KEYVAULT_SCOPE", "AZURE_TENANT_ID", "AZURE_AUTHORITY",
+    # AWS Secrets Manager / KMS credentials.
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+    "AWS_REGION", "AWS_SECRETS_PREFIX", "AWS_KMS_KEY_ID",
+    # KMS selection and key path, read only by the synchronous readers.
+    "KMS_PROVIDER", "KMS_LOCATION", "KMS_KEY_RING", "KMS_KEY_ID",
+    # Which store to use, read by _secrets_provider() -- env, then database,
+    # never the store itself, because it is the answer to which store that is.
+    # Scrubbing it silently reverts a town on Azure or AWS to the Google
+    # default, at which point nothing can read any of its secrets.
+    "SECRETS_PROVIDER",
+})
+
+
 async def get_secret(key_name: str) -> Optional[str]:
     """
     Get a single secret value.
@@ -300,12 +337,19 @@ async def _get_secret_from_db(key_name: str) -> Optional[str]:
 async def get_secrets_bundle(prefix: str) -> Dict[str, str]:
     """
     Get all secrets with a given prefix.
-    
+
     Example: get_secrets_bundle("SMTP_") returns all SMTP settings.
+
+    Only Google's path is bundle-shaped -- Key Vault and Secrets Manager store
+    one secret per key, with no prefix query -- so for those this falls through
+    to the database, which holds only the keys that could not be migrated. It is
+    therefore not a safe way to read credentials on those stores, and nothing
+    does: `get_secret` is the supported reader and handles all three. Kept for
+    the Google bundle-inspection case only.
     """
     result = {}
-    
-    if _is_gcp_available():
+
+    if _secrets_provider() == "google" and _is_gcp_available():
         # Map prefix to bundle name
         if prefix.startswith("AUTH0"):
             bundle = _get_secret_from_gcp("secret-auth")
@@ -490,25 +534,32 @@ async def set_secret(key_name: str, value: str) -> bool:
 
 async def migrate_to_secret_manager() -> Dict[str, Any]:
     """
-    Migrate all secrets from database to Google Secret Manager.
-    
-    SAFETY: Only scrubs secrets from database AFTER verifying they can be
-    read back from GCP. This prevents data loss if the write fails.
-    
+    Migrate all secrets from the database into the configured secret store.
+
+    Works against whichever store is selected -- Google Secret Manager, Azure
+    Key Vault or AWS Secrets Manager. It was previously gated on Google alone,
+    so a town on Azure or AWS had its credentials written to the vault by the
+    save path and its database copies left behind forever.
+
+    SAFETY: Only scrubs secrets from the database AFTER verifying they can be
+    read back from the store. This prevents data loss if the write fails.
+
     Returns a summary of migrated secrets.
     """
     from app.db.session import SessionLocal
     from app.models import SystemSecret
     from app.core.encryption import decrypt_safe
     from sqlalchemy import select
-    
-    if not _is_gcp_available():
+
+    from app.services.storage_maintenance import store_reachable
+
+    if not store_reachable():
         return {
             "status": "skipped",
             "reason": "Secret Manager not available",
             "migrated": 0
         }
-    
+
     migrated = []
     verified = []
     failed = []
@@ -516,10 +567,7 @@ async def migrate_to_secret_manager() -> Dict[str, Any]:
     scrubbed = []
     
     # Keys that should NOT be migrated (they're needed to access Secret Manager itself)
-    bootstrap_keys = {
-        "GCP_SERVICE_ACCOUNT_JSON",
-        "GOOGLE_CLOUD_PROJECT",
-    }
+    bootstrap_keys = set(DB_REQUIRED_KEYS)
     
     try:
         async with SessionLocal() as db:
@@ -570,10 +618,11 @@ async def migrate_to_secret_manager() -> Dict[str, Any]:
                 except Exception as e:
                     failed.append({"key": key_name, "error": f"verification failed: {str(e)}"})
             
-            # Only scrub VERIFIED secrets from database
+            # Only scrub VERIFIED secrets from database, and never one that a
+            # synchronous reader depends on -- see DB_REQUIRED_KEYS.
             if verified:
                 for secret in secrets:
-                    if secret.key_name in verified:
+                    if secret.key_name in verified and secret.key_name not in DB_REQUIRED_KEYS:
                         # Clear the encrypted value but keep the record
                         secret.key_value = None
                         scrubbed.append(secret.key_name)

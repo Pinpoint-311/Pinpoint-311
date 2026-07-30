@@ -101,21 +101,38 @@ import sys
 import types
 
 
-async def test_get_secret_routes_to_azure_key_vault(monkeypatch):
-    fake = types.ModuleType("app.core.azure_keyvault")
+def _fake_store(monkeypatch, name: str, value_for: str, value: str):
+    """Stand a fake secret store in for a real one, both ways round.
+
+    `from app.core import azure_keyvault` reads the attribute off the already
+    imported `app.core` package before it ever consults sys.modules, so patching
+    sys.modules alone only worked while nothing else in the run had imported the
+    real module first. That made these two tests pass or fail depending on
+    collection order -- they passed for a year because no other test happened to
+    import app.core.azure_keyvault, and started failing the day one did.
+
+    Patching both the package attribute and sys.modules makes the substitution
+    hold regardless of what ran before.
+    """
+    import app.core
+
+    fake = types.ModuleType(f"app.core.{name}")
     fake.is_configured = lambda: True
-    fake.get_secret = lambda name: "azure-value" if name == "INTEGRATION_SDL_API_KEY" else None
-    monkeypatch.setitem(sys.modules, "app.core.azure_keyvault", fake)
+    fake.get_secret = lambda key: value if key == value_for else None
+    monkeypatch.setitem(sys.modules, f"app.core.{name}", fake)
+    monkeypatch.setattr(app.core, name, fake, raising=False)
+    return fake
+
+
+async def test_get_secret_routes_to_azure_key_vault(monkeypatch):
+    _fake_store(monkeypatch, "azure_keyvault", "INTEGRATION_SDL_API_KEY", "azure-value")
     monkeypatch.setattr(sm, "_secrets_provider", lambda: "azure")
 
     assert await sm.get_secret("INTEGRATION_SDL_API_KEY") == "azure-value"
 
 
 async def test_get_secret_routes_to_aws_secrets_manager(monkeypatch):
-    fake = types.ModuleType("app.core.aws_secretsmanager")
-    fake.is_configured = lambda: True
-    fake.get_secret = lambda name: "aws-value" if name == "INTEGRATION_CITYWORKS_API_KEY" else None
-    monkeypatch.setitem(sys.modules, "app.core.aws_secretsmanager", fake)
+    _fake_store(monkeypatch, "aws_secretsmanager", "INTEGRATION_CITYWORKS_API_KEY", "aws-value")
     monkeypatch.setattr(sm, "_secrets_provider", lambda: "aws")
 
     assert await sm.get_secret("INTEGRATION_CITYWORKS_API_KEY") == "aws-value"

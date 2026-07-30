@@ -7,7 +7,8 @@ celery_app = Celery(
     "township_311",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.service_requests", "app.tasks.integrations", "app.tasks.road_data"]
+    include=["app.tasks.service_requests", "app.tasks.integrations", "app.tasks.road_data",
+             "app.tasks.storage"]
 )
 
 celery_app.conf.update(
@@ -91,6 +92,19 @@ celery_app.conf.update(
         "weekly-staff-digest": {
             "task": "app.tasks.service_requests.send_weekly_digest",
             "schedule": 60 * 60 * 24 * 7,  # Every 7 days
+            "options": {"queue": "default"}
+        },
+        # Storage hygiene that used to be two buttons on the setup page. Both
+        # verify before they change anything and are no-ops with nothing to do,
+        # so nobody has to work out whether they apply.
+        "hourly-secret-vaulting": {
+            "task": "app.tasks.storage.vault_secrets",
+            "schedule": 60 * 60,  # Every hour
+            "options": {"queue": "default"}
+        },
+        "nightly-pii-rewrap": {
+            "task": "app.tasks.storage.rewrap_pii",
+            "schedule": 60 * 60 * 24,  # Every 24 hours
             "options": {"queue": "default"}
         },
         # Refresh the live AI model lists so the picker stays current and can

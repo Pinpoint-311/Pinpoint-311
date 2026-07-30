@@ -3,8 +3,10 @@ System Health Check API
 
 Tests all integrations and provides detailed status for:
 - Auth0 SSO
-- Google Cloud KMS (PII Encryption)
-- Google Secret Manager
+- Key management for PII encryption (Google Cloud KMS, Azure Key Vault, AWS KMS,
+  or the application key)
+- The configured secret store (Google Secret Manager, Azure Key Vault, AWS
+  Secrets Manager, or the encrypted database)
 - Vertex AI (Gemini)
 - Translation API
 - Database
@@ -94,134 +96,136 @@ async def check_auth0(db: AsyncSession) -> Dict[str, Any]:
 
 
 
-async def check_google_kms(db: AsyncSession) -> Dict[str, Any]:
-    """Test Google Cloud KMS for PII encryption"""
+# Names kept provider-neutral on purpose. These used to be check_google_kms and
+# "Test Google Secret Manager", and both were written as a list of Google
+# config variables to look for -- so a town running Azure Key Vault or AWS KMS,
+# with envelope encryption working perfectly, saw "GCP project not configured"
+# on its health dashboard. A health check that reports a false problem on a
+# supported configuration is worse than not having one.
+#
+# Both now test the thing itself rather than the shape of somebody's config:
+# the KMS check does a real encrypt/decrypt round trip and reports which key
+# manager actually wrapped the data key, and the store check asks the same
+# reachability question the migration gates on.
+
+async def check_kms(db: AsyncSession) -> Dict[str, Any]:
+    """Round-trip PII encryption and report which key manager did the wrapping.
+
+    The selected provider is not the answer; what wrapped the key is. Those
+    differ in exactly the case worth surfacing -- a KMS chosen but unreachable
+    falls back to the application key silently, and this is where that shows.
+    """
     try:
-        # Check environment variables OR database secrets
-        project = await get_config_value(db, "GOOGLE_CLOUD_PROJECT")
-        key_ring = await get_config_value(db, "KMS_KEY_RING")
-        key_id = await get_config_value(db, "KMS_KEY_ID")
-        location = await get_config_value(db, "KMS_LOCATION") or "us-central1"
-        
-        if not project:
-            return {
-                "status": "not_configured",
-                "message": "GCP project not configured (see Admin Console → Setup & Integration)",
-                "project": None
-            }
-        
-        # If project is set but specific KMS vars aren't, show as fallback mode
-        if not all([key_ring, key_id]):
-            return {
-                "status": "fallback",
-                "message": "Using Fernet encryption (KMS keyring not configured)",
-                "project": project,
-                "note": "Fernet encryption is secure; KMS is optional for enhanced key management"
-            }
-        
-        # Encrypt/decrypt test data through the real envelope path
-        from app.core.encryption import encrypt_pii, decrypt_pii, PII_V2_PREFIX
+        from app.core.encryption import encrypt_pii, decrypt_pii, PII_V2_PREFIX, _kms_provider
         from app.core import pii_crypto
+
+        selected = _kms_provider()
 
         test_data = "health_check_test@example.com"
         encrypted = encrypt_pii(test_data)
-        decrypted = decrypt_pii(encrypted)
-
-        if decrypted != test_data:
+        if decrypt_pii(encrypted) != test_data:
             return {
                 "status": "error",
                 "message": "PII encryption round-trip returned incorrect data",
-                "project": project,
-                "key_ring": key_ring,
-                "key_name": key_id,
-                "location": location,
+                "selected_provider": selected,
             }
 
-        # Determine which key manager wraps the data key (envelope scheme).
         if encrypted.startswith(PII_V2_PREFIX):
             backend = pii_crypto.active_backend()
-        elif encrypted.startswith("kms:") or encrypted.startswith("akv:"):
-            backend = "kms"
+        elif encrypted.startswith("kms:"):
+            backend = "google"
+        elif encrypted.startswith("akv:"):
+            backend = "azure"
         else:
             backend = "local"
 
-        if backend in ("google", "azure", "kms"):
+        label = {"google": "Google Cloud KMS", "azure": "Azure Key Vault",
+                 "aws": "AWS KMS"}.get(backend)
+
+        details: Dict[str, Any] = {
+            "kms_backend": backend,
+            "selected_provider": selected,
+            "test_passed": True,
+        }
+        # Only the fields that mean something for the backend in use. Reporting
+        # a key ring to a town on AWS is how the Google shape leaked out before.
+        if backend == "google":
+            details["project"] = await get_config_value(db, "GOOGLE_CLOUD_PROJECT")
+            details["key_ring"] = await get_config_value(db, "KMS_KEY_RING")
+            details["key_name"] = await get_config_value(db, "KMS_KEY_ID")
+            details["location"] = await get_config_value(db, "KMS_LOCATION") or "us-central1"
+        elif backend == "azure":
+            details["vault"] = await get_config_value(db, "AZURE_KEYVAULT_URL")
+            details["key_name"] = await get_config_value(db, "AZURE_KEYVAULT_KEY")
+        elif backend == "aws":
+            details["key_name"] = await get_config_value(db, "AWS_KMS_KEY_ID")
+            details["region"] = await get_config_value(db, "AWS_REGION")
+
+        if label:
+            return {"status": "healthy",
+                    "message": f"Envelope encryption working (data key wrapped by {label})",
+                    **details}
+
+        # Local wrapping. Expected on a self-hosted install with no cloud
+        # account, and a real warning when a KMS was selected and is not being
+        # used -- which is silent everywhere else.
+        if selected in ("google", "azure", "aws"):
             return {
-                "status": "healthy",
-                "message": f"Envelope encryption working (data key wrapped by {backend} KMS)",
-                "project": project,
-                "key_ring": key_ring,
-                "key_name": key_id,
-                "location": location,
-                "kms_backend": backend,
-                "test_passed": True,
+                "status": "fallback",
+                "message": (
+                    f"PII is encrypted, but with the application key — the selected "
+                    f"key manager ({selected}) is not reachable, so it is not being used."
+                ),
+                **details,
             }
         return {
             "status": "fallback",
-            "message": "PII encryption working with a local SECRET_KEY-wrapped data key (no cloud KMS configured)",
-            "project": project,
-            "key_ring": key_ring,
-            "key_name": key_id,
-            "location": location,
-            "kms_backend": backend,
-            "test_passed": True,
+            "message": "PII encryption working with a local application-key-wrapped data key (no cloud KMS configured)",
+            **details,
         }
-            
+
     except Exception as e:
         import logging
         logging.getLogger(__name__).error(f"KMS health check failed: {e}")
-        return {
-            "status": "error",
-            "message": "KMS check failed",
-            "project": os.getenv("GOOGLE_CLOUD_PROJECT")
-        }
+        return {"status": "error", "message": "KMS check failed"}
 
 
 async def check_secret_manager(db: AsyncSession) -> Dict[str, Any]:
-    """Test Google Secret Manager"""
+    """Whether the configured secret store -- whichever one -- can be reached."""
     try:
-        # Check for GCP project (from env OR database via Admin Console)
-        project = await get_config_value(db, "GOOGLE_CLOUD_PROJECT")
-        
-        # If GCP is configured via wizard, Secret Manager is available
-        has_gcp_credentials = await get_config_value(db, "GCP_SERVICE_ACCOUNT_JSON") is not None
-        
-        if not project:
-            return {
-                "status": "not_configured",
-                "message": "GCP project not configured (see Admin Console → Setup & Integration)",
-                "project": None
-            }
-        
-        # If credentials exist from wizard, SM is available even if USE_SECRET_MANAGER not set
-        if has_gcp_credentials:
-            return {
-                "status": "configured",
-                "message": "Secret Manager available via service account",
-                "project": project,
-                "note": "Credentials stored in database (encrypted)"
-            }
-        
-        from app.services.secret_manager import get_secrets_bundle
-        
-        # Try to fetch any secrets
-        await get_secrets_bundle("TEST_")  # Test connectivity
-        
+        from app.services.secret_manager import _secrets_provider
+        from app.services.storage_maintenance import store_reachable
+
+        provider = _secrets_provider()
+        label = {"azure": "Azure Key Vault", "aws": "AWS Secrets Manager"}.get(
+            provider, "Google Secret Manager")
+
+        if store_reachable():
+            details: Dict[str, Any] = {"status": "healthy", "store": provider,
+                                       "message": f"{label} accessible"}
+            if provider == "google":
+                details["project"] = await get_config_value(db, "GOOGLE_CLOUD_PROJECT")
+            elif provider == "azure":
+                details["vault"] = await get_config_value(db, "AZURE_KEYVAULT_URL")
+            elif provider == "aws":
+                details["region"] = await get_config_value(db, "AWS_REGION")
+            return details
+
+        # Not an error. The encrypted database is a supported store, and this is
+        # the normal state of a small self-hosted install.
         return {
-            "status": "healthy",
-            "message": "Secret Manager accessible",
-            "project": project,
-            "test_query": "SUCCESS"
+            "status": "not_configured",
+            "store": provider,
+            "message": (
+                f"{label} is not reachable — secrets are held in the encrypted "
+                f"database. They move across on their own once it is configured."
+            ),
         }
-        
+
     except Exception as e:
         import logging
-        logging.getLogger(__name__).error(f"Secret Manager health check failed: {e}")
-        return {
-            "status": "error",
-            "message": "Secret Manager check failed",
-            "project": os.getenv("GOOGLE_CLOUD_PROJECT")
-        }
+        logging.getLogger(__name__).error(f"Secret store health check failed: {e}")
+        return {"status": "error", "message": "Secret store check failed"}
 
 
 async def check_vertex_ai(db: AsyncSession) -> Dict[str, Any]:
@@ -378,8 +382,14 @@ async def health_check(
         "database": await check_database(db),
         "auth0": await check_auth0(db),
         "gcp_auth": await check_gcp_auth(db),
-        "google_kms": await check_google_kms(db),
-        "google_secret_manager": await check_secret_manager(db),
+        # Renamed from google_kms / google_secret_manager. The old keys named a
+        # vendor for a slot that has four options, and the dashboard rendered
+        # them under Google headings whatever the town was actually running.
+        # Not aliased alongside the new keys: classify_health derives the
+        # overall status from this dict, so a duplicated entry would weight
+        # these two checks twice.
+        "kms": await check_kms(db),
+        "secret_store": await check_secret_manager(db),
         "vertex_ai": await check_vertex_ai(db),
         "translation_api": await check_translation_api(db)
     }
@@ -566,8 +576,9 @@ async def trigger_uptime_check(
     services_to_check = [
         ("database", check_database),
         ("auth0", check_auth0),
-        ("google_kms", check_google_kms),
-        ("secret_manager", check_secret_manager),
+        # Series names, not display names -- see the note in main.py.
+        ("kms", check_kms),
+        ("secret_store", check_secret_manager),
         ("vertex_ai", check_vertex_ai),
         ("translation_api", check_translation_api),
     ]

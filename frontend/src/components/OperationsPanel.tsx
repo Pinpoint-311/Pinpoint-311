@@ -21,14 +21,28 @@ interface IntegrationCheck {
     [key: string]: any;
 }
 
+/** Key management and secret storage are both pluggable, so neither panel can
+ *  carry a vendor name in its heading. Both used to say "Google". */
+const KMS_LABELS: Record<string, string> = {
+    google: 'Google Cloud KMS',
+    azure: 'Azure Key Vault',
+    aws: 'AWS KMS',
+};
+
+const STORE_LABELS: Record<string, string> = {
+    google: 'Google Secret Manager',
+    azure: 'Azure Key Vault',
+    aws: 'AWS Secrets Manager',
+};
+
 interface IntegrationHealth {
     overall_status: string;
     checks: {
         database: IntegrationCheck;
         auth0: IntegrationCheck;
         gcp_auth?: IntegrationCheck;
-        google_kms: IntegrationCheck;
-        google_secret_manager: IntegrationCheck;
+        kms: IntegrationCheck;
+        secret_store: IntegrationCheck;
         vertex_ai: IntegrationCheck;
         translation_api: IntegrationCheck;
     };
@@ -441,28 +455,33 @@ export default function OperationsPanel() {
                             </div>
                         )}
 
-                        {/* Google KMS */}
+                        {/* Key management — named for whichever manager is in
+                            use, not for Google. */}
                         <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
                             <div className="flex items-center gap-3 mb-2">
                                 <Shield className="w-5 h-5 text-blue-400" />
-                                <span className="text-white font-medium">Google KMS</span>
-                                <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.google_kms.status)}`}>
-                                    {integrations.checks.google_kms.status}
+                                <span className="text-white font-medium">
+                                    {KMS_LABELS[integrations.checks.kms.kms_backend ?? ''] ?? 'Key Management'}
+                                </span>
+                                <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.kms.status)}`}>
+                                    {integrations.checks.kms.status}
                                 </span>
                             </div>
-                            <p className="text-gray-300 text-xs">{integrations.checks.google_kms.message}</p>
+                            <p className="text-gray-300 text-xs">{integrations.checks.kms.message}</p>
                         </div>
 
-                        {/* Secret Manager */}
+                        {/* Secret store */}
                         <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
                             <div className="flex items-center gap-3 mb-2">
                                 <Key className="w-5 h-5 text-green-400" />
-                                <span className="text-white font-medium">Secret Manager</span>
-                                <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.google_secret_manager.status)}`}>
-                                    {integrations.checks.google_secret_manager.status}
+                                <span className="text-white font-medium">
+                                    {STORE_LABELS[integrations.checks.secret_store.store ?? ''] ?? 'Secret Store'}
+                                </span>
+                                <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.secret_store.status)}`}>
+                                    {integrations.checks.secret_store.status}
                                 </span>
                             </div>
-                            <p className="text-gray-300 text-xs">{integrations.checks.google_secret_manager.message}</p>
+                            <p className="text-gray-300 text-xs">{integrations.checks.secret_store.message}</p>
                         </div>
 
                         {/* Vertex AI */}
