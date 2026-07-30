@@ -16,6 +16,11 @@ import { api } from '../services/api';
 import type { Capability } from '../services/api';
 import GovtechIntegrations from './GovtechIntegrations';
 import ServiceProviders from './ServiceProviders';
+import InlineProviderSetup from './InlineProviderSetup';
+import SecretField from './SecretField';
+// Registers every provider's setup steps as a side effect, so the guide can
+// render them inline rather than pointing at the cards that do.
+import './setupStepsContent';
 import StorageStatusLine from './StorageStatusLine';
 import { openStayInformed } from './StayInformed';
 
@@ -70,7 +75,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * up with the whole platform switched on, not the three we happened to
      * pre-tick -- so the list below is every feature, and a town removes what
      * it genuinely does not want. */
-    const ALL_FEATURES = ['ai', 'translation', 'moderation', 'email', 'sms', 'secrets', 'govtech', 'backups'];
+    const ALL_FEATURES = ['ai', 'translation', 'moderation', 'redaction', 'email', 'sms', 'secrets', 'govtech', 'backups', 'errors'];
     const [wantedFeatures, setWantedFeatures] = useState<Set<string>>(new Set(ALL_FEATURES));
     const toggleFeature = (f: string) =>
         setWantedFeatures(prev => {
@@ -80,16 +85,50 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         });
     const wants = (f: string) => wantedFeatures.has(f);
 
+    /* The questionnaire's answers, translated into the provider ids the
+     * catalogs actually use.
+     *
+     * The point of asking "which cloud hosts your town's services" at the top
+     * is that nothing below should ask again. So AI, translation and key
+     * management take their provider from that answer rather than showing a
+     * second picker -- the guide sets up Vertex on Google, Azure OpenAI on
+     * Azure, Bedrock on AWS, without a further decision.
+     *
+     * Email, SMS and photo redaction are different: they are genuinely not a
+     * cloud decision. A town on Google may well send mail through SES, and
+     * redaction on this server is a reasonable choice on any cloud. Those keep
+     * a picker, seeded from the cloud answer so the common case is already
+     * right and only a town that wants something else has to touch it. */
+    const AI_BY_CLOUD = { google: 'vertex', azure: 'azure', aws: 'bedrock' } as const;
+    const EMAIL_BY_CLOUD = { google: 'smtp', azure: 'acs', aws: 'ses' } as const;
+    const SMS_BY_CLOUD = { google: 'twilio', azure: 'acs', aws: 'sns' } as const;
+
+    /* null means "still following the cloud answer". Holding the override
+     * rather than the value is what lets changing the cloud at the top move
+     * these along with it, while a deliberate pick here stays put. */
+    const [emailOverride, setEmailOverride] = useState<string | null>(null);
+    const [smsOverride, setSmsOverride] = useState<string | null>(null);
+    const [redactionOverride, setRedactionOverride] = useState<string | null>(null);
+
+    const aiProvider = AI_BY_CLOUD[setupCloud];
+    const emailProvider = emailOverride ?? EMAIL_BY_CLOUD[setupCloud];
+    const smsProvider = smsOverride ?? SMS_BY_CLOUD[setupCloud];
+    const redactionProvider = redactionOverride ?? setupCloud;
+
     /* The setup questions are asked in feature terms ("AI triage", "Secret
      * storage + PII encryption") and the provider cards are keyed by
      * capability. This is the one mapping between them. `secrets` covers the
      * KMS card because the same question is what a town answers about where
-     * keys and resident data are protected, and `moderation` covers photo
-     * redaction for the same reason -- both are about screening what gets
-     * stored. */
+     * keys and resident data are protected.
+     *
+     * Redaction used to hang off the `moderation` tick, which was wrong in both
+     * directions: unticking "content moderation" silently hid face blurring,
+     * and there was no way to have blurring without it. They are different
+     * decisions -- one screens what a resident wrote, the other blurs a
+     * bystander who never wrote anything -- so they are now separate ticks. */
     const FEATURE_TO_CAPABILITY: Record<string, Capability> = {
         ai: 'ai', translation: 'translation', email: 'email',
-        sms: 'sms', secrets: 'kms', moderation: 'redaction',
+        sms: 'sms', secrets: 'kms', redaction: 'redaction',
     };
     const wantedCapabilities = new Set<Capability>(
         Object.entries(FEATURE_TO_CAPABILITY)
@@ -230,36 +269,65 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         </div>
     );
 
-    /* Hands off to the card that owns a credential.
+    /* Boxes for settings that belong to no provider card.
      *
-     * This guide used to carry its own copy of every vendor's console walk --
-     * Auth0, Entra, Okta, Esri, Apple, all of them -- written before the cards
-     * could hold steps of their own. Now that they can, and the boxes sit
-     * directly beneath the step that produces them, keeping a second copy up
-     * here was worse than having none: the two drifted. The guide told people
-     * Okta's issuer was their org URL while the card told them it was not, and
-     * it still asked towns to invent a backup passphrase months after that
-     * field was replaced by a generated one.
+     * Most of this page's credentials hang off a capability with a catalog, so
+     * InlineSetup covers them. A few do not -- Azure's Content Safety pair, the
+     * Sentry DSN -- and those were being printed as bare environment-variable
+     * names in the middle of a sentence, which is not an instruction a clerk
+     * can act on. It reads as something to hand to IT, and it is the only place
+     * on the page that asks somebody to go and edit a file.
      *
-     * So the guide keeps what only it has -- the decisions, the cloud
-     * foundation that belongs to no single card, and the steps with no
-     * credential attached -- and defers the console walk to one place. */
-    const SeeCard = ({ children }: { children: React.ReactNode }) => (
-        <div className="ml-9 rounded-lg bg-white/[0.04] border border-white/10 px-3 py-2 flex items-start gap-2">
-            <ListChecks className="w-3.5 h-3.5 text-white/40 mt-0.5 shrink-0" aria-hidden="true" />
-            <p className="text-xs text-white/55 leading-relaxed">{children}</p>
-        </div>
-    );
+     * They are ordinary settings with ordinary boxes, so they get ordinary
+     * boxes, saved the same way as everything else here. */
+    const PlainSecrets = ({ fields }: {
+        fields: { key: string; label: string; secret?: boolean; help?: string }[];
+    }) => {
+        const pending = fields.filter(f => secretValues[f.key]);
+        return (
+            <div className="ml-9 rounded-xl border border-white/10 bg-white/[0.03] p-3.5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
+                    {fields.map(f => (
+                        <SecretField
+                            key={f.key}
+                            label={f.label}
+                            secret={f.secret}
+                            help={f.help}
+                            savedHint={!!isConfigured(f.key)}
+                            value={secretValues[f.key] || ''}
+                            onChange={(v) => setSecretValues(prev => ({ ...prev, [f.key]: v }))}
+                        />
+                    ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-2.5 mt-3 pt-3 border-t border-white/[0.07]">
+                    <button
+                        type="button"
+                        onClick={async () => { for (const f of pending) await handleSave(f.key); }}
+                        disabled={pending.length === 0 || savingKey !== null}
+                        className="inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-semibold text-white bg-primary-500 hover:bg-primary-400 border border-primary-400/50 transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                    >
+                        {savingKey ? 'Saving…' : 'Save'}
+                    </button>
+                    {fields.every(f => isConfigured(f.key)) && (
+                        <span className="text-[11px] text-emerald-300/80 inline-flex items-center gap-1.5">
+                            <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" />
+                            Already saved — leave a box blank to keep what is stored.
+                        </span>
+                    )}
+                </div>
+            </div>
+        );
+    };
 
-    /** The step-by-step for whichever provider you pick lives on the card, with
-     *  the boxes it fills. One sentence, worded the same way each time. */
-    const OnTheCard = ({ card }: { card: string }) => (
-        <SeeCard>
-            Scroll to the <strong className="text-white/80">{card}</strong> card below and choose your
-            provider. The steps for that provider appear there, each one directly above the boxes it
-            fills in — so you are never scrolling between an instruction and the field it describes.
-        </SeeCard>
-    );
+    /* Sections that need a credential mount InlineProviderSetup directly --
+     * not through a wrapper defined in here. A component declared during render
+     * is a fresh type on every render, so React unmounts and remounts it, and
+     * everything typed into it is gone. Ticking any chip in the questionnaire
+     * re-renders this component, which would have made that a routine way to
+     * lose a half-entered client secret.
+     *
+     * Why the guide sets providers up at all, rather than pointing at the cards
+     * below, is written where it applies: InlineProviderSetup.tsx. */
 
     /* "If it goes wrong" for a step, called out rather than buried in prose.
      *
@@ -516,9 +584,11 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     <div className="flex flex-wrap gap-2 mt-1.5">
                                         {([
                                             ['ai', 'AI triage'], ['translation', 'Translation'],
-                                            ['moderation', 'Content moderation'], ['email', 'Email'],
-                                            ['sms', 'Text / SMS'], ['secrets', 'Secret storage + PII encryption'],
+                                            ['moderation', 'Content moderation'], ['redaction', 'Blur faces & plates'],
+                                            ['email', 'Email'], ['sms', 'Text / SMS'],
+                                            ['secrets', 'Secret storage + PII encryption'],
                                             ['govtech', 'Town-system connector'], ['backups', 'Database backups'],
+                                            ['errors', 'Crash reporting'],
                                         ] as const).map(([f, label]) => (
                                             <button key={f} type="button" onClick={() => toggleFeature(f)}
                                                 className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${wants(f) ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-100' : 'bg-white/5 border-white/10 text-white/60 hover:text-white'}`}>
@@ -536,8 +606,8 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     <InstructionStep num={1}>
                                         <strong className="text-white/90">Check whether you already have this.</strong> If your staff sign in to Microsoft 365, you already run <strong className="text-white/90">Microsoft Entra ID</strong> and should pick that above — no new account, no new password for anyone, and your IT provider can do it in ten minutes. The same is true if the town uses Okta. Auth0 is the answer when there is nothing already in place.
                                     </InstructionStep>
-                                    <InstructionStep num={2}>Register Pinpoint with {setupIdp === 'auth0' ? 'Auth0' : setupIdp === 'entra' ? 'Entra' : setupIdp === 'okta' ? 'Okta' : 'your provider'} and collect its credentials.</InstructionStep>
-                                    <OnTheCard card="Staff Sign-In" />
+                                    <InstructionStep num={2}>Register Pinpoint with {setupIdp === 'auth0' ? 'Auth0' : setupIdp === 'entra' ? 'Microsoft Entra ID' : setupIdp === 'okta' ? 'Okta' : 'your provider'} and collect its credentials. Do it here — the boxes are below each step.</InstructionStep>
+                                    <InlineProviderSetup onSaved={onRefresh} cap="identity" provider={setupIdp} />
                                     <InstructionStep num={3}
                                         check={<>"Always" selected under the policy setting, and at least one factor switched on.</>}
                                     >Require a second step at login. This is the single most valuable thing on this page: it means a stolen or guessed staff password is not enough on its own to reach resident records. Every provider here can do it — in Auth0 it is <strong className="text-white/90">Security → Multi-factor Auth</strong>, in Entra it is a Conditional Access policy, in Okta it is a sign-on policy. Turn on an authenticator app or passkeys, and set the policy to apply always. Warn staff first: the next time they sign in they will be asked to set it up.</InstructionStep>
@@ -586,7 +656,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     time="About 15 minutes once your cloud account exists"
                                     cost="Cents per hundred reports on any of the three providers.">
                                     <InstructionStep num={1}>Enable the model service in the cloud account you set up above, and give Pinpoint permission to call it — nothing more than that. A leaked key scoped to "ask the model a question" can run up a bill; the same key with a broad role can delete the project.</InstructionStep>
-                                    <OnTheCard card="AI Provider" />
+                                    <InlineProviderSetup onSaved={onRefresh} cap="ai" provider={aiProvider}
+                                        note={<>Set up for <strong className="text-white/70">{{ vertex: 'Google Vertex AI', azure: 'Azure OpenAI', bedrock: 'AWS Bedrock' }[aiProvider]}</strong>, because that is the cloud you picked above. To use a different one, change the cloud at the top or use the AI Provider card further down.</>}
+                                    />
                                     <Trouble>Model availability differs by region on every provider, and on AWS the models have to be requested before they can be used. If the picker is empty, that is usually why rather than a bad key.</Trouble>
                                 </Guide>
 
@@ -595,8 +667,8 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     what={<>Lets a resident file a report in their own language and read the replies in it, and lets staff work entirely in English. For many towns this is a Title VI obligation rather than a nicety.</>}
                                     time="About 10 minutes"
                                     cost="Free for a small town's volume on all three providers.">
-                                    <InstructionStep num={1}>Enable the translation service in the cloud account you set up above. On Google it is an API to switch on; on Azure a Translator resource; on AWS nothing at all, it is on by default.</InstructionStep>
-                                    <OnTheCard card="Translation" />
+                                    <InstructionStep num={1}>Enable the translation service in the cloud account you set up above. {setupCloud === 'google' ? 'On Google it is an API to switch on.' : setupCloud === 'azure' ? 'On Azure it is a Translator resource to create.' : 'On AWS there is nothing to enable — it is on by default.'}</InstructionStep>
+                                    <InlineProviderSetup onSaved={onRefresh} cap="translation" provider={setupCloud} />
                                 </Guide>
 
                                 {/* ── Secrets + PII encryption ── */}
@@ -606,7 +678,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     cost="Under a dollar a month.">
                                     <InstructionStep num={1}>Create the key and the vault in the cloud account you set up above, and grant Pinpoint permission to <strong className="text-white/90">wrap and unwrap</strong> with that key — not just to read it.</InstructionStep>
                                     <Trouble>Wrap and unwrap are the two permissions people miss, and missing them fails quietly: the key exists, the settings save, and resident data is encrypted with the application key instead. The health dashboard is the only place that says so — it will tell you the key manager you selected is not the one being used.</Trouble>
-                                    <OnTheCard card="Resident Data Encryption" />
+                                    <InlineProviderSetup onSaved={onRefresh} cap="kms" provider={setupCloud} />
                                     <InstructionStep num={2}>Once the vault is reachable, credentials already in the database move across on their own, within the hour. There is no button to press and nothing to remember.</InstructionStep>
                                     <Trouble>Never delete or disable this key once resident data has been written under it. Every cloud enforces a waiting period and then destroys it permanently, and nobody — including the cloud provider — can recover what it protected.</Trouble>
                                 </Guide>
@@ -617,7 +689,15 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     time="About 15 minutes, longer if DNS records are involved"
                                     cost="Free to a few dollars a month.">
                                     <InstructionStep num={1}>Decide who sends. A dedicated town address like <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">311@yourtown.gov</code> rather than <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">noreply@</code> — residents reply to these, and a reply that goes nowhere is a complaint you never hear.</InstructionStep>
-                                    <OnTheCard card="Email" />
+                                    <InlineProviderSetup onSaved={onRefresh} cap="email" provider={emailProvider}
+                                        onChoose={setEmailOverride}
+                                        choices={[
+                                            { id: 'smtp', label: 'SMTP (your existing mail server)' },
+                                            { id: 'ses', label: 'Amazon SES' },
+                                            { id: 'acs', label: 'Azure Communication Services' },
+                                        ]}
+                                        note={<>How mail leaves the building is not a cloud decision — plenty of towns on Google send through SES. Starting on the one that suits {cloudLabel}; change it here if yours differs.</>}
+                                    />
                                     <Trouble>Microsoft 365 and Google Workspace both block plain SMTP by default. If your IT provider says it is not allowed, they are right — Amazon SES or Azure Communication Services will be less work than getting an exception.</Trouble>
                                 </Guide>
 
@@ -629,7 +709,15 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     <InstructionStep num={1}>
                                         <strong className="text-white/90">Start the carrier registration first, whichever provider you use.</strong> Texting US numbers from a business or government sender needs 10DLC registration, which identifies your town to the carriers. It is not a technical step and it is not quick — allow a couple of weeks. Unregistered messages are filtered heavily and often silently.
                                     </InstructionStep>
-                                    <OnTheCard card="Text Messages" />
+                                    <InlineProviderSetup onSaved={onRefresh} cap="sms" provider={smsProvider}
+                                        onChoose={setSmsOverride}
+                                        choices={[
+                                            { id: 'twilio', label: 'Twilio' },
+                                            { id: 'sns', label: 'Amazon SNS' },
+                                            { id: 'acs', label: 'Azure Communication Services' },
+                                            { id: 'http', label: 'Other (HTTP gateway)' },
+                                        ]}
+                                    />
                                     <Trouble>Every provider starts you in a trial or sandbox that can only text numbers you have verified. Everything looks like it works — the send succeeds — and residents receive nothing. Leave it before launch.</Trouble>
                                 </Guide>
 
@@ -638,11 +726,27 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     what={<>Anything a resident submits can end up on a public municipal website. Offensive language is always screened, with or without this; turning it on adds checking of photos too, and catches abuse a word list misses.</>}
                                     time="About 10 minutes once your cloud account exists"
                                     cost="Fractions of a cent per report.">
-                                    <InstructionStep num={1}><strong className="text-white/90">Built in, no setup:</strong> resident text is always screened — explicit/abusive descriptions and comments are blocked at submission; mild profanity posts but is flagged for staff.</InstructionStep>
-                                    {setupCloud === 'google' && <InstructionStep num={2}><strong className="text-white/90">Cloud layer (optional):</strong> enable the <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">Vision</code> + <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">Natural Language</code> APIs. No extra keys — it uses your service account for image (SafeSearch) + text moderation.</InstructionStep>}
-                                    {setupCloud === 'azure' && <InstructionStep num={2}><strong className="text-white/90">Cloud layer (optional):</strong> create an <strong className="text-white/90">Azure AI Content Safety</strong> resource and set <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">AZURE_CONTENT_SAFETY_ENDPOINT</code> + <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">AZURE_CONTENT_SAFETY_KEY</code> for text + image screening.</InstructionStep>}
-                                    {setupCloud === 'aws' && <InstructionStep num={2}><strong className="text-white/90">Cloud layer (optional):</strong> allow <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">rekognition:DetectModerationLabels</code> (image) + <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">comprehend:DetectToxicContent</code> (text) on your AWS credentials.</InstructionStep>}
-                                    <InstructionStep num={3}>Set <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">MODERATION_PROVIDER</code> to your cloud, or leave it to follow your AI cloud automatically. If the cloud layer is off, text still uses the built-in scan and images use the AI vision assessment.</InstructionStep>
+                                    <InstructionStep num={1}><strong className="text-white/90">Built in, no setup:</strong> resident text is always screened — explicit/abusive descriptions and comments are blocked at submission; mild profanity posts but is flagged for staff. This works with nothing configured and is not something you can switch off by accident.</InstructionStep>
+                                    {setupCloud === 'google' && (
+                                        <InstructionStep num={2} check={<>both APIs showing as Enabled in the API library.</>}>
+                                            <strong className="text-white/90">Add photo screening.</strong> In the Google project you created above, enable the <strong className="text-white/90">Cloud Vision</strong> and <strong className="text-white/90">Cloud Natural Language</strong> APIs. There is nothing to enter here — screening reuses the service account you already downloaded.
+                                        </InstructionStep>
+                                    )}
+                                    {setupCloud === 'azure' && <>
+                                        <InstructionStep num={2} check={<>an <strong className="text-white/90">Endpoint</strong> and two keys on the resource's Keys and Endpoint page.</>}>
+                                            <strong className="text-white/90">Add photo screening.</strong> In the Azure Portal, create an <strong className="text-white/90">Azure AI Content Safety</strong> resource in <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">pinpoint311-rg</code>. Open it, go to <strong className="text-white/90">Keys and Endpoint</strong>, and copy the endpoint and either key into the boxes below.
+                                        </InstructionStep>
+                                        <PlainSecrets fields={[
+                                            { key: 'AZURE_CONTENT_SAFETY_ENDPOINT', label: 'Content Safety endpoint', help: 'Looks like https://your-resource.cognitiveservices.azure.com/' },
+                                            { key: 'AZURE_CONTENT_SAFETY_KEY', label: 'Content Safety key', secret: true, help: 'Either KEY 1 or KEY 2 — they are interchangeable.' },
+                                        ]} />
+                                    </>}
+                                    {setupCloud === 'aws' && (
+                                        <InstructionStep num={2}>
+                                            <strong className="text-white/90">Add photo screening.</strong> On the IAM identity you created above, allow <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">rekognition:DetectModerationLabels</code> for images and <code className="bg-black/30 px-1 rounded text-rose-300 text-xs">comprehend:DetectToxicContent</code> for text. Nothing to enter here — it reuses the AWS credentials you already have.
+                                        </InstructionStep>
+                                    )}
+                                    <InstructionStep num={3}>Leave the rest alone. Screening follows the cloud you picked at the top of this page automatically. If the cloud layer is not reachable, text still uses the built-in scan and photos fall back to the AI provider's own assessment, so nothing goes unchecked.</InstructionStep>
                                 </Guide>
 
                                 {/* ── Maps (always) ── */}
@@ -653,7 +757,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     <InstructionStep num={1}>
                                         <strong className="text-white/90">Ask your GIS department before you buy anything.</strong> If the town or county has an ArcGIS agreement — many New Jersey towns do — choose Esri above. You get the map free under that licence, and more importantly you can point address lookup at the county's own locator, which knows your street names, your address ranges and your recent subdivisions. A national geocoder does not.
                                     </InstructionStep>
-                                    <OnTheCard card="Maps Provider" />
+                                    <InlineProviderSetup onSaved={onRefresh} cap="maps" provider={setupMaps} />
                                     <InstructionStep num={2}
                                         check={<>the address box offering suggestions as you type, and a pin appearing when you click the map.</>}
                                     >Test it as a resident would. Open the resident portal in another tab and file a test report — the map failing is the one thing on this page a resident notices immediately.</InstructionStep>
@@ -671,22 +775,34 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
                                 {/* ── Database backups ── */}
                                 {/* ── Photo redaction ── */}
-                                <Guide show={wants('moderation')} tone="rose" icon={ImageIcon} title="Blurring faces and licence plates" done={redactionConfigured}
+                                <Guide show={wants('redaction')} tone="rose" icon={ImageIcon} title="Blurring faces and licence plates" done={redactionConfigured}
                                     what={<>Residents photograph potholes with cars parked beside them and neighbours walking past. Those people did not ask to be in a public record, and a 311 photo is one. This blurs faces and plates before the photo is stored.</>}
                                     time="About 10 minutes"
                                     cost="A dollar or two per thousand photos, or free if you run it on this server.">
                                     <InstructionStep num={1}>Choose where detection happens. All three clouds do it well; the option that runs on this server finds fewer faces — particularly small or partly turned ones — but no photo ever leaves the building, which for some towns settles it.</InstructionStep>
-                                    <OnTheCard card="Photo Redaction" />
+                                    <InlineProviderSetup onSaved={onRefresh} cap="redaction" provider={redactionProvider}
+                                        onChoose={setRedactionOverride}
+                                        choices={[
+                                            { id: 'local', label: 'On this server (no account, no cost)' },
+                                            { id: 'google', label: 'Google Cloud Vision' },
+                                            { id: 'azure', label: 'Azure Face + Vision' },
+                                            { id: 'aws', label: 'AWS Rekognition' },
+                                        ]}
+                                        note={<>A fresh install already blurs on this server, so photos are never stored unblurred while you decide. Pointing it at a cloud finds more.</>}
+                                    />
+                                    <Trouble>This is the one setting whose failure is invisible from inside Pinpoint: "found nobody in this photo" and "could not ask" both produce an unblurred picture and a green tick. After saving, file a test report with a photo of a face in it and look at the stored image.</Trouble>
                                 </Guide>
 
                                 {/* ── Error reporting ── */}
-                                <Guide tone="violet" icon={AlertTriangle} title="Knowing when something breaks" done={sentryConfigured}
+                                <Guide show={wants('errors')} tone="violet" icon={AlertTriangle} title="Knowing when something breaks" done={sentryConfigured}
                                     what={<>Without this, a page that crashes for a resident is something you hear about only if they phone. Browser crashes are already collected and shown under Browser errors in the admin console; this sends them somewhere off the server as well, so they survive a container restart.</>}
                                     time="About 5 minutes"
                                     cost="Sentry's free tier covers a town's volume comfortably.">
-                                    <InstructionStep num={1} check={<>a DSN that looks like <code className="bg-black/30 px-1 rounded">https://…@…ingest.sentry.io/…</code></>}>Create a free account at <a href="https://sentry.io" target="_blank" rel="noopener noreferrer" className="text-violet-300 underline underline-offset-2">sentry.io</a>, make a project, and copy its <strong className="text-white/90">DSN</strong>.</InstructionStep>
-                                    <InstructionStep num={2}>Paste it into the <strong className="text-white/90">Sentry</strong> card under Other settings, and save.</InstructionStep>
-                                    <InstructionStep num={3}><em className="text-white/50">Optional:</em> this is genuinely skippable. Crashes are still recorded in the admin console without it — Sentry adds alerting and keeps the history longer.</InstructionStep>
+                                    <InstructionStep num={1} check={<>a DSN that looks like <code className="bg-black/30 px-1 rounded">https://…@…ingest.sentry.io/…</code></>}>Create a free account at <a href="https://sentry.io" target="_blank" rel="noopener noreferrer" className="text-violet-300 underline underline-offset-2">sentry.io</a>, make a project, and copy its <strong className="text-white/90">DSN</strong> into the box below.</InstructionStep>
+                                    <PlainSecrets fields={[
+                                        { key: 'SENTRY_DSN', label: 'Sentry DSN', secret: true, help: 'Project Settings → Client Keys (DSN). Not a password — but it is still worth keeping to yourself.' },
+                                    ]} />
+                                    <InstructionStep num={2}><em className="text-white/50">Optional:</em> this is genuinely skippable. Crashes are still recorded in the admin console without it — Sentry adds alerting and keeps the history longer.</InstructionStep>
                                 </Guide>
 
                                 <Guide show={wants('backups')} tone="amber" icon={HardDrive} title="Automatic backups" done={backupConfigured}
