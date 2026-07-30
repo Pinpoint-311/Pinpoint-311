@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Key, Shield, Cloud, MessageSquare, Mail, CheckCircle,
-    AlertCircle, ChevronDown, ChevronUp, Copy, Check,
+    AlertCircle, ChevronDown, ChevronUp,
     ExternalLink, AlertTriangle, Database, BookOpen,
     ListChecks, HardDrive, MapPin,
     Sparkles, Languages, Lock, Image as ImageIcon, Landmark,
@@ -46,7 +46,6 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [backupKey, setBackupKey] = useState<string | null>(null);
     const [backupKeyAcknowledged, setBackupKeyAcknowledged] = useState(false);
 
-    const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
     /* The guide starts open on a fresh install and closed once the required
      * integrations are in. It is a first-run document: hidden behind a click it
      * is missed by the person who needs it most, and left open forever it pushes
@@ -125,12 +124,6 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         } finally {
             setSavingKey(null);
         }
-    };
-
-    const copyToClipboard = (text: string, label: string) => {
-        navigator.clipboard.writeText(text);
-        setCopyFeedback(label);
-        setTimeout(() => setCopyFeedback(null), 2000);
     };
 
 
@@ -235,6 +228,37 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 )}
             </div>
         </div>
+    );
+
+    /* Hands off to the card that owns a credential.
+     *
+     * This guide used to carry its own copy of every vendor's console walk --
+     * Auth0, Entra, Okta, Esri, Apple, all of them -- written before the cards
+     * could hold steps of their own. Now that they can, and the boxes sit
+     * directly beneath the step that produces them, keeping a second copy up
+     * here was worse than having none: the two drifted. The guide told people
+     * Okta's issuer was their org URL while the card told them it was not, and
+     * it still asked towns to invent a backup passphrase months after that
+     * field was replaced by a generated one.
+     *
+     * So the guide keeps what only it has -- the decisions, the cloud
+     * foundation that belongs to no single card, and the steps with no
+     * credential attached -- and defers the console walk to one place. */
+    const SeeCard = ({ children }: { children: React.ReactNode }) => (
+        <div className="ml-9 rounded-lg bg-white/[0.04] border border-white/10 px-3 py-2 flex items-start gap-2">
+            <ListChecks className="w-3.5 h-3.5 text-white/40 mt-0.5 shrink-0" aria-hidden="true" />
+            <p className="text-xs text-white/55 leading-relaxed">{children}</p>
+        </div>
+    );
+
+    /** The step-by-step for whichever provider you pick lives on the card, with
+     *  the boxes it fills. One sentence, worded the same way each time. */
+    const OnTheCard = ({ card }: { card: string }) => (
+        <SeeCard>
+            Scroll to the <strong className="text-white/80">{card}</strong> card below and choose your
+            provider. The steps for that provider appear there, each one directly above the boxes it
+            fills in — so you are never scrolling between an instruction and the field it describes.
+        </SeeCard>
     );
 
     /* "If it goes wrong" for a step, called out rather than buried in prose.
@@ -506,61 +530,21 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
                                 {/* ── 1. Staff sign-in (always required) ── */}
                                 <Guide tone="orange" icon={Key} title="Staff sign-in" done={signInConfigured}
-                                    what={<>Residents never sign in — this is only for the clerks and staff who work the reports. Rather than Pinpoint storing staff passwords itself, an outside sign-in service handles that, which is what lets you require two-factor and switch off an ex-employee in one place. The steps below follow whichever service you picked above.</>}
+                                    what={<>Residents never sign in — this is only for the clerks and staff who work the reports. Rather than Pinpoint storing staff passwords itself, an outside sign-in service handles that, which is what lets you require two-factor and switch off an ex-employee in one place.</>}
                                     time={setupIdp === 'auth0' ? "About 20 minutes, and you only ever do it once" : "About 10 minutes if you already administer it"}
                                     cost={setupIdp === 'auth0' ? "Auth0 is free up to 25,000 monthly logins — far more than a town's staff will use" : "Usually already covered by the licence your town has for it"}>
-                                    {setupIdp === 'auth0' && <>
-                                    <InstructionStep num={1}
-                                        check={<>the Auth0 dashboard, with your town's name in the top-left corner.</>}
-                                    >Make the account. Go to <a href="https://auth0.com" target="_blank" rel="noopener noreferrer" className="text-orange-300 underline underline-offset-2">auth0.com</a> and sign up with a <strong className="text-white/90">shared town email address</strong>, not your personal one — whoever replaces you will need to get in. When it asks for a <Term means="which part of the world your staff logins are stored in">region</Term>, pick the one closest to you. <strong className="text-white/90">This cannot be changed later</strong>, so if your town or state has a rule about keeping data in the US, choose a US region now.</InstructionStep>
-                                    <InstructionStep num={2}
-                                        check={<>a settings page with boxes labelled Domain, Client ID and Client Secret. Leave this tab open — you come back to it in step 5.</>}
-                                    >Tell Auth0 about Pinpoint. In the left menu click <strong className="text-white/90">Applications</strong>, then <strong className="text-white/90">Applications</strong> again, then the <strong className="text-white/90">Create Application</strong> button. Name it <em className="text-white/60">"{`{township} 311`}"</em>. From the list of types choose <strong className="text-white/90">Regular Web Application</strong> — not Single Page, not Machine to Machine — and click Create. If it then asks you to pick a technology (React, Node, and so on), <strong className="text-white/90">ignore that and close it</strong>; it only shows sample code you do not need.</InstructionStep>
-                                    <InstructionStep num={3}>Tell Auth0 where to send people back to. Still on the <strong className="text-white/90">Settings</strong> tab, scroll down to <strong className="text-white/90">Application URIs</strong>. Copy each value below into the matching box using the copy button — <strong className="text-white/90">do not retype them</strong>, a single missing character stops sign-in working:
-                                        <div className="mt-2 space-y-1.5">
-                                            <div className="flex items-center gap-2 flex-wrap"><span className="text-white/45 text-xs w-40 shrink-0">Allowed Callback URLs</span><code className="bg-black/30 px-1.5 py-0.5 rounded text-orange-300 text-xs break-all">{window.location.origin}/api/auth/callback</code>
-                                                <button onClick={() => copyToClipboard(`${window.location.origin}/api/auth/callback`, 'callback')} aria-label="Copy to clipboard" className="inline-flex text-white/40 hover:text-white/70 transition-colors">{copyFeedback === 'callback' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}</button></div>
-                                            <div className="flex items-center gap-2 flex-wrap"><span className="text-white/45 text-xs w-40 shrink-0">Allowed Logout URLs</span><code className="bg-black/30 px-1.5 py-0.5 rounded text-orange-300 text-xs break-all">{window.location.origin}</code>
-                                                <button onClick={() => copyToClipboard(window.location.origin, 'logout')} aria-label="Copy to clipboard" className="inline-flex text-white/40 hover:text-white/70 transition-colors">{copyFeedback === 'logout' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}</button></div>
-                                            <div className="flex items-center gap-2 flex-wrap"><span className="text-white/45 text-xs w-40 shrink-0">Allowed Web Origins</span><code className="bg-black/30 px-1.5 py-0.5 rounded text-orange-300 text-xs break-all">{window.location.origin}</code>
-                                                <button onClick={() => copyToClipboard(window.location.origin, 'weborigin')} aria-label="Copy to clipboard" className="inline-flex text-white/40 hover:text-white/70 transition-colors">{copyFeedback === 'weborigin' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}</button></div>
-                                        </div>
-                                        <span className="block mt-1.5 text-white/45 text-xs">Then scroll to the very bottom and click <strong className="text-white/70">Save Changes</strong> — it is easy to miss, and nothing you typed is kept until you do.</span>
+                                    <InstructionStep num={1}>
+                                        <strong className="text-white/90">Check whether you already have this.</strong> If your staff sign in to Microsoft 365, you already run <strong className="text-white/90">Microsoft Entra ID</strong> and should pick that above — no new account, no new password for anyone, and your IT provider can do it in ten minutes. The same is true if the town uses Okta. Auth0 is the answer when there is nothing already in place.
                                     </InstructionStep>
-                                    <Trouble>If sign-in later bounces you straight back to the login page, or you see <em>"Callback URL mismatch"</em>, it is almost always this step: the address in Auth0 has to match your site exactly, including <code className="bg-black/30 px-1 rounded">https://</code> and with no trailing slash.</Trouble>
+                                    <InstructionStep num={2}>Register Pinpoint with {setupIdp === 'auth0' ? 'Auth0' : setupIdp === 'entra' ? 'Entra' : setupIdp === 'okta' ? 'Okta' : 'your provider'} and collect its credentials.</InstructionStep>
+                                    <OnTheCard card="Staff Sign-In" />
+                                    <InstructionStep num={3}
+                                        check={<>"Always" selected under the policy setting, and at least one factor switched on.</>}
+                                    >Require a second step at login. This is the single most valuable thing on this page: it means a stolen or guessed staff password is not enough on its own to reach resident records. Every provider here can do it — in Auth0 it is <strong className="text-white/90">Security → Multi-factor Auth</strong>, in Entra it is a Conditional Access policy, in Okta it is a sign-on policy. Turn on an authenticator app or passkeys, and set the policy to apply always. Warn staff first: the next time they sign in they will be asked to set it up.</InstructionStep>
+                                    <Trouble>This is not something Pinpoint can switch on for you — it lives entirely in the sign-in service. It is also the one setting a state auditor is most likely to ask about, so it is worth doing on the day rather than later.</Trouble>
                                     <InstructionStep num={4}
-                                        check={<>"Always" selected under Define Policies, and at least one factor switched on.</>}
-                                    >Require a second step at login. This is the single most valuable thing on this page: it means a stolen or guessed staff password is not enough on its own to get into resident records. Go to <strong className="text-white/90">Security → Multi-factor Auth</strong>, turn on <strong className="text-white/90">One-Time Password</strong> (a code from an app like Google Authenticator) or <strong className="text-white/90">Passkeys</strong> if your staff have newer phones. Then under <strong className="text-white/90">Define Policies</strong> choose <strong className="text-white/90">Always</strong>. Warn staff first — the next time they sign in they will be asked to set this up.</InstructionStep>
-                                    <InstructionStep num={5}
-                                        check={<>a green tick and "connection OK" on the card. If you get amber text instead, it tells you which value it could not use.</>}
-                                    >Copy the three values into Pinpoint. Back on that Auth0 <strong className="text-white/90">Settings</strong> tab there are three boxes: <strong className="text-white/90">Domain</strong>, <strong className="text-white/90">Client ID</strong> and <strong className="text-white/90">Client Secret</strong> (you will need to click "reveal" to see the secret). Copy each one into the box with the same name on the <strong className="text-white/90">Staff Sign-In</strong> card, in <strong className="text-white/90">Service Providers</strong> at the bottom of this page. Then press <strong className="text-white/90">Save &amp; Test</strong>, which stores them and immediately checks they work.</InstructionStep>
-                                    <Trouble>Copy and paste rather than retyping, and do not worry about accidentally grabbing a space at either end — Pinpoint trims those for you. The Client Secret is shown only as dots until you reveal it; a half-copied secret is the most common reason this step fails.</Trouble>
-                                    <InstructionStep num={6}
                                         check={<>their name in Pinpoint's User Management list after they have signed in once.</>}
-                                    >Add your first staff member. In Auth0 go to <strong className="text-white/90">User Management → Users → Create User</strong> and add them with their work email. <strong className="text-white/90">They have to sign in to Pinpoint once before you can give them a role</strong> — signing in is what creates their record here. After that, open <strong className="text-white/90">User Management</strong> in Pinpoint, set them to Admin or Staff, and choose their department.</InstructionStep>
-                                    <InstructionStep num={7}>
-                                        <strong className="text-white/90">The shortcut, if it applies to you.</strong> Does your town already sign in to Microsoft 365 / Office 365, or to Okta? Then you do not need Auth0 at all — skip steps 1 to 4, and on the <strong className="text-white/90">Staff Sign-In</strong> card choose <strong className="text-white/90">Microsoft Entra ID</strong> (that is what Microsoft 365 sign-in is called) or <strong className="text-white/90">Okta</strong>. Your IT provider can give you the three values it asks for. This is usually less work, and staff get to use the password they already have. The web addresses in step 3 are the same whichever you choose.
-                                    </InstructionStep>
-                                    </>}
-                                    {setupIdp === 'entra' && <>
-                                        <InstructionStep num={1} check={<>the app listed under App registrations, with a Directory (tenant) ID and Application (client) ID on its Overview page.</>}>In the <strong className="text-white/90">Microsoft Entra admin centre</strong>, go to <strong className="text-white/90">App registrations → New registration</strong>. Name it <em className="text-white/60">"{`{township} 311`}"</em>, and for supported account types choose the option limited to your own organisation.</InstructionStep>
-                                        <InstructionStep num={2}>Set the redirect URI. Platform <strong className="text-white/90">Web</strong>, and paste exactly: <code className="bg-black/30 px-1.5 py-0.5 rounded text-orange-300 text-xs break-all">{window.location.origin}/api/auth/callback</code>
-                                            <button onClick={() => copyToClipboard(`${window.location.origin}/api/auth/callback`, 'entracb')} aria-label="Copy to clipboard" className="ml-1 inline-flex text-white/40 hover:text-white/70 transition-colors">{copyFeedback === 'entracb' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}</button></InstructionStep>
-                                        <InstructionStep num={3} check={<>the secret <strong className="text-white/80">Value</strong> — not the Secret ID. It is shown once and cannot be retrieved later.</>}>Under <strong className="text-white/90">Certificates &amp; secrets → New client secret</strong>, create one and copy its Value immediately.</InstructionStep>
-                                        <InstructionStep num={4}>Paste into <strong className="text-white/90">Service Providers → Staff Sign-In → Microsoft Entra ID</strong>: the <strong className="text-white/90">Directory (tenant) ID</strong>, <strong className="text-white/90">Application (client) ID</strong> and the secret Value. <span className="text-white/45">Government tenants also set the Authority host to <code className="bg-black/30 px-1 rounded">login.microsoftonline.us</code>.</span> Then press Save &amp; Test.</InstructionStep>
-                                    </>}
-                                    {setupIdp === 'okta' && <>
-                                        <InstructionStep num={1} check={<>a Client ID and Client secret on the app's General tab.</>}>In the Okta admin console, <strong className="text-white/90">Applications → Create App Integration</strong>. Choose <strong className="text-white/90">OIDC — OpenID Connect</strong> and <strong className="text-white/90">Web Application</strong>.</InstructionStep>
-                                        <InstructionStep num={2}>Set the sign-in redirect URI to <code className="bg-black/30 px-1.5 py-0.5 rounded text-orange-300 text-xs break-all">{window.location.origin}/api/auth/callback</code>
-                                            <button onClick={() => copyToClipboard(`${window.location.origin}/api/auth/callback`, 'oktacb')} aria-label="Copy to clipboard" className="ml-1 inline-flex text-white/40 hover:text-white/70 transition-colors">{copyFeedback === 'oktacb' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}</button> and the sign-out URI to <code className="bg-black/30 px-1.5 py-0.5 rounded text-orange-300 text-xs break-all">{window.location.origin}</code>. Assign the app to the staff group who should get in.</InstructionStep>
-                                        <InstructionStep num={3}>Paste into <strong className="text-white/90">Service Providers → Staff Sign-In → Okta</strong>: the <strong className="text-white/90">Issuer URL</strong> (your Okta domain, e.g. <code className="bg-black/30 px-1 rounded">https://your-org.okta.com</code>), the Client ID and the Client Secret. Then Save &amp; Test.</InstructionStep>
-                                    </>}
-                                    {setupIdp === 'oidc' && <>
-                                        <InstructionStep num={1}>Any provider speaking OpenID Connect works. In its admin console register a <strong className="text-white/90">confidential web application</strong> (one that can hold a secret), with the redirect URI <code className="bg-black/30 px-1.5 py-0.5 rounded text-orange-300 text-xs break-all">{window.location.origin}/api/auth/callback</code>
-                                            <button onClick={() => copyToClipboard(`${window.location.origin}/api/auth/callback`, 'oidccb')} aria-label="Copy to clipboard" className="ml-1 inline-flex text-white/40 hover:text-white/70 transition-colors">{copyFeedback === 'oidccb' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}</button></InstructionStep>
-                                        <InstructionStep num={2}>Paste the <strong className="text-white/90">Issuer URL</strong>, Client ID and Client Secret into <strong className="text-white/90">Service Providers → Staff Sign-In → Generic OIDC</strong>, then Save &amp; Test.</InstructionStep>
-                                        <Trouble>Enter the issuer itself, not the discovery document. If the docs show a URL ending in <code className="bg-black/30 px-1 rounded">/.well-known/openid-configuration</code>, drop that part — Pinpoint appends it. Pasting the full discovery URL is the single most common mistake here, and the field will warn you about it.</Trouble>
-                                    </>}
+                                    >Add your first staff member, in the sign-in service rather than here. <strong className="text-white/90">They have to sign in to Pinpoint once before you can give them a role</strong> — signing in is what creates their record. After that, open <strong className="text-white/90">User Management</strong> in Pinpoint, set them to Admin or Staff, and choose their department.</InstructionStep>
                                 </Guide>
 
                                 {/* ── 2. Cloud foundation (only if a cloud-backed feature is wanted) ── */}
@@ -598,66 +582,55 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
                                 {/* ── AI ── */}
                                 <Guide show={wants('ai')} tone="sky" icon={Sparkles} title="AI triage"
-                                    what={<>Reads each new report and suggests a priority and a department, so a clerk is confirming a guess rather than sorting from scratch. It never closes or assigns anything on its own — staff always decide.</>}
-                                    time="About 10 minutes once your cloud account exists"
-                                    cost="Pennies per report. A town filing 500 reports a month typically spends a few dollars.">
-                                    {setupCloud === 'google' && <>
-                                        <InstructionStep num={1}>With Vertex AI enabled above, open <strong className="text-white/90">Service Providers → AI Provider</strong>, pick <strong className="text-white/90">Google Vertex AI</strong>, and paste your Project ID + service-account JSON.</InstructionStep>
-                                        <InstructionStep num={2}>Choose a model. Press <strong className="text-white/90">Refresh from provider</strong> to pull the current Gemini models live — no need to track model names by hand.</InstructionStep>
-                                    </>}
-                                    {setupCloud === 'azure' && <>
-                                        <InstructionStep num={1}>Create an <strong className="text-white/90">Azure OpenAI</strong> resource, then <strong className="text-white/90">Deploy</strong> a vision-capable model (e.g. <code className="bg-black/30 px-1 rounded text-sky-300 text-xs">gpt-4o</code>). Note the deployment name.</InstructionStep>
-                                        <InstructionStep num={2}>In <strong className="text-white/90">Service Providers → AI Provider</strong> pick <strong className="text-white/90">Azure</strong> and paste the <strong className="text-white/90">Endpoint</strong>, <strong className="text-white/90">API key</strong>, and <strong className="text-white/90">Deployment name</strong>. "Refresh from provider" lists your live deployments.</InstructionStep>
-                                    </>}
-                                    {setupCloud === 'aws' && <>
-                                        <InstructionStep num={1}>In <strong className="text-white/90">Bedrock → Model access</strong>, enable the models you want (e.g. a Claude model). Vision-capable models also cover image moderation.</InstructionStep>
-                                        <InstructionStep num={2}>In <strong className="text-white/90">Service Providers → AI Provider</strong> pick <strong className="text-white/90">AWS Bedrock</strong> and enter your region; credentials come from your AWS setup above.</InstructionStep>
-                                    </>}
-                                    <InstructionStep num={3}><em className="text-white/50">Optional:</em> AI is skippable — if it's off or unreachable, requests still submit and the triage panel shows the computed context (history, nearby, weather); only the AI summary is skipped.</InstructionStep>
+                                    what={<>Reads each new report and suggests a category, a priority and the department it belongs to. A clerk still decides — the suggestion is a starting point, never an action.</>}
+                                    time="About 15 minutes once your cloud account exists"
+                                    cost="Cents per hundred reports on any of the three providers.">
+                                    <InstructionStep num={1}>Enable the model service in the cloud account you set up above, and give Pinpoint permission to call it — nothing more than that. A leaked key scoped to "ask the model a question" can run up a bill; the same key with a broad role can delete the project.</InstructionStep>
+                                    <OnTheCard card="AI Provider" />
+                                    <Trouble>Model availability differs by region on every provider, and on AWS the models have to be requested before they can be used. If the picker is empty, that is usually why rather than a bad key.</Trouble>
                                 </Guide>
 
                                 {/* ── Translation ── */}
                                 <Guide show={wants('translation')} tone="cyan" icon={Languages} title="Translation"
-                                    what={<>Lets a resident file in their own language and read updates in it, while staff see everything in English. Useful in most New Jersey towns; if you are not sure you need it, you can turn it on later.</>}
-                                    time="About 5 minutes once your cloud account exists"
-                                    cost="Charged per character translated — usually a few dollars a month.">
-                                    {setupCloud === 'google' && <InstructionStep num={1}>Cloud Translation is enabled in the foundation step. In <strong className="text-white/90">Service Providers → Translation</strong> pick <strong className="text-white/90">Google</strong> — it uses the same service account.</InstructionStep>}
-                                    {setupCloud === 'azure' && <InstructionStep num={1}>Create a <strong className="text-white/90">Translator</strong> resource, copy its <strong className="text-white/90">Key</strong> + <strong className="text-white/90">Region</strong>, and enter them under <strong className="text-white/90">Service Providers → Translation → Azure</strong>.</InstructionStep>}
-                                    {setupCloud === 'aws' && <InstructionStep num={1}>Amazon Translate needs no extra resource. In <strong className="text-white/90">Service Providers → Translation</strong> pick <strong className="text-white/90">AWS</strong>; it uses your region + credentials.</InstructionStep>}
+                                    what={<>Lets a resident file a report in their own language and read the replies in it, and lets staff work entirely in English. For many towns this is a Title VI obligation rather than a nicety.</>}
+                                    time="About 10 minutes"
+                                    cost="Free for a small town's volume on all three providers.">
+                                    <InstructionStep num={1}>Enable the translation service in the cloud account you set up above. On Google it is an API to switch on; on Azure a Translator resource; on AWS nothing at all, it is on by default.</InstructionStep>
+                                    <OnTheCard card="Translation" />
                                 </Guide>
 
                                 {/* ── Secrets + PII encryption ── */}
                                 <Guide show={wants('secrets')} tone="violet" icon={Lock} title="Secure storage for keys and resident data (recommended)"
-                                    what={<>All the keys you are pasting in during setup have to live somewhere. By default they sit in Pinpoint's own database; with this turned on they live in your cloud's dedicated vault instead, and residents' names, phone numbers and emails are encrypted with a key only your town controls. This is the option to point at when someone asks how resident data is protected.</>}
+                                    what={<>Two related things. Your integration credentials move out of the database into your cloud's secret store, and the key that encrypts resident names, emails and phone numbers is held by your cloud's key service rather than derived from a setting in a file. Both are what an auditor means by "key management".</>}
                                     time="About 20 minutes"
-                                    cost="Well under a dollar a month at a town's scale.">
-                                    {setupCloud === 'google' && <>
-                                        <InstructionStep num={1}>In <strong className="text-white/90">Security → Key Management</strong> create a key ring <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">pinpoint311-keyring</code> and a symmetric key <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">pii-encryption-key</code> (or your own names).</InstructionStep>
-                                        <InstructionStep num={2}>Grant the service account <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">Cloud KMS CryptoKey Encrypter/Decrypter</code> and <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">Secret Manager Admin</code>, then fill the Google Cloud card below.</InstructionStep>
-                                    </>}
-                                    {setupCloud === 'azure' && <InstructionStep num={1}>Create an <strong className="text-white/90">Azure Key Vault</strong>. Pinpoint stores integration secrets and wraps the PII encryption key there — set <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">SECRETS_PROVIDER=azure</code> and the vault URL/credentials.</InstructionStep>}
-                                    {setupCloud === 'aws' && <InstructionStep num={1}>Create a <strong className="text-white/90">KMS key</strong> and enable <strong className="text-white/90">Secrets Manager</strong>. Set <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">SECRETS_PROVIDER=aws</code>; the same AWS credentials cover both.</InstructionStep>}
-                                    <InstructionStep num={2}>Once a vault is configured, integration credentials are stored <strong className="text-white/90">there</strong> (the app keeps only a reference), not in the app database. The connector card shows a "stored in your Secret Manager" badge.</InstructionStep>
+                                    cost="Under a dollar a month.">
+                                    <InstructionStep num={1}>Create the key and the vault in the cloud account you set up above, and grant Pinpoint permission to <strong className="text-white/90">wrap and unwrap</strong> with that key — not just to read it.</InstructionStep>
+                                    <Trouble>Wrap and unwrap are the two permissions people miss, and missing them fails quietly: the key exists, the settings save, and resident data is encrypted with the application key instead. The health dashboard is the only place that says so — it will tell you the key manager you selected is not the one being used.</Trouble>
+                                    <OnTheCard card="Resident Data Encryption" />
+                                    <InstructionStep num={2}>Once the vault is reachable, credentials already in the database move across on their own, within the hour. There is no button to press and nothing to remember.</InstructionStep>
+                                    <Trouble>Never delete or disable this key once resident data has been written under it. Every cloud enforces a waiting period and then destroys it permanently, and nobody — including the cloud provider — can recover what it protected.</Trouble>
                                 </Guide>
 
                                 {/* ── Email ── */}
                                 <Guide show={wants('email')} tone="violet" icon={Mail} title="Email notifications" done={smtpConfigured}
-                                    what={<>Sends the resident a confirmation when they file, and an update when staff change the status. Without it a resident has no way to know anything happened, which is the most common complaint about 311 systems.</>}
-                                    time="About 15 minutes"
-                                    cost="Free at a town's volume with most providers.">
-                                    <InstructionStep num={1}><strong className="text-white/90">Any cloud — SMTP:</strong> use SendGrid, Gmail App Passwords, or your org relay. Host <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">smtp.sendgrid.net</code> / <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">587</code>, then fill the <strong className="text-white/90">Email</strong> card in Service Providers, picking <strong className="text-white/90">SMTP</strong>.</InstructionStep>
-                                    {setupCloud === 'azure' && <InstructionStep num={2}><strong className="text-white/90">Or native Azure:</strong> create an <strong className="text-white/90">Azure Communication Services</strong> resource, connect an email domain, and use its connection string (provider "acs").</InstructionStep>}
-                                    {setupCloud === 'aws' && <InstructionStep num={2}><strong className="text-white/90">Or native AWS:</strong> verify a sender/domain in <strong className="text-white/90">Amazon SES</strong> and use SES (provider "ses") with your region + credentials.</InstructionStep>}
+                                    what={<>The confirmation a resident gets when they file, and the update when it is resolved. Without this, residents have no idea anything happened, and the phone calls come to you instead.</>}
+                                    time="About 15 minutes, longer if DNS records are involved"
+                                    cost="Free to a few dollars a month.">
+                                    <InstructionStep num={1}>Decide who sends. A dedicated town address like <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">311@yourtown.gov</code> rather than <code className="bg-black/30 px-1 rounded text-violet-300 text-xs">noreply@</code> — residents reply to these, and a reply that goes nowhere is a complaint you never hear.</InstructionStep>
+                                    <OnTheCard card="Email" />
+                                    <Trouble>Microsoft 365 and Google Workspace both block plain SMTP by default. If your IT provider says it is not allowed, they are right — Amazon SES or Azure Communication Services will be less work than getting an exception.</Trouble>
                                 </Guide>
 
                                 {/* ── SMS ── */}
                                 <Guide show={wants('sms')} tone="emerald" icon={MessageSquare} title="Text message notifications" done={smsConfigured}
-                                    what={<>The same updates as email, by text. Optional, and residents choose whether to give a mobile number.</>}
-                                    time="About 20 minutes, plus a wait"
-                                    cost="Roughly a cent per message. Note that US carriers now require you to register your town before you can send texts, which takes a few business days — start this early if you want it.">
-                                    <InstructionStep num={1}><strong className="text-white/90">Any cloud — Twilio:</strong> create an account at <a href="https://www.twilio.com" target="_blank" rel="noopener noreferrer" className="text-emerald-300 underline underline-offset-2">twilio.com</a>, buy a number, and enter the SID/token/number in the SMS card.</InstructionStep>
-                                    {setupCloud === 'azure' && <InstructionStep num={2}><strong className="text-white/90">Or native Azure:</strong> use <strong className="text-white/90">Azure Communication Services</strong> SMS (provider "acs") with a provisioned number.</InstructionStep>}
-                                    {setupCloud === 'aws' && <InstructionStep num={2}><strong className="text-white/90">Or native AWS:</strong> use <strong className="text-white/90">Amazon SNS</strong> (provider "sns"); it uses your region + credentials.</InstructionStep>}
+                                    what={<>The same updates by text, for residents who give a mobile number. Optional — email alone is a complete service.</>}
+                                    time="About 15 minutes, plus carrier registration"
+                                    cost="Around a cent per message.">
+                                    <InstructionStep num={1}>
+                                        <strong className="text-white/90">Start the carrier registration first, whichever provider you use.</strong> Texting US numbers from a business or government sender needs 10DLC registration, which identifies your town to the carriers. It is not a technical step and it is not quick — allow a couple of weeks. Unregistered messages are filtered heavily and often silently.
+                                    </InstructionStep>
+                                    <OnTheCard card="Text Messages" />
+                                    <Trouble>Every provider starts you in a trial or sandbox that can only text numbers you have verified. Everything looks like it works — the send succeeds — and residents receive nothing. Leave it before launch.</Trouble>
                                 </Guide>
 
                                 {/* ── Content moderation ── */}
@@ -674,45 +647,16 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
                                 {/* ── Maps (always) ── */}
                                 <Guide tone="blue" icon={MapPin} title="Maps" done={mapsConfigured}
-                                    what={<>Every town needs one. Without it a resident cannot search for their address or drop a pin, so reports arrive with no location. Any of the four providers works — the steps below follow the one you picked above.</>}
-                                    time={setupMaps === 'google' ? "About 15 minutes" : "About 10 minutes"}
-                                    cost={setupMaps === 'google'
-                                        ? "Google gives $200 of free map use every month, far more than a town of any size will reach. You still have to put a card on file — Google will not turn the maps on without one."
-                                        : setupMaps === 'esri' ? "Often already covered by a county or state ArcGIS agreement — check before buying."
-                                        : setupMaps === 'apple' ? "Needs a paid Apple Developer account (about $99/year)."
-                                        : "Pay-as-you-go, with a free tier that covers a town's volume."}>
-                                    {setupMaps === 'google' && <>
-                                    <InstructionStep num={1}
-                                        check={<>a blue "API Enabled" banner on each of the three, and a billing account listed under Billing.</>}
-                                    >Turn on the three map services. Go to <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">Google Cloud</a> and sign in with a <strong className="text-white/90">shared town account</strong>. If you already made a project in an earlier step, use that one. Go to <strong className="text-white/90">APIs &amp; Services → Library</strong>, search for each of these and click Enable on all three: <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Maps JavaScript API</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Geocoding API</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Places API</code>. Then go to <strong className="text-white/90">Billing</strong> and attach a payment method.</InstructionStep>
-                                    <Trouble>The payment method is not optional and it is the step people skip. Google will happily give you a key without it, the key will look correct, and the map will show a grey box saying <em>"this page can't load Google Maps correctly"</em> with no other explanation. If you see that grey box, check Billing first.</Trouble>
+                                    what={<>The map a resident drops a pin on, and the address lookup that turns what they type into a location your crews can find. Required — a 311 report without a location is not actionable.</>}
+                                    time="About 20 minutes"
+                                    cost="Google and Azure have free tiers a town will not exceed; Esri may already be covered by a county licence; Apple needs a paid developer membership.">
+                                    <InstructionStep num={1}>
+                                        <strong className="text-white/90">Ask your GIS department before you buy anything.</strong> If the town or county has an ArcGIS agreement — many New Jersey towns do — choose Esri above. You get the map free under that licence, and more importantly you can point address lookup at the county's own locator, which knows your street names, your address ranges and your recent subdivisions. A national geocoder does not.
+                                    </InstructionStep>
+                                    <OnTheCard card="Maps Provider" />
                                     <InstructionStep num={2}
-                                        check={<>a long string starting with <code className="bg-black/30 px-1 rounded">AIza</code>. Copy it somewhere safe for a moment — you need it in step 4.</>}
-                                    >Create the key. Go to <strong className="text-white/90">APIs &amp; Services → Credentials</strong>, click <strong className="text-white/90">Create Credentials</strong> at the top, and choose <strong className="text-white/90">API key</strong>.</InstructionStep>
-                                    <InstructionStep num={3}
-                                        check={<>your site listed under Website restrictions, and only the three services ticked under API restrictions.</>}
-                                    >Lock the key to your own website. Do not skip this — an unrestricted key can be copied off your site and run up a bill on your town's card. Click the key you just made. Under <strong className="text-white/90">Application restrictions</strong> choose <strong className="text-white/90">Websites</strong>, click Add, and paste exactly this: <code className="bg-black/30 px-1.5 py-0.5 rounded text-blue-300 text-xs break-all">{window.location.origin}/*</code>
-                                        <button onClick={() => copyToClipboard(`${window.location.origin}/*`, 'mapsref')} aria-label="Copy to clipboard" className="ml-1 inline-flex text-white/40 hover:text-white/70 transition-colors">{copyFeedback === 'mapsref' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}</button> — the <code className="bg-black/30 px-1 rounded">/*</code> on the end matters. Then under <strong className="text-white/90">API restrictions</strong> choose <strong className="text-white/90">Restrict key</strong> and tick the same three services from step 1. Save.</InstructionStep>
-                                    <InstructionStep num={4}
                                         check={<>the address box offering suggestions as you type, and a pin appearing when you click the map.</>}
-                                    >Paste the key into Pinpoint and check it. Put it in the <strong className="text-white/90">Maps Provider</strong> card in <strong className="text-white/90">Service Providers</strong> at the bottom of this page, then press <strong className="text-white/90">Save &amp; Test</strong>. Now open the resident portal in another tab and try filing a test report. <span className="text-white/45">(The <strong className="text-white/70">Map ID</strong> box is optional — it only changes how the map looks. Leave it empty.)</span></InstructionStep>
-                                    <Trouble>Changes to a Google key can take up to five minutes to take effect. If the map is still grey straight after saving, wait a few minutes and reload before changing anything else.</Trouble>
-                                    </>}
-                                    {setupMaps === 'esri' && <>
-                                        <InstructionStep num={1} check={<>an API key listed in your ArcGIS developer dashboard.</>}>Sign in to <strong className="text-white/90">ArcGIS Location Platform</strong> with your organisation's account, and create an <strong className="text-white/90">API key</strong>. Scope it to the basemap and geocoding services you are entitled to use.</InstructionStep>
-                                        <InstructionStep num={2}>Paste it into <strong className="text-white/90">Service Providers → Maps Provider → Esri / ArcGIS</strong> as the <strong className="text-white/90">ArcGIS API key</strong>, then Save &amp; Test. <span className="text-white/45">Basemap ID and Address locator URL are optional — set them only if your county publishes its own, which is the usual reason to choose Esri.</span></InstructionStep>
-                                        <Trouble>Check with whoever administers your county or state ArcGIS agreement before buying anything. Many New Jersey towns are already covered by a county licence, and geocoding against the county's own locator is more accurate for local addresses than a national one.</Trouble>
-                                    </>}
-                                    {setupMaps === 'azure' && <>
-                                        <InstructionStep num={1} check={<>two keys listed under Authentication; either one works.</>}>In the Azure portal create an <strong className="text-white/90">Azure Maps</strong> account, then open <strong className="text-white/90">Authentication</strong> and copy the <strong className="text-white/90">Primary Key</strong>.</InstructionStep>
-                                        <InstructionStep num={2}>Paste it into <strong className="text-white/90">Service Providers → Maps Provider → Azure Maps</strong> as the <strong className="text-white/90">Subscription key</strong>, then Save &amp; Test.</InstructionStep>
-                                    </>}
-                                    {setupMaps === 'apple' && <>
-                                        <InstructionStep num={1} check={<>a downloaded <code className="bg-black/30 px-1 rounded">.p8</code> file. It downloads once and cannot be downloaded again.</>}>This needs a paid <strong className="text-white/90">Apple Developer</strong> account. In the developer portal create a <strong className="text-white/90">MapKit JS</strong> key and download it.</InstructionStep>
-                                        <InstructionStep num={2}>Collect three values: your <strong className="text-white/90">Team ID</strong> (membership details), the <strong className="text-white/90">Key ID</strong> shown next to the key, and the contents of the <code className="bg-black/30 px-1 rounded">.p8</code> file.</InstructionStep>
-                                        <InstructionStep num={3}>Enter all three under <strong className="text-white/90">Service Providers → Maps Provider → Apple Maps</strong>, then Save &amp; Test.</InstructionStep>
-                                        <Trouble>Paste the whole <code className="bg-black/30 px-1 rounded">.p8</code> file including the <code className="bg-black/30 px-1 rounded">-----BEGIN PRIVATE KEY-----</code> and <code className="bg-black/30 px-1 rounded">-----END PRIVATE KEY-----</code> lines. Pasting only the middle block is the usual mistake, and the field will tell you if you do.</Trouble>
-                                    </>}
+                                    >Test it as a resident would. Open the resident portal in another tab and file a test report — the map failing is the one thing on this page a resident notices immediately.</InstructionStep>
                                 </Guide>
 
                                 {/* ── GovTech connector ── */}
@@ -728,12 +672,11 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 {/* ── Database backups ── */}
                                 {/* ── Photo redaction ── */}
                                 <Guide show={wants('moderation')} tone="rose" icon={ImageIcon} title="Blurring faces and licence plates" done={redactionConfigured}
-                                    what={<>Residents photograph the pothole and the neighbour walking past it. This finds faces and plates before the photo is stored, so the municipal site never publishes them. It runs on the way in — the unblurred original is never saved.</>}
-                                    time="About 2 minutes"
-                                    cost={setupCloud === 'google' ? "Roughly a tenth of a cent per photo on Cloud Vision." : "A fraction of a cent per photo, or nothing at all on your own server."}>
-                                    <InstructionStep num={1}>Open <strong className="text-white/90">Service Providers → Photo Redaction</strong> and pick a detector. The cloud ones reuse the credentials you already entered — there is no new key. <strong className="text-white/90">On this server</strong> needs no account at all and no photo leaves the building, at some cost in accuracy.</InstructionStep>
-                                    <InstructionStep num={2} check={<>a face blurred in the photo on the request you just filed.</>}>Faces and plates are both on by default. Save, then file a test report with a photo of a person or a car and open it in the staff view.</InstructionStep>
-                                    <Trouble>Plate detection guesses, and what it occasionally guesses wrong is a house number. If your crews work from those, switch <strong className="text-white/90">Blur licence plates</strong> off on the same card — faces stay on.</Trouble>
+                                    what={<>Residents photograph potholes with cars parked beside them and neighbours walking past. Those people did not ask to be in a public record, and a 311 photo is one. This blurs faces and plates before the photo is stored.</>}
+                                    time="About 10 minutes"
+                                    cost="A dollar or two per thousand photos, or free if you run it on this server.">
+                                    <InstructionStep num={1}>Choose where detection happens. All three clouds do it well; the option that runs on this server finds fewer faces — particularly small or partly turned ones — but no photo ever leaves the building, which for some towns settles it.</InstructionStep>
+                                    <OnTheCard card="Photo Redaction" />
                                 </Guide>
 
                                 {/* ── Error reporting ── */}
@@ -750,9 +693,11 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     what={<>Takes a nightly encrypted copy of everything and stores it off the server. Do this one. 311 reports are public records the town is legally required to keep, and a server can fail.</>}
                                     time="About 20 minutes"
                                     cost="A few dollars a month for storage.">
-                                    <InstructionStep num={1}>Provision an <strong className="text-white/90">S3-compatible</strong> bucket (AWS S3, Oracle Object Storage, MinIO, …) with put/get/list/delete permissions and an access key.</InstructionStep>
-                                    <InstructionStep num={2}>Choose a strong <strong className="text-white/90">AES-256 passphrase</strong> and store it safely — backups can't be restored without it.</InstructionStep>
-                                    <InstructionStep num={3}>Enter the bucket, keys, encryption passphrase, and optional endpoint/region in the <strong className="text-white/90">Database Backups</strong> card below.</InstructionStep>
+                                    <InstructionStep num={1}>Provision an <strong className="text-white/90">S3-compatible</strong> bucket (AWS S3, Oracle Object Storage, MinIO, …) with put/get/list/delete permissions, and take an access key for it.</InstructionStep>
+                                    <InstructionStep num={2}
+                                        check={<>the passphrase shown once, with a box to tick confirming you have put a copy somewhere else.</>}
+                                    >Enter the bucket and keys in the <strong className="text-white/90">Database Backups</strong> card below, and press <strong className="text-white/90">Create backup passphrase</strong>. You are not asked to invent one — inventing a passphrase reliably produces either something guessable or something nobody can find again.</InstructionStep>
+                                    <Trouble>The one part nobody can automate is keeping a copy somewhere other than this server. A key held only inside the system it protects is worth nothing on the day that system is gone — which is the day a backup matters. A password manager, or a sealed envelope in the clerk's safe.</Trouble>
                                     <div className="mt-3 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2">
                                         <p className="text-amber-200/80 text-xs"><strong>⚠ Privacy note:</strong> Backups contain a full snapshot including resident PII. Retention deletes old backups, but PII anonymization only applies to the live database — not to existing backup files.</p>
                                     </div>

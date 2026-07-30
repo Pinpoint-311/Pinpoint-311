@@ -22,7 +22,8 @@ from pathlib import Path
 
 import pytest
 
-CONTENT = Path(__file__).resolve().parents[2] / "frontend/src/components/setupStepsContent.tsx"
+ROOT = Path(__file__).resolve().parents[2]
+CONTENT = ROOT / "frontend/src/components/setupStepsContent.tsx"
 
 
 def _catalogs():
@@ -169,3 +170,48 @@ def test_the_callback_url_matches_the_route_that_receives_it():
     source = inspect.getsource(auth)
     assert '"/api/auth/callback"' in source or "/api/auth/callback" in source
     assert "/api/auth/callback" in CONTENT.read_text()
+
+
+# ---------------------------------------------------------------------------
+# One copy of the console walk, not two
+# ---------------------------------------------------------------------------
+
+GUIDE = ROOT / "frontend/src/components/SetupIntegrationsPage.tsx"
+
+# Sentences that only belong in a per-provider console walk. If the long-form
+# guide starts carrying these again, it has grown a second copy of instructions
+# that already live on the cards -- and the copies drift, which is not a
+# hypothetical: the guide told towns Okta's issuer was their org URL while the
+# card told them it was not, and it asked them to invent a backup passphrase
+# months after that field was replaced by a generated one.
+DUPLICATED_WALKS = (
+    "Create App Integration",
+    "New client secret",
+    "Certificates &amp; secrets",
+    "MapKit JS",
+    "Create Credentials",
+    "Regular Web Application",
+    "Application URIs",
+)
+
+
+def test_the_guide_does_not_repeat_the_cards_console_steps():
+    if not GUIDE.exists():
+        pytest.skip("frontend not present in this checkout")
+    source = GUIDE.read_text()
+    repeated = [phrase for phrase in DUPLICATED_WALKS if phrase in source]
+    assert not repeated, (
+        "the setup guide has grown its own copy of a vendor console walk: "
+        f"{repeated}. Those live in setupStepsContent.tsx, where the steps sit "
+        "directly above the boxes they fill."
+    )
+
+
+def test_the_guide_no_longer_asks_for_an_invented_backup_passphrase():
+    """The backup passphrase is generated and shown once. An instruction to
+    choose one sends a clerk looking for a field that is not there."""
+    if not GUIDE.exists():
+        pytest.skip("frontend not present in this checkout")
+    source = GUIDE.read_text()
+    assert "Choose a strong" not in source
+    assert "Create backup passphrase" in source
