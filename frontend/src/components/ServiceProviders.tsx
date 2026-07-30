@@ -477,7 +477,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                     const isStale = staleOverride !== null
                         ? staleOverride
                         : (selected === catalog.current_provider && catalog.current_model_available === false);
-                    if (models.length === 0) return null;
+                    if (!models || models.length === 0) return null;
                     return (
                         <div>
                             <Step n={2} aside={
@@ -548,7 +548,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 })()}
 
                 {/* Credential/config fields */}
-                {active && active.credential_fields.length > 0 && (
+                {active && (active?.credential_fields || []).length > 0 && (
                     <div>
                     <Step n={cap === 'ai' ? 3 : 2}>Credentials</Step>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
@@ -817,9 +817,9 @@ export default function ServiceProviders() {
     }, []);
 
     const loaded = CAPS.filter(c => statuses[c.key]);
-    const onDefaultCount = loaded.filter(c => statuses[c.key]?.onDefault).length;
-    const verifiedCount = loaded.filter(c => statuses[c.key]?.verified === true).length;
-    const failedCount = loaded.filter(c => statuses[c.key]?.verified === false).length;
+    const onDefaultCount = (loaded || []).filter(c => statuses[c.key]?.onDefault).length;
+    const verifiedCount = (loaded || []).filter(c => statuses[c.key]?.verified === true).length;
+    const failedCount = (loaded || []).filter(c => statuses[c.key]?.verified === false).length;
 
     return (
         <CollapsibleSection

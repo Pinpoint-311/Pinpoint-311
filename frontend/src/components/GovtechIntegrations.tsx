@@ -83,9 +83,9 @@ export default function GovtechIntegrations() {
     // actually manages); leave the rest collapsed. Only runs once so it never
     // fights a manual toggle.
     useEffect(() => {
-        if (initialized.current || configs.length === 0) return;
+        if (initialized.current || !configs || configs.length === 0) return;
         initialized.current = true;
-        const connected = configs.filter(c => c.enabled).map(c => c.platform);
+        const connected = (configs || []).filter(c => c.enabled).map(c => c.platform);
         if (connected.length) setOpenCards(new Set(connected));
     }, [configs]);
 
@@ -298,11 +298,11 @@ export default function GovtechIntegrations() {
         );
     };
 
-    const connectedCount = configs.filter(c => c.enabled).length;
+    const connectedCount = (configs || []).filter(c => c.enabled).length;
 
     // Filter by the clerk's search and surface connected platforms first.
     const q = query.trim().toLowerCase();
-    const visibleCatalog = catalog
+    const visibleCatalog = (catalog || [])
         .filter(p => !q || [p.name, p.vendor, p.category].some(s => (s || '').toLowerCase().includes(q)))
         .sort((a, b) => {
             const rank = (p: IntegrationPlatform) => (configFor(p.platform)?.enabled ? 0 : configFor(p.platform) ? 1 : 2);
@@ -316,7 +316,7 @@ export default function GovtechIntegrations() {
         <CollapsibleSection
             title="Connect Your Other Town Systems"
             icon={Landmark}
-            subtitle={`${visibleCatalog.length || catalog.length} platforms available — Accela, Tyler, CivicPlus, Open311, or a generic connector for anything else`}
+            subtitle={`${(visibleCatalog || []).length || (catalog || []).length} platforms available — Accela, Tyler, CivicPlus, Open311, or a generic connector for anything else`}
             defaultOpen={true}
             badge={connectedCount > 0 ? (
                 <span className="inline-flex items-center gap-2 rounded-full bg-emerald-500/15 border border-emerald-400/30 pl-2.5 pr-3 py-1 text-[11px] font-semibold text-emerald-200 whitespace-nowrap">
@@ -337,7 +337,7 @@ export default function GovtechIntegrations() {
             )}
 
             {/* Search — with 10+ platforms, let staff jump straight to theirs */}
-            {catalog.length > 4 && (
+            {(catalog || []).length > 4 && (
                 <div className="relative mb-4 max-w-md">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/35" aria-hidden="true" />
                     <input
@@ -350,7 +350,7 @@ export default function GovtechIntegrations() {
                 </div>
             )}
 
-            {visibleCatalog.length === 0 && (
+            {(visibleCatalog || []).length === 0 && (
                 <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-8 text-center text-white/50 text-sm">
                     No platforms match “{query}”. Don’t see yours? The <span className="text-white/70">Generic Open311</span> connector works with many systems.
                 </div>
@@ -519,7 +519,7 @@ export default function GovtechIntegrations() {
 
                             {logsOpen === platform.platform && platformLogs && (
                                 <div className="relative mt-3 rounded-lg border border-white/10 divide-y divide-white/5 max-h-48 overflow-y-auto">
-                                    {platformLogs.length === 0 && (
+                                    {(platformLogs || []).length === 0 && (
                                         <p className="text-white/60 text-xs px-3 py-2">Nothing has synced yet. Activity will show up here once reports start flowing.</p>
                                     )}
                                     {platformLogs.map(entry => (
@@ -645,7 +645,7 @@ export default function GovtechIntegrations() {
                                     : wizard.capabilities.includes(c.value));
                                 // A single possible direction isn't a choice — don't ask. Just
                                 // pin it so the payload is correct and skip the redundant panel.
-                                if (syncOptions.length <= 1) {
+                                if ((syncOptions || []).length <= 1) {
                                     if (syncOptions[0] && syncChoice !== syncOptions[0].value) setSyncChoice(syncOptions[0].value);
                                     return null;
                                 }

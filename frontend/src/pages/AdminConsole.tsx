@@ -22,6 +22,8 @@ import {
     Mail,
     MessageSquare,
     Building2,
+    ExternalLink,
+    GitFork,
     Edit,
     Phone,
     UserCheck,
@@ -222,13 +224,13 @@ function SidebarItem({ icon: Icon, label, isActive, onClick }: SidebarItemProps)
 
 // ============ Drag-and-Drop Service Reorder ============
 
-function SortableServiceCard({ service, onEdit, onDelete }: {
+function BubblyServiceCard({ service, onEdit, onDelete }: {
     service: ServiceDefinition;
     onEdit: (s: ServiceDefinition) => void;
     onDelete: (id: number) => void;
 }) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: service.id });
-    
+
     const style = {
         transform: CSS.Transform.toString(transform),
         transition,
@@ -236,56 +238,96 @@ function SortableServiceCard({ service, onEdit, onDelete }: {
         opacity: isDragging ? 0.85 : 1,
     };
 
-    return (
-        <div ref={setNodeRef} style={style} className={`group ${isDragging ? 'relative' : ''}`}>
-            <Card className={`relative ${isDragging ? 'ring-2 ring-primary-500/50 shadow-2xl shadow-primary-500/20' : ''}`}>
-                {/* Drag handle - top right corner */}
-                <button
-                    {...attributes}
-                    {...listeners}
-                    className="absolute top-3 right-3 p-1 rounded-md text-white/15 hover:text-white/50 hover:bg-white/5 cursor-grab active:cursor-grabbing transition-colors touch-none z-10"
-                    aria-label={`Drag to reorder ${service.service_name}`}
-                >
-                    <GripVertical className="w-4 h-4" />
-                </button>
+    const getIconComponent = (iconName?: string) => {
+        if (!iconName) return Grid3X3;
+        const found = ICON_LIBRARY.find(i => i.name === iconName);
+        return found ? found.icon : Grid3X3;
+    };
 
-                <div className="flex items-start gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-primary-500/20 flex items-center justify-center text-primary-300">
-                        <Grid3X3 className="w-6 h-6" />
-                    </div>
-                    <div className="flex-1 min-w-0 pr-8">
-                        <h3 className="font-semibold text-white">{service.service_name}</h3>
-                        <p className="text-sm text-white/50 mt-1 line-clamp-2">{service.description}</p>
-                        <div className="flex items-center gap-2 mt-2 flex-wrap">
-                            <span className="text-xs text-white/30 font-mono">{service.service_code}</span>
-                            {service.routing_mode && service.routing_mode !== 'township' && (
-                                <Badge variant={service.routing_mode === 'third_party' ? 'warning' : 'info'}>
-                                    {service.routing_mode === 'third_party' ? '3rd Party' : 'Road-Based'}
-                                </Badge>
-                            )}
-                            {service.assigned_department && (
-                                <Badge variant="default">{service.assigned_department.name}</Badge>
-                            )}
+    const IconComp = getIconComponent((service as any).icon);
+
+    const getModeBadge = (mode?: string) => {
+        if (mode === 'third_party') return (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl text-xs font-semibold bg-gradient-to-r from-purple-500/20 to-indigo-500/20 text-purple-300 border border-purple-500/30 shadow-md shadow-purple-950/40">
+                <ExternalLink className="w-3.5 h-3.5" /> 3rd Party
+            </span>
+        );
+        if (mode === 'road_based') return (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl text-xs font-semibold bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30 shadow-md shadow-amber-950/40">
+                <GitFork className="w-3.5 h-3.5" /> Road-Based
+            </span>
+        );
+        return (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl text-xs font-semibold bg-gradient-to-r from-emerald-500/20 to-teal-500/20 text-emerald-300 border border-emerald-500/30 shadow-md shadow-emerald-950/40">
+                <Building2 className="w-3.5 h-3.5" /> Municipality
+            </span>
+        );
+    };
+
+    return (
+        <div ref={setNodeRef} style={style} className={`group ${isDragging ? 'relative z-50' : ''}`}>
+            <div className={`relative p-6 rounded-3xl bg-gradient-to-br from-white/[0.08] via-white/[0.03] to-indigo-950/30 border border-white/15 backdrop-blur-2xl shadow-[0_10px_30px_rgba(0,0,0,0.3)] hover:shadow-[0_20px_50px_rgba(99,102,241,0.2)] hover:border-primary-400/50 hover:-translate-y-1 transition-all duration-300 ${isDragging ? 'ring-2 ring-primary-500 shadow-2xl scale-[1.03]' : ''}`}>
+                {/* Glow accent bar on top */}
+                <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-primary-400/40 to-transparent rounded-t-3xl" />
+
+                {/* Top bar: Icon, Code Badge, Drag Handle */}
+                <div className="flex items-center justify-between gap-3 mb-4">
+                    <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary-500/25 via-indigo-500/20 to-purple-500/15 border border-white/20 shadow-inner flex items-center justify-center text-primary-300 shrink-0">
+                            <IconComp className="w-6 h-6" />
+                        </div>
+                        <div>
+                            <h3 className="font-bold text-white text-lg tracking-tight group-hover:text-primary-200 transition-colors">{service.service_name}</h3>
+                            <span className="text-[11px] font-mono font-semibold text-white/50 bg-white/10 border border-white/15 px-2.5 py-0.5 rounded-full tracking-wider">@{service.service_code.toLowerCase()}</span>
                         </div>
                     </div>
-                    <div className="flex gap-1 mt-6">
-                        <button
-                            onClick={() => onEdit(service)}
-                            className="opacity-0 group-hover:opacity-100 p-2 hover:bg-white/10 rounded-lg transition-all"
-                            aria-label={`Configure ${service.service_name} routing`}
-                        >
-                            <Edit className="w-4 h-4 text-white/60" aria-hidden="true" />
-                        </button>
-                        <button
-                            onClick={() => onDelete(service.id)}
-                            className="opacity-0 group-hover:opacity-100 p-2 hover:bg-red-500/20 rounded-lg transition-all"
-                            aria-label={`Delete ${service.service_name}`}
-                        >
-                            <Trash2 className="w-4 h-4 text-red-400" aria-hidden="true" />
-                        </button>
-                    </div>
+
+                    <button
+                        {...attributes}
+                        {...listeners}
+                        className="p-2 rounded-xl text-white/20 hover:text-white/80 hover:bg-white/10 cursor-grab active:cursor-grabbing transition-colors touch-none shrink-0"
+                        aria-label={`Drag to reorder ${service.service_name}`}
+                    >
+                        <GripVertical className="w-5 h-5" />
+                    </button>
                 </div>
-            </Card>
+
+                {/* Description */}
+                <p className="text-xs text-white/65 leading-relaxed min-h-[32px] line-clamp-2">{service.description || 'No description provided.'}</p>
+
+                {/* Routing & Department Badges */}
+                <div className="flex items-center gap-2 mt-4 flex-wrap">
+                    {getModeBadge(service.routing_mode)}
+                    {service.assigned_department ? (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-2xl text-xs font-medium bg-white/10 border border-white/15 text-white/90">
+                            <Users className="w-3.5 h-3.5 text-white/40" />
+                            {service.assigned_department.name}
+                        </span>
+                    ) : (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-2xl text-xs font-medium bg-white/5 border border-white/10 text-white/30 italic">
+                            No department assigned
+                        </span>
+                    )}
+                </div>
+
+                {/* Action Footer */}
+                <div className="flex items-center justify-end gap-2.5 mt-5 pt-4 border-t border-white/10">
+                    <Button
+                        leftIcon={<Edit className="w-4 h-4" />}
+                        onClick={() => onEdit(service)}
+                        className="rounded-2xl px-5"
+                    >
+                        Configure Routing
+                    </Button>
+                    <button
+                        onClick={() => onDelete(service.id)}
+                        className="p-2.5 rounded-2xl bg-white/5 hover:bg-red-500/20 border border-white/10 hover:border-red-500/30 text-white/40 hover:text-red-300 transition-all"
+                        title="Delete Category"
+                    >
+                        <Trash2 className="w-4 h-4" />
+                    </button>
+                </div>
+            </div>
         </div>
     );
 }
@@ -329,23 +371,82 @@ function ServiceCategoriesTab({ services, setServices, loadTabData, setShowServi
         }
     };
 
+    const roadBasedCount = services.filter(s => s.routing_mode === 'road_based').length;
+    const thirdPartyCount = services.filter(s => s.routing_mode === 'third_party').length;
+    const municipalCount = services.filter(s => !s.routing_mode || s.routing_mode === 'township').length;
+
+    const [searchQuery, setSearchQuery] = useState('');
+    const [filterMode, setFilterMode] = useState<string>('all');
+
+    const filteredServices = services.filter(s => {
+        const matchesSearch = s.service_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            s.service_code.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (s.description || '').toLowerCase().includes(searchQuery.toLowerCase());
+        const mode = s.routing_mode || 'township';
+        const matchesFilter = filterMode === 'all' || mode === filterMode;
+        return matchesSearch && matchesFilter;
+    });
+
     return (
         <div className="space-y-6">
+            {/* Top Bar Header */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div>
-                    <h1 className="text-xl sm:text-2xl font-bold text-white">Service Categories</h1>
-                    <p className="text-sm text-white/50 mt-1">Drag to reorder how categories appear in the resident portal</p>
+                    <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Service Categories</h1>
+                    <p className="text-sm text-white/50 mt-1">Configure portal categories, assignment rules, and automated spatial routing</p>
                 </div>
-                <Button className="w-full sm:w-auto" leftIcon={<Plus className="w-4 h-4" />} onClick={() => setShowServiceModal(true)}>
+                <Button
+                    leftIcon={<Plus className="w-4 h-4" />}
+                    onClick={() => setShowServiceModal(true)}
+                    className="w-full sm:w-auto bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-500/25"
+                >
                     Add Category
                 </Button>
             </div>
 
+            {/* 3 Premium Stat Cards (Matching User Management Page) */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-500/10 to-blue-600/5 border border-blue-500/20 backdrop-blur-sm shadow-xl">
+                    <div className="flex items-center gap-3.5">
+                        <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center shrink-0">
+                            <Building2 className="w-5 h-5 text-blue-400" />
+                        </div>
+                        <div>
+                            <p className="text-2xl font-bold text-white">{municipalCount}</p>
+                            <p className="text-xs text-blue-300/70">Municipality</p>
+                        </div>
+                    </div>
+                </div>
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-500/10 to-amber-600/5 border border-amber-500/20 backdrop-blur-sm shadow-xl">
+                    <div className="flex items-center gap-3.5">
+                        <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                            <GitFork className="w-5 h-5 text-amber-400" />
+                        </div>
+                        <div>
+                            <p className="text-2xl font-bold text-white">{roadBasedCount}</p>
+                            <p className="text-xs text-amber-300/70">Road-Based</p>
+                        </div>
+                    </div>
+                </div>
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border border-emerald-500/20 backdrop-blur-sm shadow-xl">
+                    <div className="flex items-center gap-3.5">
+                        <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center shrink-0">
+                            <ExternalLink className="w-5 h-5 text-emerald-400" />
+                        </div>
+                        <div>
+                            <p className="text-2xl font-bold text-white">{thirdPartyCount}</p>
+                            <p className="text-xs text-emerald-300/70">3rd Party</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Bubbly Glassmorphic Card Grid */}
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                <SortableContext items={services.map(s => s.id)} strategy={rectSortingStrategy}>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {services.map((service) => (
-                            <SortableServiceCard
+                <SortableContext items={filteredServices.map(s => s.id)} strategy={rectSortingStrategy}>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        {filteredServices.map((service) => (
+                            <BubblyServiceCard
                                 key={service.id}
                                 service={service}
                                 onEdit={handleEditService}
@@ -709,6 +810,14 @@ export default function AdminConsole() {
             });
         }
     }, [settings]);
+
+    useEffect(() => {
+        // Always load maps config & township boundary so map features work on any tab
+        api.getMapsConfig().then(mapsConfig => {
+            if (mapsConfig.google_maps_api_key) setMapsApiKey(mapsConfig.google_maps_api_key);
+            if (mapsConfig.township_boundary) setTownshipBoundary(mapsConfig.township_boundary);
+        }).catch(err => console.warn("Maps config load warning:", err));
+    }, []);
 
     useEffect(() => {
         loadTabData();
@@ -3386,7 +3495,7 @@ export default function AdminConsole() {
             </Modal>
 
             {/* Add Service Modal */}
-            <Modal isOpen={showServiceModal} onClose={() => setShowServiceModal(false)} title="Add Service Category">
+            <Modal isOpen={showServiceModal} size="lg" panelClassName="bg-slate-900/95 border border-white/20 shadow-[0_20px_80px_rgba(0,0,0,0.6)] backdrop-blur-3xl rounded-3xl" headerClassName="bg-slate-800/90 border-b border-white/15 p-6" onClose={() => setShowServiceModal(false)} title="Add Service Category">
                 <form onSubmit={handleCreateService} className="space-y-4">
                     <Input
                         label="Service Name"
@@ -3416,6 +3525,9 @@ export default function AdminConsole() {
             {/* Service Routing Edit Modal */}
             <Modal
                 isOpen={showServiceEditModal}
+                size="xl"
+                panelClassName="bg-slate-900/95 border border-white/20 shadow-[0_20px_90px_rgba(0,0,0,0.7)] backdrop-blur-3xl rounded-3xl overflow-hidden"
+                headerClassName="bg-gradient-to-r from-slate-800 via-slate-850 to-slate-800 border-b border-white/15 p-6"
                 onClose={() => {
                     setShowServiceEditModal(false);
                     setEditingService(null);
@@ -3424,42 +3536,49 @@ export default function AdminConsole() {
             >
                 <form onSubmit={handleSaveServiceRouting} className="space-y-5 max-h-[70vh] overflow-y-auto pr-2">
                     {/* Routing Mode */}
-                    <div className="space-y-2">
-                        <label className="block text-sm font-medium text-white/70">Routing Mode</label>
-                        <div className="grid grid-cols-3 gap-2">
+                    <div className="space-y-2.5">
+                        <label className="block text-xs font-bold uppercase tracking-wider text-white/60">Routing Mode</label>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             {[
-                                { value: 'township', label: 'Municipality Handles', desc: 'We process this request' },
-                                { value: 'third_party', label: '3rd Party Only', desc: 'Block & redirect' },
-                                { value: 'road_based', label: 'Road-Based', desc: 'Route by address' },
-                            ].map(mode => (
-                                <button
-                                    type="button"
-                                    key={mode.value}
-                                    onClick={() => setServiceRouting(p => ({ ...p, routing_mode: mode.value as any }))}
-                                    className={`p-3 rounded-lg border text-left transition-colors ${serviceRouting.routing_mode === mode.value
-                                        ? 'bg-primary-500/20 border-primary-500 text-white'
-                                        : 'bg-white/5 border-white/10 text-white/70 hover:border-white/30'
-                                        }`}
-                                >
-                                    <div className="font-medium text-sm">{mode.label}</div>
-                                    <div className="text-xs text-white/50 mt-1">{mode.desc}</div>
-                                </button>
-                            ))}
+                                { value: 'township', label: 'Municipality Handles', desc: 'Processed by town staff', icon: Building2, color: 'text-emerald-400' },
+                                { value: 'third_party', label: '3rd Party Only', desc: 'Redirect to outside portal', icon: ExternalLink, color: 'text-purple-400' },
+                                { value: 'road_based', label: 'Road-Based Routing', desc: 'Route by GIS jurisdiction', icon: GitFork, color: 'text-amber-400' },
+                            ].map(mode => {
+                                const IconComponent = mode.icon;
+                                const isSelected = serviceRouting.routing_mode === mode.value;
+                                return (
+                                    <button
+                                        type="button"
+                                        key={mode.value}
+                                        onClick={() => setServiceRouting(p => ({ ...p, routing_mode: mode.value as any }))}
+                                        className={`p-4 rounded-2xl border text-left transition-all duration-200 ${isSelected
+                                            ? 'bg-gradient-to-br from-primary-500/20 via-indigo-500/15 to-purple-500/10 border-primary-400 text-white shadow-[0_0_25px_rgba(99,102,241,0.2)] ring-1 ring-primary-400/40'
+                                            : 'bg-white/[0.03] border-white/10 text-white/70 hover:border-white/25 hover:bg-white/[0.06]'
+                                            }`}
+                                    >
+                                        <div className="flex items-center gap-2.5 mb-1.5">
+                                            <IconComponent className={`w-4 h-4 ${isSelected ? 'text-primary-300' : mode.color}`} />
+                                            <div className="font-semibold text-sm text-white tracking-tight">{mode.label}</div>
+                                        </div>
+                                        <div className="text-xs text-white/50 leading-relaxed">{mode.desc}</div>
+                                    </button>
+                                );
+                            })}
                         </div>
                     </div>
 
                     {/* Icon Picker */}
-                    <div className="space-y-2">
-                        <label className="block text-sm font-medium text-white/70">Category Icon</label>
-                        <div className="grid grid-cols-10 gap-1 p-2 rounded-lg bg-white/5 border border-white/10 max-h-24 overflow-y-auto">
+                    <div className="space-y-2.5 p-4 rounded-3xl bg-slate-800/50 border border-white/20 shadow-xl backdrop-blur-xl">
+                        <label className="block text-xs font-bold uppercase tracking-wider text-white/70">Category Icon</label>
+                        <div className="grid grid-cols-10 gap-2 p-2.5 rounded-2xl bg-white/[0.04] border border-white/10 max-h-28 overflow-y-auto">
                             {ICON_LIBRARY.map(({ name, icon: IconComponent }) => (
                                 <button
                                     type="button"
                                     key={name}
                                     onClick={() => setServiceRouting(p => ({ ...p, icon: name }))}
-                                    className={`p-2 rounded transition-colors ${serviceRouting.icon === name
-                                        ? 'bg-primary-500 text-white'
-                                        : 'bg-white/5 text-white/60 hover:bg-white/10'
+                                    className={`p-2.5 rounded-2xl transition-all duration-200 flex items-center justify-center ${serviceRouting.icon === name
+                                        ? 'bg-gradient-to-r from-primary-500 to-indigo-600 text-white shadow-lg shadow-primary-500/40 scale-110 ring-2 ring-white/30'
+                                        : 'bg-white/5 text-white/60 hover:bg-white/15 hover:text-white'
                                         }`}
                                     title={name}
                                 >
@@ -3513,13 +3632,13 @@ export default function AdminConsole() {
 
                     {/* Township Mode Config */}
                     {serviceRouting.routing_mode === 'township' && (
-                        <div className="space-y-4 p-4 rounded-lg bg-green-500/10 border border-green-500/20">
-                            <h4 className="font-medium text-green-300 flex items-center gap-2">
-                                <Check className="w-4 h-4" /> Municipality Handles This
+                        <div className="space-y-4 p-5 rounded-3xl bg-gradient-to-br from-emerald-500/15 via-teal-900/10 to-slate-950/50 border border-emerald-500/30 shadow-xl">
+                            <h4 className="font-bold text-emerald-300 flex items-center gap-2 text-sm tracking-wide">
+                                <Check className="w-4 h-4 text-emerald-400" /> Municipality Handles Requests in House
                             </h4>
 
                             <div className="space-y-2">
-                                <label className="block text-sm font-medium text-white/70">Assign to Department</label>
+                                <label className="block text-xs font-bold uppercase tracking-wider text-white/70">Assign to Department</label>
                                 <select
                                     value={serviceRouting.assigned_department_id || ''}
                                     onChange={(e) => setServiceRouting(p => ({
@@ -3527,7 +3646,7 @@ export default function AdminConsole() {
                                         assigned_department_id: e.target.value ? parseInt(e.target.value) : null,
                                         routing_config: { ...p.routing_config, staff_ids: [] }
                                     }))}
-                                    className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
+                                    className="w-full h-11 rounded-2xl bg-white/[0.08] border border-white/20 text-white px-4 text-sm focus:outline-none focus:border-emerald-400"
                                     aria-label="Assign to department"
                                 >
                                     <option value="">Select department...</option>
@@ -3610,11 +3729,11 @@ export default function AdminConsole() {
 
                     {/* Third Party Config */}
                     {serviceRouting.routing_mode === 'third_party' && (
-                        <div className="space-y-4 p-4 rounded-lg bg-red-500/10 border border-red-500/20">
-                            <h4 className="font-medium text-red-300 flex items-center gap-2">
-                                <AlertTriangle className="w-4 h-4" /> Third Party Only (Blocks Submission)
+                        <div className="space-y-4 p-5 rounded-3xl bg-gradient-to-br from-purple-500/15 via-indigo-900/10 to-slate-950/50 border border-purple-500/30 shadow-xl">
+                            <h4 className="font-bold text-purple-300 flex items-center gap-2 text-sm tracking-wide">
+                                <AlertTriangle className="w-4 h-4 text-purple-400" /> Third Party Only (Blocks Portal Submission)
                             </h4>
-                            <p className="text-sm text-white/50">Users cannot submit requests. They see message + contacts.</p>
+                            <p className="text-xs text-white/60">Residents cannot submit requests directly in portal; they are provided redirection links & contacts.</p>
 
                             <div className="space-y-2">
                                 <label className="block text-sm font-medium text-white/70">Message to Display</label>
@@ -3680,14 +3799,14 @@ export default function AdminConsole() {
 
                             {/* Default Handler */}
                             <div className="space-y-2">
-                                <label className="block text-sm font-medium text-white/70">Default Handler</label>
+                                <label className="block text-xs font-bold uppercase tracking-wider text-white/70">Default Handler</label>
                                 <select
                                     value={serviceRouting.routing_config.default_handler}
                                     onChange={(e) => setServiceRouting(p => ({
                                         ...p,
                                         routing_config: { ...p.routing_config, default_handler: e.target.value as any }
                                     }))}
-                                    className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
+                                    className="w-full h-11 rounded-2xl bg-white/[0.08] border border-white/20 text-white px-4 text-sm focus:outline-none focus:border-amber-400"
                                     aria-label="Default handler"
                                 >
                                     <option value="township">Municipality handles by default</option>
@@ -3785,48 +3904,9 @@ export default function AdminConsole() {
                                 </div>
                             )}
 
-                            {/* Conditional Road Lists */}
-                            {serviceRouting.routing_config.default_handler === 'township' ? (
-                                <RoadListInput
-                                    id="routing-exclusion-list"
-                                    label="Roads handled by another agency"
-                                    tone="danger"
-                                    hint="Reports on these roads are redirected instead of filed."
-                                    value={serviceRouting.routing_config.exclusion_list}
-                                    onChange={(value) => setServiceRouting(p => ({
-                                        ...p,
-                                        routing_config: { ...p.routing_config, exclusion_list: value }
-                                    }))}
-                                />
-                            ) : (
-                                <RoadListInput
-                                    id="routing-inclusion-list"
-                                    label="Roads this town maintains"
-                                    tone="success"
-                                    hint="These always stay with the town, even where another agency claims the road."
-                                    value={serviceRouting.routing_config.inclusion_list}
-                                    onChange={(value) => setServiceRouting(p => ({
-                                        ...p,
-                                        routing_config: { ...p.routing_config, inclusion_list: value }
-                                    }))}
-                                />
-                            )}
 
-                            <RoadCorridorMap
-                                roads={
-                                    serviceRouting.routing_config.default_handler === 'township'
-                                        ? (typeof serviceRouting.routing_config.exclusion_list === 'string' ? serviceRouting.routing_config.exclusion_list : (Array.isArray(serviceRouting.routing_config.exclusion_list) ? (serviceRouting.routing_config.exclusion_list as string[]).join(', ') : ''))
-                                        : (typeof serviceRouting.routing_config.inclusion_list === 'string' ? serviceRouting.routing_config.inclusion_list : (Array.isArray(serviceRouting.routing_config.inclusion_list) ? (serviceRouting.routing_config.inclusion_list as string[]).join(', ') : ''))
-                                }
-                                townshipBoundary={townshipBoundary}
-                                excludedFeatureIds={excludedSegments}
-                                onExcludedChange={setExcludedSegments}
-                                trims={segmentTrims}
-                                onTrimsChange={setSegmentTrims}
-                                corridorMetres={corridorMetres}
-                                onCorridorMetresChange={setCorridorMetres}
-                                apiKey={mapsApiKey}
-                            />
+
+
 
                             {routingIssues.length > 0 && (
                                 <ul className="space-y-2" aria-label="Routing configuration issues">
@@ -3851,20 +3931,165 @@ export default function AdminConsole() {
                                 </ul>
                             )}
 
-                            {/* Third Party Redirect Message */}
-                            <div className="space-y-2 pt-2 border-t border-white/10">
-                                <label className="block text-sm font-medium text-white/70">Third Party Redirect Message</label>
-                                <textarea
-                                    rows={2}
-                                    placeholder="This road is maintained by the County..."
-                                    value={serviceRouting.routing_config.third_party_message}
-                                    onChange={(e) => setServiceRouting(p => ({
-                                        ...p,
-                                        routing_config: { ...p.routing_config, third_party_message: e.target.value }
-                                    }))}
-                                    className="w-full rounded-lg bg-white/10 border border-white/20 text-white px-3 py-2"
-                                />
+                            {/* 3rd Party Agencies & Roads */}
+                            <div className="space-y-4 pt-4 border-t border-white/10">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                    <div>
+                                        <label className="block text-xs font-bold uppercase tracking-wider text-white">3rd Party Agencies & Contacts</label>
+                                        <p className="text-xs text-white/50">Add 3rd party agencies (e.g. PennDOT, Mercer County DPW) with their contact info & road lists.</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setServiceRouting(p => ({
+                                            ...p,
+                                            routing_config: {
+                                                ...p.routing_config,
+                                                third_party_contacts: [
+                                                    ...(p.routing_config.third_party_contacts || []),
+                                                    { name: '', phone: '', email: '', url: '', message: '', road_input: '', roads: [] }
+                                                ]
+                                            }
+                                        }))}
+                                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500/20 to-orange-500/20 border border-amber-500/30 text-xs font-bold text-amber-300 hover:bg-amber-500/30 transition-all shadow-md shrink-0"
+                                    >
+                                        <Plus className="w-4 h-4" /> Add 3rd Party Agency
+                                    </button>
+                                </div>
+
+                                {(serviceRouting.routing_config.third_party_contacts || []).map((agency: any, idx: number) => {
+                                    const roadsList: string[] = Array.isArray(agency.roads)
+                                        ? agency.roads
+                                        : (typeof agency.road_list === 'string' ? agency.road_list.split(',').map((r: string) => r.trim()).filter(Boolean) : []);
+
+                                    return (
+                                        <div key={idx} className="p-5 rounded-3xl bg-white/[0.04] border border-white/15 space-y-4 shadow-xl">
+                                            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                                                <span className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-2">
+                                                    <Building2 className="w-4 h-4 text-amber-400" /> Agency #{idx + 1}: {agency.name || 'Unnamed Agency'}
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    aria-label="Remove agency"
+                                                    onClick={() => {
+                                                        const updated = (serviceRouting.routing_config.third_party_contacts || []).filter((_: any, i: number) => i !== idx);
+                                                        setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, third_party_contacts: updated } }));
+                                                    }}
+                                                    className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors flex items-center gap-1 text-xs"
+                                                >
+                                                    <Trash2 className="w-4 h-4" /> Remove Agency
+                                                </button>
+                                            </div>
+
+                                            {/* Agency Name & Contact Info */}
+                                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                                <div>
+                                                    <label className="block text-[11px] font-semibold text-white/70 mb-1">Agency Name</label>
+                                                    <input
+                                                        placeholder="e.g. PennDOT / State Highways"
+                                                        value={agency.name || ''}
+                                                        onChange={(e) => {
+                                                            const updated = [...(serviceRouting.routing_config.third_party_contacts || [])];
+                                                            updated[idx] = { ...updated[idx], name: e.target.value };
+                                                            setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, third_party_contacts: updated } }));
+                                                        }}
+                                                        className="w-full h-9 rounded-xl bg-white/10 border border-white/20 text-white px-3 text-xs focus:outline-none focus:border-amber-400"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[11px] font-semibold text-white/70 mb-1">Phone Number</label>
+                                                    <input
+                                                        placeholder="e.g. 1-800-FIX-ROAD"
+                                                        value={agency.phone || ''}
+                                                        onChange={(e) => {
+                                                            const updated = [...(serviceRouting.routing_config.third_party_contacts || [])];
+                                                            updated[idx] = { ...updated[idx], phone: e.target.value };
+                                                            setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, third_party_contacts: updated } }));
+                                                        }}
+                                                        className="w-full h-9 rounded-xl bg-white/10 border border-white/20 text-white px-3 text-xs focus:outline-none focus:border-amber-400"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[11px] font-semibold text-white/70 mb-1">Email Address</label>
+                                                    <input
+                                                        placeholder="e.g. customercare@penndot.gov"
+                                                        value={agency.email || ''}
+                                                        onChange={(e) => {
+                                                            const updated = [...(serviceRouting.routing_config.third_party_contacts || [])];
+                                                            updated[idx] = { ...updated[idx], email: e.target.value };
+                                                            setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, third_party_contacts: updated } }));
+                                                        }}
+                                                        className="w-full h-9 rounded-xl bg-white/10 border border-white/20 text-white px-3 text-xs focus:outline-none focus:border-amber-400"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                <div>
+                                                    <label className="block text-[11px] font-semibold text-white/70 mb-1">Website / Portal URL</label>
+                                                    <input
+                                                        placeholder="e.g. https://customercare.penndot.gov"
+                                                        value={agency.url || ''}
+                                                        onChange={(e) => {
+                                                            const updated = [...(serviceRouting.routing_config.third_party_contacts || [])];
+                                                            updated[idx] = { ...updated[idx], url: e.target.value };
+                                                            setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, third_party_contacts: updated } }));
+                                                        }}
+                                                        className="w-full h-9 rounded-xl bg-white/10 border border-white/20 text-white px-3 text-xs focus:outline-none focus:border-amber-400"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[11px] font-semibold text-white/70 mb-1">Custom Redirect Message (Optional)</label>
+                                                    <input
+                                                        placeholder="e.g. State-maintained routes require filing directly with PennDOT."
+                                                        value={agency.message || ''}
+                                                        onChange={(e) => {
+                                                            const updated = [...(serviceRouting.routing_config.third_party_contacts || [])];
+                                                            updated[idx] = { ...updated[idx], message: e.target.value };
+                                                            setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, third_party_contacts: updated } }));
+                                                        }}
+                                                        className="w-full h-9 rounded-xl bg-white/10 border border-white/20 text-white px-3 text-xs focus:outline-none focus:border-amber-400"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            {/* Exact RoadListInput Component From Screenshot for this Agency */}
+                                            <div className="pt-2">
+                                                <RoadListInput
+                                                    id={`agency-roads-${idx}`}
+                                                    label={`Roads handled by ${agency.name || 'this agency'}`}
+                                                    tone="danger"
+                                                    hint={`Reports on these roads are redirected to ${agency.name || 'this agency'} instead of filed.`}
+                                                    value={agency.road_list || ''}
+                                                    onChange={(val) => {
+                                                        const updated = [...(serviceRouting.routing_config.third_party_contacts || [])];
+                                                        updated[idx] = { ...updated[idx], road_list: val };
+                                                        
+                                                        // Sync combined road lists into exclusion_list for GIS map matching
+                                                        const allRoads = updated.map((a: any) => a.road_list || '').filter(Boolean).join(', ');
+                                                        setServiceRouting(p => ({
+                                                            ...p,
+                                                            routing_config: {
+                                                                ...p.routing_config,
+                                                                third_party_contacts: updated,
+                                                                exclusion_list: allRoads || p.routing_config.exclusion_list
+                                                            }
+                                                        }));
+                                                    }}
+                                                />
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+
+                                {(serviceRouting.routing_config.third_party_contacts || []).length === 0 && (
+                                    <div className="p-5 rounded-3xl bg-white/[0.02] border border-dashed border-white/15 text-center text-xs text-white/40">
+                                        No 3rd party agencies added yet. Click "+ Add 3rd Party Agency" above to list agencies like PennDOT or Mercer County DPW.
+                                    </div>
+                                )}
                             </div>
+
+                            {/* Default Fallback Redirect Message */}
+
                         </div>
                     )}
 
@@ -4329,7 +4554,7 @@ export default function AdminConsole() {
                                     </p>
                                 ) : (
                                     <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto p-3 rounded-lg bg-white/5 border border-white/10">
-                                        {services.map((service) => (
+                                        {filteredServices.map((service) => (
                                             <label
                                                 key={service.service_code}
                                                 className="flex items-center gap-2 text-sm text-white/70 hover:text-white cursor-pointer p-2 rounded hover:bg-white/10"
