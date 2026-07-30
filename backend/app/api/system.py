@@ -559,6 +559,8 @@ async def get_cloud_profile(
     from app.services.secret_manager import get_secret, _secrets_provider
     from app.core.config import get_settings as _app_settings
     from app.core.encryption import _kms_provider
+    from app.services.map_provider import MAP_CATALOG, MAP_PROVIDER_KEY, normalize_provider
+    maps_provider = normalize_provider(await get_secret(MAP_PROVIDER_KEY))
     ai = (await get_secret("AI_PROVIDER")) or "vertex"
     translation = (await get_secret("TRANSLATION_PROVIDER")) or "google"
     identity = (await get_secret("IDENTITY_PROVIDER")) or "auth0"
@@ -573,7 +575,17 @@ async def get_cloud_profile(
             "ai": ai, "translation": translation, "secrets": secrets, "kms": kms,
             "identity": identity, "email": email, "sms": sms,
         },
-        "maps": {"provider": "google", "locked": True, "label": "Google Maps (required)"},
+        # Maps was pinned to Google when this endpoint was written. It has since
+        # become a switchable capability like the others -- /maps/catalog offers
+        # Google, Esri, Azure and Apple, and _PROVIDER_SELECT_KEY routes saves to
+        # MAP_PROVIDER -- so reporting it as locked contradicted the card sitting
+        # directly beneath the banner that showed it.
+        "maps": {
+            "provider": maps_provider,
+            "locked": False,
+            "label": MAP_CATALOG.get(maps_provider, {}).get("name")
+                     or maps_provider.replace("_", " ").title(),
+        },
         "profiles": [{"id": k, **v} for k, v in CLOUD_PROFILES.items()],
     }
 

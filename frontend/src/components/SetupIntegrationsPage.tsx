@@ -56,6 +56,8 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     // Setup Instructions chooser: the guide shows ONLY the steps for the cloud
     // and optional features the admin actually wants to set up.
     const [setupCloud, setSetupCloud] = useState<'google' | 'azure' | 'aws'>('google');
+    const [setupIdp, setSetupIdp] = useState<'auth0' | 'entra' | 'okta' | 'oidc'>('auth0');
+    const [setupMaps, setSetupMaps] = useState<'google' | 'esri' | 'azure' | 'apple'>('google');
     const [wantedFeatures, setWantedFeatures] = useState<Set<string>>(
         new Set(['ai', 'secrets', 'email'])
     );
@@ -146,10 +148,10 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     // (Google Cloud, DB Backups) are excluded — the state handles them, so
     // counting them would leave progress permanently "incomplete".
     const setupSteps = [
-        { label: 'Staff sign-in', done: !!signInConfigured, required: true },
+        { label: 'Staff sign-in', done: !!signInConfigured, required: false },
         { label: 'Email', done: !!smtpConfigured, required: false },
         ...(managedMode ? [] : [{ label: 'Google Cloud', done: !!gcpConfigured, required: false }]),
-        { label: 'Map provider', done: !!mapsConfigured, required: true },
+        { label: 'Map provider', done: !!mapsConfigured, required: false },
         { label: 'SMS Alerts', done: smsConfigured, required: false },
         ...(managedMode ? [] : [{ label: 'DB Backups', done: !!backupConfigured, required: false }]),
     ];
@@ -346,7 +348,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         <BookOpen className="w-5 h-5 text-indigo-400" />
                         <div className="text-left">
                             <h3 className="font-semibold text-white">Setup Instructions</h3>
-                            <p className="text-white/50 text-xs">Step-by-step, in plain language — answer two questions and see only your steps</p>
+                            <p className="text-white/50 text-xs">Step-by-step, in plain language — answer a few questions and see only your steps</p>
                         </div>
                     </div>
                     {expandedGuide === 'master' ? <ChevronUp className="w-5 h-5 text-white/50" /> : <ChevronDown className="w-5 h-5 text-white/50" />}
@@ -384,8 +386,8 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 </div>
 
                                 <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-                                    <p className="text-sm font-semibold text-white mb-0.5">Answer two questions and we will hide the rest</p>
-                                    <p className="text-white/50 text-xs mb-3">Sign-in and maps are always shown because they are required.</p>
+                                    <p className="text-sm font-semibold text-white mb-0.5">Answer a few questions and we will hide the rest</p>
+                                    <p className="text-white/50 text-xs mb-3">Sign-in and maps are always shown — a town needs both before it can take a report.</p>
 
                                     <label className="text-[11px] uppercase tracking-wider text-white/50 font-semibold">1. Which company hosts your town's services?</label>
                                     <p className="text-white/40 text-[11px] mt-0.5 mb-1">Most towns pick Google. If your staff already use Microsoft 365, Microsoft Azure may be easier. If you genuinely do not know, choose Google — you can change this later.</p>
@@ -398,7 +400,29 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                         ))}
                                     </div>
 
-                                    <label className="text-[11px] uppercase tracking-wider text-white/50 font-semibold">2. Which extras do you want? (all optional)</label>
+                                    <label className="text-[11px] uppercase tracking-wider text-white/50 font-semibold">2. How will staff sign in?</label>
+                                    <p className="text-white/40 text-[11px] mt-0.5 mb-1">If your staff already sign in to Microsoft 365, Entra is less work than standing up a new service. Auth0 is the fastest from nothing.</p>
+                                    <div className="flex flex-wrap gap-2 mt-1.5 mb-4">
+                                        {(['auth0', 'entra', 'okta', 'oidc'] as const).map(c => (
+                                            <button key={c} type="button" onClick={() => setSetupIdp(c)}
+                                                className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${setupIdp === c ? 'bg-primary-500/20 border-primary-400/50 text-white' : 'bg-white/5 border-white/10 text-white/60 hover:text-white'}`}>
+                                                {{ auth0: 'Auth0', entra: 'Microsoft Entra ID', okta: 'Okta', oidc: 'Other (OIDC)' }[c]}
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                    <label className="text-[11px] uppercase tracking-wider text-white/50 font-semibold">3. Which map provider?</label>
+                                    <p className="text-white/40 text-[11px] mt-0.5 mb-1">Google is the quickest to set up. Pick Esri if your county already publishes an ArcGIS basemap you are entitled to use.</p>
+                                    <div className="flex flex-wrap gap-2 mt-1.5 mb-4">
+                                        {(['google', 'esri', 'azure', 'apple'] as const).map(c => (
+                                            <button key={c} type="button" onClick={() => setSetupMaps(c)}
+                                                className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${setupMaps === c ? 'bg-primary-500/20 border-primary-400/50 text-white' : 'bg-white/5 border-white/10 text-white/60 hover:text-white'}`}>
+                                                {{ google: 'Google Maps', esri: 'Esri / ArcGIS', azure: 'Azure Maps', apple: 'Apple Maps' }[c]}
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                    <label className="text-[11px] uppercase tracking-wider text-white/50 font-semibold">4. Which extras do you want? (all optional)</label>
                                     <p className="text-white/40 text-[11px] mt-0.5 mb-1">Tick anything that sounds useful — each one adds its own short guide below with what it does and what it costs. Untick it to hide the guide again.</p>
                                     <div className="flex flex-wrap gap-2 mt-1.5">
                                         {([
@@ -416,10 +440,11 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 </div>
 
                                 {/* ── 1. Staff sign-in (always required) ── */}
-                                <Guide tone="orange" icon={Key} title="Staff sign-in (required)" done={signInConfigured}
-                                    what={<>Residents never sign in — this is only for the clerks and staff who work the reports. Rather than Pinpoint storing staff passwords itself, an outside sign-in service handles that, which is what lets you require two-factor and switch off an ex-employee in one place. These steps use <strong className="text-white/70">Auth0</strong> because it is the fastest if your town does not already have something. If you already use Microsoft 365 or Okta, skip to step 7 and use that instead — it will be less work, not more.</>}
-                                    time="About 20 minutes, and you only ever do it once"
-                                    cost="Free for up to 25,000 monthly logins — far more than a town's staff will use">
+                                <Guide tone="orange" icon={Key} title="Staff sign-in" done={signInConfigured}
+                                    what={<>Residents never sign in — this is only for the clerks and staff who work the reports. Rather than Pinpoint storing staff passwords itself, an outside sign-in service handles that, which is what lets you require two-factor and switch off an ex-employee in one place. The steps below follow whichever service you picked above.</>}
+                                    time={setupIdp === 'auth0' ? "About 20 minutes, and you only ever do it once" : "About 10 minutes if you already administer it"}
+                                    cost={setupIdp === 'auth0' ? "Auth0 is free up to 25,000 monthly logins — far more than a town's staff will use" : "Usually already covered by the licence your town has for it"}>
+                                    {setupIdp === 'auth0' && <>
                                     <InstructionStep num={1}
                                         check={<>the Auth0 dashboard, with your town's name in the top-left corner.</>}
                                     >Make the account. Go to <a href="https://auth0.com" target="_blank" rel="noopener noreferrer" className="text-orange-300 underline underline-offset-2">auth0.com</a> and sign up with a <strong className="text-white/90">shared town email address</strong>, not your personal one — whoever replaces you will need to get in. When it asks for a <Term means="which part of the world your staff logins are stored in">region</Term>, pick the one closest to you. <strong className="text-white/90">This cannot be changed later</strong>, so if your town or state has a rule about keeping data in the US, choose a US region now.</InstructionStep>
@@ -451,6 +476,26 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     <InstructionStep num={7}>
                                         <strong className="text-white/90">The shortcut, if it applies to you.</strong> Does your town already sign in to Microsoft 365 / Office 365, or to Okta? Then you do not need Auth0 at all — skip steps 1 to 4, and on the <strong className="text-white/90">Staff Sign-In</strong> card choose <strong className="text-white/90">Microsoft Entra ID</strong> (that is what Microsoft 365 sign-in is called) or <strong className="text-white/90">Okta</strong>. Your IT provider can give you the three values it asks for. This is usually less work, and staff get to use the password they already have. The web addresses in step 3 are the same whichever you choose.
                                     </InstructionStep>
+                                    </>}
+                                    {setupIdp === 'entra' && <>
+                                        <InstructionStep num={1} check={<>the app listed under App registrations, with a Directory (tenant) ID and Application (client) ID on its Overview page.</>}>In the <strong className="text-white/90">Microsoft Entra admin centre</strong>, go to <strong className="text-white/90">App registrations → New registration</strong>. Name it <em className="text-white/60">"{`{township} 311`}"</em>, and for supported account types choose the option limited to your own organisation.</InstructionStep>
+                                        <InstructionStep num={2}>Set the redirect URI. Platform <strong className="text-white/90">Web</strong>, and paste exactly: <code className="bg-black/30 px-1.5 py-0.5 rounded text-orange-300 text-xs break-all">{window.location.origin}/api/auth/callback</code>
+                                            <button onClick={() => copyToClipboard(`${window.location.origin}/api/auth/callback`, 'entracb')} aria-label="Copy to clipboard" className="ml-1 inline-flex text-white/40 hover:text-white/70 transition-colors">{copyFeedback === 'entracb' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}</button></InstructionStep>
+                                        <InstructionStep num={3} check={<>the secret <strong className="text-white/80">Value</strong> — not the Secret ID. It is shown once and cannot be retrieved later.</>}>Under <strong className="text-white/90">Certificates &amp; secrets → New client secret</strong>, create one and copy its Value immediately.</InstructionStep>
+                                        <InstructionStep num={4}>Paste into <strong className="text-white/90">Service Providers → Staff Sign-In → Microsoft Entra ID</strong>: the <strong className="text-white/90">Directory (tenant) ID</strong>, <strong className="text-white/90">Application (client) ID</strong> and the secret Value. <span className="text-white/45">Government tenants also set the Authority host to <code className="bg-black/30 px-1 rounded">login.microsoftonline.us</code>.</span> Then press Save &amp; Test.</InstructionStep>
+                                    </>}
+                                    {setupIdp === 'okta' && <>
+                                        <InstructionStep num={1} check={<>a Client ID and Client secret on the app's General tab.</>}>In the Okta admin console, <strong className="text-white/90">Applications → Create App Integration</strong>. Choose <strong className="text-white/90">OIDC — OpenID Connect</strong> and <strong className="text-white/90">Web Application</strong>.</InstructionStep>
+                                        <InstructionStep num={2}>Set the sign-in redirect URI to <code className="bg-black/30 px-1.5 py-0.5 rounded text-orange-300 text-xs break-all">{window.location.origin}/api/auth/callback</code>
+                                            <button onClick={() => copyToClipboard(`${window.location.origin}/api/auth/callback`, 'oktacb')} aria-label="Copy to clipboard" className="ml-1 inline-flex text-white/40 hover:text-white/70 transition-colors">{copyFeedback === 'oktacb' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}</button> and the sign-out URI to <code className="bg-black/30 px-1.5 py-0.5 rounded text-orange-300 text-xs break-all">{window.location.origin}</code>. Assign the app to the staff group who should get in.</InstructionStep>
+                                        <InstructionStep num={3}>Paste into <strong className="text-white/90">Service Providers → Staff Sign-In → Okta</strong>: the <strong className="text-white/90">Issuer URL</strong> (your Okta domain, e.g. <code className="bg-black/30 px-1 rounded">https://your-org.okta.com</code>), the Client ID and the Client Secret. Then Save &amp; Test.</InstructionStep>
+                                    </>}
+                                    {setupIdp === 'oidc' && <>
+                                        <InstructionStep num={1}>Any provider speaking OpenID Connect works. In its admin console register a <strong className="text-white/90">confidential web application</strong> (one that can hold a secret), with the redirect URI <code className="bg-black/30 px-1.5 py-0.5 rounded text-orange-300 text-xs break-all">{window.location.origin}/api/auth/callback</code>
+                                            <button onClick={() => copyToClipboard(`${window.location.origin}/api/auth/callback`, 'oidccb')} aria-label="Copy to clipboard" className="ml-1 inline-flex text-white/40 hover:text-white/70 transition-colors">{copyFeedback === 'oidccb' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}</button></InstructionStep>
+                                        <InstructionStep num={2}>Paste the <strong className="text-white/90">Issuer URL</strong>, Client ID and Client Secret into <strong className="text-white/90">Service Providers → Staff Sign-In → Generic OIDC</strong>, then Save &amp; Test.</InstructionStep>
+                                        <Trouble>Enter the issuer itself, not the discovery document. If the docs show a URL ending in <code className="bg-black/30 px-1 rounded">/.well-known/openid-configuration</code>, drop that part — Pinpoint appends it. Pasting the full discovery URL is the single most common mistake here, and the field will warn you about it.</Trouble>
+                                    </>}
                                 </Guide>
 
                                 {/* ── 2. Cloud foundation (only if a cloud-backed feature is wanted) ── */}
@@ -563,10 +608,15 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 </Guide>
 
                                 {/* ── Maps (always) ── */}
-                                <Guide tone="blue" icon={MapPin} title="Maps (required)" done={mapsConfigured}
-                                    what={<>This is the one thing every town needs. Without it a resident cannot search for their address or drop a pin, so reports arrive with no location. These steps cover <strong className="text-white/70">Google Maps</strong>, which is the quickest; Esri/ArcGIS, Apple and Azure are also available on the Maps Provider card if your county already publishes its own maps.</>}
-                                    time="About 15 minutes"
-                                    cost="Google gives $200 of free map use every month, which is far more than a town of any size will reach. You still have to put a card on file — Google will not turn the maps on without one.">
+                                <Guide tone="blue" icon={MapPin} title="Maps" done={mapsConfigured}
+                                    what={<>Every town needs one. Without it a resident cannot search for their address or drop a pin, so reports arrive with no location. Any of the four providers works — the steps below follow the one you picked above.</>}
+                                    time={setupMaps === 'google' ? "About 15 minutes" : "About 10 minutes"}
+                                    cost={setupMaps === 'google'
+                                        ? "Google gives $200 of free map use every month, far more than a town of any size will reach. You still have to put a card on file — Google will not turn the maps on without one."
+                                        : setupMaps === 'esri' ? "Often already covered by a county or state ArcGIS agreement — check before buying."
+                                        : setupMaps === 'apple' ? "Needs a paid Apple Developer account (about $99/year)."
+                                        : "Pay-as-you-go, with a free tier that covers a town's volume."}>
+                                    {setupMaps === 'google' && <>
                                     <InstructionStep num={1}
                                         check={<>a blue "API Enabled" banner on each of the three, and a billing account listed under Billing.</>}
                                     >Turn on the three map services. Go to <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">Google Cloud</a> and sign in with a <strong className="text-white/90">shared town account</strong>. If you already made a project in an earlier step, use that one. Go to <strong className="text-white/90">APIs &amp; Services → Library</strong>, search for each of these and click Enable on all three: <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Maps JavaScript API</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Geocoding API</code>, <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">Places API</code>. Then go to <strong className="text-white/90">Billing</strong> and attach a payment method.</InstructionStep>
@@ -582,6 +632,22 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                         check={<>the address box offering suggestions as you type, and a pin appearing when you click the map.</>}
                                     >Paste the key into Pinpoint and check it. Put it in the <strong className="text-white/90">Maps Provider</strong> card in <strong className="text-white/90">Service Providers</strong> at the bottom of this page, then press <strong className="text-white/90">Save &amp; Test</strong>. Now open the resident portal in another tab and try filing a test report. <span className="text-white/45">(The <strong className="text-white/70">Map ID</strong> box is optional — it only changes how the map looks. Leave it empty.)</span></InstructionStep>
                                     <Trouble>Changes to a Google key can take up to five minutes to take effect. If the map is still grey straight after saving, wait a few minutes and reload before changing anything else.</Trouble>
+                                    </>}
+                                    {setupMaps === 'esri' && <>
+                                        <InstructionStep num={1} check={<>an API key listed in your ArcGIS developer dashboard.</>}>Sign in to <strong className="text-white/90">ArcGIS Location Platform</strong> with your organisation's account, and create an <strong className="text-white/90">API key</strong>. Scope it to the basemap and geocoding services you are entitled to use.</InstructionStep>
+                                        <InstructionStep num={2}>Paste it into <strong className="text-white/90">Service Providers → Maps Provider → Esri / ArcGIS</strong> as the <strong className="text-white/90">ArcGIS API key</strong>, then Save &amp; Test. <span className="text-white/45">Basemap ID and Address locator URL are optional — set them only if your county publishes its own, which is the usual reason to choose Esri.</span></InstructionStep>
+                                        <Trouble>Check with whoever administers your county or state ArcGIS agreement before buying anything. Many New Jersey towns are already covered by a county licence, and geocoding against the county's own locator is more accurate for local addresses than a national one.</Trouble>
+                                    </>}
+                                    {setupMaps === 'azure' && <>
+                                        <InstructionStep num={1} check={<>two keys listed under Authentication; either one works.</>}>In the Azure portal create an <strong className="text-white/90">Azure Maps</strong> account, then open <strong className="text-white/90">Authentication</strong> and copy the <strong className="text-white/90">Primary Key</strong>.</InstructionStep>
+                                        <InstructionStep num={2}>Paste it into <strong className="text-white/90">Service Providers → Maps Provider → Azure Maps</strong> as the <strong className="text-white/90">Subscription key</strong>, then Save &amp; Test.</InstructionStep>
+                                    </>}
+                                    {setupMaps === 'apple' && <>
+                                        <InstructionStep num={1} check={<>a downloaded <code className="bg-black/30 px-1 rounded">.p8</code> file. It downloads once and cannot be downloaded again.</>}>This needs a paid <strong className="text-white/90">Apple Developer</strong> account. In the developer portal create a <strong className="text-white/90">MapKit JS</strong> key and download it.</InstructionStep>
+                                        <InstructionStep num={2}>Collect three values: your <strong className="text-white/90">Team ID</strong> (membership details), the <strong className="text-white/90">Key ID</strong> shown next to the key, and the contents of the <code className="bg-black/30 px-1 rounded">.p8</code> file.</InstructionStep>
+                                        <InstructionStep num={3}>Enter all three under <strong className="text-white/90">Service Providers → Maps Provider → Apple Maps</strong>, then Save &amp; Test.</InstructionStep>
+                                        <Trouble>Paste the whole <code className="bg-black/30 px-1 rounded">.p8</code> file including the <code className="bg-black/30 px-1 rounded">-----BEGIN PRIVATE KEY-----</code> and <code className="bg-black/30 px-1 rounded">-----END PRIVATE KEY-----</code> lines. Pasting only the middle block is the usual mistake, and the field will tell you if you do.</Trouble>
+                                    </>}
                                 </Guide>
 
                                 {/* ── GovTech connector ── */}

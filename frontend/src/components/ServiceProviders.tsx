@@ -104,7 +104,14 @@ function HealthPill({ health }: { health?: ConnectorHealth }) {
     );
 }
 
-export interface CapStatus { providerName?: string; onDefault?: boolean; verified?: boolean | null }
+export interface CapStatus {
+    providerName?: string;
+    onDefault?: boolean;
+    verified?: boolean | null;
+    /** Whether the in-use provider has its credentials stored. undefined means
+     *  the endpoint did not say, which is not the same as no. */
+    configured?: boolean;
+}
 
 function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus, health }: {
     cap: Capability; title: string; blurb: string; icon: typeof Sparkles; delay: number;
@@ -143,6 +150,10 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             onStatus(cap, {
                 providerName: cat.providers.find(p => p.provider === cat.current_provider)?.name || cat.current_provider,
                 onDefault: !cat.default_provider || cat.current_provider === cat.default_provider,
+                // The summary above the cards needs this: "which provider is
+                // picked" is not what an admin is trying to find out, "which
+                // ones still need a key" is.
+                configured: cat.configured?.[cat.current_provider] === true,
             });
         } catch (e: any) {
             setError(e?.message || 'Failed to load providers');
@@ -575,11 +586,11 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                     <button
                         onClick={handleSave}
                         disabled={busy !== null}
-                        className="shimmer-sweep inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-primary-400 to-primary-600 hover:from-primary-300 hover:to-primary-500 border border-primary-300/40 shadow-lg shadow-primary-900/60 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                        className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white bg-primary-500 hover:bg-primary-400 border border-primary-400/50 transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
                     >
                         {busy === 'save'
                             ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</>
-                            : <><Sparkles className="w-4 h-4" /> Save &amp; Test</>}
+                            : <>Save &amp; Test</>}
                     </button>
                     <button
                         onClick={handleTest}
@@ -782,7 +793,8 @@ function CloudEnvironment({ onApplied }: { onApplied: () => void }) {
 
             <div className="mt-3 pt-3 border-t border-white/10 flex items-center gap-1.5 text-[11px] text-white/60">
                 <MapPin className="w-3 h-3 text-primary-300/70 shrink-0" aria-hidden="true" />
-                Mapping always uses <span className="text-white/60">{state.maps.label}</span> — it isn't affected by the cloud choice.
+                Mapping is set separately — currently{' '}
+                <span className="text-white/80 font-medium">{state.maps.label}</span>. The cloud choice does not change it.
             </div>
         </motion.div>
     );
@@ -818,6 +830,7 @@ export default function ServiceProviders() {
 
     const loaded = CAPS.filter(c => statuses[c.key]);
     const onDefaultCount = (loaded || []).filter(c => statuses[c.key]?.onDefault).length;
+    const configuredCount = (loaded || []).filter(c => statuses[c.key]?.configured).length;
     const verifiedCount = (loaded || []).filter(c => statuses[c.key]?.verified === true).length;
     const failedCount = (loaded || []).filter(c => statuses[c.key]?.verified === false).length;
 
@@ -827,7 +840,7 @@ export default function ServiceProviders() {
             icon={Sparkles}
             accent="primary"
             defaultOpen={true}
-            subtitle="AI, translation, sign-in & cloud environment — defaults work out of the box"
+            subtitle="AI, translation, sign-in & cloud environment — pick a provider, then add its key"
             trailing={
                 <button
                     onClick={() => setRecheckToken(t => t + 1)}
@@ -838,14 +851,17 @@ export default function ServiceProviders() {
             }
         >
             <p className="text-white/60 text-sm max-w-2xl leading-relaxed mb-1">
-                Choose which cloud powers each capability. Every option is pre-built — pick a provider, paste your key, and test.
-                Google &amp; Auth0 are the defaults, so you can leave these untouched and everything just works.
+                Choose which cloud powers each capability. Every option is pre-built — pick a provider, paste its key, and test.
+                Google and Auth0 are already selected, so for most towns the only step left is adding the credentials.
             </p>
             {loaded.length > 0 && (
                 <div className="text-[11px] text-white/55 flex flex-wrap items-center gap-x-3 gap-y-0.5 mb-4">
-                    <span>{onDefaultCount === loaded.length
-                        ? 'All on recommended defaults'
-                        : `${loaded.length - onDefaultCount} customized · ${onDefaultCount} on defaults`}</span>
+                    <span>{configuredCount === loaded.length
+                        ? `All ${loaded.length} have credentials`
+                        : `${loaded.length - configuredCount} of ${loaded.length} still need credentials`}</span>
+                    {onDefaultCount !== loaded.length && (
+                        <span className="text-white/40">{loaded.length - onDefaultCount} not on the default provider</span>
+                    )}
                     {verifiedCount > 0 && <span className="text-emerald-300/80 inline-flex items-center gap-1"><CheckCircle className="w-3 h-3" />{verifiedCount} verified</span>}
                     {failedCount > 0 && <span className="text-amber-300/90 inline-flex items-center gap-1"><AlertCircle className="w-3 h-3" />{failedCount} need attention</span>}
                 </div>
