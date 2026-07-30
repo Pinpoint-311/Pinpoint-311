@@ -1,4 +1,8 @@
 import type { ReactNode } from 'react';
+import { claimedFields, stepsFor } from './setupSteps';
+// Registers every provider's steps as a side effect of importing it.
+import './setupStepsContent';
+import type { StepContext } from './setupSteps';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -123,7 +127,7 @@ export interface CapStatus {
     configured?: boolean;
 }
 
-function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus, health, step, guided, instructions }: {
+function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus, health, step, guided }: {
     cap: Capability; title: string; blurb: string; icon: typeof Sparkles; delay: number;
     recheckToken: number; reloadToken: number; onStatus: (cap: Capability, s: CapStatus) => void;
     health?: ConnectorHealth;
@@ -133,12 +137,6 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
      * undefined once setup is done and the page is just cards again. */
     step?: { index: number; total: number; active: boolean };
     guided?: boolean;
-    /* How to obtain the credentials for the provider currently selected,
-     * rendered immediately above the boxes they go into. The instructions used
-     * to sit in one long document at the top of the page, three thousand pixels
-     * from the fields, so following step four meant scrolling away from the
-     * instruction to find the box and back again to read the next one. */
-    instructions?: (provider: string) => ReactNode;
 }) {
     const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
     const [selected, setSelected] = useState<string>('');
@@ -148,6 +146,20 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const [result, setResult] = useState<{ ok: boolean; detail: string } | null>(null);
     const [error, setError] = useState<string | null>(null);
     // Live model discovery (AI only)
+    // Copy targets inside steps: a callback URL retyped by hand is the single
+    // most common reason sign-in fails after the password is accepted.
+    const [copied, setCopied] = useState<string | null>(null);
+    const stepCtx: StepContext = {
+        origin: window.location.origin,
+        copy: (text, id) => {
+            navigator.clipboard?.writeText(text).then(
+                () => { setCopied(id); setTimeout(() => setCopied(null), 1600); },
+                () => { /* clipboard blocked; the value is visible and selectable */ },
+            );
+        },
+        copied,
+    };
+
     const [refreshingModels, setRefreshingModels] = useState(false);
     const [liveModels, setLiveModels] = useState<ProviderModelSpec[] | null>(null);
     const [modelsMeta, setModelsMeta] = useState<{ source?: string; fetched_at?: number | null } | null>(null);
@@ -589,38 +601,75 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 })()}
 
                 {/* Credential/config fields */}
-                {active && (active?.credential_fields || []).length > 0 && (
-                    <div>
-                    <Step n={cap === 'ai' ? 3 : 2}>Credentials</Step>
-                    {instructions?.(selected) && (
-                        <div className="mb-3 rounded-2xl bg-white/[0.05] border border-white/10 px-4 py-3">
-                            <p className="text-[11px] uppercase tracking-wider text-white/45 font-semibold mb-1.5">
-                                How to get these
-                            </p>
-                            <div className="text-sm text-white/70 leading-relaxed space-y-1.5">
-                                {instructions(selected)}
-                            </div>
+                {active && (active?.credential_fields || []).length > 0 && (() => {
+                    const alreadySet = !!(catalog.configured?.[selected] && selected === catalog.current_provider);
+                    const field = (key: string) => {
+                        const f = active.credential_fields.find(x => x.key === key);
+                        if (!f) return null;  // catalog changed under the steps
+                        return (
+                            <SecretField
+                                key={f.key}
+                                label={f.label}
+                                secret={f.secret}
+                                value={values[f.key] || ''}
+                                onChange={(v) => setValues(p => ({ ...p, [f.key]: v }))}
+                                placeholder={`Enter ${f.label.toLowerCase()}`}
+                                help={active.field_help?.[f.key]}
+                                savedHint={alreadySet}
+                            />
+                        );
+                    };
+
+                    /* Steps own the boxes they produce, so each instruction is
+                     * followed immediately by the inputs it just told you how to
+                     * obtain. A provider with no steps written yet falls back to
+                     * the plain list, which is what every provider had before. */
+                    const steps = stepsFor(cap, selected, stepCtx);
+                    const claimed = claimedFields(steps);
+                    const leftover = active.credential_fields.filter(f => !claimed.has(f.key));
+
+                    return (
+                        <div>
+                            <Step n={cap === 'ai' ? 3 : 2}>{steps.length ? 'Set it up' : 'Credentials'}</Step>
+
+                            {steps.map((st, i) => (
+                                <div key={i} className="mb-4">
+                                    <div className="flex gap-3">
+                                        <span className="mt-0.5 w-6 h-6 shrink-0 rounded-full bg-white/10 border border-white/15 text-[11px] font-semibold text-white/70 flex items-center justify-center">
+                                            {i + 1}
+                                        </span>
+                                        <div className="min-w-0 flex-1">
+                                            <div className="text-sm text-white/75 leading-relaxed">{st.body}</div>
+                                            {st.check && (
+                                                <p className="mt-1.5 text-xs text-emerald-300/75 flex items-start gap-1.5">
+                                                    <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+                                                    <span><span className="font-medium">You should see:</span> {st.check}</span>
+                                                </p>
+                                            )}
+                                            {st.trouble && (
+                                                <p className="mt-1.5 text-xs text-amber-200/75 flex items-start gap-1.5">
+                                                    <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+                                                    <span>{st.trouble}</span>
+                                                </p>
+                                            )}
+                                            {!!st.fields?.length && (
+                                                <div className="mt-2.5 grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
+                                                    {st.fields.map(field)}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+
+                            {leftover.length > 0 && (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
+                                    {leftover.map(f => field(f.key))}
+                                </div>
+                            )}
                         </div>
-                    )}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
-                        {active.credential_fields.map(f => {
-                            const alreadySet = !!(catalog.configured?.[selected] && selected === catalog.current_provider);
-                            return (
-                                <SecretField
-                                    key={f.key}
-                                    label={f.label}
-                                    secret={f.secret}
-                                    value={values[f.key] || ''}
-                                    onChange={(v) => setValues(p => ({ ...p, [f.key]: v }))}
-                                    placeholder={`Enter ${f.label.toLowerCase()}`}
-                                    help={active.field_help?.[f.key]}
-                                    savedHint={alreadySet}
-                                />
-                            );
-                        })}
-                    </div>
-                    </div>
-                )}
+                    );
+                })()}
 
                 <div className="flex flex-wrap items-center gap-2.5 pt-1 border-t border-white/5 mt-1">
                     <button
@@ -840,7 +889,7 @@ function CloudEnvironment({ onApplied }: { onApplied: () => void }) {
     );
 }
 
-export default function ServiceProviders({ show, extras, instructions }: {
+export default function ServiceProviders({ show, extras }: {
     /* Which capabilities the town said it wants, from the setup questions.
      * Undefined means "no answer yet", which shows everything -- an absent
      * answer must not read as "wanted nothing", the same distinction the
@@ -857,8 +906,6 @@ export default function ServiceProviders({ show, extras, instructions }: {
      * across both. Rendered here instead, after the capability cards, so the
      * page has one list. */
     extras?: ReactNode;
-    /** Per-capability, per-provider "how to get these credentials". */
-    instructions?: (cap: Capability, provider: string) => ReactNode;
 } = {}) {
     const [recheckToken, setRecheckToken] = useState(0);
     /* One request for the whole section rather than one per card: the endpoint
@@ -1016,7 +1063,6 @@ export default function ServiceProviders({ show, extras, instructions }: {
                     <CapabilityCard key={c.key} cap={c.key} title={c.title} blurb={c.blurb} icon={c.icon} delay={i * 0.08}
                         recheckToken={recheckToken} reloadToken={reloadToken} onStatus={onStatus}
                         health={health[c.key]} guided={guided}
-                        instructions={instructions ? (provider) => instructions(c.key, provider) : undefined}
                         step={{ index: i, total: visible.length, active: i === cursor }} />
                 ))}
             </div>

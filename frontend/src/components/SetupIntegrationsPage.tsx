@@ -91,54 +91,6 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             .map(([, capability]) => capability),
     );
 
-    /* What to do to obtain the credentials for a given provider, shown inside
-     * the card immediately above the boxes.
-     *
-     * Short on purpose. The long guide above still exists for someone starting
-     * from nothing; this is the reminder you want when you are already looking
-     * at the field and have forgotten which console page the value is on. Keyed
-     * by capability and provider so switching provider switches the reminder,
-     * the same way the fields themselves switch.
-     *
-     * Returning null is normal -- a provider that needs no explanation beyond
-     * its field labels should not be given filler. */
-    const cardInstructions = (cap: Capability, provider: string): React.ReactNode => {
-        const K: Record<string, React.ReactNode> = {
-            'ai:vertex': <>Enable <strong className="text-white/85">Vertex AI API</strong> in Google Cloud, then use the project ID and service-account JSON from the Google Cloud step above.</>,
-            'ai:azure': <>Create an <strong className="text-white/85">Azure OpenAI</strong> resource and deploy a vision-capable model. The deployment name is what goes in the third box, not the model name.</>,
-            'ai:bedrock': <>In <strong className="text-white/85">Bedrock → Model access</strong>, enable the models you want first — a region alone is not enough if nothing is enabled in it.</>,
-            'translation:google': <>Nothing new to fetch. Enable <strong className="text-white/85">Cloud Translation API</strong> and reuse the same project as AI.</>,
-            'translation:azure': <>Create a <strong className="text-white/85">Translator</strong> resource; its Key and Region are on the resource's Keys and Endpoint page.</>,
-            'translation:aws': <>No resource to create. Amazon Translate works with the region and credentials you already use.</>,
-            'identity:auth0': <>Applications → your app → Settings. Add <code className="bg-black/30 px-1 rounded text-[11px]">{window.location.origin}/api/auth/callback</code> as an Allowed Callback URL first, or sign-in fails after the password.</>,
-            'identity:entra': <>App registrations → your app. Overview holds both IDs; the secret <em>Value</em> (not the Secret ID) is under Certificates &amp; secrets and is shown only once.</>,
-            'identity:okta': <>The Issuer is your Okta domain, e.g. <code className="bg-black/30 px-1 rounded text-[11px]">https://your-org.okta.com</code>. Assign the app to a staff group or nobody can sign in.</>,
-            'identity:oidc': <>Enter the issuer itself. If your provider's docs show a URL ending <code className="bg-black/30 px-1 rounded text-[11px]">/.well-known/openid-configuration</code>, leave that part off.</>,
-            'maps:google': <>Enable Maps JavaScript, Geocoding and Places, attach billing, then restrict the key to <code className="bg-black/30 px-1 rounded text-[11px]">{window.location.origin}/*</code>. Without billing the key looks fine and the map stays grey.</>,
-            'maps:esri': <>An API key from ArcGIS Location Platform. Check whether your county's licence already covers you before buying one.</>,
-            'maps:azure': <>Azure Maps account → Authentication → Primary Key.</>,
-            'maps:apple': <>Needs a paid Apple Developer account. Paste the whole <code className="bg-black/30 px-1 rounded text-[11px]">.p8</code> file including its BEGIN and END lines.</>,
-            'email:smtp': <>Your existing mail server. For Microsoft 365 or Google Workspace this needs an <strong className="text-white/85">app password</strong>, not the account password.</>,
-            'email:ses': <>SES refuses to send from an address or domain you have not verified in its console first.</>,
-            'email:acs': <>The endpoint and key are on the Communication Services resource, under Keys.</>,
-            'sms:none': <>Nothing to enter. Residents still get email updates.</>,
-            'sms:twilio': <>Account SID and Auth Token are on the Twilio console home page. The number must be one you own there, in <code className="bg-black/30 px-1 rounded text-[11px]">+1XXXXXXXXXX</code> form.</>,
-            'sms:sns': <>Uses your existing AWS credentials. New AWS accounts are sandboxed for SMS — request production access or only verified numbers receive anything.</>,
-            'sms:acs': <>The same Communication Services resource as email, plus a number provisioned in it.</>,
-            'sms:http': <>For a gateway not listed here. Not certified against any particular vendor, so send a test before relying on it.</>,
-            'kms:google': <>Enable <strong className="text-white/85">Cloud KMS API</strong>. The three boxes only name the key inside your project; leave them blank for the defaults.</>,
-            'kms:azure': <>Key Vault URL and key name, plus an app registration that can wrap and unwrap with it.</>,
-            'kms:aws': <>A KMS key ID or ARN in the same region as the rest of your AWS setup.</>,
-            'kms:local': <>Nothing to enter. Resident data is still encrypted, using the application's own key rather than a cloud key service.</>,
-            'redaction:local': <>Nothing to enter — detection runs here and no photo leaves the building. Less accurate than the cloud detectors.</>,
-        };
-        const cloud = K[`${cap}:${provider}`];
-        if (cloud) return cloud;
-        if (cap === 'redaction') {
-            return <>No new credentials — this reuses the {provider === 'google' ? 'Google Cloud' : provider === 'aws' ? 'AWS' : 'Azure'} keys you entered above. Both toggles are on by default; plate detection guesses, and what it occasionally blurs is a house number.</>;
-        }
-        return null;
-    };
 
     // Managed (state-hosted) mode: infrastructure cards are locked because the
     // state's orchestrator owns those keys (Google Cloud, Backups, domain).
@@ -802,7 +754,6 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             <div id="sec-providers">
                 <ServiceProviders
                     show={wantedCapabilities}
-                    instructions={cardInstructions}
                     extras={
                         <>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
