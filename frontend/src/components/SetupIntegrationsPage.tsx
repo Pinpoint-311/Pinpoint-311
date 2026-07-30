@@ -153,6 +153,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * town with both required items done and nothing else is ready to go live,
      * and a bar reading 33% told it the opposite. The headline now answers the
      * first question and the count answers the second. */
+    const completedCount = setupSteps.filter(s => s.done).length;
     const required = setupSteps.filter(s => s.required);
     const optional = setupSteps.filter(s => !s.required);
     const missingRequired = required.filter(s => !s.done);
@@ -294,38 +295,41 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 animate={{ opacity: 1, y: 0 }}
                 className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-slate-800/80 via-slate-900/90 to-slate-800/80 backdrop-blur-xl p-5"
             >
-                <div className="flex items-start gap-3.5 mb-4">
-                    <div className={`w-11 h-11 shrink-0 rounded-xl flex items-center justify-center shadow-lg transition-colors ${ready
-                        ? 'bg-gradient-to-br from-emerald-500 to-teal-600 shadow-emerald-500/20'
-                        : 'bg-gradient-to-br from-amber-500 to-orange-600 shadow-amber-500/20'}`}>
-                        {ready ? <CheckCircle className="w-5 h-5 text-white" /> : <ListChecks className="w-5 h-5 text-white" />}
+                <div className="flex items-center gap-3 mb-4">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                        <ListChecks className="w-5 h-5 text-white" />
                     </div>
                     <div className="min-w-0">
-                        {/* The headline answers whether the town can go live, not
-                            how many boxes are ticked. Those are different
-                            questions and only one of them is urgent. */}
-                        <h2 className="font-semibold text-white leading-tight">
-                            {ready ? 'Ready to take reports' : 'Not ready yet'}
-                        </h2>
-                        <p className="text-white/50 text-xs mt-0.5">
-                            {ready
-                                ? optional.filter(s => s.done).length === optional.length
-                                    ? 'Everything is set up.'
-                                    : `Everything required is set up · ${optional.filter(s => s.done).length} of ${optional.length} optional extras on`
-                                : `${missingRequired.map(s => s.label).join(' and ')} still needed`}
-                        </p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                            <h2 className="font-semibold text-white">Setup Progress</h2>
+                            {/* Readiness added alongside the count rather than
+                                replacing it. The count is what someone tracks
+                                over time; this answers the separate question of
+                                whether the town can go live today, and the two
+                                genuinely differ -- both required items done and
+                                nothing else is ready, at 2 of 6. */}
+                            {ready ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                    <CheckCircle className="w-3 h-3" aria-hidden="true" />
+                                    Ready to take reports
+                                </span>
+                            ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide bg-amber-500/15 text-amber-300 border border-amber-500/25">
+                                    <AlertCircle className="w-3 h-3" aria-hidden="true" />
+                                    Not ready yet
+                                </span>
+                            )}
+                        </div>
+                        <p className="text-white/50 text-xs">{completedCount} of {setupSteps.length} integrations configured</p>
                     </div>
                 </div>
 
-                {/* Progress reflects required completion. An optional extra
-                    being off is not incomplete setup. */}
+                {/* Progress bar */}
                 <div className="h-2 rounded-full bg-white/10 mb-4 overflow-hidden">
                     <motion.div
-                        className={`h-full rounded-full ${ready
-                            ? 'bg-gradient-to-r from-emerald-400 to-cyan-400'
-                            : 'bg-gradient-to-r from-amber-400 to-orange-400'}`}
+                        className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-cyan-400"
                         initial={{ width: 0 }}
-                        animate={{ width: `${(required.filter(s => s.done).length / Math.max(1, required.length)) * 100}%` }}
+                        animate={{ width: `${(completedCount / setupSteps.length) * 100}%` }}
                         transition={{ duration: 0.8, ease: 'easeOut' }}
                     />
                 </div>
