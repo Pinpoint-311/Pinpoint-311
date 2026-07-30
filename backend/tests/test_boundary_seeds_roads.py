@@ -214,3 +214,96 @@ def test_the_old_in_memory_only_upload_is_gone():
     source = GIS.read_text()
     upload = source[source.index("async def upload_boundary"):source.index("async def check_point_in_boundary")]
     assert "persist_boundary" in upload, "an uploaded boundary is still not stored"
+
+
+# ---------------------------------------------------------------------------
+# Reading the lookup's answer without knowing its field names
+# ---------------------------------------------------------------------------
+
+def test_the_state_code_is_found_whatever_the_field_is_called():
+    """The Census service could not be reached from where this was written --
+    the sandbox's egress policy refuses that host -- so the exact attribute name
+    is the one thing here that went unconfirmed.
+
+    Getting it wrong would fail in the worst way available: the lookup returns
+    nothing every time, the caller quietly falls back to the name match,
+    uploaded boundaries keep getting the national road layer, and every test in
+    this file still passes. That is the bug this change exists to fix,
+    reintroduced one level down.
+
+    So the parser does not depend on the name. These are the shapes Census
+    services actually return.
+    """
+    from app.services.boundary_geo import state_code_in
+
+    assert state_code_in({"STUSAB": "NJ", "NAME": "New Jersey", "GEOID": "34"}) == "NJ"
+    assert state_code_in({"STUSPS": "NJ", "NAME": "New Jersey", "STATEFP": "34"}) == "NJ"
+    assert state_code_in({"STATE_ABBR": "NJ", "NAME": "New Jersey"}) == "NJ"
+    # Field named nothing we anticipated.
+    assert state_code_in({"abbrev_2": "NJ", "GEOID": "34"}) == "NJ"
+    # Abbreviation absent entirely; the full name still resolves.
+    assert state_code_in({"NAME": "New Jersey", "GEOID": "34", "ALAND": 19047825962}) == "NJ"
+    assert state_code_in({"stusps": "nj"}) == "NJ"
+
+
+def test_a_state_whose_code_is_an_english_word_still_works():
+    """OK and IN and OR are real abbreviations. Validating against the known set
+    is what lets the parser search widely without inventing answers."""
+    from app.services.boundary_geo import state_code_in
+
+    assert state_code_in({"STUSPS": "OK", "NAME": "Oklahoma"}) == "OK"
+    assert state_code_in({"STUSPS": "IN", "NAME": "Indiana"}) == "IN"
+    assert state_code_in({"STUSPS": "OR", "NAME": "Oregon"}) == "OR"
+
+
+def test_nothing_state_shaped_returns_nothing():
+    from app.services.boundary_geo import state_code_in
+
+    assert state_code_in({"GEOID": "34", "ALAND": 19047825962}) is None
+    assert state_code_in({}) is None
+    assert state_code_in(None) is None
+
+
+def test_an_arcgis_error_payload_is_not_read_as_an_answer():
+    """ArcGIS answers 200 with an {"error": ...} body for a bad query. Treating
+    that as "no features" is right; treating it as a state would not be."""
+    import asyncio
+
+    from app.services.boundary_geo import state_from_coordinates
+
+    class Fake:
+        def __init__(self, payload): self.payload = payload
+        async def get(self, url, params=None): return self
+        def json(self): return self.payload
+
+    err = Fake({"error": {"code": 400, "message": "Unable to complete operation"}})
+    assert asyncio.run(state_from_coordinates(-74.2, 40.8, client=err)) is None
+
+    ok = Fake({"features": [{"attributes": {"STUSPS": "NJ", "NAME": "New Jersey"}}]})
+    assert asyncio.run(state_from_coordinates(-74.2, 40.8, client=ok)) == "NJ"
+
+    empty = Fake({"features": []})
+    assert asyncio.run(state_from_coordinates(-74.2, 40.8, client=empty)) is None
+
+
+def test_the_query_asks_for_every_field():
+    """Naming one field is the dependency this avoids."""
+    import asyncio
+
+    from app.services.boundary_geo import state_from_coordinates
+
+    seen = {}
+
+    class Recorder:
+        async def get(self, url, params=None):
+            seen.update(params or {})
+            seen["url"] = url
+            return self
+        def json(self): return {"features": [{"attributes": {"STUSPS": "NJ"}}]}
+
+    asyncio.run(state_from_coordinates(-74.2, 40.8, client=Recorder()))
+    assert seen["outFields"] == "*"
+    assert seen["geometryType"] == "esriGeometryPoint"
+    assert seen["inSR"] == "4326"
+    assert seen["geometry"] == "-74.2,40.8"
+    assert seen["f"] == "json"
