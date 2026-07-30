@@ -258,6 +258,35 @@ def active_backend() -> str:
     return {_WRAP_GOOGLE: "google", _WRAP_AZURE: "azure", _WRAP_AWS: "aws", _WRAP_LOCAL: "local"}.get(tag, "unknown")
 
 
+def probe_backend() -> str:
+    """Which key manager would wrap a data key *right now*.
+
+    `active_backend()` reports the data key this process cached at startup, so
+    in a worker that has been up for a week it describes the world as of a week
+    ago. That is the right answer for "what is in use" and the wrong one for "is
+    the key still working" -- and the difference is the whole deletion window,
+    the only stretch in which the answer can still change the outcome.
+
+    This wraps a throwaway key instead, discards it, and reports the tag. One
+    real call to the key service, and it deliberately does not touch `_active`
+    or either cache: a probe must not change what it is probing.
+
+    Returns "unknown" if the wrap fails outright -- which is itself a positive
+    finding, since a KMS in that state is not encrypting anything.
+    """
+    try:
+        dek = AESGCM.generate_key(bit_length=256)
+        tag = _wrap_dek(dek)[:1]
+        return {_WRAP_GOOGLE: "google", _WRAP_AZURE: "azure",
+                _WRAP_AWS: "aws", _WRAP_LOCAL: "local"}.get(tag, "unknown")
+    except Exception:
+        # REQUIRE_KMS raises here rather than falling back, which is the point
+        # of that setting. Either way the honest answer is that the configured
+        # key is not usable.
+        logger.debug("KMS probe failed", exc_info=True)
+        return "unknown"
+
+
 def clear_caches() -> None:
     """Drop the active DEK and all caches — call after rotating the KMS key so
     new writes re-wrap and reads re-unwrap against the current key."""

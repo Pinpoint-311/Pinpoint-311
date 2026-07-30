@@ -896,7 +896,29 @@ defineSteps('kms', 'google', () => [
             </>
         ),
         fields: ['KMS_LOCATION', 'KMS_KEY_RING', 'KMS_KEY_ID'],
-        trouble: <>Never delete or disable this key, or the key ring holding it. Resident contact details are encrypted under it, and Google cannot recover a destroyed key for anyone.</>,
+    },
+    {
+        body: (
+            <>
+                <B>Then make it hard to destroy.</B> Google will not let you delete a key or a key ring
+                at all — only <em>destroy a key version</em>, which is enough to lose the data. Two
+                things to do now, while you are already here:
+                <span className="mt-2 grid gap-1.5">
+                    <span className="text-white/50 text-xs">
+                        Set the key's <B>destroy scheduled duration</B> to the longest you can — the
+                        default is 24 hours, and it can go to 120 days. That is the length of the window
+                        in which somebody can undo the mistake.
+                    </span>
+                    <span className="text-white/50 text-xs">
+                        Make sure day-to-day accounts do not hold{' '}
+                        <C>cloudkms.cryptoKeyVersions.destroy</C>. Encrypter/Decrypter does not include
+                        it — so if you followed the previous step exactly, Pinpoint already cannot
+                        destroy its own key. Check that a human administrator's role does not either.
+                    </span>
+                </span>
+            </>
+        ),
+        trouble: <>Rotating this key is safe and good practice — old versions stay and keep decrypting old rows. <B>Destroying</B> a version is the fatal one, and the two sit next to each other in the console. Once a version is destroyed, Google cannot recover it for you, for law enforcement, or for anyone.</>,
     },
 ]);
 
@@ -940,7 +962,21 @@ defineSteps('kms', 'azure', () => [
             </>
         ),
         fields: ['AZURE_KEYVAULT_URL', 'AZURE_KEYVAULT_KEY', 'AZURE_TENANT_ID', 'AZURE_KEYVAULT_CLIENT_ID', 'AZURE_KEYVAULT_CLIENT_SECRET'],
-        trouble: <>The client secret has an expiry date. Write it down: when it lapses, resident data stops decrypting, and nothing about that failure points at a calendar.</>,
+        trouble: <>The client secret has an expiry date. Put it in the town's calendar with a month's notice: when it lapses, resident data stops decrypting, and nothing about that failure points at a calendar. Azure will not warn you.</>,
+    },
+    {
+        body: (
+            <>
+                <B>Last, lock the vault down.</B> Confirm <B>soft delete</B> and <B>purge protection</B>{' '}
+                are both showing as enabled on the vault's Properties page — with them on, a deleted key
+                is recoverable for the retention period and cannot be permanently purged early, even by
+                an administrator, even deliberately. Then check that the everyday accounts your staff use
+                do not hold <B>Delete</B> or <B>Purge</B> on keys; a service principal certainly should
+                not.
+            </>
+        ),
+        check: <>Soft delete: Enabled, and Purge protection: Enabled, on Properties.</>,
+        trouble: <>This is the step to insist on. Purge protection cannot be switched on later in some configurations, and it is the only setting that makes an accidental deletion survivable rather than final.</>,
     },
 ]);
 
@@ -965,7 +1001,20 @@ defineSteps('kms', 'aws', () => [
             </>
         ),
         fields: ['AWS_REGION', 'AWS_KMS_KEY_ID'],
-        trouble: <>Never schedule this key for deletion. AWS enforces a waiting period between 7 and 30 days — 30 by default — during which the key cannot be used at all, so resident data stops decrypting the moment deletion is scheduled rather than when it completes. It can be cancelled inside that window. After it, the data encrypted under the key is unrecoverable, by you and by AWS.</>,
+    },
+    {
+        body: (
+            <>
+                <B>Then make deletion impossible rather than merely inadvisable.</B> AWS has no
+                "protect from deletion" switch, so you do it in the key policy: add a statement that{' '}
+                <B>denies</B> <C>kms:ScheduleKeyDeletion</C> and <C>kms:DisableKey</C> to everyone. An
+                explicit deny in AWS cannot be overridden by any allow, including the account root — so
+                the deletion simply cannot be started, by anyone, by accident or otherwise. If you ever
+                genuinely need to retire the key, an administrator edits the policy first, which is one
+                deliberate step where there was none.
+            </>
+        ),
+        trouble: <>Do this rather than relying on care. The console offers deletion from the same page as everything else, the default waiting period is 30 days, and the key stops working the moment deletion is <em>scheduled</em> — so resident data breaks at the start of the window, not the end. It can be cancelled inside those 30 days; after that, the data is unrecoverable by you and by AWS.</>,
     },
 ]);
 
