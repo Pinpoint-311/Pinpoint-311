@@ -619,6 +619,13 @@ class ApiClient {
         return this.request(`/system/providers/${capability}/test`, { method: 'POST' });
     }
 
+    /** Whether this server already has an identity on its cloud, in which case
+     *  the credential boxes for that cloud should be left empty rather than
+     *  filled — the platform issues a short-lived token instead. */
+    async getCloudIdentity(): Promise<CloudIdentity> {
+        return this.request<CloudIdentity>('/system/providers/cloud-identity');
+    }
+
     async getCloudProfile(): Promise<CloudProfileState> {
         return this.request<CloudProfileState>('/system/providers/cloud-profile');
     }
@@ -1538,6 +1545,16 @@ export interface HealthSummary {
     level: 'ok' | 'warning' | 'critical';
     label: string;
     detail: string;
+}
+
+/** An identity attached to the compute by the cloud itself. When present, the
+ *  listed keys need no value — and leaving them empty is the better answer, not
+ *  merely an allowed one. */
+export interface CloudIdentity {
+    attached: boolean;
+    provider: string | null;
+    identity: string | null;
+    skippable_keys: string[];
 }
 
 /** Counts of what has not yet reached the storage the town selected. */

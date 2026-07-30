@@ -14,7 +14,7 @@ import {
 
 import { CollapsibleSection } from './ui';
 import SecretField from './SecretField';
-import { api, ProviderCatalog, ProviderInfo, ProviderModelSpec, CloudProfileState } from '../services/api';
+import { api, ProviderCatalog, ProviderInfo, ProviderModelSpec, CloudProfileState, CloudIdentity } from '../services/api';
 import type { ConnectorHealth } from '../types';
 
 // Relative "updated Xh ago" from an epoch-seconds timestamp.
@@ -127,10 +127,21 @@ export interface CapStatus {
     configured?: boolean;
 }
 
-function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus, health, step, guided }: {
+/** Cloud names for a heading, kept out of the render so the three places that
+ *  need them cannot drift apart. */
+const CLOUD_LABEL: Record<string, string> = {
+    google: 'Google Cloud',
+    azure: 'Azure',
+    aws: 'AWS',
+};
+
+function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus, health, step, guided, identity }: {
     cap: Capability; title: string; blurb: string; icon: typeof Sparkles; delay: number;
     recheckToken: number; reloadToken: number; onStatus: (cap: Capability, s: CapStatus) => void;
     health?: ConnectorHealth;
+    /* Fetched once by the parent and passed down: the probe is a metadata call
+     * and the answer is the same for every card on the page. */
+    identity?: CloudIdentity | null;
     /* Guided setup: the parent walks one capability at a time, so it decides
      * which card is open rather than each card deciding for itself. `step` is
      * the position in that walk, shown so a clerk can see where they are; it is
@@ -606,6 +617,37 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                     const field = (key: string) => {
                         const f = active.credential_fields.find(x => x.key === key);
                         if (!f) return null;  // catalog changed under the steps
+
+                        /* This server already has an identity on the cloud, so
+                         * this particular box needs no value -- and empty is the
+                         * better answer, not merely a permitted one: the
+                         * platform issues a token minutes at a time and rotates
+                         * it, so no long-lived secret exists to be mis-copied,
+                         * vaulted, or left to expire.
+                         *
+                         * It has to say so. Two of the three clouds already
+                         * behaved this way and nothing mentioned it, so every
+                         * town pasted a key into a box that did not need one. */
+                        if (identity?.skippable_keys?.includes(f.key)) {
+                            return (
+                                <div key={f.key} className="mb-3 rounded-xl border border-emerald-400/25 bg-emerald-500/[0.07] px-3 py-2.5">
+                                    <div className="flex items-start gap-2">
+                                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-300 mt-0.5 shrink-0" />
+                                        <div>
+                                            <p className="text-xs text-emerald-100/90">
+                                                <span className="font-semibold">{f.label}</span> — nothing to enter.
+                                            </p>
+                                            <p className="text-[11px] text-white/45 mt-0.5">
+                                                This server already has an identity on {CLOUD_LABEL[identity.provider ?? ''] ?? 'your cloud'}
+                                                {identity.identity ? <> (<code className="bg-black/30 px-1 rounded">{identity.identity}</code>)</> : null}.
+                                                It signs in with that, so there is no key to create, copy, or renew.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        }
+
                         return (
                             <SecretField
                                 key={f.key}
@@ -908,6 +950,19 @@ export default function ServiceProviders({ show, extras }: {
     extras?: ReactNode;
 } = {}) {
     const [recheckToken, setRecheckToken] = useState(0);
+    /* Whether this server has an identity the cloud attached to it. Fetched
+     * once for the whole section -- the answer is the same for every card, and
+     * the probe is a metadata call that either answers instantly or times out.
+     * Failure is silent and reads as "no identity", which just means the cards
+     * ask for credentials the way they always did. */
+    const [identity, setIdentity] = useState<CloudIdentity | null>(null);
+    useEffect(() => {
+        let cancelled = false;
+        api.getCloudIdentity()
+            .then(i => { if (!cancelled) setIdentity(i); })
+            .catch(() => undefined);
+        return () => { cancelled = true; };
+    }, []);
     /* One request for the whole section rather than one per card: the endpoint
      * returns every connector, and four parallel calls on page load for data
      * that arrives together is wasteful.
@@ -1062,7 +1117,7 @@ export default function ServiceProviders({ show, extras }: {
                 {visible.map((c, i) => (
                     <CapabilityCard key={c.key} cap={c.key} title={c.title} blurb={c.blurb} icon={c.icon} delay={i * 0.08}
                         recheckToken={recheckToken} reloadToken={reloadToken} onStatus={onStatus}
-                        health={health[c.key]} guided={guided}
+                        health={health[c.key]} guided={guided} identity={identity}
                         step={{ index: i, total: visible.length, active: i === cursor }} />
                 ))}
             </div>
