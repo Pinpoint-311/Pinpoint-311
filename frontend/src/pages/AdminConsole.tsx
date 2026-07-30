@@ -313,7 +313,7 @@ function BubblyServiceCard({ service, onEdit, onDelete }: {
                 <div className="flex items-center justify-end gap-2.5 mt-5 pt-4 border-t border-white/10">
                     <button
                         onClick={() => onEdit(service)}
-                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-primary-500 hover:from-indigo-500 hover:to-primary-400 text-xs font-bold text-white shadow-[0_4px_20px_rgba(99,102,241,0.4)] hover:shadow-[0_6px_30px_rgba(99,102,241,0.6)] hover:scale-[1.04] active:scale-[0.98] border border-indigo-400/40 transition-all duration-200 tracking-wide"
+                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-gradient-to-r from-indigo-500 via-purple-500 to-violet-600 hover:from-indigo-400 hover:via-purple-400 hover:to-violet-500 text-xs font-extrabold text-white shadow-[0_4px_25px_rgba(99,102,241,0.8)] hover:shadow-[0_6px_35px_rgba(139,92,246,0.9)] hover:scale-[1.05] active:scale-[0.97] border border-white/40 ring-2 ring-indigo-400/30 transition-all duration-200 tracking-wide"
                     >
                         <Edit className="w-4 h-4 text-white" /> Configure Routing
                     </button>
