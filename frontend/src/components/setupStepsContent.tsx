@@ -858,6 +858,34 @@ defineSteps('sms', 'http', () => [
     },
 ]);
 
+/**
+ * The risk none of the key-level controls cover.
+ *
+ * Denying deletion, purge protection and liens all stop somebody deleting the
+ * *key*. None of them survives the loss of the *account* that holds it, and for
+ * a municipality that is the likelier way this ends: a card that expires
+ * between budget cycles, a subscription opened on a departing employee's
+ * personal account, a purchasing gap nobody notices until the disable notice.
+ *
+ * Verified timelines, all of which start quietly: an Azure subscription is
+ * deleted 90 days after cancellation and its resources go with it; an AWS
+ * account's resources are deleted 90 days after closure; a deleted Google
+ * project takes its key ring, and Google commits to erasing the key material
+ * within 45 days. The key survives none of those, and no setting inside the key
+ * changes it.
+ */
+const ACCOUNT_SURVIVES = (
+    <>
+        <B>Finally, the boring one that matters most.</B> Every protection above guards the key. None
+        of them guards the <em>account</em> — and an account closed for non-payment takes the key with
+        it after about 90 days, whatever is set on the key itself. So: the cloud account must be in the
+        town's name on a town payment method, not an individual's; more than one person must be an
+        administrator; and billing alerts must go to a shared address that is still monitored after
+        somebody leaves. For most towns that is the realistic way this data gets lost — not a
+        mis-click, a lapsed card between budget cycles.
+    </>
+);
+
 // ===========================================================================
 // Key management for resident data
 //
@@ -920,6 +948,20 @@ defineSteps('kms', 'google', () => [
         ),
         trouble: <>Rotating this key is safe and good practice — old versions stay and keep decrypting old rows. <B>Destroying</B> a version is the fatal one, and the two sit next to each other in the console. Once a version is destroyed, Google cannot recover it for you, for law enforcement, or for anyone.</>,
     },
+    {
+        body: (
+            <>
+                <B>Protect the project, not just the key.</B> None of the above survives the project
+                being deleted — that takes the key ring with it. Place a <B>lien</B> on the project,
+                which blocks deletion outright until somebody removes the lien:
+                <span className="mt-2 block"><C>gcloud alpha resource-manager liens create --project=YOUR_PROJECT --restrictions=resourcemanager.projects.delete --reason="Holds the Pinpoint 311 PII encryption key"</C></span>
+            </>
+        ),
+        trouble: <>Ask whoever manages your Google Cloud billing to run it if you do not have the command line. It is one command, it is free, and it is the difference between a mis-click being an inconvenience and being permanent.</>,
+    },
+    {
+        body: <>{ACCOUNT_SURVIVES}</>,
+    },
 ]);
 
 defineSteps('kms', 'azure', () => [
@@ -978,6 +1020,20 @@ defineSteps('kms', 'azure', () => [
         check: <>Soft delete: Enabled, and Purge protection: Enabled, on Properties.</>,
         trouble: <>This is the step to insist on. Purge protection cannot be switched on later in some configurations, and it is the only setting that makes an accidental deletion survivable rather than final.</>,
     },
+    {
+        body: (
+            <>
+                <B>Then lock the vault itself.</B> On the vault, open <B>Settings → Locks</B> and add a
+                lock of type <B>Delete</B>. An Azure lock overrides user permissions — with it in place
+                nobody can delete the vault, and an attempt to delete the whole resource group fails
+                rather than half-completing.
+            </>
+        ),
+        check: <>a lock listed on the vault, type Delete.</>,
+    },
+    {
+        body: <>{ACCOUNT_SURVIVES}</>,
+    },
 ]);
 
 defineSteps('kms', 'aws', () => [
@@ -1015,6 +1071,9 @@ defineSteps('kms', 'aws', () => [
             </>
         ),
         trouble: <>Do this rather than relying on care. The console offers deletion from the same page as everything else, the default waiting period is 30 days, and the key stops working the moment deletion is <em>scheduled</em> — so resident data breaks at the start of the window, not the end. It can be cancelled inside those 30 days; after that, the data is unrecoverable by you and by AWS.</>,
+    },
+    {
+        body: <>{ACCOUNT_SURVIVES}</>,
     },
 ]);
 
