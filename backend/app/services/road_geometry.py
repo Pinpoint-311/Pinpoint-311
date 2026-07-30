@@ -38,7 +38,12 @@ from sqlalchemy import cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import RoadSegment
-from app.services.road_matching import JurisdictionMatch, road_matches, _as_list
+from app.services.road_matching import (
+    JurisdictionMatch,
+    jurisdictions_from_config,
+    road_matches,
+    _as_list,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -149,19 +154,10 @@ def _municipal_entries(config: Dict[str, Any]) -> List[str]:
 
 
 def _jurisdictions(config: Dict[str, Any]) -> List[Dict[str, Any]]:
-    jurisdictions = config.get("jurisdictions")
-    if isinstance(jurisdictions, list) and jurisdictions:
-        return [j for j in jurisdictions if isinstance(j, dict)]
-    # Pre-multi-jurisdiction config: one unnamed third party.
-    roads = _as_list(config.get("exclusion_list"))
-    if not roads:
-        return []
-    return [{
-        "name": config.get("third_party_name") or "Another agency",
-        "roads": roads,
-        "message": config.get("third_party_message") or "",
-        "contacts": config.get("third_party_contacts") or [],
-    }]
+    """Delegated so the spatial and address resolvers read one config the same
+    way. They had separate copies of this, and only one of them would have been
+    fixed."""
+    return jurisdictions_from_config(config)
 
 
 def _matching_jurisdiction(

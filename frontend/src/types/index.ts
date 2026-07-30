@@ -56,6 +56,19 @@ export interface CustomQuestion {
 }
 
 // Service types
+/** A third-party agency as the routing modal stores it: contact details flat on
+ *  the entry, plus the roads and message that belong to that agency alone. */
+export interface RoutingContact {
+    name?: string;
+    phone?: string;
+    email?: string;
+    url?: string;
+    message?: string;
+    /** Raw comma-separated text as the clerk types it. */
+    road_list?: string;
+    roads?: string[];
+}
+
 export interface ServiceDefinition {
     id: number;
     service_code: string;
@@ -74,13 +87,17 @@ export interface ServiceDefinition {
         staff_ids?: number[];
         // Third party mode
         message?: string;
-        contacts?: { name: string; phone: string; url: string }[];
+        third_party_name?: string;
+        contacts?: RoutingContact[];
         // Road-based mode
         default_handler?: 'township' | 'third_party';
         exclusion_list?: string[];
         inclusion_list?: string[];
         third_party_message?: string;
-        third_party_contacts?: { name: string; phone: string; url: string }[];
+        /** One entry per agency card in the routing modal. Each owns its own
+         *  roads, message and contact details -- reading them as a single
+         *  flattened list is what showed a resident every agency at once. */
+        third_party_contacts?: RoutingContact[];
         /** Stretches a clerk switched off, keyed to the road publisher's own
          *  feature ids so a data refresh cannot orphan the corrections. */
         excluded_segments?: string[];

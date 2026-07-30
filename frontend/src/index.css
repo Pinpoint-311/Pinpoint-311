@@ -652,17 +652,27 @@ a:focus-visible {
 
 /* Link underlines for accessibility.
  *
- * `.brand-link` opts out. The rule exists so a link inside a paragraph is
- * distinguishable without relying on colour, which is the right default -- but
- * the "Powered by <logo>" credit is a wordmark, not prose. The underline drew
- * under the words and stopped at the image, which read as a rendering fault
- * rather than a link. Its target is unambiguous from the logo itself. */
-a:not(.skip-link):not(.brand-link):not([class*="btn"]):not([class*="button"]) {
+ * The rule exists so a link inside a paragraph is distinguishable without
+ * relying on colour, which is the right default. Two things opt out, both
+ * because they are not prose links and already meet that bar by other means:
+ *
+ *   `.brand-link` -- the "Powered by <logo>" credit is a wordmark. The
+ *   underline drew under the words and stopped at the image, which read as a
+ *   rendering fault rather than a link.
+ *
+ *   `.contact-action` -- the call/email/website rows in the redirect notice.
+ *   Each is a bordered card with its own background, a leading icon and a
+ *   trailing arrow, so it is identifiable as an action with colour removed.
+ *   Underlining the phone number inside it made a button look like broken text.
+ *
+ * Specificity here is deliberately above Tailwind's utilities, so `no-underline`
+ * on the element will NOT work -- add the class to this list instead. */
+a:not(.skip-link):not(.brand-link):not(.contact-action):not([class*="btn"]):not([class*="button"]) {
     text-decoration: underline;
     text-underline-offset: 2px;
 }
 
-a:not(.skip-link):not(.brand-link):not([class*="btn"]):not([class*="button"]):hover {
+a:not(.skip-link):not(.brand-link):not(.contact-action):not([class*="btn"]):not([class*="button"]):hover {
     text-decoration-thickness: 2px;
 }
 
