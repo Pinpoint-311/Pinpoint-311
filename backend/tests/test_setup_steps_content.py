@@ -215,3 +215,55 @@ def test_the_guide_no_longer_asks_for_an_invented_backup_passphrase():
     source = GUIDE.read_text()
     assert "Choose a strong" not in source
     assert "Create backup passphrase" in source
+
+
+# ---------------------------------------------------------------------------
+# Pitfalls
+# ---------------------------------------------------------------------------
+
+def test_every_provider_warns_about_something(declarations):
+    """`trouble` is where the failures that do not announce themselves live.
+
+    Every path on this page has at least one: a key that Google issues without
+    billing and that renders a grey box; an Entra secret shown once with a
+    "Secret ID" next to it that is not the secret; an SES sandbox that accepts
+    the message and delivers nothing; a KMS key whose deletion cannot be undone
+    after the window closes. A provider with no warning almost always means
+    nobody has walked it rather than that it has no traps.
+
+    Redaction was the gap this caught: three of its four paths had no warning at
+    all, and one of them is the default every install now lands on.
+    """
+    import re
+
+    source = CONTENT.read_text()
+    calls = list(re.finditer(r"defineSteps\(\s*'([a-z]+)'\s*,\s*'([a-z0-9]+)'", source))
+    missing = []
+    for i, call in enumerate(calls):
+        end = calls[i + 1].start() if i + 1 < len(calls) else len(source)
+        if "trouble:" not in source[call.start():end]:
+            missing.append(f"{call.group(1)}:{call.group(2)}")
+    assert not missing, f"no pitfall warning written for: {missing}"
+
+
+def test_the_key_deletion_warnings_are_present():
+    """The one failure on this page that cannot be undone. Each cloud words it
+    differently and each has its own window, so this checks all three rather
+    than trusting one sentence to cover them."""
+    source = CONTENT.read_text()
+    for phrase in (
+        "lien",                       # google: project deletion is refused
+        "purge protection",           # azure: soft-deleted keys stay recoverable
+        "kms:ScheduleKeyDeletion",    # aws: explicit deny beats any allow
+        "unrecoverable",              # what happens if all of that fails
+    ):
+        assert phrase in source, phrase
+
+
+def test_redaction_says_how_to_prove_it_works():
+    """Redaction is the only capability whose failure is invisible from inside
+    the product: "found nobody" and "could not ask" both produce an unblurred
+    photo and a green card. The only proof is looking at one."""
+    source = CONTENT.read_text()
+    assert "VERIFY_WITH_A_PHOTO" in source
+    assert "UNCONFIGURED_DETECTOR" in source
