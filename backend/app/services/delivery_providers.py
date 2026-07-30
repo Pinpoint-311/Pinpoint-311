@@ -223,7 +223,7 @@ REDACTION_CATALOG: Dict[str, Dict[str, Any]] = {
         "boundary": "Google Cloud — Assured Workloads / FedRAMP High",
         "credential_fields": list(_REDACTION_TOGGLES),
         "field_help": {
-            "REDACT_PLATES": "Plate detection guesses. The failure it makes is blurring a house number, so decide knowingly.",
+            "REDACT_PLATES": "On by default. Detection guesses, so it occasionally blurs a house number — switch it off if your crews rely on those.",
         },
     },
     "aws": {
