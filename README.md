@@ -153,7 +153,6 @@ graph TB
 
     subgraph "Infrastructure"
         CD[Caddy HTTPS]
-        WT[Watchtower auto-update, optional]
     end
 
     subgraph "Pluggable Providers - bring your own cloud"
@@ -824,7 +823,6 @@ The system automatically recovers from common failures without developer interve
 |-------|------------|-----------------|
 | **Docker healthchecks** | Backend, Worker, Frontend auto-restart if unresponsive | None |
 | **Container restart** | Containers restart after a crash (`unless-stopped`) | None |
-| **Watchtower** | Optional: pulls updated images on a schedule | None |
 | **SSH Auto-Restart** | Force restart via SSH when uptime check fails | Optional* |
 
 *To enable SSH auto-restart, add `PROD_HOST` and `PROD_SSH_KEY` secrets to your GitHub repository.
@@ -1038,23 +1036,34 @@ Yes. Every deployment is self-hosted on your own infrastructure.
 | **Dependencies** | Open-source, with public documentation |
 | **Phone-home** | The application makes no automatic calls back to Pinpoint 311 servers. The single exception is a voluntary registration form in the admin console, which sends only what an administrator types and only when they press Submit — see COMPLIANCE.md |
 | **Recovery** | Container auto-restart and health checks |
-| **Updates** | Optional automatic image updates (see below) |
+| **Updates** | Manual and deliberate — you decide when, see below |
 
-**Watchtower (Optional):**
-Watchtower automatically updates your Docker containers with security patches. It runs at 3am daily.
+**Updating**
+
+Nothing updates itself. There is no agent watching a registry, and no way for
+anybody outside your organisation to change what is running on your server. An
+update happens when somebody on your staff runs two commands:
 
 ```bash
-# Enable Watchtower
-docker compose up -d watchtower
-
-# Disable Watchtower  
-docker compose stop watchtower
-
-# Check status
-docker compose ps watchtower
+docker compose pull                                        # fetch the new images
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
-> 💡 The core system works perfectly without Watchtower. Enable it for hands-off security updates, or disable it for full manual control.
+The container reconciles the database schema on start. Additive migrations apply
+by themselves; a migration that would drop or rewrite data stops the container
+and prints the command a person has to run, rather than doing it unattended.
+
+**Take a backup first.** A restore is only as good as the last one taken, and an
+upgrade is the moment you find out.
+
+*This used to be automatic.* A Watchtower container shipped in the default
+compose file and pulled new images at 3am daily. Two problems: the README called
+it optional while nothing in the compose made it so, and its scope was every
+container it could pull rather than the application — which on a source-built
+install meant it upgraded PostGIS, Redis and Caddy unattended while leaving the
+application alone. An unannounced database-engine change on a municipal server
+at 3am is not a feature. It is gone; updates are now something a person decides
+to do.
 
 **What you'd handle independently:**
 - Security patches for dependencies
