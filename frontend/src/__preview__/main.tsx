@@ -17,6 +17,7 @@ import '../index.css';
 import './themes.css';
 
 import SetupWizard from '../components/SetupWizard';
+import { OptionRow, OptionTile, OptionStatusFirst } from './ProviderCardOptions';
 import { DepartmentsTab, ServiceCategoriesTab } from '../pages/AdminConsole';
 
 // Canned API so the components render exactly as they would with a real one.
@@ -83,54 +84,9 @@ function Section({ id, title, children }: any) {
     );
 }
 
-const THEMES = [
-    ['theme-ink', 'A — Ink', 'Near-opaque and flat. Depth from a hairline and a soft shadow, no blur. Reads best on a cheap office monitor.'],
-    ['theme-slate', 'B — Slate glass', 'Keeps the frosted look, over a dark base instead of a light one. Closest to today.'],
-    ['theme-rail', 'C — Rail', 'Dark, plus a coloured edge carrying state — indigo for current, green for done, amber for attention.'],
-] as const;
-
-function Kit({ label }: { label: string }) {
-    return (
-        <>
-            <SetupWizard
-                cloud="azure" idp="entra" maps="google"
-                aiProvider="azure" emailProvider="acs" smsProvider="acs" redactionProvider="azure"
-                wanted={new Set(['ai', 'translation', 'secrets'])}
-                status={STATUS as any}
-                isDone={() => false}
-                secretValues={{}} onSecretChange={() => {}} onSaveSecrets={async () => {}}
-                savingSecret={null} isSecretConfigured={() => false}
-                onRefresh={() => {}} publicOrigin="https://311.example.gov"
-                renderFoundation={() => (
-                    <div className="space-y-2.5">
-                        <p className="text-[11px] uppercase tracking-wider text-white/45 font-semibold">First, the account</p>
-                        <p className="text-sm text-white/70 pl-9">Create a resource group called <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pinpoint311-rg</code>. Everything below goes in it.</p>
-                    </div>
-                )}
-            />
-            <div className="mt-6">
-                <DepartmentsTab departments={DEPARTMENTS.slice(0, 2) as any} onAdd={() => {}} onEdit={() => {}} onDelete={() => {}} />
-            </div>
-            <p className="sr-only">{label}</p>
-        </>
-    );
-}
-
 function App() {
     return (
         <div style={{ background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #1e1b4b 100%)', minHeight: '100vh' }}>
-            {THEMES.map(([cls, name, note]) => (
-                <div key={cls} id={cls} className={cls}>
-                    <section className="p-8 max-w-6xl mx-auto">
-                        <div className="mb-5">
-                            <h2 className="text-white font-bold text-lg">{name}</h2>
-                            <p className="text-white/60 text-sm mt-0.5 max-w-2xl">{note}</p>
-                        </div>
-                        <Kit label={name} />
-                    </section>
-                </div>
-            ))}
-
             <Section id="wizard" title="Current (for comparison)">
                 <SetupWizard
                     cloud="azure" idp="entra" maps="google"
@@ -149,6 +105,20 @@ function App() {
                     )}
                 />
             </Section>
+
+            {([
+                ['opt-row', '1 — Row', 'A list, not a grid. All eight at a glance with the states in a column, so "which one is red" is answered by scanning.', OptionRow],
+                ['opt-tile', '2 — Tile', 'Two columns of cards, closest to today. More room per capability, at the cost of scrolling and of the states being harder to compare.', OptionTile],
+                ['opt-status', '3 — Status first', 'Sorted worst-first. Anything needing attention is pulled to the top and given a coloured surface; the rest collapse to a quiet line.', OptionStatusFirst],
+            ] as const).map(([id, name, note, Comp]) => (
+                <section key={id} id={id} className="p-8 max-w-5xl mx-auto">
+                    <div className="mb-5">
+                        <h2 className="text-white font-bold text-lg">{name}</h2>
+                        <p className="text-white/60 text-sm mt-0.5 max-w-2xl">{note}</p>
+                    </div>
+                    <Comp />
+                </section>
+            ))}
 
             <Section id="departments" title="Departments">
                 <DepartmentsTab departments={DEPARTMENTS as any} onAdd={() => {}} onEdit={() => {}} onDelete={() => {}} />
