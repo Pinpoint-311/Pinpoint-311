@@ -18,11 +18,19 @@ interface ServiceStatus {
 
 // Resolution tips for common issues
 const RESOLUTION_TIPS: Record<string, { issue: string; steps: string[] }> = {
-    backend: { issue: 'Backend API not responding', steps: ['Click "Restart Backend"', 'Check server logs', 'Verify database'] },
-    frontend: { issue: 'Frontend not reachable', steps: ['Click "Restart Frontend"', 'Check if Vite is running', 'Review build errors'] },
-    db: { issue: 'Database connection failed', steps: ['Check PostgreSQL container', 'Verify disk space', 'Review connection limits'] },
-    redis: { issue: 'Redis cache unavailable', steps: ['Click "Restart Redis"', 'Check Redis logs', 'Verify memory limits'] },
-    caddy: { issue: 'Reverse proxy not routing', steps: ['Click "Restart Caddy"', 'Check Caddyfile', 'Verify SSL certificates'] }
+    /* "Click Restart Backend" is not a step everywhere.
+     *
+     * The button only works where the app can reach Docker Compose and the
+     * project directory, and it says so honestly when it cannot -- but these
+     * instructions told a clerk to click it regardless, so on a managed or
+     * single-container deployment the first suggested remedy is one that
+     * always fails. The host-side command comes first now, because it works
+     * everywhere. */
+    backend: { issue: 'Backend API not responding', steps: ['Restart it on the host: docker compose restart backend', 'Or press Restart below, where this deployment allows it', 'Check the server logs'] },
+    frontend: { issue: 'Frontend not reachable', steps: ['Check FRONTEND_HOST — a wrong address looks the same as a stopped service', 'Restart on the host: docker compose restart frontend', 'Review build errors'] },
+    db: { issue: 'Database connection failed', steps: ['Check PostgreSQL is running', 'Check free disk space', 'Review connection limits'] },
+    redis: { issue: 'Redis cache unavailable', steps: ['Restart on the host: docker compose restart redis', 'Check Redis logs', 'Verify memory limits'] },
+    caddy: { issue: 'Reverse proxy not routing', steps: ['If you reached this page through the proxy, it is routing', 'Check the Caddyfile', 'Verify SSL certificates'] }
 };
 
 export default function OperationsPanel() {

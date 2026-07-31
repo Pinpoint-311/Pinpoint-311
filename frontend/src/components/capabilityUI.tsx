@@ -153,63 +153,13 @@ export function Action({
     );
 }
 
-/**
- * A capability as one expandable row inside a panel.
+/* CapabilityRow was here.
  *
- * Used by the setup guide for its steps and by the standing cards for editing,
- * so the thing a clerk clicks behaves identically in both. The header stays
- * visible while open -- collapsing an item to find out what it was is a small
- * indignity that adds up over eight of them.
- */
-export function CapabilityRow({
-    icon, badge, title, subtitle, status, meta, actions,
-    expanded, onToggle, tone = 'normal', children,
-}: {
-    icon: React.ElementType;
-    badge?: ReactNode;
-    title: string;
-    subtitle?: ReactNode;
-    status?: ReactNode;
-    meta?: ReactNode;
-    actions?: ReactNode;
-    expanded: boolean;
-    onToggle: () => void;
-    tone?: 'normal' | 'alert';
-    children?: ReactNode;
-}) {
-    return (
-        <div className={`rounded-2xl border transition-all duration-200 ${tone === 'alert'
-            ? 'bg-red-500/[0.09] border-red-400/25 hover:border-red-400/40'
-            : expanded
-                ? 'bg-white/[0.06] border-white/18'
-                : 'bg-white/[0.045] border-white/10 hover:bg-white/[0.075] hover:border-white/20'}`}>
-            <div className="flex items-center gap-3.5 px-4 py-3 flex-wrap">
-                <button
-                    type="button"
-                    onClick={onToggle}
-                    aria-expanded={expanded}
-                    className="flex items-center gap-3.5 min-w-0 flex-1 text-left rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
-                >
-                    <CapabilityTile icon={icon} badge={badge} tone={tone} />
-                    <span className="min-w-0 flex-1">
-                        <span className="block font-semibold text-white text-sm truncate">{title}</span>
-                        {subtitle && <span className="block text-[11px] text-white/55 truncate mt-0.5">{subtitle}</span>}
-                    </span>
-                    {status}
-                    {meta && <span className="text-[11px] text-white/45 truncate hidden lg:block">{meta}</span>}
-                </button>
-                {actions}
-                <button
-                    type="button"
-                    onClick={onToggle}
-                    aria-hidden="true"
-                    tabIndex={-1}
-                    className="text-white/35 hover:text-white/70 transition-colors shrink-0"
-                >
-                    <ChevronDown className={`w-4 h-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
-                </button>
-            </div>
-            {expanded && <div className="px-4 pb-4 pt-0.5">{children}</div>}
-        </div>
-    );
-}
+ * Written to reshape the setup guide's task rows onto the same component the
+ * cards use, then left unused when the two surfaces were deliberately given
+ * different layouts -- one is a walk through setup, the other is "is anything
+ * wrong". Dead code that looks like a shared abstraction is worse than none:
+ * the next person to touch this reasonably assumes both surfaces render it.
+ *
+ * What they actually share is below and above -- the tile, the pill and the
+ * buttons -- which is the part that has to stay identical. */
