@@ -3774,6 +3774,7 @@ async def restore_backup_endpoint(
 
 @router.get("/health-dashboard")
 async def get_health_dashboard(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
@@ -3794,11 +3795,18 @@ async def get_health_dashboard(
     
     # Check service health via network (works from inside containers)
     
-    # Backend is running if we're responding to this request
-    health["services"]["backend"] = {
-        "status": "running",
-        "uptime": "Active (responding to requests)"
-    }
+    # Every value in here is a *detail*, not an uptime.
+    #
+    # The field was called "uptime" and held strings like "Port 5173 active"
+    # and "6.2 GB - 12 conns". Nothing in this product measures availability
+    # over a period, so the name promised a statistic that does not exist and
+    # was never computed. Renamed to `detail`; `uptime` is still emitted
+    # alongside it for one release so an older frontend does not blank out.
+    def _svc(status: str, detail: str) -> dict:
+        return {"status": status, "detail": detail, "uptime": detail}
+
+    # True by construction: this code is running, so the backend is.
+    health["services"]["backend"] = _svc("running", "Responding to this request")
     
     # Check frontend via socket - try configured port or common ports
     import os
@@ -3811,42 +3819,55 @@ async def get_health_dashboard(
     # Remove duplicates while preserving order
     frontend_ports = list(dict.fromkeys(frontend_ports))
     
+    # The hostname was hardcoded to 'frontend', which is a docker-compose
+    # service name. On any deployment not using that exact topology -- a single
+    # container, a static bundle behind a CDN, separate hosts -- the connect
+    # fails and the page reports the frontend down while a clerk is looking at
+    # it. Configurable, and the failure below now says "could not check" rather
+    # than "stopped".
+    frontend_host = os.getenv("FRONTEND_HOST", "frontend")
+
     frontend_found = False
     for port in frontend_ports:
         try:
             import socket
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(1)
-            result = sock.connect_ex(('frontend', port))
+            result = sock.connect_ex((frontend_host, port))
             sock.close()
             if result == 0:
-                health["services"]["frontend"] = {
-                    "status": "running",
-                    "uptime": f"Port {port} active"
-                }
+                health["services"]["frontend"] = _svc("running", f"Reachable on port {port}")
                 frontend_found = True
                 break
         except Exception:
             continue
     
     if not frontend_found:
+        # "stopped" would be a claim. All that is known is that nothing
+        # answered at the address we tried, which on an unusual topology says
+        # more about the address than about the frontend.
         health["services"]["frontend"] = {
-            "status": "stopped", 
-            "uptime": f"Checked ports: {frontend_ports[:3]}",
-            "error": "No ports reachable"
+            **_svc("unknown", f"No answer from {frontend_host} on "
+                              f"{', '.join(str(p) for p in frontend_ports[:3])}"),
+            "error": "No ports reachable",
         }
     
     # Database - checked below via SQL
-    health["services"]["db"] = {"status": "pending", "uptime": "Checking..."}
+    health["services"]["db"] = _svc("pending", "Checking...")
     
     # Redis - checked via redis_client
-    health["services"]["redis"] = {"status": "pending", "uptime": "Checking..."}
+    health["services"]["redis"] = _svc("pending", "Checking...")
     
-    # Caddy - if we're receiving requests, it's working
-    health["services"]["caddy"] = {
-        "status": "running",
-        "uptime": "Active (routing requests)"
-    }
+    # Caddy was hardcoded to "running" with no probe at all, on the reasoning
+    # that a received request proves the proxy routed it. That holds only when
+    # the request came through the proxy, and an admin on a port-forward or a
+    # dev server talking to the backend directly gets a confident green tick on
+    # a proxy that may be stopped.
+    #
+    # Now it says which of those it is, and never claims more than it checked.
+    from app.services.system_probes import proxy_status
+    _proxy = proxy_status(request.headers)
+    health["services"]["caddy"] = _svc(_proxy["status"], _proxy["detail"])
     
     # Database size and connection count
     try:
@@ -3861,10 +3882,10 @@ async def get_health_dashboard(
         health["database"]["connections"] = conn_result.scalar()
         health["database"]["status"] = "healthy"
         # Update service status
-        health["services"]["db"] = {
-            "status": "running",
-            "uptime": f"{health['database']['size']} • {health['database']['connections']} conns"
-        }
+        health["services"]["db"] = _svc(
+            "running",
+            f"{health['database']['size']} • {health['database']['connections']} connections",
+        )
     except Exception as e:
         health["database"]["status"] = "error"
         health["database"]["error"] = str(e)
@@ -3892,14 +3913,13 @@ async def get_health_dashboard(
         health["cache"]["used_memory"] = info.get("used_memory_human", "unknown")
         health["cache"]["connected_clients"] = info.get("connected_clients", 0)
         # Update service status
-        health["services"]["redis"] = {
-            "status": "running",
-            "uptime": f"Port {redis_port} • {health['cache']['used_memory']} memory"
-        }
+        health["services"]["redis"] = _svc(
+            "running", f"Port {redis_port} • {health['cache']['used_memory']} memory",
+        )
     except redis.ConnectionError:
         health["cache"]["status"] = "not_configured"
         health["cache"]["error"] = "Redis not available"
-        health["services"]["redis"] = {"status": "stopped", "uptime": "Not reachable"}
+        health["services"]["redis"] = _svc("stopped", "Not reachable")
     except Exception as e:
         health["cache"]["status"] = "error"
         health["cache"]["error"] = str(e)

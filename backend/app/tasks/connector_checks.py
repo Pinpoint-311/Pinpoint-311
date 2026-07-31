@@ -33,3 +33,33 @@ def verify_connectors():
         logger.error("[Health] daily connector check could not run: %s",
                      sanitize_for_log(str(exc)[:300]))
         return {"checked": {}, "failing": [], "error": True}
+
+
+@celery_app.task(name="app.tasks.connector_checks.probe_system")
+def probe_system():
+    """Hourly infrastructure probe.
+
+    Hourly rather than daily because a disk fills in hours, and each of these
+    costs a syscall rather than a call to somebody else's API. It does not make
+    the email hourly: the cadence is set by how long something has been in a
+    state, not by how often it is measured.
+    """
+    import asyncio
+
+    from app.services.connector_verification import probe_system as run_probe
+
+    async def run():
+        from app.db.session import SessionLocal
+        from app.services.connector_alerts import dispatch
+        async with SessionLocal() as db:
+            # Alerting is handed in rather than left to a second scheduled job.
+            # A probe that records a full disk and does not send the email is
+            # the same silence this replaces, one layer further in.
+            return await run_probe(db, alerts=dispatch)
+
+    try:
+        return asyncio.run(run())
+    except Exception as exc:
+        logger.error("[Probe] hourly system probe could not run: %s",
+                     sanitize_for_log(str(exc)[:300]))
+        return {"probes": {}, "error": True}
