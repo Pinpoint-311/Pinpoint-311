@@ -975,6 +975,18 @@ class ConnectorHealth(Base):
     alerted_level = Column(String(16))
     alerted_at = Column(DateTime(timezone=True))
 
+    # "I know, stop emailing me about it."
+    #
+    # Silences the alert, never the badge. A connector whose card went quiet
+    # along with its email would be the precise failure this whole subsystem
+    # exists to catch, so the card stays red and says it is muted and until
+    # when. The level is recorded alongside the deadline because muting is
+    # consent to a known problem, not to whatever that problem becomes: an
+    # at-risk connector that goes fully down is new information and breaks
+    # through.
+    alert_muted_until = Column(DateTime(timezone=True))
+    alert_muted_level = Column(String(16))
+
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 

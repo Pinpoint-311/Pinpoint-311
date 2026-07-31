@@ -276,6 +276,28 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [recheckToken]);
 
+    /* "I know about this one."
+     *
+     * Held locally so the button reacts at once, then reconciled by the health
+     * reload the parent runs. It silences the email and nothing else: the card
+     * below keeps whatever colour the connector has earned. */
+    const [mutedUntil, setMutedUntil] = useState<string | null | undefined>(undefined);
+    const [muting, setMuting] = useState(false);
+    const effectiveMute = mutedUntil !== undefined ? mutedUntil : (health?.alerts_muted_until ?? null);
+    const toggleMute = useCallback(async () => {
+        setMuting(true);
+        try {
+            const r = await api.muteConnectorAlerts(cap, effectiveMute ? 0 : undefined);
+            setMutedUntil(r.muted_until);
+            onChanged?.();
+        } catch {
+            // Leaving the button as it was is the honest failure: claiming a
+            // mute that did not take would produce silence nobody asked for.
+        } finally {
+            setMuting(false);
+        }
+    }, [cap, effectiveMute, onChanged]);
+
     const discover = useCallback(async (provider: string) => {
         setRefreshingModels(true);
         try {
@@ -489,6 +511,12 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                 <p className={`text-sm mt-1.5 ${bad ? 'text-red-100/90' : 'text-white/70'}`}>
                                     {spotlightDetail}
                                 </p>
+                                {effectiveMute && (
+                                    <p className="text-xs text-amber-200/85 mt-1.5">
+                                        Nobody is being emailed about this until{' '}
+                                        {new Date(effectiveMute).toLocaleDateString()}. It is still not working.
+                                    </p>
+                                )}
                                 <p className="text-xs text-white/50 mt-1.5">
                                     {configured ? currentName : 'No provider credentials yet'}
                                     {cap === 'ai' && catalog.current_model ? ` · ${catalog.current_model}` : ''}
@@ -499,6 +527,17 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                 </p>
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
+                                {/* Only where there is an alert to silence. A
+                                    capability nobody is being emailed about
+                                    does not need an off switch. */}
+                                {(shown === 'failing' || shown === 'unchecked') && (
+                                    <Action onClick={toggleMute} busy={muting} disabled={muting}
+                                        title={effectiveMute
+                                            ? 'Start emailing administrators about this again'
+                                            : 'Stop emailing administrators about this for a week. The card stays as it is.'}>
+                                        {effectiveMute ? 'Unmute' : 'Mute alerts'}
+                                    </Action>
+                                )}
                                 {configured && (
                                     <Action onClick={handleTest} busy={busy === 'test'} disabled={busy !== null}>
                                         {busy === 'test' ? 'Testing…' : 'Test now'}

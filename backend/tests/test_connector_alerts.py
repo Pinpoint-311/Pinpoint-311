@@ -423,3 +423,176 @@ def test_the_recorded_state_is_what_silences_tomorrow():
                     now=NOW + timedelta(hours=2)) is None
     assert A.decide(level=A.BROKEN, previous_level=level, alerted_at=at,
                     now=NOW + timedelta(days=1)) == "reminder"
+
+
+# ---------------------------------------------------------------------------
+# "I know about this one"
+# ---------------------------------------------------------------------------
+
+def mute(days_left=5, level=A.BROKEN):
+    return {"muted_until": NOW + timedelta(days=days_left), "muted_level": level}
+
+
+def test_a_muted_problem_stops_emailing():
+    """Without this the only way to stop a daily reminder about something you
+    are already dealing with is to filter the sender, and that takes the next
+    unrelated alert with it."""
+    assert A.decide(level=A.BROKEN, previous_level=A.BROKEN,
+                    alerted_at=NOW - timedelta(days=5), now=NOW, **mute()) is None
+
+
+def test_a_mute_expires_on_its_own():
+    """A problem muted and forgotten has to come back, not disappear."""
+    assert A.decide(level=A.BROKEN, previous_level=A.BROKEN,
+                    alerted_at=NOW - timedelta(days=9), now=NOW,
+                    **mute(days_left=-1)) == "reminder"
+
+
+def test_muting_a_warning_does_not_buy_silence_over_an_outage():
+    """The one outcome a dismiss button must never be able to produce.
+
+    Acknowledging "the AI key failed once" and thereby not being told when AI
+    stops working entirely would make the button actively dangerous.
+    """
+    assert A.decide(level=A.BROKEN, previous_level=A.AT_RISK,
+                    alerted_at=NOW - timedelta(days=1), now=NOW,
+                    **mute(level=A.AT_RISK)) == "escalated"
+
+
+def test_muting_an_outage_covers_the_outage_itself():
+    assert A.decide(level=A.BROKEN, previous_level=A.BROKEN,
+                    alerted_at=NOW - timedelta(days=5), now=NOW,
+                    **mute(level=A.BROKEN)) is None
+
+
+def test_a_mute_never_suppresses_the_recovery_notice():
+    """The good news is short, it arrives once, and it is how somebody learns
+    they can stop worrying."""
+    assert A.decide(level=A.HEALTHY, previous_level=A.BROKEN,
+                    alerted_at=NOW - timedelta(days=1), now=NOW,
+                    **mute()) == "recovered"
+
+
+def test_an_unreadable_mute_level_does_not_suppress_anything_worse():
+    """A row we cannot interpret must fail towards telling somebody."""
+    assert A.decide(level=A.BROKEN, previous_level=A.BROKEN,
+                    alerted_at=NOW - timedelta(days=5), now=NOW,
+                    muted_until=NOW + timedelta(days=5), muted_level=None) is None
+    # ...but a genuinely unknown, higher-ranked level is not covered by it.
+    assert A.muted(level=A.BROKEN, muted_until=NOW + timedelta(days=5),
+                   muted_level=A.AT_RISK, now=NOW) is False
+
+
+def test_a_naive_mute_deadline_does_not_explode():
+    naive = (NOW + timedelta(days=5)).replace(tzinfo=None)
+    assert A.muted(level=A.BROKEN, muted_until=naive, muted_level=A.BROKEN, now=NOW) is True
+
+
+def test_the_planner_reads_the_mute_off_the_row():
+    class Muted:
+        connector = "ai"
+        status = "down"
+        alerted_level = A.BROKEN
+        alerted_at = NOW - timedelta(days=5)
+        alert_muted_until = NOW + timedelta(days=3)
+        alert_muted_level = A.BROKEN
+
+    assert A.plan([Muted()], now=NOW) == []
+
+
+def test_a_row_predating_the_mute_columns_is_simply_not_muted():
+    """Rows written before the migration have neither attribute."""
+    class Old:
+        connector = "ai"
+        status = "down"
+
+    assert [a.kind for a in A.plan([Old()], now=NOW)] == ["new"]
+
+
+def test_recovery_clears_the_mute_so_the_next_failure_is_heard():
+    """The administrator acknowledged the old problem, not a future one."""
+    recovered = A.Alert(connector="ai", level=A.HEALTHY, kind="recovered", summary="")
+    assert A.next_state(recovered, now=NOW) == (None, None)
+
+
+def test_the_email_says_how_to_stop_it():
+    """Somebody who cannot find the off switch filters the sender instead."""
+    plan = A.plan([FakeHealth("ai", "down")], now=NOW)
+    body = A.compose(plan, town="T", settings_url="https://t.gov/admin", now=NOW)
+    assert "Mute" in body["text"] or "mute" in body["text"]
+    assert str(A.MUTE_FOR.days) in body["text"]
+
+
+def test_a_mute_is_shorter_than_forever():
+    assert timedelta(days=1) <= A.MUTE_FOR <= timedelta(days=30)
+
+
+def test_an_escalation_throws_the_mute_away():
+    """It already broke through once. Leaving the old deadline in place would
+    re-suppress the outage on tomorrow's sweep, so the dismiss button would buy
+    a week of silence over an outage after all -- one day late."""
+    escalated = A.Alert(connector="ai", level=A.BROKEN, kind="escalated", summary="")
+    assert A.clears_mute(escalated) is True
+
+
+def test_a_recovery_throws_the_mute_away():
+    assert A.clears_mute(A.Alert(connector="ai", level=A.HEALTHY, kind="recovered", summary="")) is True
+
+
+def test_a_routine_reminder_leaves_the_mute_alone():
+    """Muting is not undone by the passage of time alone -- that is what the
+    deadline is for."""
+    for kind in ("new", "reminder"):
+        assert A.clears_mute(A.Alert(connector="ai", level=A.BROKEN, kind=kind, summary="")) is False
+
+
+# ---------------------------------------------------------------------------
+# The endpoint behind the button
+# ---------------------------------------------------------------------------
+
+def _system_api() -> str:
+    from pathlib import Path
+
+    return (Path(__file__).resolve().parents[1] / "app/api/system.py").read_text()
+
+
+def test_there_is_somewhere_to_press_mute():
+    source = _system_api()
+    assert '"/connectors/{connector}/mute"' in source
+    assert "async def mute_connector_alerts" in source
+
+
+def test_muting_cannot_be_forever():
+    """An unbounded mute is a permanently disabled alarm that nobody remembers
+    turning off."""
+    source = _system_api()
+    assert "0 <= days <= 90" in source
+
+
+def test_muting_an_unknown_connector_does_not_invent_one():
+    """`connector` is an unvalidated path segment. Creating a row for whatever
+    name it is given would let any admin request insert arbitrary junk into a
+    table the setup page renders -- the same hole that was closed on the test
+    endpoint."""
+    source = _system_api()
+    block = source[source.index("async def mute_connector_alerts"):]
+    block = block[:block.index("\n@router") if "\n@router" in block else len(block)]
+    assert "status_code=404" in block
+    assert "ConnectorHealth(" not in block, "the mute endpoint creates health rows"
+
+
+def test_muting_changes_no_health_field():
+    """Silencing the email must not touch what the card reports. A dismiss that
+    also cleared the red badge would turn a known problem into an invisible
+    one."""
+    source = _system_api()
+    block = source[source.index("async def mute_connector_alerts"):]
+    block = block[:block.index("\ndef ch_classify")]
+    for field in ("consecutive_failures", "last_error", "last_success_at", "total_failures"):
+        assert f"row.{field}" not in block, f"the mute endpoint rewrites {field}"
+
+
+def test_the_card_can_tell_that_alerts_are_muted():
+    """A mute that silenced the email and left no trace on screen would be
+    indistinguishable from the alerting being broken."""
+    assert '"alerts_muted_until"' in _system_api()

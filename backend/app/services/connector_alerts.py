@@ -132,6 +132,39 @@ class Alert:
         return label(self.connector)
 
 
+# How long "I know about this one" lasts before the alerts resume. Long enough
+# to cover a vendor support ticket or a holiday; short enough that a problem
+# muted and forgotten comes back rather than disappearing.
+MUTE_FOR = timedelta(days=7)
+
+
+def muted(
+    *,
+    level: str,
+    muted_until: Optional[datetime],
+    muted_level: Optional[str],
+    now: datetime,
+) -> bool:
+    """Whether an administrator has already said "I know" about this.
+
+    Muting is consent to a *known* problem, not to whatever that problem later
+    becomes. Something acknowledged while it was failing intermittently, that
+    then goes fully down, is new information and breaks through -- otherwise
+    dismissing a warning would buy a week of silence over an outage, which is
+    the one outcome a dismiss button must never be able to produce.
+    """
+    if muted_until is None:
+        return False
+    if muted_until.tzinfo is None:
+        muted_until = muted_until.replace(tzinfo=timezone.utc)
+    if now >= muted_until:
+        return False
+    # Unknown recorded level is treated as the worst, so a row we cannot
+    # interpret errs towards staying quiet only for as long as the deadline --
+    # never towards suppressing something worse than what was acknowledged.
+    return RANK.get(level, 0) <= RANK.get(muted_level, RANK[BROKEN])
+
+
 def decide(
     *,
     level: str,
@@ -139,6 +172,8 @@ def decide(
     alerted_at: Optional[datetime],
     now: datetime,
     remind_after: Dict[str, timedelta] = REMIND_AFTER,
+    muted_until: Optional[datetime] = None,
+    muted_level: Optional[str] = None,
 ) -> Optional[str]:
     """Whether to send anything about one connector, and what kind of thing.
 
@@ -146,6 +181,10 @@ def decide(
     been long enough to mention it again".
     """
     previous = previous_level or HEALTHY
+
+    if level != HEALTHY and muted(level=level, muted_until=muted_until,
+                                  muted_level=muted_level, now=now):
+        return None
 
     if level == HEALTHY:
         # Only worth saying if we had said the opposite. A connector that has
@@ -197,6 +236,8 @@ def plan(
             alerted_at=getattr(h, "alerted_at", None),
             now=now,
             remind_after=remind_after,
+            muted_until=getattr(h, "alert_muted_until", None),
+            muted_level=getattr(h, "alert_muted_level", None),
         )
         if kind is None:
             continue
@@ -305,6 +346,18 @@ def compose(
         lines.append(f"Check or fix these here: {settings_url}")
         html.append(
             f'<p><a href="{_esc(settings_url)}">Check or fix these in your settings</a></p>'
+        )
+        # Somebody who cannot stop a daily reminder filters the sender, and
+        # that takes the next unrelated alert with it. So the way to stop it is
+        # in the message itself.
+        lines.append(
+            f"Already know about one of these? Mute it on that page and we will stop "
+            f"emailing about it for {MUTE_FOR.days} days -- unless it gets worse."
+        )
+        html.append(
+            '<p style="color:#666">Already know about one of these? Mute it on that '
+            f"page and we will stop emailing about it for {MUTE_FOR.days} days &mdash; "
+            "unless it gets worse.</p>"
         )
 
     lines.append("")
@@ -423,6 +476,23 @@ def next_state(alert: Alert, *, now: datetime) -> tuple:
     return (alert.level, now)
 
 
+def clears_mute(alert: Alert) -> bool:
+    """Whether this alert invalidates whatever mute the connector carries.
+
+    Two ways a mute stops describing anything anyone agreed to. A recovery
+    means the acknowledged problem is over, and carrying the mute into the next
+    failure would silence a problem nobody has seen yet. An escalation means it
+    got worse than what was acknowledged -- it has already broken through, so
+    leaving the old deadline in place would re-suppress it tomorrow.
+    """
+    return alert.kind in ("recovered", "escalated")
+
+
+def mute_until(now: datetime, *, days: Optional[int] = None) -> datetime:
+    """When a mute taken now should expire."""
+    return now + (timedelta(days=days) if days is not None else MUTE_FOR)
+
+
 async def remember(db, alerts: Sequence[Alert], *, now: Optional[datetime] = None) -> None:
     """Write back what was announced, so tomorrow's sweep stays quiet."""
     now = now or datetime.now(timezone.utc)
@@ -439,6 +509,9 @@ async def remember(db, alerts: Sequence[Alert], *, now: Optional[datetime] = Non
             if row is None:
                 continue
             row.alerted_level, row.alerted_at = next_state(alert, now=now)
+            if clears_mute(alert):
+                row.alert_muted_until = None
+                row.alert_muted_level = None
         await db.commit()
     except Exception as exc:
         logger.warning("[Health] could not record which alerts were sent: %s", str(exc)[:200])
