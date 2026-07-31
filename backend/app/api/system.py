@@ -1,5 +1,6 @@
-from fastapi import (APIRouter, BackgroundTasks, Depends, HTTPException, status, UploadFile,
+from fastapi import (APIRouter, BackgroundTasks, Body, Depends, HTTPException, status, UploadFile,
                      File, Request, Query)
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from typing import Any, List, Optional, Dict
@@ -255,11 +256,99 @@ async def connector_health_report(
                 "consecutive_failures": h.consecutive_failures,
                 "total_successes": h.total_successes,
                 "total_failures": h.total_failures,
+                # Surfaced so the card can say alerts are muted and until when.
+                # A mute that silenced the email and left no trace on screen
+                # would be indistinguishable from the alerting being broken.
+                "alerts_muted_until": (
+                    h.alert_muted_until.isoformat() if h.alert_muted_until else None
+                ),
             }
             for h in healths
         ],
         "needs_attention": [h.connector for h in healths if h.status in (ch.DOWN, ch.FAILING)],
     }
+
+
+@router.post("/connectors/{connector}/mute")
+async def mute_connector_alerts(
+    connector: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """"I know about this one." Stops the emails; leaves the badge alone.
+
+    Pass `{"days": 0}` to lift a mute early.
+
+    Nothing here touches how the connector is reported on screen. A dismiss
+    that also cleared the red card would turn a known problem into an invisible
+    one, which is the exact failure the health system exists to prevent -- so
+    the card keeps saying it is broken, and adds that nobody is being emailed
+    about it and until when.
+    """
+    from sqlalchemy import select
+
+    from app.models import ConnectorHealth
+    from app.services import connector_alerts as alerts
+
+    row = (await db.execute(
+        select(ConnectorHealth).where(ConnectorHealth.connector == connector)
+    )).scalar_one_or_none()
+    if row is None:
+        # Nothing has ever reported health for this name. Creating a row here
+        # would let any admin request insert arbitrary connectors into a table
+        # the setup page renders.
+        raise HTTPException(status_code=404, detail="No health has been recorded for that service yet.")
+
+    raw_days = payload.get("days", alerts.MUTE_FOR.days)
+    try:
+        days = int(raw_days)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="days must be a whole number.")
+    # Bounded. An unbounded mute is a permanently disabled alarm that nobody
+    # remembers turning off, and a negative one is a mute that has already
+    # expired dressed up as a mute.
+    if not 0 <= days <= 90:
+        raise HTTPException(status_code=400, detail="days must be between 0 and 90.")
+
+    now = datetime.now(timezone.utc)
+    if days == 0:
+        row.alert_muted_until = None
+        row.alert_muted_level = None
+    else:
+        row.alert_muted_until = alerts.mute_until(now, days=days)
+        row.alert_muted_level = alerts.alert_level(ch_classify(row, now=now))
+    await db.commit()
+
+    # Muting an alarm is exactly the kind of act that wants a name against it
+    # six months later, when somebody asks why nobody was told.
+    try:
+        from app.services.audit_service import AuditService
+
+        await AuditService.log_event(
+            db,
+            event_type="connector_alerts_muted" if days else "connector_alerts_unmuted",
+            username=getattr(admin, "username", None) or str(getattr(admin, "id", "")),
+            user_id=getattr(admin, "id", None),
+            success=True,
+            details={"connector": connector, "days": days},
+        )
+    except Exception:
+        # The mute has already been committed. Losing its audit line is worth
+        # noting, not worth failing the request over.
+        from app.core.sanitize import sanitize_for_log
+        logger.warning("[Health] could not audit the mute of %s", sanitize_for_log(connector))
+    return {
+        "connector": connector,
+        "muted_until": row.alert_muted_until.isoformat() if row.alert_muted_until else None,
+        "muted_level": row.alert_muted_level,
+    }
+
+
+def ch_classify(row, *, now=None):
+    from app.services.connector_health import classify
+
+    return classify(row, now=now)
 
 
 @router.get("/identity/catalog")

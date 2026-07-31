@@ -218,6 +218,12 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * map provider's key existed, so switching to one with no credentials still
      * showed a tick. Refetched whenever something saves. */
     const [providerStatus, setProviderStatus] = useState<ProviderStatusMap | null>(null);
+    /* The guide and the provider cards below are two views of one set of
+     * credentials, on one screen. Until this token existed neither told the
+     * other anything: a key entered in the guide left the card below still
+     * reading "Not set up", and the only conclusion available to a clerk from
+     * that is that the save did not take. */
+    const [providerRefresh, setProviderRefresh] = useState(0);
     const loadProviderStatus = useCallback(() => {
         api.getProviderStatus()
             .then(setProviderStatus)
@@ -705,7 +711,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     onSaveSecrets={async (keys) => { for (const k of keys) await handleSave(k); }}
                                     savingSecret={savingKey}
                                     isSecretConfigured={(key) => !!isConfigured(key)}
-                                    onRefresh={() => { onRefresh(); loadProviderStatus(); }}
+                                    onRefresh={() => { onRefresh(); loadProviderStatus(); setProviderRefresh(t => t + 1); }}
                                     publicOrigin={publicOrigin}
                                     renderFoundation={renderFoundation}
                                 />
@@ -733,6 +739,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             <div id="sec-providers">
                 <ServiceProviders
                     show={wantedCapabilities}
+                    refreshToken={providerRefresh}
+                    publicOrigin={publicOrigin}
+                    onChanged={() => { onRefresh(); loadProviderStatus(); }}
                     extras={
                         <>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

@@ -39,7 +39,17 @@ logger = logging.getLogger(__name__)
 # stale rather than working: the last real evidence is old enough that a key
 # could have been revoked, a card could have expired, or a vendor could have
 # changed a scope, and we would not know.
-FRESH_FOR = timedelta(days=7)
+#
+# Was a week, from when the only evidence was organic traffic -- a connector
+# nobody happened to use for six days was unremarkable. There is now a sweep
+# that actively tests every configured connector once a day, so with the worker
+# running this resets daily and three days without a success means three
+# consecutive sweeps found nothing to record. A week of that is a long time to
+# call something healthy.
+#
+# Towns with no Celery worker have no sweep, so nothing here alerts on their
+# behalf either; their badges simply go honest sooner.
+FRESH_FOR = timedelta(days=3)
 
 # Failures before "failing" becomes "down". One failed call is a blip -- a
 # timeout, a redeploy, a rate limit -- and paging a clerk for it teaches them to
@@ -68,6 +78,10 @@ class Health:
     consecutive_failures: int = 0
     total_successes: int = 0
     total_failures: int = 0
+    # Carried through so the alerting layer can tell "this is new" from "we
+    # already said this on Tuesday" without a second query per connector.
+    alerted_level: Optional[str] = None
+    alerted_at: Optional[datetime] = None
 
     @property
     def ok(self) -> bool:
@@ -80,7 +94,8 @@ class Health:
         if self.status == WORKING:
             return "Working"
         if self.status == STALE:
-            return "No recent activity — last worked more than a week ago"
+            days = max(1, FRESH_FOR.days)
+            return f"No recent activity — nothing has worked here in over {days} days"
         detail = f" — {self.last_error}" if self.last_error else ""
         if self.status == DOWN:
             return f"Failing repeatedly ({self.consecutive_failures} in a row){detail}"
@@ -123,6 +138,8 @@ def to_health(row: Any, *, now: Optional[datetime] = None) -> Health:
         consecutive_failures=getattr(row, "consecutive_failures", 0) or 0,
         total_successes=getattr(row, "total_successes", 0) or 0,
         total_failures=getattr(row, "total_failures", 0) or 0,
+        alerted_level=getattr(row, "alerted_level", None),
+        alerted_at=getattr(row, "alerted_at", None),
     )
 
 

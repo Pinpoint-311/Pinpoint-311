@@ -33,6 +33,7 @@ INLINE = FRONTEND / "InlineProviderSetup.tsx"
 SHARED = FRONTEND / "ProviderCredentialSteps.tsx"
 CARDS = FRONTEND / "ServiceProviders.tsx"
 CONTENT = FRONTEND / "setupStepsContent.tsx"
+SHARED_UI = FRONTEND / "capabilityUI.tsx"
 
 SETUP_SURFACE = (GUIDE, WIZARD, PLAN, INLINE, SHARED, CONTENT)
 
@@ -233,6 +234,72 @@ def test_screening_and_blurring_are_one_thing(guide):
 # Callback URLs point at the real site
 # ---------------------------------------------------------------------------
 
+def test_the_cards_and_the_guide_share_their_parts_without_sharing_a_layout():
+    """Two surfaces, one vocabulary.
+
+    They are deliberately not the same shape -- the guide is a numbered walk
+    through setup, the cards are "is anything wrong" -- but the tile, the status
+    pill and the buttons must come from one file. Hand-rolled from utility
+    classes in each, they drift: that is exactly how the department cards and
+    the service-category cards ended up looking like two different products.
+    """
+    ui = _read(SHARED_UI)
+    for export in ("export function StatusPill", "export function CapabilityTile",
+                   "export function Action"):
+        assert export in ui, f"the shared vocabulary is missing {export}"
+    cards = _read(CARDS)
+    for part in ("StatusPill", "CapabilityTile", "Action"):
+        assert part in cards, f"the provider cards roll their own {part} again"
+    assert "from './capabilityUI'" in cards
+
+
+def test_providers_are_chosen_in_one_place_only():
+    """The questionnaire decides. A picker on the card as well meant the two
+    could disagree, with nowhere to see which the town had actually meant."""
+    cards = _read(CARDS)
+    assert 'aria-label={`${title} provider`}' not in cards, (
+        "the provider cards have grown their own provider picker again"
+    )
+
+
+def test_the_cards_do_not_run_a_second_setup_walk():
+    """This section used to carry its own "Step 3 of 8" cursor and progress
+    bar. With the guide above doing the same job, a town had two progress
+    indicators that counted differently."""
+    # Comment lines are excluded: the note explaining why the guided walk was
+    # removed necessarily quotes the copy it removed.
+    live = [line for line in _read(CARDS).splitlines()
+            if not line.lstrip().startswith(("*", "//", "/*"))]
+    cards = "\n".join(live)
+    for gone in ("Skip the guide", "Walk me through what is left", "One at a time, in order"):
+        assert gone not in cards, f"the cards are running their own guided setup again: {gone!r}"
+
+
+def test_only_a_real_problem_takes_the_whole_width():
+    """Spotlight puts anything wrong on a full-width card and shrinks the rest
+    to bubbles. An earlier version also spotlit "not set up", which on a town
+    mid-setup produced six full-width cards -- the wall this layout exists to
+    avoid, shouting about work the guide above is already walking through."""
+    cards = _read(CARDS)
+    assert "s === 'failing' || s === 'unchecked'" in cards
+    assert "s === 'unset'" not in cards, (
+        "switched-off capabilities are being spotlit as though they were faults"
+    )
+
+
+def test_a_save_on_one_surface_reaches_the_other():
+    """The guide and the cards are two views of one set of credentials on one
+    screen. A key entered in the guide leaving the card below reading "Not set
+    up" reads, to the person who typed it, as a save that did not take."""
+    guide_text = _read(GUIDE)
+    assert "refreshToken={providerRefresh}" in guide_text, (
+        "a save in the guide never reaches the cards below"
+    )
+    assert "onChanged=" in guide_text, "a save on the cards never reaches the guide above"
+    cards = _read(CARDS)
+    assert "refreshToken > 0" in cards, "the cards ignore the refresh signal"
+
+
 def test_callback_urls_use_the_configured_domain(guide):
     """`window.location.origin` is wherever the admin happens to be -- an
     internal hostname, a port-forward, an IP. A redirect URI registered from one
@@ -240,10 +307,10 @@ def test_callback_urls_use_the_configured_domain(guide):
     password is accepted, which reads as a wrong secret rather than a wrong URL.
     """
     assert "public_origin" in guide, "the page never asks the server for its real address"
-    inline = _read(INLINE)
-    assert "publicOrigin || window.location.origin" in inline, (
-        "the steps still build callback URLs from the browser's address"
-    )
+    for path in (INLINE, CARDS):
+        assert "publicOrigin || window.location.origin" in _read(path), (
+            f"{path.name} still builds callback URLs from the browser's address"
+        )
 
 
 def test_the_backend_serves_the_real_origin():

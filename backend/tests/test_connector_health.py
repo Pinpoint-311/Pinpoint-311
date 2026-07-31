@@ -183,3 +183,55 @@ async def test_recording_against_a_broken_session_does_not_raise():
     await ch.record_success(Broken(), "ai")
     await ch.record_failure(Broken(), "ai", "boom")
     assert await ch.snapshot(Broken()) == {}
+
+
+# ---------------------------------------------------------------------------
+# The staleness threshold has to mean something
+# ---------------------------------------------------------------------------
+
+def test_a_success_goes_stale_within_a_few_sweeps():
+    """Seven days was written when the only evidence was organic traffic.
+
+    There is now a sweep that actively tests every configured connector once a
+    day, so `last_success_at` resets daily on its own. Under the old threshold
+    a connector could go a full week with every one of those seven sweeps
+    recording nothing, and still be reported as working -- and, since the
+    alerting reads this same status, still not be mentioned to anyone.
+
+    Bounded in sweeps rather than in days so the two constants cannot drift
+    apart: raising the beat interval without revisiting this would quietly
+    restore the old behaviour.
+    """
+    from datetime import timedelta
+
+    from app.services import connector_health as ch
+
+    sweep = timedelta(seconds=60 * 60 * 24)
+    assert ch.FRESH_FOR <= 3 * sweep, (
+        f"a connector may be called healthy after {ch.FRESH_FOR // sweep} silent sweeps"
+    )
+    # And not so tight that one missed run trips it.
+    assert ch.FRESH_FOR >= 2 * sweep
+
+
+def test_the_sweep_really_does_run_daily():
+    """The bound above is only meaningful if the schedule is what it claims."""
+    pytest.importorskip("celery")
+    from app.core.celery_app import celery_app
+
+    entry = celery_app.conf.beat_schedule["daily-connector-check"]
+    assert entry["schedule"] == 60 * 60 * 24
+
+
+def test_the_stale_summary_does_not_quote_a_threshold_of_its_own():
+    """It read "last worked more than a week ago" while the constant said three
+    days. A sentence shown to a clerk must not carry a number the code stopped
+    using -- that is a small lie they have no way to check."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.services import connector_health as ch
+
+    now = datetime.now(timezone.utc)
+    health = ch.Health(connector="ai", status=ch.STALE,
+                       last_success_at=now - ch.FRESH_FOR - timedelta(days=1))
+    assert str(ch.FRESH_FOR.days) in health.summary()
