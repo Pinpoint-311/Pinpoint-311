@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -11,7 +11,7 @@ import {
 import { Card, Button, Input, Badge, CollapsibleSection } from './ui';
 import { SystemSecret } from '../types';
 import { api } from '../services/api';
-import type { Capability } from '../services/api';
+import type { Capability, ProviderStatusMap } from '../services/api';
 import GovtechIntegrations from './GovtechIntegrations';
 import ServiceProviders from './ServiceProviders';
 import SetupWizard from './SetupWizard';
@@ -21,6 +21,71 @@ import './setupStepsContent';
 import StorageStatusLine from './StorageStatusLine';
 import { openStayInformed } from './StayInformed';
 
+
+/* One question in the questionnaire.
+ *
+ * Declared at module scope, not inside the page's render. A component defined
+ * during render is a fresh type every render, so React unmounts and remounts it
+ * -- which, for anything holding state, silently discards what was typed.
+ */
+/* The optional features, as id-and-label pairs.
+ *
+ * One list rather than two. An id in the feature set with no chip is a feature
+ * that cannot be switched off; a chip whose id is not in the set is a control
+ * that does nothing when clicked. Both existed, so the set is now derived from
+ * the chips and the pair cannot drift.
+ */
+const FEATURES = [
+    ['ai', 'AI triage'],
+    ['translation', 'Translation'],
+    ['safety', 'Screening and blurring'],
+    ['email', 'Email'],
+    ['sms', 'Text messages'],
+    ['secrets', 'Key management'],
+    ['backups', 'Backups'],
+    ['errors', 'Crash reporting'],
+] as const;
+
+const ALL_FEATURES: readonly string[] = FEATURES.map(([id]) => id);
+
+function Ask({ n, label, hint, children }: {
+    n: number; label: string; hint?: string; children: React.ReactNode;
+}) {
+    return (
+        <div className="mb-4 last:mb-0">
+            <p className="text-[11px] uppercase tracking-wider text-white/50 font-semibold">
+                {n}. {label}
+            </p>
+            {hint && <p className="text-white/40 text-[11px] mt-0.5 mb-1.5">{hint}</p>}
+            <div className="mt-1.5">{children}</div>
+        </div>
+    );
+}
+
+/** A row of mutually exclusive choices. */
+function Options({ value, onChange, options }: {
+    value: string;
+    onChange: (v: string) => void;
+    options: readonly (readonly [string, string])[];
+}) {
+    return (
+        <div className="flex flex-wrap gap-2">
+            {options.map(([id, label]) => (
+                <button
+                    key={id}
+                    type="button"
+                    onClick={() => onChange(id)}
+                    aria-pressed={value === id}
+                    className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${value === id
+                        ? 'bg-primary-500/20 border-primary-400/50 text-white'
+                        : 'bg-white/5 border-white/10 text-white/60 hover:text-white'}`}
+                >
+                    {label}
+                </button>
+            ))}
+        </div>
+    );
+}
 
 interface ModulesState {
     ai_analysis: boolean;
@@ -72,7 +137,6 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * up with the whole platform switched on, not the three we happened to
      * pre-tick -- so the list below is every feature, and a town removes what
      * it genuinely does not want. */
-    const ALL_FEATURES = ['ai', 'translation', 'safety', 'email', 'sms', 'secrets', 'govtech', 'backups', 'errors'];
     const [wantedFeatures, setWantedFeatures] = useState<Set<string>>(new Set(ALL_FEATURES));
     const toggleFeature = (f: string) =>
         setWantedFeatures(prev => {
@@ -112,14 +176,6 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const smsProvider = smsOverride ?? SMS_BY_CLOUD[setupCloud];
     const redactionProvider = redactionOverride ?? setupCloud;
 
-    /** A picker inside the wizard writing back to the questionnaire's state. */
-    const chooseProvider = (key: 'email' | 'sms' | 'redaction' | 'maps' | 'idp', id: string) => {
-        if (key === 'email') setEmailOverride(id);
-        else if (key === 'sms') setSmsOverride(id);
-        else if (key === 'redaction') setRedactionOverride(id);
-        else if (key === 'maps') setSetupMaps(id as typeof setupMaps);
-        else if (key === 'idp') setSetupIdp(id as typeof setupIdp);
-    };
 
     /* The setup questions are asked in feature terms ("AI triage", "Secret
      * storage + PII encryption") and the provider cards are keyed by
@@ -156,6 +212,18 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * than a wrong URL. null means nothing has configured a domain yet, and the
      * browser's origin is the best guess available. */
     const [publicOrigin, setPublicOrigin] = useState<string | null>(null);
+    /* Which provider each capability is on, and which are set up.
+     *
+     * Per provider, not per capability: "maps is configured" was true if any
+     * map provider's key existed, so switching to one with no credentials still
+     * showed a tick. Refetched whenever something saves. */
+    const [providerStatus, setProviderStatus] = useState<ProviderStatusMap | null>(null);
+    const loadProviderStatus = useCallback(() => {
+        api.getProviderStatus()
+            .then(setProviderStatus)
+            .catch(() => { /* leaves everything unfinished, which is the safe way to be wrong */ });
+    }, []);
+    useEffect(() => { loadProviderStatus(); }, [loadProviderStatus, secrets.length]);
     useEffect(() => {
         fetch('/api/system/config')
             .then(r => (r.ok ? r.json() : null))
@@ -249,10 +317,6 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         sms: smsConfigured,
         backups: !!backupConfigured,
         errors: !!sentryConfigured,
-        // The connector wizard lives in its own component and reports no single
-        // "configured" flag, so this never marks itself finished. Optional, and
-        // a town that has not connected anything has not got it wrong.
-        govtech: false,
     };
     const itemDone = (id: string) => DONE_BY_ITEM[id] ?? false;
 
@@ -521,56 +585,108 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     <p className="text-sm font-semibold text-white mb-0.5">Answer a few questions and we will hide the rest</p>
                                     <p className="text-white/50 text-xs mb-3">Sign-in and maps are always shown — a town needs both before it can take a report.</p>
 
-                                    <label className="text-[11px] uppercase tracking-wider text-white/50 font-semibold">1. Which company hosts your town's services?</label>
-                                    <p className="text-white/40 text-[11px] mt-0.5 mb-1">If the town already uses Microsoft 365, pick Microsoft Azure. If you are not sure, pick Google — you can change it later.</p>
-                                    <div className="flex flex-wrap gap-2 mt-1.5 mb-4">
-                                        {(['google', 'azure', 'aws'] as const).map(c => (
-                                            <button key={c} type="button" onClick={() => setSetupCloud(c)}
-                                                className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${setupCloud === c ? 'bg-primary-500/20 border-primary-400/50 text-white' : 'bg-white/5 border-white/10 text-white/60 hover:text-white'}`}>
-                                                {{ google: 'Google Cloud', azure: 'Microsoft Azure', aws: 'AWS' }[c]}
-                                            </button>
-                                        ))}
-                                    </div>
+                                    {/* Every provider decision, in one place.
+                                      *
+                                      * They used to be split: the cloud, sign-in
+                                      * and maps here, and email, text and
+                                      * screening on pickers nested inside their
+                                      * own sections further down. That meant the
+                                      * questionnaire could say one thing and a
+                                      * section another, and a clerk had no single
+                                      * place to see what the town had chosen.
+                                      *
+                                      * Extras come first because there is no
+                                      * point asking who sends your email before
+                                      * asking whether you want email at all. */}
+                                    <Ask
+                                        n={1}
+                                        label="What do you want to switch on? (all optional)"
+                                        hint="Sign-in and maps are always needed. Tick anything else you want; untick to remove it."
+                                    >
+                                        <div className="flex flex-wrap gap-2">
+                                            {FEATURES.map(([f, label]) => (
+                                                <button key={f} type="button" onClick={() => toggleFeature(f)}
+                                                    aria-pressed={wants(f)}
+                                                    className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${wants(f) ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-100' : 'bg-white/5 border-white/10 text-white/60 hover:text-white'}`}>
+                                                    {wants(f) ? '\u2713 ' : ''}{label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </Ask>
 
-                                    <label className="text-[11px] uppercase tracking-wider text-white/50 font-semibold">2. How will staff sign in?</label>
-                                    <p className="text-white/40 text-[11px] mt-0.5 mb-1">If your staff already sign in to Microsoft 365, you already have Entra and can use it. Auth0 is for when there is nothing in place yet.</p>
-                                    <div className="flex flex-wrap gap-2 mt-1.5 mb-4">
-                                        {(['auth0', 'entra', 'okta', 'oidc'] as const).map(c => (
-                                            <button key={c} type="button" onClick={() => setSetupIdp(c)}
-                                                className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${setupIdp === c ? 'bg-primary-500/20 border-primary-400/50 text-white' : 'bg-white/5 border-white/10 text-white/60 hover:text-white'}`}>
-                                                {{ auth0: 'Auth0', entra: 'Microsoft Entra ID', okta: 'Okta', oidc: 'Other (OIDC)' }[c]}
-                                            </button>
-                                        ))}
-                                    </div>
+                                    <Ask
+                                        n={2}
+                                        label="Which company hosts your town's services?"
+                                        hint="If the town already uses Microsoft 365, pick Microsoft Azure. If you are not sure, pick Google — you can change it later."
+                                    >
+                                        <Options
+                                            value={setupCloud}
+                                            onChange={(v) => setSetupCloud(v as typeof setupCloud)}
+                                            options={[['google', 'Google Cloud'], ['azure', 'Microsoft Azure'], ['aws', 'AWS']]}
+                                        />
+                                    </Ask>
 
-                                    <label className="text-[11px] uppercase tracking-wider text-white/50 font-semibold">3. Which map provider?</label>
-                                    <p className="text-white/40 text-[11px] mt-0.5 mb-1">If the town or county already has an ArcGIS agreement, Esri lets you use it. Otherwise any of these will do.</p>
-                                    <div className="flex flex-wrap gap-2 mt-1.5 mb-4">
-                                        {(['google', 'esri', 'azure', 'apple'] as const).map(c => (
-                                            <button key={c} type="button" onClick={() => setSetupMaps(c)}
-                                                className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${setupMaps === c ? 'bg-primary-500/20 border-primary-400/50 text-white' : 'bg-white/5 border-white/10 text-white/60 hover:text-white'}`}>
-                                                {{ google: 'Google Maps', esri: 'Esri / ArcGIS', azure: 'Azure Maps', apple: 'Apple Maps' }[c]}
-                                            </button>
-                                        ))}
-                                    </div>
+                                    <Ask
+                                        n={3}
+                                        label="How will staff sign in?"
+                                        hint="If your staff already sign in to Microsoft 365, you already have Entra and can use it. Auth0 is for when there is nothing in place yet."
+                                    >
+                                        <Options
+                                            value={setupIdp}
+                                            onChange={(v) => setSetupIdp(v as typeof setupIdp)}
+                                            options={[['auth0', 'Auth0'], ['entra', 'Microsoft Entra ID'], ['okta', 'Okta'], ['oidc', 'Other (OIDC)']]}
+                                        />
+                                    </Ask>
 
-                                    <label className="text-[11px] uppercase tracking-wider text-white/50 font-semibold">4. Which extras do you want? (all optional)</label>
-                                    <p className="text-white/40 text-[11px] mt-0.5 mb-1">Tick anything you want. Each one is added to the list below, grouped with whatever else uses the same login. Untick to remove it again.</p>
-                                    <div className="flex flex-wrap gap-2 mt-1.5">
-                                        {([
-                                            ['ai', 'AI triage'], ['translation', 'Translation'],
-                                            ['safety', 'Screening and blurring'],
-                                            ['email', 'Email'], ['sms', 'Text messages'],
-                                            ['secrets', 'Key management'],
-                                            ['govtech', 'Town-system connector'], ['backups', 'Backups'],
-                                            ['errors', 'Crash reporting'],
-                                        ] as const).map(([f, label]) => (
-                                            <button key={f} type="button" onClick={() => toggleFeature(f)}
-                                                className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${wants(f) ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-100' : 'bg-white/5 border-white/10 text-white/60 hover:text-white'}`}>
-                                                {wants(f) ? '✓ ' : ''}{label}
-                                            </button>
-                                        ))}
-                                    </div>
+                                    <Ask
+                                        n={4}
+                                        label="Which map provider?"
+                                        hint="If the town or county already has an ArcGIS agreement, Esri lets you use it. Otherwise any of these will do."
+                                    >
+                                        <Options
+                                            value={setupMaps}
+                                            onChange={(v) => setSetupMaps(v as typeof setupMaps)}
+                                            options={[['google', 'Google Maps'], ['esri', 'Esri / ArcGIS'], ['azure', 'Azure Maps'], ['apple', 'Apple Maps']]}
+                                        />
+                                    </Ask>
+
+                                    {/* Only asked about what the town ticked.
+                                      * These three are not a cloud decision -- a
+                                      * town on Google may well send through SES --
+                                      * so each starts on whatever suits the cloud
+                                      * above and can be changed here. */}
+                                    {wants('email') && (
+                                        <Ask n={5} label="Who sends your email?"
+                                            hint="SMTP uses the mail server the town already has. Microsoft 365 and Google Workspace block plain SMTP by default, so SES or Azure Communication Services may be less work than getting an exception.">
+                                            <Options
+                                                value={emailProvider}
+                                                onChange={setEmailOverride}
+                                                options={[['smtp', 'Our mail server (SMTP)'], ['ses', 'Amazon SES'], ['acs', 'Azure Communication Services']]}
+                                            />
+                                        </Ask>
+                                    )}
+
+                                    {wants('sms') && (
+                                        <Ask n={6} label="Who sends your text messages?"
+                                            hint="Whichever you pick, start the 10DLC carrier registration early — it is not a technical step and it is not immediate.">
+                                            <Options
+                                                value={smsProvider}
+                                                onChange={setSmsOverride}
+                                                options={[['twilio', 'Twilio'], ['sns', 'Amazon SNS'], ['acs', 'Azure Communication Services'], ['http', 'Other (HTTP gateway)']]}
+                                            />
+                                        </Ask>
+                                    )}
+
+                                    {wants('safety') && (
+                                        <Ask n={7} label="Where should photos be checked and blurred?"
+                                            hint="On this server needs no account and no photo ever leaves the building; it finds fewer faces than the clouds do.">
+                                            <Options
+                                                value={redactionProvider}
+                                                onChange={setRedactionOverride}
+                                                options={[['local', 'On this server'], ['google', 'Google Cloud Vision'], ['azure', 'Azure Face + Vision'], ['aws', 'AWS Rekognition']]}
+                                            />
+                                        </Ask>
+                                    )}
                                 </div>
 
                                 <SetupWizard
@@ -582,15 +698,15 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     smsProvider={smsProvider}
                                     redactionProvider={redactionProvider}
                                     wanted={wantedFeatures}
+                                    status={providerStatus}
                                     isDone={itemDone}
                                     secretValues={secretValues}
                                     onSecretChange={(key, value) => setSecretValues(prev => ({ ...prev, [key]: value }))}
                                     onSaveSecrets={async (keys) => { for (const k of keys) await handleSave(k); }}
                                     savingSecret={savingKey}
                                     isSecretConfigured={(key) => !!isConfigured(key)}
-                                    onRefresh={onRefresh}
+                                    onRefresh={() => { onRefresh(); loadProviderStatus(); }}
                                     publicOrigin={publicOrigin}
-                                    onChooseProvider={chooseProvider}
                                     renderFoundation={renderFoundation}
                                 />
                             </div>

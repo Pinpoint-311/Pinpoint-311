@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Check, ChevronRight, Circle, AlertCircle } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Circle, AlertCircle } from 'lucide-react';
 
 import InlineProviderSetup from './InlineProviderSetup';
 import SecretField from './SecretField';
 import { buildPlan, type PlanInput, type PlanItem, type PlanTask } from './setupPlan';
+import type { ProviderStatusMap } from '../services/api';
 // Registers every provider's console walk as an import side effect.
 import './setupStepsContent';
 
@@ -36,7 +37,10 @@ const STATUS_TONE = {
 } as const;
 
 export interface SetupWizardProps extends PlanInput {
-    /** Whether an item is already set up, from secrets the page has loaded. */
+    /** Which provider each capability is on and which are set up, from the
+     *  server. Null while it loads. */
+    status: ProviderStatusMap | null;
+    /** For items with no capability catalog -- backups, the Sentry key. */
     isDone: (itemId: string) => boolean;
     /** Plain settings, saved through the page's own secret endpoint. */
     secretValues: Record<string, string>;
@@ -48,23 +52,40 @@ export interface SetupWizardProps extends PlanInput {
     onRefresh: () => void;
     /** The address residents use, for callback URLs. */
     publicOrigin: string | null;
-    /** Switch a choice the questionnaire seeded but did not settle. */
-    onChooseProvider: (key: NonNullable<PlanItem['choiceKey']>, id: string) => void;
     /** The cloud foundation walk, which belongs to no single capability. */
     renderFoundation: (cloud: 'google' | 'azure' | 'aws') => React.ReactNode;
-    /** The town-systems connector, which has its own component further down. */
-    renderGovtech?: () => React.ReactNode;
 }
 
 export default function SetupWizard(props: SetupWizardProps) {
-    const { isDone, onRefresh, publicOrigin, onChooseProvider, renderFoundation } = props;
+    const { onRefresh, publicOrigin, renderFoundation, status } = props;
 
     const tasks = useMemo(() => buildPlan(props), [
         props.cloud, props.idp, props.maps, props.aiProvider,
         props.emailProvider, props.smsProvider, props.redactionProvider, props.wanted,
     ]);
 
-    const taskDone = (t: PlanTask) => t.items.every(i => isDone(i.id));
+    /* Finished means finished *for the provider currently chosen*.
+     *
+     * This was the bug behind two complaints at once. Done-ness was read from
+     * the stored secrets per capability, so "maps is set up" was true if any
+     * map provider's key existed. A town that configured Google Maps and then
+     * switched to Esri saw a green tick against a provider with no credentials,
+     * and the guide skipped the one thing it most needed to ask for.
+     *
+     * Asking the server per provider fixes both: the tick is honest, and
+     * switching to something unconfigured makes the task unfinished again,
+     * which is what reopens it.
+     */
+    const itemDone = (item: PlanItem): boolean => {
+        if (item.cap && item.provider) {
+            // Unknown until the status arrives. Treated as unfinished, which is
+            // the safe direction: the cost is asking about something already
+            // done rather than skipping something that is not.
+            return status?.[item.cap]?.configured?.[item.provider] === true;
+        }
+        return props.isDone(item.id);
+    };
+    const taskDone = (t: PlanTask) => t.items.every(itemDone);
 
     const [openId, setOpenId] = useState<string | null>(null);
     /* Once a clerk clicks a row, their choice wins over the automatic one --
@@ -72,23 +93,75 @@ export default function SetupWizard(props: SetupWizardProps) {
      * and look at something already finished. */
     const chosen = useRef(false);
 
-    // Land on the first unfinished task, once, when status first arrives.
+    const remaining = tasks.filter(t => !taskDone(t)).length;
+    const allDone = tasks.length > 0 && remaining === 0;
+
+    // Land on the first unfinished task once the server has said which those
+    // are. Guarded on `status` as well as on the ref: before it arrives every
+    // task looks unfinished, so landing then would always pick the first one.
     useEffect(() => {
-        if (chosen.current || openId !== null || tasks.length === 0) return;
-        setOpenId((tasks.find(t => !taskDone(t)) ?? tasks[0]).id);
+        if (chosen.current || openId !== null || tasks.length === 0 || !status) return;
+        const next = tasks.find(t => !taskDone(t));
+        if (next) setOpenId(next.id);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [tasks.length]);
+    }, [tasks.length, status]);
+
+    /* Switching a provider reopens the task it belongs to.
+     *
+     * Changing the map provider from Google to Esri makes that task unfinished
+     * again -- there are no Esri credentials -- and leaving it collapsed with a
+     * tick beside it is how a town ends up live on a provider it never
+     * configured. Only reopens what the clerk has not deliberately navigated
+     * away from since. */
+    const openTask = tasks.find(t => t.id === openId) ?? null;
+    useEffect(() => {
+        if (openTask && !taskDone(openTask)) return;
+        const next = tasks.find(t => !taskDone(t));
+        if (next && next.id !== openId) setOpenId(next.id);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [props.cloud, props.idp, props.maps, props.aiProvider,
+        props.emailProvider, props.smsProvider, props.redactionProvider]);
 
     /** Move on, but only from a task that is genuinely finished. */
     const advanceFrom = (taskId: string) => {
         const index = tasks.findIndex(t => t.id === taskId);
         if (index < 0) return;
-        const next = tasks.slice(index + 1).find(t => !taskDone(t));
+        const next = tasks.slice(index + 1).find(t => !taskDone(t))
+            ?? tasks.find(t => !taskDone(t));
         setOpenId(next ? next.id : null);
     };
 
-    const open = tasks.find(t => t.id === openId) ?? null;
-    const remaining = tasks.filter(t => !taskDone(t)).length;
+    const open = openTask;
+
+    /* One item open inside the task, for the same reason one task is open in
+     * the rail. Grouping by login turned four visits into one, and then put
+     * everything from all four on the screen together: the Azure task rendered
+     * about six thousand pixels tall while the rail said "1 left". That is the
+     * same wall in a new place.
+     *
+     * Reset when the task changes, then filled in by the effect below. */
+    const [openItemId, setOpenItemId] = useState<string | null>(null);
+    const itemChosen = useRef(false);
+    useEffect(() => { setOpenItemId(null); itemChosen.current = false; }, [openId]);
+    useEffect(() => {
+        if (!open || itemChosen.current || openItemId !== null) return;
+        const next = open.items.find(i => !itemDone(i));
+        setOpenItemId((next ?? open.items[0])?.id ?? null);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [openId, status, open?.items.length]);
+
+    /** Finishing an item opens the next one, or moves on to the next task. */
+    const advanceItem = (fromId: string) => {
+        if (!open) return;
+        const index = open.items.findIndex(i => i.id === fromId);
+        const next = open.items.slice(index + 1).find(i => !itemDone(i))
+            ?? open.items.find(i => i.id !== fromId && !itemDone(i));
+        if (next) {
+            setOpenItemId(next.id);
+        } else {
+            advanceFrom(open.id);
+        }
+    };
 
     return (
         <div className="grid lg:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] gap-5">
@@ -134,7 +207,8 @@ export default function SetupWizard(props: SetupWizardProps) {
             {/* ── The one you are on ── */}
             <div className="min-w-0">
                 <AnimatePresence mode="wait">
-                    {open ? (
+                    {open && (
+
                         <motion.section
                             key={open.id}
                             initial={{ opacity: 0, y: 8 }}
@@ -153,44 +227,66 @@ export default function SetupWizard(props: SetupWizardProps) {
                             )}
 
                             <div className="mt-4 space-y-5">
-                                {open.items.map(item => (
+                                {open.items.map((item, i) => (
                                     <TaskItem
                                         key={item.id}
                                         item={item}
+                                        index={i + 1}
+                                        total={open.items.length}
+                                        done={itemDone(item)}
+                                        expanded={item.id === openItemId}
+                                        onToggle={() => {
+                                            itemChosen.current = true;
+                                            setOpenItemId(item.id === openItemId ? null : item.id);
+                                        }}
                                         {...props}
                                         onDone={(verified) => {
                                             onRefresh();
-                                            /* Only when the whole task is finished, and only on a
-                                             * green test. Advancing after one item of four would
-                                             * leave the other three behind. */
-                                            if (verified && open.items.every(i => i.id === item.id || isDone(i.id))) {
-                                                advanceFrom(open.id);
-                                            }
+                                            // Only on a green test: moving somebody past a
+                                            // credential that does not work reads as confirmation.
+                                            if (verified) advanceItem(item.id);
                                         }}
                                         publicOrigin={publicOrigin}
-                                        onChooseProvider={onChooseProvider}
                                     />
                                 ))}
-                                {open.vendor === 'govtech' && props.renderGovtech?.()}
                             </div>
                         </motion.section>
-                    ) : (
-                        <motion.div
-                            key="done"
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            className="setup-panel p-6 text-center"
-                        >
-                            <div className="w-12 h-12 mx-auto rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/25">
-                                <Check className="w-6 h-6 text-white" strokeWidth={2.5} />
-                            </div>
-                            <p className="text-white/80 mt-3.5">Everything you picked is set up.</p>
-                            <p className="text-white/45 text-sm mt-1.5">
-                                Pick anything from the list to look at it again, or change it later on the cards below.
-                            </p>
-                        </motion.div>
                     )}
                 </AnimatePresence>
+
+                {/* Outside the AnimatePresence above, deliberately.
+                    Inside it, `mode="wait"` holds the outgoing task panel until
+                    its exit animation finishes, so collapsing a row left the
+                    old panel on screen and this one unmounted. It is also what
+                    made the bug invisible to a test: jsdom produces no frames,
+                    so the exit never completes and the wrong panel never
+                    appears. */}
+                {!open && (allDone ? (
+                    <div className="setup-panel p-6 text-center">
+                        <div className="w-12 h-12 mx-auto rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/25">
+                            <Check className="w-6 h-6 text-white" strokeWidth={2.5} />
+                        </div>
+                        <p className="text-white/80 mt-3.5">Everything you picked is set up.</p>
+                        <p className="text-white/45 text-sm mt-1.5">
+                            Pick anything from the list to look at it again, or change it later on the cards below.
+                        </p>
+                    </div>
+                ) : (
+                    /* Nothing open, but not finished either.
+                     *
+                     * This state used to render the "everything is set up"
+                     * panel, because that panel was shown whenever nothing was
+                     * open -- and nothing is open after collapsing a row, not
+                     * only after finishing the last task. So clicking the open
+                     * task shut congratulated a town that had configured
+                     * nothing at all. */
+                    <div className="setup-panel p-6 text-center">
+                        <p className="text-white/70">
+                            {remaining} {remaining === 1 ? 'thing' : 'things'} left to set up.
+                        </p>
+                        <p className="text-white/45 text-sm mt-1.5">Pick one from the list to carry on.</p>
+                    </div>
+                ))}
             </div>
         </div>
     );
@@ -200,44 +296,80 @@ export default function SetupWizard(props: SetupWizardProps) {
 
 /** One thing inside a task: a provider with a catalog, plain settings, or both. */
 function TaskItem({
-    item, onDone, publicOrigin, onChooseProvider,
+    item, index, total, done, expanded, onToggle, onDone, publicOrigin,
     secretValues, onSecretChange, onSaveSecrets, savingSecret, isSecretConfigured,
 }: {
     item: PlanItem;
+    index: number;
+    total: number;
+    done: boolean;
+    expanded: boolean;
+    onToggle: () => void;
     onDone: (verified: boolean) => void;
     publicOrigin: string | null;
-    onChooseProvider: (key: NonNullable<PlanItem['choiceKey']>, id: string) => void;
 } & Pick<SetupWizardProps,
     'secretValues' | 'onSecretChange' | 'onSaveSecrets' | 'savingSecret' | 'isSecretConfigured'>) {
     return (
-        <div>
-            <h4 className="text-sm font-semibold text-white/90">{item.title}</h4>
-            <p className="text-xs text-white/50 leading-relaxed mt-0.5 mb-2.5">{item.blurb}</p>
-
-            {item.cap && item.provider && (
-                <InlineProviderSetup
-                    cap={item.cap}
-                    provider={item.provider}
-                    choices={item.choices}
-                    onChoose={item.choiceKey ? (id) => onChooseProvider(item.choiceKey!, id) : undefined}
-                    onSaved={onDone}
-                    publicOrigin={publicOrigin}
+        <div className={`rounded-2xl border transition-colors ${expanded
+            ? 'border-white/15 bg-white/[0.04]'
+            : 'border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.04]'}`}>
+            <button
+                type="button"
+                onClick={onToggle}
+                aria-expanded={expanded}
+                className="w-full text-left px-4 py-3 flex items-center gap-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+            >
+                <span
+                    className={`shrink-0 w-6 h-6 rounded-full border text-[11px] font-semibold flex items-center justify-center ${done
+                        ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300'
+                        : 'bg-white/10 border-white/15 text-white/60'}`}
+                    aria-hidden="true"
+                >
+                    {done ? <Check className="w-3.5 h-3.5" /> : index}
+                </span>
+                <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-white/90 truncate">{item.title}</span>
+                    {/* The one-line summary stays visible when collapsed, so the
+                        list reads as a plan rather than as a row of headings. */}
+                    <span className="block text-[11px] text-white/45 truncate">
+                        {done ? 'Set up' : item.blurb}
+                    </span>
+                </span>
+                <span className="text-[10px] uppercase tracking-wider text-white/30 shrink-0 hidden sm:block">
+                    {index} of {total}
+                </span>
+                <ChevronDown
+                    className={`w-4 h-4 text-white/35 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`}
+                    aria-hidden="true"
                 />
-            )}
+            </button>
 
-            {item.secrets && (
-                <PlainSecrets
-                    fields={item.secrets}
-                    values={secretValues}
-                    onChange={onSecretChange}
-                    onSave={onSaveSecrets}
-                    saving={savingSecret}
-                    isConfigured={isSecretConfigured}
-                    onSaved={() => onDone(false)}
-                    /* Spacing only when it follows a provider block, so an item
-                     * that is only settings does not start with a gap. */
-                    className={item.cap ? 'mt-3' : ''}
-                />
+            {/* No blurb repeated inside: it is already in the header above,
+                which stays visible while expanded. */}
+            {expanded && (
+                <div className="px-4 pb-4 pt-1">
+                    {item.cap && item.provider && (
+                        <InlineProviderSetup
+                            cap={item.cap}
+                            provider={item.provider}
+                            onSaved={onDone}
+                            publicOrigin={publicOrigin}
+                        />
+                    )}
+
+                    {item.secrets && (
+                        <PlainSecrets
+                            fields={item.secrets}
+                            values={secretValues}
+                            onChange={onSecretChange}
+                            onSave={onSaveSecrets}
+                            saving={savingSecret}
+                            isConfigured={isSecretConfigured}
+                            onSaved={() => onDone(false)}
+                            className={item.cap ? 'mt-3' : ''}
+                        />
+                    )}
+                </div>
             )}
         </div>
     );
