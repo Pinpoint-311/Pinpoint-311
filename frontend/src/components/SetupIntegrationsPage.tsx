@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    Key, Shield, Cloud, CheckCircle,
+    Key, Shield, CheckCircle, CircleDashed,
     AlertCircle, ChevronDown, ChevronUp,
     ExternalLink, AlertTriangle, Database, BookOpen,
     ListChecks, HardDrive, Bell,
@@ -15,10 +15,12 @@ import type { Capability, ProviderStatusMap } from '../services/api';
 import GovtechIntegrations from './GovtechIntegrations';
 import ServiceProviders from './ServiceProviders';
 import SetupWizard from './SetupWizard';
+import { buildPlan, summarise, nameList } from './setupPlan';
 // Registers every provider's setup steps as a side effect, so the guide can
 // render them inline rather than pointing at the cards that do.
 import './setupStepsContent';
 import StorageStatusLine from './StorageStatusLine';
+import SecretField from './SecretField';
 import { openStayInformed } from './StayInformed';
 
 
@@ -101,6 +103,151 @@ interface SetupIntegrationsPageProps {
     onRefresh: () => void;
     modules?: ModulesState;
     onUpdateModules?: (modules: ModulesState) => Promise<void>;
+}
+
+
+/* The boxes for the account credentials, directly under the steps that
+ * produce them.
+ *
+ * These used to live in a "Google Cloud" card several thousand pixels down
+ * the page, which made the walk above end on "that file is what you paste
+ * into the boxes below" with no boxes below. A clerk following the guide
+ * downloaded a credential file and hit a dead end -- the same handoff the
+ * rest of this page had already been fixed for, missed because the phrase
+ * was not one the test looked for.
+ *
+ * Google only, and not an oversight. Google needs one account-level
+ * credential shared by AI, KMS, secrets and translation. Azure Key Vault
+ * takes a vault URL and prefers a managed identity with nothing to type,
+ * and AWS needs a region and can use the instance profile -- for both, the
+ * per-service keys live on the capability itself. Inventing an "Azure
+ * account" box to make the three look symmetrical would ask for something
+ * that does not exist.
+ */
+function GoogleAccountFields({
+secretValues, setSecretValues, handleSave, savingKey, isConfigured, modules, onUpdateModules,
+}: {
+secretValues: Record<string, string>;
+setSecretValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+handleSave: (key: string) => Promise<void>;
+savingKey: string | null;
+isConfigured: (key: string) => boolean | undefined;
+modules: any;
+onUpdateModules?: (m: any) => Promise<void>;
+}) {
+    const jsonKey = 'GCP_SERVICE_ACCOUNT_JSON';
+    const [showKms, setShowKms] = useState(false);
+    const pending = ['GOOGLE_CLOUD_PROJECT', jsonKey, 'KMS_LOCATION', 'KMS_KEY_RING', 'KMS_KEY_ID']
+        .filter(k => secretValues[k]);
+    return (
+        <div className="ml-9 mt-1 rounded-xl border border-white/10 bg-white/[0.03] p-3.5 space-y-3">
+            <div>
+                <label className="text-[11px] uppercase tracking-wider text-white/55 font-semibold flex items-center gap-1.5">
+                    <Key className="w-3.5 h-3.5 text-amber-300/80" aria-hidden="true" />
+                    The .json file you just downloaded
+                    {isConfigured(jsonKey) && <span className="text-emerald-300/80 normal-case font-medium">· Saved</span>}
+                </label>
+                <label className="mt-1.5 block cursor-pointer">
+                    <div className="h-10 rounded-lg border border-dashed border-white/20 flex items-center justify-center text-white/50 text-xs hover:border-white/40 hover:text-white/70 transition-colors">
+                        Choose the file, or drop it here
+                    </div>
+                    <input
+                        type="file"
+                        accept=".json,application/json"
+                        className="hidden"
+                        onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            const reader = new FileReader();
+                            reader.onload = (ev) => setSecretValues(p => ({
+                                ...p, [jsonKey]: (ev.target?.result as string) || '',
+                            }));
+                            reader.readAsText(file);
+                        }}
+                    />
+                </label>
+                {secretValues[jsonKey] && (
+                    <p className="text-[11px] text-emerald-200/80 mt-1.5">
+                        File read. Press Save below to store it.
+                    </p>
+                )}
+                {/* Pasting is still allowed -- some towns get the key by
+                    email from whoever administers the project -- but the
+                    file picker is first, because a downloaded file is what
+                    step 4 actually leaves you holding. */}
+                <textarea
+                    placeholder="…or paste the contents"
+                    value={secretValues[jsonKey] || ''}
+                    onChange={(e) => setSecretValues(p => ({ ...p, [jsonKey]: e.target.value }))}
+                    rows={2}
+                    className="mt-2 w-full text-xs bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-white/30 focus:outline-none focus:border-primary-400/50 resize-none font-mono"
+                />
+            </div>
+
+            <SecretField
+                label="Project ID"
+                value={secretValues['GOOGLE_CLOUD_PROJECT'] || ''}
+                onChange={(v: string) => setSecretValues(p => ({ ...p, 'GOOGLE_CLOUD_PROJECT': v }))}
+                savedHint={!!isConfigured('GOOGLE_CLOUD_PROJECT')}
+                placeholder="my-town-311-4821"
+                help="The short code from step 1, not the name you typed."
+            />
+
+            {/* Behind a disclosure because the defaults are right for
+                almost everyone, and three boxes that should stay empty
+                read as three more things to get wrong. */}
+            <button
+                type="button"
+                onClick={() => setShowKms(v => !v)}
+                className="text-[11px] text-white/55 hover:text-white/85 underline underline-offset-2"
+            >
+                {showKms ? 'Hide' : 'I was given different'} encryption key names
+            </button>
+            {showKms && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    {[
+                        ['KMS_LOCATION', 'Location', 'us-central1'],
+                        ['KMS_KEY_RING', 'Key ring', 'pinpoint311-keyring'],
+                        ['KMS_KEY_ID', 'Key name', 'pii-encryption-key'],
+                    ].map(([key, label, placeholder]) => (
+                        <SecretField
+                            key={key}
+                            label={label}
+                            value={secretValues[key] || ''}
+                            onChange={(v: string) => setSecretValues(p => ({ ...p, [key]: v }))}
+                            savedHint={!!isConfigured(key)}
+                            placeholder={placeholder}
+                            help={`Leave blank for ${placeholder}.`}
+                        />
+                    ))}
+                </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2.5 pt-1">
+                <button
+                    type="button"
+                    onClick={async () => {
+                        for (const k of pending) await handleSave(k);
+                        // AI cannot run without this, so having entered it
+                        // and left the module off is never what was meant.
+                        if (modules && onUpdateModules && secretValues['GOOGLE_CLOUD_PROJECT'] && !modules.ai_analysis) {
+                            await onUpdateModules({ ...modules, ai_analysis: true });
+                        }
+                    }}
+                    disabled={pending.length === 0 || savingKey !== null}
+                    className="inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-semibold text-white bg-primary-500 hover:bg-primary-400 border border-primary-400/50 transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                >
+                    {savingKey ? 'Saving…' : 'Save'}
+                </button>
+                {isConfigured('GOOGLE_CLOUD_PROJECT') && isConfigured(jsonKey) && pending.length === 0 && (
+                    <span className="text-[11px] text-emerald-300/80">
+                        Saved. Leave a box blank to keep what is stored.
+                    </span>
+                )}
+            </div>
+            <StorageStatusLine />
+        </div>
+    );
 }
 
 
@@ -224,6 +371,16 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * reading "Not set up", and the only conclusion available to a clerk from
      * that is that the save did not take. */
     const [providerRefresh, setProviderRefresh] = useState(0);
+    /* Health, for the badge on the collapsed panel. Provider status alone can
+     * only say whether a credential is stored, and "stored" is the fact that
+     * stays true through a key being revoked. */
+    const [connectorHealth, setConnectorHealth] = useState<Record<string, string>>({});
+    const loadHealth = useCallback(() => {
+        api.getConnectorHealth()
+            .then(r => setConnectorHealth(Object.fromEntries(r.connectors.map(c => [c.connector, c.status]))))
+            .catch(() => { /* no health is not the same as bad health */ });
+    }, []);
+    useEffect(() => { loadHealth(); }, [loadHealth, providerRefresh]);
     const loadProviderStatus = useCallback(() => {
         api.getProviderStatus()
             .then(setProviderStatus)
@@ -325,6 +482,33 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         errors: !!sentryConfigured,
     };
     const itemDone = (id: string) => DONE_BY_ITEM[id] ?? false;
+
+    /* What the badge on the collapsed header reports.
+     *
+     * Built from buildPlan with the same inputs the wizard is given, so the
+     * count can never say something the list inside it does not. Reproducing
+     * the arithmetic here instead would be a second implementation of "what is
+     * left", and those drift. */
+    const planSummary = summarise(
+        buildPlan({
+            cloud: setupCloud, idp: setupIdp, maps: setupMaps, aiProvider,
+            emailProvider, smsProvider, redactionProvider, wanted: wantedFeatures,
+        }),
+        {
+            isDone: (item) => (item.cap && item.provider)
+                ? providerStatus?.[item.cap]?.configured?.[item.provider] === true
+                : itemDone(item.id),
+            /* Only a real failure counts. `unknown` means nobody has looked and
+             * `stale` means not lately -- neither is evidence of a fault, and
+             * badging them as one produces a number that never reaches zero on
+             * a town whose sweep has not run yet. */
+            stateOf: (item) => {
+                const status = item.cap ? connectorHealth[item.cap] : undefined;
+                return status === 'failing' || status === 'down' ? 'failing' : status;
+            },
+        },
+    );
+    const outstanding = planSummary.notSetUp.length + planSummary.notWorking.length;
 
     // Setup progress calculation. In managed mode the platform-managed steps
     // (Google Cloud, DB Backups) are excluded — the state handles them, so
@@ -429,9 +613,14 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                     Under <strong className="text-white/90">IAM &amp; Admin → Service Accounts</strong>, create one called <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pinpoint311</code>. This is a login for the software, so nothing is tied to your own account.
                 </InstructionStep>
                 <InstructionStep num={4} check={<>a file ending in <code className="bg-black/30 px-1 rounded">.json</code> in your Downloads.</>}>
-                    Open it, then <strong className="text-white/90">Keys → Add Key → Create new key → JSON</strong>. A file downloads. That file is what you paste into the boxes below.
+                    Open it, then <strong className="text-white/90">Keys → Add Key → Create new key → JSON</strong>. A file downloads — that is the one you add below.
                 </InstructionStep>
-                <Trouble>Google will not let you download that file again. Put a copy somewhere the town controls — a shared drive rather than your own laptop — and do not send it by email.</Trouble>
+                <Trouble>Google will not let you download that file again. Keep a copy somewhere the town controls, not on your own laptop.</Trouble>
+                <GoogleAccountFields
+                    secretValues={secretValues} setSecretValues={setSecretValues}
+                    handleSave={handleSave} savingKey={savingKey} isConfigured={isConfigured}
+                    modules={modules} onUpdateModules={onUpdateModules}
+                />
             </>}
             {cloud === 'azure' && <>
                 <InstructionStep num={1}>
@@ -554,7 +743,47 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                             <p className="text-white/50 text-xs">Answer a few questions, then work through one thing at a time</p>
                         </div>
                     </div>
-                    {expandedGuide === 'master' ? <ChevronUp className="w-5 h-5 text-white/50" /> : <ChevronDown className="w-5 h-5 text-white/50" />}
+                    <div className="flex items-center gap-2.5 shrink-0">
+                        {/* Two pills, never one.
+                            "Not set up" and "not working" need different things
+                            from a clerk -- a credential entered, or a credential
+                            replaced -- and merging them into "4 issues" sends
+                            them to the wrong place. Named where the list is
+                            short enough to name, because "which ones" is the
+                            next question either way. */}
+                        {planSummary.notWorking.length > 0 && (
+                            <span
+                                title={nameList(planSummary.notWorking, 99)}
+                                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl text-xs font-semibold border bg-gradient-to-r from-red-500/25 to-rose-500/20 text-red-200 border-red-400/35 shadow-md shadow-red-950/40"
+                            >
+                                <AlertCircle className="w-3.5 h-3.5" aria-hidden="true" />
+                                {planSummary.notWorking.length} not working
+                            </span>
+                        )}
+                        {planSummary.notSetUp.length > 0 && (
+                            <span
+                                title={nameList(planSummary.notSetUp, 99)}
+                                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl text-xs font-semibold border bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border-amber-500/30 shadow-md shadow-amber-950/40"
+                            >
+                                <CircleDashed className="w-3.5 h-3.5" aria-hidden="true" />
+                                {planSummary.notSetUp.length} still to set up
+                            </span>
+                        )}
+                        {/* Only once the server has actually said so. Before
+                            provider status arrives everything looks unfinished,
+                            and a green "all set up" flashed at that moment is
+                            the false completion message all over again. */}
+                        {providerStatus && outstanding === 0 && planSummary.total > 0 && (
+                            <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl text-xs font-semibold border bg-gradient-to-r from-emerald-500/20 to-teal-500/20 text-emerald-300 border-emerald-500/30 shadow-md shadow-emerald-950/40">
+                                <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" />
+                                All set up
+                            </span>
+                        )}
+                        {outstanding > 0 && (
+                            <span className="sm:hidden text-xs font-semibold text-amber-300">{outstanding}</span>
+                        )}
+                        {expandedGuide === 'master' ? <ChevronUp className="w-5 h-5 text-white/50" /> : <ChevronDown className="w-5 h-5 text-white/50" />}
+                    </div>
                 </button>
 
                 <AnimatePresence>
@@ -745,236 +974,16 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                     extras={
                         <>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            {/* Google Cloud - Premium Card (locked in managed mode: the state owns these keys) */}
-                            {managedMode ? (
-                                <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6">
-                                    <div className="flex items-center gap-4 mb-2">
-                                        <div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-white/10">
-                                            <Cloud className="w-7 h-7 text-white/50" />
-                                        </div>
-                                        <div>
-                                            <h3 className="font-bold text-lg text-white/70">Google Cloud</h3>
-                                            <p className="text-white/40 text-sm">AI, encryption &amp; translation infrastructure</p>
-                                        </div>
-                                        <span className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-white/10 text-white/60 border border-white/15">
-                                            <Shield className="w-3.5 h-3.5" />
-                                            Managed by your state
-                                        </span>
-                                    </div>
-                                    <p className="text-white/50 text-sm">
-                                        Cloud project, KMS encryption keys, and secrets storage are provisioned and maintained by your state hosting program. Nothing to configure here.
-                                    </p>
-                                </div>
-                            ) : (
-                            <motion.div
-                                initial={{ opacity: 0, y: 20 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: 0.3 }}
-                                className={`relative rounded-3xl border p-6 transition-all duration-300 ${gcpConfigured
-                                    ? 'bg-gradient-to-br from-blue-500/10 via-cyan-500/5 to-sky-500/10 border-blue-500/30 shadow-lg shadow-blue-500/10'
-                                    : 'setup-panel border-transparent'
-                                    }`}
-                            >
-                                {gcpConfigured && (
-                                    <div className="absolute inset-0 bg-gradient-to-r from-blue-500/5 via-transparent to-cyan-500/5 pointer-events-none" />
-                                )}
+                            {/* The Google Cloud card that used to open this
+                                section has gone. Its instructions and its two
+                                boxes now sit together in the setup guide's
+                                Google task, so the walk that says "download
+                                this file" ends where the file is added rather
+                                than pointing thousands of pixels down the page.
 
-                                <div className="relative">
-                                    <div className="flex items-start justify-between mb-4">
-                                        <div className="flex items-center gap-4">
-                                            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${gcpConfigured
-                                                ? 'bg-gradient-to-br from-blue-400 to-cyan-500 shadow-lg shadow-blue-500/30'
-                                                : 'setup-tile'
-                                                }`}>
-                                                <Cloud className="w-7 h-7 text-white" />
-                                            </div>
-                                            <div>
-                                                <h3 className="font-bold text-lg text-white">Google Cloud</h3>
-                                                <p className="text-white/50 text-sm">AI, KMS, Secrets, Translation</p>
-                                            </div>
-                                        </div>
-                                        {gcpConfigured ? (
-                                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-blue-500/20 to-cyan-500/20 text-blue-300 border border-blue-500/30 shadow-lg shadow-blue-500/10">
-                                                <CheckCircle className="w-3.5 h-3.5" />
-                                                Configured
-                                            </span>
-                                        ) : (
-                                            <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 text-white/50 border border-white/10">
-                                                Optional
-                                            </span>
-                                        )}
-                                    </div>
-
-                                    <p className="text-white/60 text-sm mb-4">
-                                        Enables AI analysis (Vertex AI), PII encryption (Cloud KMS), multi-language translation, and secure secrets storage.
-                                        See the <strong className="text-blue-300">Setup Instructions</strong> above for a full walkthrough.
-                                    </p>
-
-                                    {/* Manual configuration fields */}
-                                    {!gcpConfigured || secretValues['GOOGLE_CLOUD_PROJECT'] !== undefined ? (
-                                        <div className="space-y-3">
-                                            <div>
-                                                <label className="text-sm text-white/60 mb-1.5 block">GCP Project ID</label>
-                                                <div className="flex gap-2">
-                                                    <Input
-                                                        type="text"
-                                                        placeholder="my-municipality-project"
-                                                        value={secretValues['GOOGLE_CLOUD_PROJECT'] || ''}
-                                                        onChange={(e) => setSecretValues(p => ({ ...p, 'GOOGLE_CLOUD_PROJECT': e.target.value }))}
-                                                        className="flex-1 text-sm"
-                                                    />
-                                                    <Button
-                                                        size="sm"
-                                                        className="bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700"
-                                                        onClick={() => handleSave('GOOGLE_CLOUD_PROJECT')}
-                                                        disabled={!secretValues['GOOGLE_CLOUD_PROJECT'] || savingKey === 'GOOGLE_CLOUD_PROJECT'}
-                                                    >
-                                                        {savingKey === 'GOOGLE_CLOUD_PROJECT' ? '...' : 'Save'}
-                                                    </Button>
-                                                </div>
-                                            </div>
-
-                                            <div className="grid grid-cols-3 gap-2">
-                                                <div>
-                                                    <label className="text-xs text-white/50 mb-1 block">KMS Location</label>
-                                                    <Input
-                                                        type="text"
-                                                        placeholder="us-central1"
-                                                        value={secretValues['KMS_LOCATION'] || ''}
-                                                        onChange={(e) => setSecretValues(p => ({ ...p, 'KMS_LOCATION': e.target.value }))}
-                                                        className="text-xs"
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label className="text-xs text-white/50 mb-1 block">KMS Key Ring</label>
-                                                    <Input
-                                                        type="text"
-                                                        placeholder="pinpoint311-keyring"
-                                                        value={secretValues['KMS_KEY_RING'] || ''}
-                                                        onChange={(e) => setSecretValues(p => ({ ...p, 'KMS_KEY_RING': e.target.value }))}
-                                                        className="text-xs"
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label className="text-xs text-white/50 mb-1 block">KMS Key ID</label>
-                                                    <Input
-                                                        type="text"
-                                                        placeholder="pii-encryption-key"
-                                                        value={secretValues['KMS_KEY_ID'] || ''}
-                                                        onChange={(e) => setSecretValues(p => ({ ...p, 'KMS_KEY_ID': e.target.value }))}
-                                                        className="text-xs"
-                                                    />
-                                                </div>
-                                            </div>
-
-                                            <Button
-                                                size="sm"
-                                                className="w-full bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700"
-                                                onClick={async () => {
-                                                    if (secretValues['GOOGLE_CLOUD_PROJECT']) await handleSave('GOOGLE_CLOUD_PROJECT');
-                                                    if (secretValues['KMS_LOCATION']) await handleSave('KMS_LOCATION');
-                                                    if (secretValues['KMS_KEY_RING']) await handleSave('KMS_KEY_RING');
-                                                    if (secretValues['KMS_KEY_ID']) await handleSave('KMS_KEY_ID');
-
-                                                    // Auto-enable AI module when GCP is configured
-                                                    if (modules && onUpdateModules && secretValues['GOOGLE_CLOUD_PROJECT']) {
-                                                        await onUpdateModules({ ...modules, ai_analysis: true });
-                                                    }
-                                                }}
-                                                disabled={!secretValues['GOOGLE_CLOUD_PROJECT'] || savingKey !== null}
-                                            >
-                                                {savingKey ? 'Saving...' : 'Save GCP Settings'}
-                                            </Button>
-
-                                            <p className="text-white/40 text-xs">
-                                                KMS fields are optional — the platform defaults to <code className="bg-black/20 px-1 rounded">us-central1</code> / <code className="bg-black/20 px-1 rounded">pinpoint311-keyring</code> / <code className="bg-black/20 px-1 rounded">pii-encryption-key</code> if left blank. These must match your KMS key ring and key names exactly, or PII encryption silently falls back to local (Fernet) encryption.
-                                            </p>
-
-                                            {/* Divider */}
-                                            <div className="border-t border-white/10 my-4" />
-
-                                            {/* GCP Service Account JSON */}
-                                            <div>
-                                                <label className="text-sm text-white/60 mb-1.5 block flex items-center gap-2">
-                                                    <Key className="w-4 h-4 text-amber-400" />
-                                                    GCP Service Account JSON
-                                                    {isConfigured('GCP_SERVICE_ACCOUNT_JSON') && <CheckCircle className="w-3.5 h-3.5 text-green-400" />}
-                                                </label>
-                                                <textarea
-                                                    placeholder='{"type": "service_account", "project_id": "...", ...}'
-                                                    value={secretValues['GCP_SERVICE_ACCOUNT_JSON'] || ''}
-                                                    onChange={(e) => setSecretValues(p => ({ ...p, 'GCP_SERVICE_ACCOUNT_JSON': e.target.value }))}
-                                                    rows={4}
-                                                    className="w-full text-sm bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white placeholder-white/30 focus:outline-none focus:border-blue-500/50 resize-none font-mono"
-                                                />
-                                                <div className="flex gap-2 mt-2">
-                                                    <label className="flex-1 cursor-pointer">
-                                                        <div className="h-9 rounded-lg border border-dashed border-white/20 flex items-center justify-center text-white/40 text-xs hover:border-white/40 transition-colors">
-                                                            📁 Or drop / select a .json key file
-                                                        </div>
-                                                        <input
-                                                            type="file"
-                                                            accept=".json"
-                                                            className="hidden"
-                                                            onChange={(e) => {
-                                                                const file = e.target.files?.[0];
-                                                                if (file) {
-                                                                    const reader = new FileReader();
-                                                                    reader.onload = (ev) => {
-                                                                        setSecretValues(p => ({ ...p, 'GCP_SERVICE_ACCOUNT_JSON': ev.target?.result as string || '' }));
-                                                                    };
-                                                                    reader.readAsText(file);
-                                                                }
-                                                            }}
-                                                        />
-                                                    </label>
-                                                    <Button
-                                                        size="sm"
-                                                        className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
-                                                        onClick={() => handleSave('GCP_SERVICE_ACCOUNT_JSON')}
-                                                        disabled={!secretValues['GCP_SERVICE_ACCOUNT_JSON'] || savingKey === 'GCP_SERVICE_ACCOUNT_JSON'}
-                                                    >
-                                                        {savingKey === 'GCP_SERVICE_ACCOUNT_JSON' ? 'Saving...' : 'Save Key'}
-                                                    </Button>
-                                                </div>
-                                                <p className="text-white/30 text-xs mt-1">Required for Vertex AI analysis, multi-language translation, and secure secrets storage</p>
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <div className="space-y-3">
-                                            <div className="flex items-center gap-2">
-                                                <div className="flex-1 h-10 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center px-4">
-                                                    <CheckCircle className="w-4 h-4 text-blue-400 mr-2" />
-                                                    <span className="text-blue-200 text-sm">GCP configured and ready</span>
-                                                </div>
-                                                <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, 'GOOGLE_CLOUD_PROJECT': '' }))}>
-                                                    Change
-                                                </Button>
-                                            </div>
-
-                                            {/* Module sync indicator */}
-                                            {modules && (
-                                                <div className={`flex items-center gap-2 text-xs ${modules.ai_analysis ? 'text-blue-400' : 'text-white/40'}`}>
-                                                    {modules.ai_analysis ? (
-                                                        <>
-                                                            <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-                                                            AI Analysis module enabled
-                                                        </>
-                                                    ) : (
-                                                        <>
-                                                            <div className="w-2 h-2 rounded-full bg-white/30" />
-                                                            AI Analysis module disabled
-                                                        </>
-                                                    )}
-                                                </div>
-                                            )}
-
-                                        </div>
-                                    )}
-                                </div>
-                            </motion.div>
-                            )}
-
+                                Nothing replaces it for Azure or AWS, and that
+                                is correct: neither has an account-level
+                                credential to enter. */}
                             {/* Where the stored data actually lives.
                               *
                               * This used to be two buttons -- "Vault Local Secrets to GCP

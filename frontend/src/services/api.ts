@@ -626,7 +626,12 @@ class ApiClient {
         });
     }
 
-    async testProvider(capability: string): Promise<{ ok: boolean; detail: string }> {
+    /** `recorded: false` means the provider cannot be checked from here at all
+     *  -- a generic HTTP SMS gateway cannot be exercised without sending a real
+     *  text. That is not a failure, and the backend deliberately does not write
+     *  it to connector health. Dropping the flag here is what made those show
+     *  up as "Not working". */
+    async testProvider(capability: string): Promise<{ ok: boolean; detail: string; recorded?: boolean }> {
         return this.request(`/system/providers/${capability}/test`, { method: 'POST' });
     }
 

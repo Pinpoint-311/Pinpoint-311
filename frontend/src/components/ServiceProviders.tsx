@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Sparkles, Languages, KeyRound, CheckCircle, AlertCircle,
-    Check, CircleDashed, ShieldCheck, RefreshCw,
+    Check, CircleDashed, HelpCircle, ShieldCheck, RefreshCw,
     Lock, Map as MapIcon,
     Mail, MessageSquare, Image as ImageIcon,
 } from 'lucide-react';
@@ -117,6 +117,10 @@ export interface CapStatus {
     providerName?: string;
     onDefault?: boolean;
     verified?: boolean | null;
+    /** False when the provider cannot be checked from here at all. Distinct
+     *  from a failed check: there is no test to run and there never will be,
+     *  so reporting it as broken is a badge that can never go green. */
+    verifiable?: boolean;
     /** Whether the in-use provider has its credentials stored. undefined means
      *  the endpoint did not say, which is not the same as no. */
     configured?: boolean;
@@ -132,6 +136,7 @@ export interface CapStatus {
 export function capabilityState(s: CapStatus | undefined, health?: ConnectorHealth): CapabilityState | null {
     if (!s) return null;                      // catalog still loading
     if (!s.configured) return 'unset';
+    if (s.verifiable === false) return 'unverifiable';
     // A test run in this session is fresher than the stored health row.
     if (s.verified === true) return 'working';
     if (s.verified === false) return 'failing';
@@ -257,7 +262,13 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
         try {
             const t = await api.testProvider(cap);
             setResult(t);
-            onStatus(cap, { verified: t.ok });
+            // `recorded === false` is the provider saying "there is nothing to
+            // test here", not "the test failed". Passing t.ok straight through
+            // is what put a red "Not working" on an HTTP SMS gateway whose own
+            // message said it could not be checked.
+            onStatus(cap, t.recorded === false
+                ? { verifiable: false, verified: null }
+                : { verifiable: true, verified: t.ok });
         } catch (e: any) {
             setResult({ ok: false, detail: e?.message || 'Test failed' });
             onStatus(cap, { verified: false });
@@ -422,7 +433,9 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             // Immediately verify
             const t = await api.testProvider(cap);
             setResult(t);
-            onStatus(cap, { verified: t.ok });
+            onStatus(cap, t.recorded === false
+                ? { verifiable: false, verified: null }
+                : { verifiable: true, verified: t.ok });
         } catch (e: any) {
             setError(e?.message || 'Save failed');
         } finally {
@@ -484,14 +497,20 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                 className={`shrink-0 ${shown === 'working' ? 'text-emerald-300' : 'text-white/30'}`}
                                 aria-hidden="true"
                             >
-                                {shown === 'working' ? <Check className="w-4 h-4" /> : <CircleDashed className="w-4 h-4" />}
+                                {shown === 'working' ? <Check className="w-4 h-4" />
+                                    : shown === 'unverifiable' ? <HelpCircle className="w-4 h-4" />
+                                    : <CircleDashed className="w-4 h-4" />}
                             </span>
                         </div>
                         {/* Nothing about check times on something with no
                             credentials: the tile already says "Not set up", and
                             "Not checked yet" underneath reads as a second,
                             different problem. */}
-                        {configured && <span className="block text-[11px] text-white/45 mt-2.5">{checkedLine}</span>}
+                        {configured && (
+                            <span className="block text-[11px] text-white/45 mt-2.5">
+                                {shown === 'unverifiable' ? 'Set up. There is no way to test this one from here.' : checkedLine}
+                            </span>
+                        )}
                     </button>
                 ) : variant !== 'full' ? (
                     /* ── The spotlight: something is wrong, or the clerk opened it ── */
@@ -896,6 +915,8 @@ export default function ServiceProviders({ show, extras, refreshToken = 0, onCha
      * change it. */
     const verifiedCount = (loaded || []).filter(c => statuses[c.key]?.verified === true).length;
     const failedCount = (loaded || []).filter(c => statuses[c.key]?.verified === false).length;
+    // Counted separately, and never as "needs attention": nobody can act on it.
+    const unverifiableCount = (loaded || []).filter(c => statuses[c.key]?.verifiable === false).length;
 
     /* Which card the clerk has opened in the Spotlight layout. Held here rather
      * than in the card, because opening one has to widen its cell. */
@@ -914,6 +935,9 @@ export default function ServiceProviders({ show, extras, refreshToken = 0, onCha
      * waits in the bubble grid, where it renders as a skeleton. */
     const spotlit = visible.filter(c => {
         const s = capState(c.key);
+        // 'unverifiable' is excluded on purpose. It never resolves -- a generic
+        // HTTP gateway will never become checkable -- so spotlighting it would
+        // leave a permanent card demanding attention nobody can give it.
         return s === 'failing' || s === 'unchecked';
     });
     const bubbles = visible.filter(c => !spotlit.includes(c));
@@ -940,7 +964,10 @@ export default function ServiceProviders({ show, extras, refreshToken = 0, onCha
                         ? `All ${loaded.length} have credentials`
                         : `${loaded.length - configuredCount} of ${loaded.length} still need credentials`}</span>
                     {verifiedCount > 0 && <span className="text-emerald-300/80 inline-flex items-center gap-1"><CheckCircle className="w-3 h-3" />{verifiedCount} verified</span>}
-                    {failedCount > 0 && <span className="text-amber-300/90 inline-flex items-center gap-1"><AlertCircle className="w-3 h-3" />{failedCount} need attention</span>}
+                    {failedCount > 0 && <span className="text-amber-300/90 inline-flex items-center gap-1"><AlertCircle className="w-3 h-3" />{failedCount} not working</span>}
+                    {unverifiableCount > 0 && (
+                        <span className="text-white/55">{unverifiableCount} cannot be tested from here</span>
+                    )}
                 </div>
             )}
 

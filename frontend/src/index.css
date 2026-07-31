@@ -449,53 +449,68 @@ body {
    Override Tailwind opacity text colors that fail 4.5:1
    ======================================== */
 
-/* 
- * Background: #1e1b4b (dark indigo) RGB(30, 27, 75)
- * Contrast ratio requirements: 4.5:1 for normal text, 3:1 for large text
- * 
- * White opacity contrast calculations on #1e1b4b:
- * - 100% (#ffffff) = 15.8:1 ✓
- * - 80%  (#ffffffcc) = 11.9:1 ✓  
- * - 70%  (#ffffffb3) = 9.2:1 ✓
- * - 60%  (#ffffff99) = 6.5:1 ✓ (but close to minimum)
- * - 50%  (#ffffff80) = 4.3:1 ✗ FAILS
- * - 40%  (#ffffff66) = 2.9:1 ✗ FAILS
- * 
- * Fix: Increase minimum opacity to ensure 7:1+ for better accessibility
+/*
+ * Measured, not reasoned about.
+ *
+ * The block that used to be here computed its ratios against #1e1b4b, the
+ * darkest surface on the page, and concluded that /50 and /40 were the only
+ * failures. Four contrast audits across the console disagreed: the panels a
+ * clerk actually reads sit at #454390 and lighter, where white text has *less*
+ * contrast, and /25, /35 and /45 were failing at 2.1:1, 2.8:1 and 3.5:1.
+ *
+ * Worst case across every surface sampled in those audits -- #454390 being the
+ * lightest -- white needs 0.65 to clear 4.5:1. The floor below is 0.68, which
+ * gives 4.94:1 there and more everywhere else.
+ *
+ * The steps are compressed rather than flattened, so the hierarchy these
+ * utilities were chosen for survives: /25 is still quieter than /60, just no
+ * longer illegible.
+ *
+ * Global, deliberately. An earlier version scoped this to three card classes,
+ * which is why it did not reach the Spotlight bubbles, the GIS panel or the
+ * user table -- every new surface had to remember to opt in, and none did.
  */
 
-/* Override low-contrast text colors */
-.text-white\/30 {
-    color: rgba(255, 255, 255, 0.7) !important;
-    /* Was 0.3, increased to 0.7 for WCAG AA */
-}
+.text-white\/15,
+.text-white\/20 { color: rgba(255, 255, 255, 0.68) !important; }
+.text-white\/25 { color: rgba(255, 255, 255, 0.68) !important; }
+.text-white\/30 { color: rgba(255, 255, 255, 0.70) !important; }
+.text-white\/35 { color: rgba(255, 255, 255, 0.72) !important; }
+.text-white\/40 { color: rgba(255, 255, 255, 0.74) !important; }
+.text-white\/45 { color: rgba(255, 255, 255, 0.76) !important; }
+.text-white\/50 { color: rgba(255, 255, 255, 0.78) !important; }
+.text-white\/55 { color: rgba(255, 255, 255, 0.81) !important; }
+.text-white\/60 { color: rgba(255, 255, 255, 0.84) !important; }
+.text-white\/65 { color: rgba(255, 255, 255, 0.87) !important; }
 
-.text-white\/40 {
-    color: rgba(255, 255, 255, 0.7) !important;
-    /* Was 0.4, increased to 0.7 for WCAG AA */
-}
-
-.text-white\/50 {
-    color: rgba(255, 255, 255, 0.75) !important;
-    /* Was 0.5, increased to 0.75 for WCAG AA */
-}
-
-.text-white\/60 {
-    color: rgba(255, 255, 255, 0.8) !important;
-    /* Was 0.6, increased to 0.8 for better contrast (11.9:1) */
-}
+/* Tinted small print -- the badge rows on the department, category and user
+ * cards. At /70 these came in between 3.2:1 and 3.7:1 on the lighter panels.
+ * The 300-level hues only just clear the bar even at full opacity (blue-300 is
+ * 4.74:1, red-300 exactly 4.50:1), so these move to the 200-level, which is
+ * 5.9:1 or better and leaves room for a surface that shifts later. */
+.text-blue-300\/70,
+.text-blue-300\/80    { color: rgb(191, 219, 254) !important; }
+.text-emerald-300\/70,
+.text-emerald-300\/80 { color: rgb(167, 243, 208) !important; }
+.text-amber-300\/70,
+.text-amber-300\/80   { color: rgb(253, 230, 138) !important; }
+.text-red-300\/70,
+.text-red-300\/80     { color: rgb(254, 202, 202) !important; }
 
 /* Ensure muted UI text has sufficient contrast */
 .text-gray-400,
 .text-slate-400 {
-    color: rgb(156, 163, 175) !important;
-    /* #9ca3af - 4.6:1 on dark backgrounds */
+    /* Was #9ca3af, annotated "4.6:1 on dark backgrounds". Measured against the
+     * panels it is actually used on it is 3.36:1 -- the annotation was computed
+     * against the darkest background on the page, not the lightest, which is
+     * the one that matters. #d1d5db is 5.80:1 worst case. */
+    color: rgb(209, 213, 219) !important;
 }
 
 .text-gray-500,
 .text-slate-500 {
-    color: rgb(156, 163, 175) !important;
-    /* Override to lighter shade for contrast */
+    color: rgb(209, 213, 219) !important;
+    /* Same correction as .text-gray-400 above. */
 }
 
 /* Primary color text overrides for darker backgrounds */
@@ -1000,21 +1015,10 @@ html.rtl [data-no-translate] {
      * override would change pages nobody has looked at. Two class names of
      * specificity beats a utility's one, so no !important is needed.
      */
-    .setup-panel .text-white\/45,
-    .premium-card .text-white\/45,
-    .surface-card .text-white\/45 { color: rgba(255, 255, 255, 0.62); }
-
-    .setup-panel .text-white\/40,
-    .premium-card .text-white\/40,
-    .surface-card .text-white\/40 { color: rgba(255, 255, 255, 0.6); }
-
-    .setup-panel .text-white\/35,
-    .premium-card .text-white\/35,
-    .surface-card .text-white\/35 { color: rgba(255, 255, 255, 0.58); }
-
-    .setup-panel .text-white\/30,
-    .premium-card .text-white\/30,
-    .surface-card .text-white\/30 { color: rgba(255, 255, 255, 0.56); }
+    /* The per-card text lift that used to sit here has gone global -- see the
+     * contrast block above. Scoping it to three class names meant every new
+     * surface had to remember to opt in, and the Spotlight bubbles, the GIS
+     * panel and the user table all did not. */
 
     /* The departments and service-category cards are built from inline gradient
      * utilities rather than a shared class, so they need this marker to pick up

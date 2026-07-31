@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Check, AlertCircle, CircleDashed, ChevronDown, Loader2 } from 'lucide-react';
+import { Check, AlertCircle, CircleDashed, HelpCircle, ChevronDown, Loader2 } from 'lucide-react';
 
 /**
  * The shared vocabulary for a capability, wherever it appears.
@@ -19,12 +19,13 @@ import { Check, AlertCircle, CircleDashed, ChevronDown, Loader2 } from 'lucide-r
  */
 
 export type CapabilityState =
-    | 'working'    // a live check succeeded recently
-    | 'failing'    // a live check failed, and we have the provider's words
-    | 'unchecked'  // configured, but nothing has exercised it
-    | 'unset'      // deliberately not set up
-    | 'done'       // setup finished (the guide's version of working)
-    | 'todo';      // setup outstanding
+    | 'working'      // a live check succeeded recently
+    | 'failing'      // a live check failed, and we have the provider's words
+    | 'unchecked'    // configured, but nothing has exercised it
+    | 'unverifiable' // configured, and there is no way to check it from here
+    | 'unset'        // deliberately not set up
+    | 'done'         // setup finished (the guide's version of working)
+    | 'todo';        // setup outstanding
 
 /* Deliberately not merging `unchecked` into `failing` or `working`. A connector
  * nobody has exercised is not healthy and it is not broken; collapsing it into
@@ -45,6 +46,17 @@ const PILL: Record<CapabilityState, { cls: string; label: string; Icon: typeof C
     unchecked: {
         cls: 'bg-white/[0.07] text-white/70 border-white/15',
         label: 'Not checked yet', Icon: CircleDashed,
+    },
+    /* Not amber, and not grouped with the failures.
+     *
+     * A generic HTTP gateway cannot be exercised without sending a real text
+     * message, so there is no check to run and there never will be. Reporting
+     * that as "Not working" -- which is what happened -- is a red badge that
+     * can never go green, and the whole page has been built around not doing
+     * that. It is also not "not checked yet", which implies somebody could. */
+    unverifiable: {
+        cls: 'bg-white/[0.07] text-white/70 border-white/15',
+        label: 'Set up · we cannot test this one', Icon: HelpCircle,
     },
     unset: {
         cls: 'bg-white/[0.05] text-white/55 border-white/12',
