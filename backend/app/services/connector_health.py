@@ -68,6 +68,10 @@ class Health:
     consecutive_failures: int = 0
     total_successes: int = 0
     total_failures: int = 0
+    # Carried through so the alerting layer can tell "this is new" from "we
+    # already said this on Tuesday" without a second query per connector.
+    alerted_level: Optional[str] = None
+    alerted_at: Optional[datetime] = None
 
     @property
     def ok(self) -> bool:
@@ -123,6 +127,8 @@ def to_health(row: Any, *, now: Optional[datetime] = None) -> Health:
         consecutive_failures=getattr(row, "consecutive_failures", 0) or 0,
         total_successes=getattr(row, "total_successes", 0) or 0,
         total_failures=getattr(row, "total_failures", 0) or 0,
+        alerted_level=getattr(row, "alerted_level", None),
+        alerted_at=getattr(row, "alerted_at", None),
     )
 
 

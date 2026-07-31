@@ -965,6 +965,16 @@ class ConnectorHealth(Base):
     total_successes = Column(Integer, default=0, nullable=False)
     total_failures = Column(Integer, default=0, nullable=False)
 
+    # What the last alert email said about this connector, and when.
+    #
+    # Without these the daily sweep would either say nothing -- which is what
+    # it did, so a broken connector waited for someone to open the settings
+    # page -- or say the same thing every morning until it was filtered into a
+    # folder, taking the one that mattered with it. Null means nothing has been
+    # announced, which is also what a recovery resets it to.
+    alerted_level = Column(String(16))
+    alerted_at = Column(DateTime(timezone=True))
+
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 

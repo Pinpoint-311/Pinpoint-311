@@ -17,13 +17,12 @@ import '../index.css';
 import './themes.css';
 
 import SetupWizard from '../components/SetupWizard';
-import { OptionRow, OptionTile, OptionStatusFirst } from './ProviderCardOptions';
-import { OptionBubble, OptionAurora, OptionSpotlight, OptionInset } from './ProviderCardOptions2';
+import ServiceProviders from '../components/ServiceProviders';
 import { DepartmentsTab, ServiceCategoriesTab } from '../pages/AdminConsole';
 
 // Canned API so the components render exactly as they would with a real one.
 const CATALOGS: Record<string, any> = {
-    identity: { current_provider: 'entra', configured: { entra: false }, providers: [
+    identity: { current_provider: 'entra', configured: { entra: true }, providers: [
         { provider: 'entra', name: 'Microsoft Entra ID', credential_fields: [
             { key: 'ENTRA_TENANT_ID', label: 'Directory (tenant) ID', secret: false },
             { key: 'ENTRA_CLIENT_ID', label: 'Application (client) ID', secret: false },
@@ -31,18 +30,41 @@ const CATALOGS: Record<string, any> = {
     maps: { current_provider: 'google', configured: { google: true }, providers: [
         { provider: 'google', name: 'Google Maps', credential_fields: [
             { key: 'GOOGLE_MAPS_API_KEY', label: 'Google Maps API key', secret: true }]}]},
-    ai: { current_provider: 'azure', configured: { azure: false }, providers: [
+    ai: { current_provider: 'azure', configured: { azure: true }, current_model: 'gpt-4o', providers: [
         { provider: 'azure', name: 'Azure OpenAI', credential_fields: [
             { key: 'AZURE_OPENAI_ENDPOINT', label: 'Endpoint', secret: false },
             { key: 'AZURE_OPENAI_API_KEY', label: 'API key', secret: true }]}]},
-    translation: { current_provider: 'azure', configured: { azure: false }, providers: [
+    translation: { current_provider: 'azure', configured: { azure: true }, providers: [
         { provider: 'azure', name: 'Azure Translator', credential_fields: [
             { key: 'AZURE_TRANSLATOR_KEY', label: 'Translator key', secret: true },
             { key: 'AZURE_TRANSLATOR_REGION', label: 'Region', secret: false }]}]},
-    kms: { current_provider: 'azure', configured: { azure: false }, providers: [
+    kms: { current_provider: 'azure', configured: { azure: true }, providers: [
         { provider: 'azure', name: 'Azure Key Vault', credential_fields: [
             { key: 'AZURE_KEYVAULT_URL', label: 'Vault URL', secret: false }]}]},
 };
+Object.assign(CATALOGS, {
+    email: { current_provider: 'acs', configured: { acs: true }, providers: [
+        { provider: 'acs', name: 'Azure Communication Services', credential_fields: [
+            { key: 'ACS_CONNECTION_STRING', label: 'Connection string', secret: true }]}]},
+    sms: { current_provider: 'acs', configured: { acs: false }, providers: [
+        { provider: 'acs', name: 'Azure Communication Services', credential_fields: [
+            { key: 'ACS_SMS_FROM', label: 'From number', secret: false }]}]},
+    redaction: { current_provider: 'local', configured: { local: true }, providers: [
+        { provider: 'local', name: 'On this server', credential_fields: [] }]},
+});
+// Deliberately mixed: a page where everything is green is the easy case, and
+// not the one worth looking at.
+const ago = (mins: number) => new Date(Date.now() - mins * 60000).toISOString();
+const HEALTH = { connectors: [
+    { connector: 'identity', status: 'working', last_success_at: ago(360), consecutive_failures: 0 },
+    { connector: 'maps', status: 'working', last_success_at: ago(360), consecutive_failures: 0 },
+    { connector: 'ai', status: 'down', last_error_at: ago(20), consecutive_failures: 4,
+      last_error: '401 — the API key was rejected by Azure OpenAI' },
+    { connector: 'translation', status: 'working', last_success_at: ago(1500), consecutive_failures: 0 },
+    { connector: 'email', status: 'unknown', consecutive_failures: 0 },
+    { connector: 'kms', status: 'working', last_success_at: ago(360), consecutive_failures: 0 },
+    { connector: 'redaction', status: 'working', last_success_at: ago(360), consecutive_failures: 0 },
+] };
 const origFetch = window.fetch.bind(window);
 window.fetch = async (input: any, init?: any) => {
     const url = String(typeof input === 'string' ? input : input.url);
@@ -50,6 +72,7 @@ window.fetch = async (input: any, init?: any) => {
     const m = url.match(/\/system\/([a-z]+)\/catalog/);
     if (m && CATALOGS[m[1]]) return json(CATALOGS[m[1]]);
     if (url.includes('cloud-identity')) return json({ attached: false, provider: null, identity: null, skippable_keys: [] });
+    if (url.includes('connectors/health')) return json(HEALTH);
     if (url.includes('/system/')) return json({});
     return origFetch(input, init);
 };
@@ -107,23 +130,9 @@ function App() {
                 />
             </Section>
 
-            {([
-                ['opt-row', '1 — Row', 'A list, not a grid. All eight at a glance with the states in a column, so "which one is red" is answered by scanning.', OptionRow],
-                ['opt-tile', '2 — Tile', 'Two columns of cards, closest to today. More room per capability, at the cost of scrolling and of the states being harder to compare.', OptionTile],
-                ['opt-status', '3 — Status first', 'Sorted worst-first. Anything needing attention is pulled to the top and given a coloured surface; the rest collapse to a quiet line.', OptionStatusFirst],
-                ['opt-bubble', '4 — Bubble rows', 'Each capability its own floating glass pill with air between them, rather than rows divided by hairlines. List density, console idiom.', OptionBubble],
-                ['opt-aurora', '5 — Aurora tiles', 'Full glass cards with the aurora glow used behind section headers, red where something is wrong. The most decorative of the set.', OptionAurora],
-                ['opt-spotlight', '6 — Spotlight', 'Anything wrong gets a full-width glass card with a coloured aurora; everything healthy becomes a small bubble in a grid.', OptionSpotlight],
-                ['opt-inset', '7 — Inset panel', 'One outer glass panel holding soft inner bubbles, the way the setup guide holds its steps. Groups the set as one object on the page.', OptionInset],
-            ] as const).map(([id, name, note, Comp]) => (
-                <section key={id} id={id} className="p-8 max-w-5xl mx-auto">
-                    <div className="mb-5">
-                        <h2 className="text-white font-bold text-lg">{name}</h2>
-                        <p className="text-white/60 text-sm mt-0.5 max-w-2xl">{note}</p>
-                    </div>
-                    <Comp />
-                </section>
-            ))}
+            <Section id="spotlight" title="Service providers — Spotlight, built for real">
+                <ServiceProviders />
+            </Section>
 
             <Section id="departments" title="Departments">
                 <DepartmentsTab departments={DEPARTMENTS as any} onAdd={() => {}} onEdit={() => {}} onDelete={() => {}} />
