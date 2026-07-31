@@ -18,6 +18,7 @@ import './themes.css';
 
 import SetupWizard from '../components/SetupWizard';
 import { OptionRow, OptionTile, OptionStatusFirst } from './ProviderCardOptions';
+import { OptionBubble, OptionAurora, OptionSpotlight, OptionInset } from './ProviderCardOptions2';
 import { DepartmentsTab, ServiceCategoriesTab } from '../pages/AdminConsole';
 
 // Canned API so the components render exactly as they would with a real one.
@@ -110,6 +111,10 @@ function App() {
                 ['opt-row', '1 — Row', 'A list, not a grid. All eight at a glance with the states in a column, so "which one is red" is answered by scanning.', OptionRow],
                 ['opt-tile', '2 — Tile', 'Two columns of cards, closest to today. More room per capability, at the cost of scrolling and of the states being harder to compare.', OptionTile],
                 ['opt-status', '3 — Status first', 'Sorted worst-first. Anything needing attention is pulled to the top and given a coloured surface; the rest collapse to a quiet line.', OptionStatusFirst],
+                ['opt-bubble', '4 — Bubble rows', 'Each capability its own floating glass pill with air between them, rather than rows divided by hairlines. List density, console idiom.', OptionBubble],
+                ['opt-aurora', '5 — Aurora tiles', 'Full glass cards with the aurora glow used behind section headers, red where something is wrong. The most decorative of the set.', OptionAurora],
+                ['opt-spotlight', '6 — Spotlight', 'Anything wrong gets a full-width glass card with a coloured aurora; everything healthy becomes a small bubble in a grid.', OptionSpotlight],
+                ['opt-inset', '7 — Inset panel', 'One outer glass panel holding soft inner bubbles, the way the setup guide holds its steps. Groups the set as one object on the page.', OptionInset],
             ] as const).map(([id, name, note, Comp]) => (
                 <section key={id} id={id} className="p-8 max-w-5xl mx-auto">
                     <div className="mb-5">
