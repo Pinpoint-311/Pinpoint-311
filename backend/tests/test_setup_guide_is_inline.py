@@ -399,3 +399,66 @@ def test_no_console_walk_runs_away_with_itself():
         if words > 400:
             offenders.append(f"{m.group(1)}:{m.group(2)} is {words} words")
     assert not offenders, "console walks have grown back:\n" + "\n".join(offenders)
+
+
+# ---------------------------------------------------------------------------
+# A warning that is everywhere is not a warning
+# ---------------------------------------------------------------------------
+
+def test_warnings_are_rare_enough_to_read():
+    """There was one on every other step, and on all three steps of the Google
+    Maps walk. The billing warning -- the one that silently produces a grey map
+    on a key that looks correct -- sat in identical amber beside "changes can
+    take up to five minutes". A page that flags everything flags nothing.
+
+    The bar is now: amber is for a failure that is silent, one that cannot be
+    undone, or one that lands on the town's money or resident data. Everything
+    else is a grey note.
+    """
+    source = _read(CONTENT)
+    offenders = []
+    for m in re.finditer(r"defineSteps\(\s*'([a-z]+)'\s*,\s*'([a-z0-9]+)'", source):
+        end = source.index("\n]);", m.start())
+        block = source[m.start():end]
+        warnings = len(re.findall(r"^\s+trouble:", block, re.M))
+        steps = max(1, len(re.findall(r"^\s{4}\{", block, re.M)))
+        # Half, rounded up. A three-step walk may carry two if both earn it --
+        # Google Maps does: one is the billing step that silently yields a grey
+        # map, the other is an unrestricted key somebody can run a bill up on.
+        if warnings > -(-steps // 2):
+            offenders.append(f"{m.group(1)}:{m.group(2)} has {warnings} across {steps} steps")
+    assert not offenders, "warnings are back to competing with each other:\n" + "\n".join(offenders)
+
+
+def test_the_quiet_kind_of_aside_exists_and_is_used():
+    """The demotion has to go somewhere. If `note` disappeared, the 28 asides
+    that stopped being warnings were deleted rather than quietened -- and some
+    of them are the difference between finishing and not."""
+    source = _read(CONTENT)
+    assert len(re.findall(r"^\s+note:", source, re.M)) >= 20
+    assert "note?: ReactNode" in _read(FRONTEND / "setupSteps.tsx")
+
+
+def test_a_note_does_not_look_like_a_warning():
+    """Same weight and colour is what made the warnings stop registering."""
+    renderer = _read(SHARED)
+    assert "st.note" in renderer, "notes are defined but never rendered"
+    note_block = renderer[renderer.index("st.note &&"):]
+    note_block = note_block[:note_block.index("</p>")]
+    assert "amber" not in note_block
+    assert "AlertCircle" not in note_block
+
+
+def test_the_silent_failures_kept_their_warning():
+    """The specific ones worth keeping. Each is a case where a clerk would
+    otherwise believe it had worked."""
+    source = _read(CONTENT)
+    for phrase in (
+        "Google will issue a key without it",       # billing: key looks right, map grey
+        "quietly encrypted with",                    # KMS: wrong key, no error
+        "Entra shows the Value once",                # no second chance
+    ):
+        assert phrase in source, f"a silent-failure warning was demoted: {phrase}"
+        i = source.index(phrase)
+        line_start = source.rfind("\n", 0, source.rfind("trouble:", 0, i) if "trouble:" in source[:i] else 0)
+        assert "trouble:" in source[max(0, i - 400):i], f"{phrase} is no longer a warning"

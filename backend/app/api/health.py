@@ -579,14 +579,11 @@ async def trigger_uptime_check(
     """
     import time
     
+    # Matches the background sampler exactly -- see the note in main.py. When
+    # these two lists differed, pressing "Check now" wrote series the sampler
+    # never maintained, so they aged out of the graph on their own.
     services_to_check = [
         ("database", check_database),
-        ("auth0", check_auth0),
-        # Series names, not display names -- see the note in main.py.
-        ("kms", check_kms),
-        ("secret_store", check_secret_manager),
-        ("vertex_ai", check_vertex_ai),
-        ("translation_api", check_translation_api),
     ]
     
     from app.services.uptime import uptime_status

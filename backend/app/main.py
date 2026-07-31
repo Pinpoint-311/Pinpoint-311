@@ -196,18 +196,25 @@ async def lifespan(app: FastAPI):
         while True:
             try:
                 async with SessionLocal() as db:
+                    # Infrastructure only, and deliberately.
+                    #
+                    # This list used to name Auth0, Vertex AI and Google
+                    # Translate, so an Azure town accumulated a month of uptime
+                    # history for three services it does not use -- the same
+                    # hardcoded-vendor problem the health page had.
+                    #
+                    # The fix is not to widen the list. External dependencies
+                    # are already swept daily by the connector check, which is
+                    # daily *because* each one costs a call to somebody else's
+                    # paid API; sampling eight of them every five minutes would
+                    # be about 2,300 calls a day against a town's own account.
+                    #
+                    # So the two stop overlapping. The connector sweep owns
+                    # external services, at a frequency that respects their
+                    # cost. This owns the machine, where a check is a syscall
+                    # and five-minute resolution is free.
                     services_to_check = [
                         ("database", check_database),
-                        ("auth0", check_auth0),
-                        # Renamed from "google_kms": key management is
-                        # pluggable, and the old name asserted a vendor. The
-                        # uptime series restarts under the new name; these are
-                        # five-minute samples for a recent-availability figure,
-                        # not a long-term record.
-                        ("kms", check_kms),
-                        ("secret_store", check_secret_manager),
-                        ("vertex_ai", check_vertex_ai),
-                        ("translation_api", check_translation_api),
                     ]
                     
                     from app.services.uptime import uptime_status

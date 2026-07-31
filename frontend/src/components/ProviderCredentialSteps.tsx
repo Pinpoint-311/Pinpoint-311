@@ -112,10 +112,16 @@ export default function ProviderCredentialSteps({
                                 </p>
                             )}
                             {st.trouble && (
-                                <p className="mt-1.5 text-xs text-amber-200/75 flex items-start gap-1.5">
+                                <p className="mt-1.5 text-xs text-amber-200/90 flex items-start gap-1.5">
                                     <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
                                     <span>{st.trouble}</span>
                                 </p>
+                            )}
+                            {/* No icon and no colour. A note competing visually
+                                with a warning is what made the warnings stop
+                                registering. */}
+                            {st.note && (
+                                <p className="mt-1.5 text-xs text-white/55 leading-relaxed">{st.note}</p>
                             )}
                             {!!st.fields?.length && (
                                 <div className="mt-2.5 grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">

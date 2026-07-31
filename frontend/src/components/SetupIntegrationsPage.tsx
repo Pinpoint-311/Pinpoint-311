@@ -2,20 +2,22 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    Key, Shield, CheckCircle, CircleDashed,
+    Key, Shield, CheckCircle, CircleDashed, Activity,
     AlertCircle, ChevronDown, ChevronUp,
-    ExternalLink, AlertTriangle, Database, BookOpen,
+    ExternalLink, Database, BookOpen,
     ListChecks, HardDrive, Bell,
 } from 'lucide-react';
 
-import { Card, Button, Input, Badge, CollapsibleSection } from './ui';
+import { Card, Button, Badge, CollapsibleSection } from './ui';
 import { SystemSecret } from '../types';
 import { api } from '../services/api';
 import type { Capability, ProviderStatusMap } from '../services/api';
 import GovtechIntegrations from './GovtechIntegrations';
 import ServiceProviders from './ServiceProviders';
 import SetupWizard from './SetupWizard';
-import { buildPlan, summarise, nameList } from './setupPlan';
+import { buildPlan, summarise, nameList, BACKUP_SECRETS, SENTRY_SECRETS } from './setupPlan';
+import { PlainSecrets } from './SetupWizard';
+import { CapabilityTile, StatusPill } from './capabilityUI';
 // Registers every provider's setup steps as a side effect, so the guide can
 // render them inline rather than pointing at the cards that do.
 import './setupStepsContent';
@@ -1001,77 +1003,34 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                             </div>
 
 
-                            {/* Sentry Error Tracking - Premium Card */}
-                            <motion.div
-                                initial={{ opacity: 0, y: 20 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: 0.4 }}
-                                className={`relative rounded-3xl border p-6 transition-all duration-300 ${sentryConfigured
-                                    ? 'bg-gradient-to-br from-rose-500/10 via-red-500/5 to-orange-500/10 border-rose-500/30 shadow-lg shadow-rose-500/10'
-                                    : 'setup-panel border-transparent'
-                                    }`}
-                            >
-                                {sentryConfigured && (
-                                    <div className="absolute inset-0 bg-gradient-to-r from-rose-500/5 via-transparent to-orange-500/5 pointer-events-none" />
-                                )}
-
-                                <div className="relative">
-                                    <div className="flex items-start justify-between mb-4">
-                                        <div className="flex items-center gap-4">
-                                            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${sentryConfigured
-                                                ? 'bg-gradient-to-br from-rose-400 to-orange-500 shadow-lg shadow-rose-500/30'
-                                                : 'setup-tile'
-                                                }`}>
-                                                <AlertTriangle className="w-7 h-7 text-white" />
-                                            </div>
-                                            <div>
-                                                <h3 className="font-bold text-lg text-white">Sentry</h3>
-                                                <p className="text-white/50 text-sm">Error monitoring</p>
-                                            </div>
-                                        </div>
-                                        {sentryConfigured ? (
-                                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-rose-500/20 to-orange-500/20 text-rose-300 border border-rose-500/30 shadow-lg shadow-rose-500/10">
-                                                <CheckCircle className="w-3.5 h-3.5" />
-                                                Active
-                                            </span>
-                                        ) : (
-                                            <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 text-white/50 border border-white/10">
-                                                Optional
-                                            </span>
-                                        )}
+                            {/* Crash reporting.
+                                One field, and it was written out by hand here
+                                as well as in setupPlan.ts. Both now render the
+                                same SENTRY_SECRETS array through the same
+                                component the guide uses -- two copies of a
+                                credential form is exactly how the guide and
+                                the cards drifted last time. */}
+                            <div className="premium-card p-5">
+                                <div className="flex items-center gap-3.5 mb-3.5">
+                                    <CapabilityTile icon={Activity} size="sm" />
+                                    <div className="min-w-0 flex-1">
+                                        <h3 className="font-semibold text-white">Crash reporting</h3>
+                                        <p className="text-white/55 text-xs">
+                                            Sends crash reports off this server, so they survive a restart.
+                                        </p>
                                     </div>
-
-                                    {!sentryConfigured || secretValues['SENTRY_DSN'] !== undefined ? (
-                                        <div className="flex gap-2">
-                                            <Input
-                                                type="text"
-                                                placeholder="https://xxx@sentry.io/xxx"
-                                                value={secretValues['SENTRY_DSN'] || ''}
-                                                onChange={(e) => setSecretValues(p => ({ ...p, 'SENTRY_DSN': e.target.value }))}
-                                                className="flex-1 text-sm"
-                                            />
-                                            <Button
-                                                size="sm"
-                                                className="bg-gradient-to-r from-rose-500 to-orange-500 hover:from-rose-600 hover:to-orange-600"
-                                                onClick={() => handleSave('SENTRY_DSN')}
-                                                disabled={!secretValues['SENTRY_DSN'] || savingKey === 'SENTRY_DSN'}
-                                            >
-                                                Save
-                                            </Button>
-                                        </div>
-                                    ) : (
-                                        <div className="flex items-center gap-2">
-                                            <div className="flex-1 h-10 rounded-xl bg-rose-500/20 border border-rose-500/30 flex items-center px-4">
-                                                <CheckCircle className="w-4 h-4 text-rose-400 mr-2" />
-                                                <span className="text-rose-200 text-sm">Monitoring active</span>
-                                            </div>
-                                            <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, 'SENTRY_DSN': '' }))}>
-                                                Change
-                                            </Button>
-                                        </div>
-                                    )}
+                                    <StatusPill state={isConfigured('SENTRY_DSN') ? 'done' : 'unset'} />
                                 </div>
-                            </motion.div>
+                                <PlainSecrets
+                                    fields={SENTRY_SECRETS}
+                                    values={secretValues}
+                                    onChange={(k, v) => setSecretValues(p => ({ ...p, [k]: v }))}
+                                    onSave={async (keys) => { for (const k of keys) await handleSave(k); }}
+                                    saving={savingKey}
+                                    isConfigured={(k) => !!isConfigured(k)}
+                                    onSaved={() => undefined}
+                                />
+                            </div>
 
                             {/* Database Backups - Premium Card (locked in managed mode: the state owns backups) */}
                             {managedMode ? (
@@ -1138,43 +1097,35 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                         See the <strong className="text-amber-300">Setup Instructions</strong> above for provider-specific guidance.
                                     </p>
 
+                                    {/* The five S3 boxes were written by hand
+                                        here and again in setupPlan.ts. Both
+                                        now render BACKUP_SECRETS through the
+                                        same component the guide uses.
+
+                                        The passphrase below is not part of
+                                        that array on purpose: it is generated
+                                        rather than typed, it is shown exactly
+                                        once, and it needs the acknowledgement
+                                        checkbox. Folding it into a generic
+                                        credential form would lose all three,
+                                        and losing it means a town's backups
+                                        cannot be restored. */}
                                     {!backupConfigured || secretValues['BACKUP_S3_BUCKET'] !== undefined ? (
                                         <div className="space-y-3">
-                                            <div>
-                                                <label className="text-sm text-white/60 mb-1.5 block">S3 Bucket Name</label>
-                                                <div className="flex gap-2">
-                                                    <Input
-                                                        type="text"
-                                                        placeholder="my-backup-bucket"
-                                                        value={secretValues['BACKUP_S3_BUCKET'] || ''}
-                                                        onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_BUCKET': e.target.value }))}
-                                                        className="flex-1 text-sm"
-                                                    />
-                                                </div>
-                                            </div>
-
-                                            <div className="grid grid-cols-2 gap-2">
-                                                <div>
-                                                    <label className="text-xs text-white/50 mb-1 block">Access Key</label>
-                                                    <Input
-                                                        type="text"
-                                                        placeholder="AKIA..."
-                                                        value={secretValues['BACKUP_S3_ACCESS_KEY'] || ''}
-                                                        onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_ACCESS_KEY': e.target.value }))}
-                                                        className="text-sm"
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label className="text-xs text-white/50 mb-1 block">Secret Key</label>
-                                                    <Input
-                                                        type="password"
-                                                        placeholder="Your S3 secret key"
-                                                        value={secretValues['BACKUP_S3_SECRET_KEY'] || ''}
-                                                        onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_SECRET_KEY': e.target.value }))}
-                                                        className="text-sm"
-                                                    />
-                                                </div>
-                                            </div>
+                                            <PlainSecrets
+                                                fields={BACKUP_SECRETS}
+                                                values={secretValues}
+                                                onChange={(k, v) => setSecretValues(p => ({ ...p, [k]: v }))}
+                                                onSave={async (keys) => { for (const k of keys) await handleSave(k); }}
+                                                saving={savingKey}
+                                                isConfigured={(k) => !!isConfigured(k)}
+                                                onSaved={() => undefined}
+                                                blockedReason={
+                                                    (backupKeyAcknowledged || (!backupKey && isConfigured('BACKUP_ENCRYPTION_KEY')))
+                                                        ? null
+                                                        : 'Create the encryption passphrase below and confirm you have kept a copy first.'
+                                                }
+                                            />
 
                                             <div>
                                                 <label className="text-sm text-white/60 mb-1.5 block">Encryption Passphrase</label>
@@ -1236,51 +1187,6 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                                 )}
                                             </div>
 
-                                            <div className="grid grid-cols-2 gap-2">
-                                                <div>
-                                                    <label className="text-xs text-white/50 mb-1 block">S3 Endpoint <span className="text-white/30">(optional)</span></label>
-                                                    <Input
-                                                        type="text"
-                                                        placeholder="https://... (non-AWS only)"
-                                                        value={secretValues['BACKUP_S3_ENDPOINT'] || ''}
-                                                        onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_ENDPOINT': e.target.value }))}
-                                                        className="text-xs"
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label className="text-xs text-white/50 mb-1 block">Region <span className="text-white/30">(optional)</span></label>
-                                                    <Input
-                                                        type="text"
-                                                        placeholder="us-ashburn-1"
-                                                        value={secretValues['BACKUP_S3_REGION'] || ''}
-                                                        onChange={(e) => setSecretValues(p => ({ ...p, 'BACKUP_S3_REGION': e.target.value }))}
-                                                        className="text-xs"
-                                                    />
-                                                </div>
-                                            </div>
-
-                                            <Button
-                                                size="sm"
-                                                className="w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
-                                                onClick={async () => {
-                                                    if (secretValues['BACKUP_S3_BUCKET']) await handleSave('BACKUP_S3_BUCKET');
-                                                    if (secretValues['BACKUP_S3_ACCESS_KEY']) await handleSave('BACKUP_S3_ACCESS_KEY');
-                                                    if (secretValues['BACKUP_S3_SECRET_KEY']) await handleSave('BACKUP_S3_SECRET_KEY');
-                                                    // The passphrase is stored by the endpoint that
-                                                    // generates it, so there is nothing to save here.
-                                                    if (secretValues['BACKUP_S3_ENDPOINT']) await handleSave('BACKUP_S3_ENDPOINT');
-                                                    if (secretValues['BACKUP_S3_REGION']) await handleSave('BACKUP_S3_REGION');
-                                                }}
-                                                disabled={!secretValues['BACKUP_S3_BUCKET']
-                                                    || !(backupKeyAcknowledged || (!backupKey && isConfigured('BACKUP_ENCRYPTION_KEY')))
-                                                    || savingKey !== null}
-                                            >
-                                                {savingKey ? 'Saving...' : 'Save Backup Settings'}
-                                            </Button>
-
-                                            <p className="text-white/40 text-xs">
-                                                Endpoint and Region are optional — only needed for non-AWS providers (Oracle, MinIO, etc.).
-                                            </p>
                                         </div>
                                     ) : (
                                         <div className="space-y-3">

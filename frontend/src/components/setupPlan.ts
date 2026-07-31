@@ -119,6 +119,27 @@ const VENDOR_ORDER: Vendor[] = [
     'local', 'storage', 'sentry',
 ];
 
+/**
+ * The two settings that belong to no provider, defined once.
+ *
+ * They were written twice: here, for the guide, and again by hand in the
+ * "Other settings" block on the same page. Two copies of a credential form is
+ * how the guide and the cards drifted last time -- one said Okta's issuer was
+ * the org URL and the other said the opposite -- so these are exported and
+ * both surfaces render the same array.
+ */
+export const BACKUP_SECRETS = [
+    { key: 'BACKUP_S3_BUCKET', label: 'Bucket name' },
+    { key: 'BACKUP_S3_ENDPOINT', label: 'Endpoint URL', help: 'Leave blank for AWS S3. Set it for Oracle, MinIO, Backblaze and the rest.' },
+    { key: 'BACKUP_S3_REGION', label: 'Region' },
+    { key: 'BACKUP_S3_ACCESS_KEY', label: 'Access key ID', secret: true },
+    { key: 'BACKUP_S3_SECRET_KEY', label: 'Secret access key', secret: true },
+];
+
+export const SENTRY_SECRETS = [
+    { key: 'SENTRY_DSN', label: 'Sentry DSN', secret: true, help: 'Project Settings → Client Keys (DSN).' },
+];
+
 export function buildPlan(input: PlanInput): PlanTask[] {
     const { cloud, idp, maps, wanted } = input;
     const want = (f: string) => wanted.has(f);
@@ -216,23 +237,16 @@ export function buildPlan(input: PlanInput): PlanTask[] {
             id: 'backups',
             title: 'Automatic backups',
             blurb: 'A nightly copy of everything, kept somewhere other than this server.',
-            secrets: [
-                { key: 'BACKUP_S3_BUCKET', label: 'Bucket name' },
-                { key: 'BACKUP_S3_ENDPOINT', label: 'Endpoint URL', help: 'Leave blank for AWS S3. Set it for Oracle, MinIO, Backblaze and the rest.' },
-                { key: 'BACKUP_S3_REGION', label: 'Region' },
-                { key: 'BACKUP_S3_ACCESS_KEY', label: 'Access key ID', secret: true },
-                { key: 'BACKUP_S3_SECRET_KEY', label: 'Secret access key', secret: true },
-            ],
+            secrets: BACKUP_SECRETS,
         });
     }
-
 
     if (want('errors')) {
         add('sentry', {
             id: 'errors',
             title: 'Crash reporting',
             blurb: 'Sends crash reports somewhere off this server, so they survive a restart.',
-            secrets: [{ key: 'SENTRY_DSN', label: 'Sentry DSN', secret: true, help: 'Project Settings → Client Keys (DSN).' }],
+            secrets: SENTRY_SECRETS,
         });
     }
 

@@ -72,3 +72,39 @@ describe('nameList', () => {
         expect(nameList(items('Maps', 'AI', 'Email', 'Text'))).toBe('Maps, AI and 2 more'));
     it('says nothing about nothing', () => expect(nameList([])).toBe(''));
 });
+
+describe('one definition of the settings that belong to no provider', () => {
+    it('the guide and the cards render the same backup fields', async () => {
+        // They were written twice -- once here, once by hand in the "Other
+        // settings" block on the same page. Two copies of a credential form is
+        // how the guide and the cards drifted last time: one told towns Okta's
+        // issuer was their org URL and the other said the opposite.
+        const { BACKUP_SECRETS, SENTRY_SECRETS } = await import('./setupPlan');
+        const plan = buildPlan({
+            cloud: 'google', idp: 'auth0', maps: 'google', aiProvider: 'vertex',
+            emailProvider: 'smtp', smsProvider: 'twilio', redactionProvider: 'google',
+            wanted: new Set(['backups', 'errors']),
+        });
+        const backups = plan.flatMap(t => t.items).find(i => i.id === 'backups');
+        const errors = plan.flatMap(t => t.items).find(i => i.id === 'errors');
+        expect(backups?.secrets).toBe(BACKUP_SECRETS);
+        expect(errors?.secrets).toBe(SENTRY_SECRETS);
+    });
+
+    it('the backup fields still cover a non-AWS bucket', async () => {
+        // Endpoint and region are what make this work with Oracle, MinIO and
+        // Backblaze. Dropping them during the de-duplication would quietly
+        // restrict every town to Amazon.
+        const { BACKUP_SECRETS } = await import('./setupPlan');
+        const keys = BACKUP_SECRETS.map(f => f.key);
+        expect(keys).toContain('BACKUP_S3_ENDPOINT');
+        expect(keys).toContain('BACKUP_S3_REGION');
+        expect(keys).toContain('BACKUP_S3_BUCKET');
+    });
+
+    it('keeps the secret fields marked secret', async () => {
+        const { BACKUP_SECRETS } = await import('./setupPlan');
+        const secret = BACKUP_SECRETS.filter(f => f.secret).map(f => f.key);
+        expect(secret).toEqual(['BACKUP_S3_ACCESS_KEY', 'BACKUP_S3_SECRET_KEY']);
+    });
+});

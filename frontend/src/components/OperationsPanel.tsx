@@ -403,9 +403,21 @@ export default function OperationsPanel() {
                 )}
 
                 {/* Uptime Timeline (last 48 hours) */}
-                {uptimeHistory && Object.keys(uptimeHistory.services).length > 0 && (
+                {uptimeHistory && Object.keys(uptimeHistory.services).length > 0 && (() => {
+                const maxChecks = Math.max(
+                    0, ...Object.values(uptimeHistory.services).map(c => c.length),
+                );
+                return (
                     <div className="space-y-3">
-                        <p className="text-gray-400 text-xs">Last 48 hours (newest → oldest)</p>
+                        {/* It said "Last 48 hours" and rendered the last 48
+                            *records*. At one sample every five minutes that is
+                            four hours of history under a label promising two
+                            days -- and after an outage the bars either side of
+                            the gap sit adjacent, so a hole in the record looks
+                            like continuous service. */}
+                        <p className="text-gray-400 text-xs">
+                            Most recent {Math.min(48, maxChecks)} checks (newest → oldest)
+                        </p>
                         {/* Not the backend's own uptime, and it cannot be:
                             the sampler runs inside the backend. Saying which
                             it is beats a number a council report will read as
@@ -431,7 +443,8 @@ export default function OperationsPanel() {
                             </div>
                         ))}
                     </div>
-                )}
+                );
+                })()}
             </Card>
 
             {/* The "Cloud Integrations" block that was here has gone.

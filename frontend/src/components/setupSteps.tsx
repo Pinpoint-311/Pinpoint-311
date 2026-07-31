@@ -39,7 +39,21 @@ export interface SetupStep {
     /** Secret keys this step produces, rendered as inputs directly beneath it. */
     fields?: string[];
     /** A caveat worth reading before the next step, not after it goes wrong. */
+    /** A warning, in amber, with an icon.
+     *
+     * Reserved for a failure that is *silent* -- one where you would otherwise
+     * think it had worked -- or *irreversible*, where there is no second
+     * chance. Everything else belongs in `note`.
+     *
+     * The distinction is the whole point. There was a warning on every other
+     * step and on all three steps of the Google Maps walk, and a page where
+     * everything is flagged flags nothing: the billing warning, which is the
+     * one that silently produces a grey map, sat in identical amber beside
+     * "changes can take five minutes". */
     trouble?: ReactNode;
+    /** A quiet aside. True, worth knowing, and not a warning: timing, a tip,
+     *  an alternative. Grey, no icon, no urgency. */
+    note?: ReactNode;
 }
 
 /** Everything a step-writer needs that depends on the deployment. */

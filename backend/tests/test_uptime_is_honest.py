@@ -93,3 +93,42 @@ class TestExpectedSamples:
     def test_a_nonsense_interval_does_not_divide_by_zero(self):
         assert U.expected_samples(24, timedelta(0)) == 0
         assert U.summarise(total=5, healthy=5, hours=24, interval=timedelta(0))["coverage_percent"] == 0.0
+
+
+class TestWhatIsSampled:
+    """The five-minute sampler and the connector sweep must not overlap.
+
+    They did: the sampler named Auth0, Vertex AI and Google Translate, so an
+    Azure town accumulated a month of history for three services it does not
+    use. Widening the list is the wrong fix -- the connector sweep is daily
+    *because* each external check costs a call to a town's own paid account,
+    and eight of them every five minutes is about 2,300 calls a day.
+    """
+
+    def _lists(self):
+        import re
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1] / "app"
+        out = {}
+        for name in ("main.py", "api/health.py"):
+            text = (root / name).read_text()
+            m = re.search(r"services_to_check = \[(.*?)\]", text, re.S)
+            out[name] = set(re.findall(r'\("([a-z_]+)",', m.group(1))) if m else set()
+        return out
+
+    def test_no_external_vendor_is_sampled_every_five_minutes(self):
+        expensive = {"auth0", "vertex_ai", "translation_api", "kms", "secret_store"}
+        for name, sampled in self._lists().items():
+            assert not (sampled & expensive), (
+                f"{name} samples paid external APIs every five minutes: {sampled & expensive}"
+            )
+
+    def test_the_manual_button_records_the_same_series_as_the_sampler(self):
+        """When they differed, pressing "Check now" wrote series the sampler
+        never maintained, which then aged out of the graph on their own."""
+        lists = self._lists()
+        assert lists["main.py"] == lists["api/health.py"], lists
+
+    def test_something_is_still_sampled(self):
+        assert self._lists()["main.py"], "the uptime series has nothing in it"
