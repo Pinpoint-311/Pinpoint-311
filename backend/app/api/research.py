@@ -65,7 +65,7 @@ async def check_research_enabled(db: AsyncSession):
     if getattr(settings, 'enable_research_suite', False):
         return True
 
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     system_settings = result.scalar_one_or_none()
     if system_settings and system_settings.modules:
         return system_settings.modules.get("research_portal", False)
@@ -2285,7 +2285,7 @@ async def get_code_snippets(
     if not await check_research_enabled(db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Research Suite is not enabled")
     
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     system_settings = result.scalar_one_or_none()
     base_url = f"https://{system_settings.custom_domain}" if system_settings and system_settings.custom_domain else "https://your-311-domain.com"
     
@@ -2458,7 +2458,7 @@ async def research_chat(
     context_used = []
 
     # Get township info
-    settings_result = await db.execute(select(SystemSettings).limit(1))
+    settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     sys_settings = settings_result.scalar_one_or_none()
     township_name = getattr(sys_settings, 'township_name', 'the municipality') or 'the municipality'
     context_used.append("system_settings")

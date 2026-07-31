@@ -94,6 +94,13 @@ def label(connector: str) -> str:
     """A name for a connector that reads in a sentence."""
     if connector in CONNECTOR_LABEL:
         return CONNECTOR_LABEL[connector]
+    # Infrastructure probes ride in this same table so they inherit the
+    # escalation, the digest and the mute. They need their own names for the
+    # same reason the connectors do: "system:disk is down" is not a sentence to
+    # forward to a township administrator.
+    if connector.startswith("system:"):
+        from app.services.system_probes import label_for
+        return label_for(connector)
     # "govtech:accela" -> "Accela". Anything unrecognised keeps its own name
     # rather than being dropped, so a new integration can still raise an alarm
     # the day it is added.

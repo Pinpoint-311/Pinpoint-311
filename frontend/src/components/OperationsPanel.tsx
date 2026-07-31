@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     Server, Database, RefreshCw, Play, Trash2, HardDrive, Clock,
     CheckCircle, XCircle, Loader2, RotateCcw, Wrench,
-    Shield, Cloud, Languages, Sparkles, Key, Activity, Link2, AlertTriangle
+    Cloud, Activity, AlertTriangle
 } from 'lucide-react';
 import { Card, Button } from './ui';
 import api, { HealthDashboard, RunbookResult, ProactiveHealth } from '../services/api';
@@ -15,52 +15,31 @@ interface ServiceStatus {
     error?: string;
 }
 
-interface IntegrationCheck {
-    status: string;
-    message: string;
-    [key: string]: any;
-}
-
-/** Key management and secret storage are both pluggable, so neither panel can
- *  carry a vendor name in its heading. Both used to say "Google". */
-const KMS_LABELS: Record<string, string> = {
-    google: 'Google Cloud KMS',
-    azure: 'Azure Key Vault',
-    aws: 'AWS KMS',
-};
-
-const STORE_LABELS: Record<string, string> = {
-    google: 'Google Secret Manager',
-    azure: 'Azure Key Vault',
-    aws: 'AWS Secrets Manager',
-};
-
-interface IntegrationHealth {
-    overall_status: string;
-    checks: {
-        database: IntegrationCheck;
-        auth0: IntegrationCheck;
-        gcp_auth?: IntegrationCheck;
-        kms: IntegrationCheck;
-        secret_store: IntegrationCheck;
-        vertex_ai: IntegrationCheck;
-        translation_api: IntegrationCheck;
-    };
-    timestamp: string;
-}
 
 // Resolution tips for common issues
 const RESOLUTION_TIPS: Record<string, { issue: string; steps: string[] }> = {
-    backend: { issue: 'Backend API not responding', steps: ['Click "Restart Backend"', 'Check server logs', 'Verify database'] },
-    frontend: { issue: 'Frontend not reachable', steps: ['Click "Restart Frontend"', 'Check if Vite is running', 'Review build errors'] },
-    db: { issue: 'Database connection failed', steps: ['Check PostgreSQL container', 'Verify disk space', 'Review connection limits'] },
-    redis: { issue: 'Redis cache unavailable', steps: ['Click "Restart Redis"', 'Check Redis logs', 'Verify memory limits'] },
-    caddy: { issue: 'Reverse proxy not routing', steps: ['Click "Restart Caddy"', 'Check Caddyfile', 'Verify SSL certificates'] }
+    /* "Click Restart Backend" is not a step everywhere.
+     *
+     * The button only works where the app can reach Docker Compose and the
+     * project directory, and it says so honestly when it cannot -- but these
+     * instructions told a clerk to click it regardless, so on a managed or
+     * single-container deployment the first suggested remedy is one that
+     * always fails. The host-side command comes first now, because it works
+     * everywhere. */
+    backend: { issue: 'Backend API not responding', steps: ['Restart it on the host: docker compose restart backend', 'Or press Restart below, where this deployment allows it', 'Check the server logs'] },
+    frontend: { issue: 'Frontend not reachable', steps: ['Check FRONTEND_HOST — a wrong address looks the same as a stopped service', 'Restart on the host: docker compose restart frontend', 'Review build errors'] },
+    db: { issue: 'Database connection failed', steps: ['Check PostgreSQL is running', 'Check free disk space', 'Review connection limits'] },
+    redis: { issue: 'Redis cache unavailable', steps: ['Restart on the host: docker compose restart redis', 'Check Redis logs', 'Verify memory limits'] },
+    caddy: { issue: 'Reverse proxy not routing', steps: ['If you reached this page through the proxy, it is routing', 'Check the Caddyfile', 'Verify SSL certificates'] }
 };
 
 export default function OperationsPanel() {
     const [health, setHealth] = useState<HealthDashboard | null>(null);
-    const [integrations, setIntegrations] = useState<IntegrationHealth | null>(null);
+    /* Derived from the same endpoint the provider cards read, rather than
+     * from a hardcoded list of vendors this deployment may not even use. */
+    const [connectorRollup, setConnectorRollup] = useState<
+        { working: number; failing: number; unchecked: number; names: string[] } | null
+    >(null);
     const [uptimeStats, setUptimeStats] = useState<import('../services/api').UptimeStats | null>(null);
     const [uptimeHistory, setUptimeHistory] = useState<import('../services/api').UptimeHistory | null>(null);
     const [proactive, setProactive] = useState<ProactiveHealth | null>(null);
@@ -78,22 +57,33 @@ export default function OperationsPanel() {
             // Every source is fetched independently and tolerant of failure, so a
             // single failing probe (e.g. infra introspection in a managed env)
             // degrades that section instead of blanking the whole panel.
-            const [healthData, integrationsData, statsData, historyData, proactiveData] = await Promise.all([
+            const [healthData, connectorData, statsData, historyData, proactiveData] = await Promise.all([
                 api.getHealthDashboard().catch(() => null),
-                fetch('/api/health/', {
-                    headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-                }).then(r => r.ok ? r.json() : null).catch(() => null),
+                api.getConnectorHealth().catch(() => null),
                 api.getUptimeStats().catch(() => null),
                 api.getUptimeHistory(48).catch(() => null),
                 api.getProactiveHealth().catch(() => null),
             ]);
             setHealth(healthData);
-            setIntegrations(integrationsData);
+            if (connectorData) {
+                /* The infrastructure probes ride in the same table so they
+                 * inherit the alerting and the mute, but they belong to the
+                 * panel above rather than to this roll-up. */
+                const external = connectorData.connectors.filter(c => !c.connector.startsWith('system:'));
+                setConnectorRollup({
+                    working: external.filter(c => c.status === 'working').length,
+                    failing: external.filter(c => c.status === 'failing' || c.status === 'down').length,
+                    unchecked: external.filter(c => c.status === 'unknown' || c.status === 'stale').length,
+                    names: external
+                        .filter(c => c.status === 'failing' || c.status === 'down')
+                        .map(c => c.connector),
+                });
+            }
             setUptimeStats(statsData);
             setUptimeHistory(historyData);
             setProactive(proactiveData);
             // Only show the hard error state if literally nothing loaded.
-            if (!healthData && !integrationsData && !statsData && !historyData && !proactiveData) {
+            if (!healthData && !connectorData && !statsData && !historyData && !proactiveData) {
                 setError('Failed to fetch system status');
             }
         } catch (err: any) {
@@ -179,11 +169,18 @@ export default function OperationsPanel() {
             .map(([name]) => name)
         : [];
 
-    // Count healthy integrations
-    const integrationCounts = integrations ? {
-        healthy: Object.values(integrations.checks).filter(c => c.status === 'healthy' || c.status === 'configured').length,
-        total: Object.keys(integrations.checks).length
-    } : { healthy: 0, total: 6 };
+    /* Counted from what this deployment actually runs.
+     *
+     * The old version counted a fixed six -- Auth0, GCP auth, Vertex, KMS,
+     * secret store, database -- so an Azure town read "2/6 Configured" while
+     * being fully set up on services this tile had never heard of. The
+     * denominator was a guess about somebody else's architecture. */
+    const integrationCounts = connectorRollup
+        ? {
+            healthy: connectorRollup.working,
+            total: connectorRollup.working + connectorRollup.failing + connectorRollup.unchecked,
+        }
+        : { healthy: 0, total: 0 };
 
     if (error) {
         return (
@@ -379,11 +376,27 @@ export default function OperationsPanel() {
                                     {(['24h', '7d', '30d'] as const).map(period => {
                                         const stats = periods[period];
                                         const pct = stats?.uptime_percent ?? 0;
-                                        const color = pct >= 99 ? 'text-green-400' : pct >= 95 ? 'text-yellow-400' : 'text-red-400';
+                                        /* A figure we did not watch enough of
+                                           the period to stand behind is shown
+                                           greyed with a dash, not in green.
+                                           100% across 12 of an expected 288
+                                           checks means the server spent the day
+                                           down -- printing that in green is the
+                                           worst thing this panel could do. */
+                                        const trustworthy = stats?.reliable !== false && (stats?.checks ?? 0) > 0;
+                                        const color = !trustworthy ? 'text-white/45'
+                                            : pct >= 99 ? 'text-green-400' : pct >= 95 ? 'text-yellow-400' : 'text-red-400';
                                         return (
-                                            <div key={period} className="text-center">
-                                                <p className={`text-lg font-bold ${color}`}>{pct.toFixed(1)}%</p>
+                                            <div key={period} className="text-center" title={stats?.summary}>
+                                                <p className={`text-lg font-bold ${color}`}>
+                                                    {trustworthy ? `${pct.toFixed(1)}%` : '—'}
+                                                </p>
                                                 <p className="text-gray-500 text-xs">{period}</p>
+                                                {!trustworthy && (stats?.checks ?? 0) > 0 && (
+                                                    <p className="text-amber-300/80 text-[10px] leading-tight mt-0.5">
+                                                        only {stats?.checks} of {stats?.expected_checks} checks
+                                                    </p>
+                                                )}
                                             </div>
                                         );
                                     })}
@@ -398,9 +411,29 @@ export default function OperationsPanel() {
                 )}
 
                 {/* Uptime Timeline (last 48 hours) */}
-                {uptimeHistory && Object.keys(uptimeHistory.services).length > 0 && (
+                {uptimeHistory && Object.keys(uptimeHistory.services).length > 0 && (() => {
+                const maxChecks = Math.max(
+                    0, ...Object.values(uptimeHistory.services).map(c => c.length),
+                );
+                return (
                     <div className="space-y-3">
-                        <p className="text-gray-400 text-xs">Last 48 hours (newest → oldest)</p>
+                        {/* It said "Last 48 hours" and rendered the last 48
+                            *records*. At one sample every five minutes that is
+                            four hours of history under a label promising two
+                            days -- and after an outage the bars either side of
+                            the gap sit adjacent, so a hole in the record looks
+                            like continuous service. */}
+                        <p className="text-gray-400 text-xs">
+                            Most recent {Math.min(48, maxChecks)} checks (newest → oldest)
+                        </p>
+                        {/* Not the backend's own uptime, and it cannot be:
+                            the sampler runs inside the backend. Saying which
+                            it is beats a number a council report will read as
+                            the other one. */}
+                        <p className="text-white/45 text-[11px] -mt-2">
+                            Whether each dependency answered, sampled every five minutes while this
+                            server was running. Gaps are periods nothing was recorded.
+                        </p>
                         {Object.entries(uptimeHistory.services).map(([serviceName, checks]) => (
                             <div key={serviceName} className="flex items-center gap-2">
                                 <span className="text-white text-sm w-28 truncate capitalize">{serviceName.replace(/_/g, ' ')}</span>
@@ -418,108 +451,50 @@ export default function OperationsPanel() {
                             </div>
                         ))}
                     </div>
-                )}
+                );
+                })()}
             </Card>
 
-            {/* Cloud Integrations */}
-            {integrations && (
+            {/* The "Cloud Integrations" block that was here has gone.
+                It was a hardcoded struct -- auth0, gcp_auth, vertex_ai,
+                translation_api -- so a town on Azure with Entra sign-in was
+                shown checks for four services it does not use, and none for
+                the four it does. It also duplicated the provider cards, which
+                read the real catalog and the real health table.
+
+                Replaced by a roll-up of the same data those cards use. This
+                page keeps what only it can answer: the machine this runs on. */}
+            {connectorRollup && (
                 <Card>
-                    <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                    <h3 className="text-lg font-semibold text-white mb-1 flex items-center gap-2">
                         <Cloud className="w-5 h-5 text-purple-400" />
-                        Cloud Integrations
+                        Service providers
                     </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {/* Auth0 */}
-                        <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
-                            <div className="flex items-center gap-3 mb-2">
-                                <Key className="w-5 h-5 text-orange-400" />
-                                <span className="text-white font-medium">Auth0 SSO</span>
-                                <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.auth0.status)}`}>
-                                    {integrations.checks.auth0.status}
-                                </span>
-                            </div>
-                            <p className="text-gray-300 text-xs">{integrations.checks.auth0.message}</p>
-                        </div>
-
-                        {/* GCP Authentication */}
-                        {integrations.checks.gcp_auth && (
-                            <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
-                                <div className="flex items-center gap-3 mb-2">
-                                    <Link2 className="w-5 h-5 text-emerald-400" />
-                                    <span className="text-white font-medium">GCP Auth</span>
-                                    <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.gcp_auth.status)}`}>
-                                        {integrations.checks.gcp_auth.status}
-                                    </span>
-                                </div>
-                                <p className="text-gray-300 text-xs">{integrations.checks.gcp_auth.message}</p>
-                            </div>
+                    <p className="text-white/55 text-xs mb-4">
+                        Checked automatically once a day. Set up and changed under Setup &amp; Integration.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2.5">
+                        {connectorRollup.working > 0 && (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl text-xs font-semibold border bg-gradient-to-r from-emerald-500/20 to-teal-500/20 text-emerald-300 border-emerald-500/30">
+                                <CheckCircle className="w-3.5 h-3.5" /> {connectorRollup.working} working
+                            </span>
                         )}
-
-                        {/* Key management — named for whichever manager is in
-                            use, not for Google. */}
-                        <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
-                            <div className="flex items-center gap-3 mb-2">
-                                <Shield className="w-5 h-5 text-blue-400" />
-                                <span className="text-white font-medium">
-                                    {KMS_LABELS[integrations.checks.kms.kms_backend ?? ''] ?? 'Key Management'}
-                                </span>
-                                <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.kms.status)}`}>
-                                    {integrations.checks.kms.status}
-                                </span>
-                            </div>
-                            <p className="text-gray-300 text-xs">{integrations.checks.kms.message}</p>
-                        </div>
-
-                        {/* Secret store */}
-                        <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
-                            <div className="flex items-center gap-3 mb-2">
-                                <Key className="w-5 h-5 text-green-400" />
-                                <span className="text-white font-medium">
-                                    {STORE_LABELS[integrations.checks.secret_store.store ?? ''] ?? 'Secret Store'}
-                                </span>
-                                <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.secret_store.status)}`}>
-                                    {integrations.checks.secret_store.status}
-                                </span>
-                            </div>
-                            <p className="text-gray-300 text-xs">{integrations.checks.secret_store.message}</p>
-                        </div>
-
-                        {/* Vertex AI */}
-                        <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
-                            <div className="flex items-center gap-3 mb-2">
-                                <Sparkles className="w-5 h-5 text-purple-400" />
-                                <span className="text-white font-medium">Vertex AI</span>
-                                <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.vertex_ai.status)}`}>
-                                    {integrations.checks.vertex_ai.status}
-                                </span>
-                            </div>
-                            <p className="text-gray-300 text-xs">{integrations.checks.vertex_ai.message}</p>
-                        </div>
-
-                        {/* Translation API */}
-                        <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
-                            <div className="flex items-center gap-3 mb-2">
-                                <Languages className="w-5 h-5 text-cyan-400" />
-                                <span className="text-white font-medium">Translation API</span>
-                                <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.translation_api.status)}`}>
-                                    {integrations.checks.translation_api.status}
-                                </span>
-                            </div>
-                            <p className="text-gray-300 text-xs">{integrations.checks.translation_api.message}</p>
-                        </div>
-
-                        {/* Database */}
-                        <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
-                            <div className="flex items-center gap-3 mb-2">
-                                <Database className="w-5 h-5 text-purple-400" />
-                                <span className="text-white font-medium">PostgreSQL</span>
-                                <span className={`ml-auto px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(integrations.checks.database.status)}`}>
-                                    {integrations.checks.database.status}
-                                </span>
-                            </div>
-                            <p className="text-gray-300 text-xs">{integrations.checks.database.message}</p>
-                        </div>
+                        {connectorRollup.failing > 0 && (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl text-xs font-semibold border bg-gradient-to-r from-red-500/25 to-rose-500/20 text-red-200 border-red-400/35">
+                                <AlertTriangle className="w-3.5 h-3.5" /> {connectorRollup.failing} not working
+                            </span>
+                        )}
+                        {connectorRollup.unchecked > 0 && (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl text-xs font-semibold border bg-white/[0.07] text-white/70 border-white/15">
+                                {connectorRollup.unchecked} not checked yet
+                            </span>
+                        )}
                     </div>
+                    {connectorRollup.names.length > 0 && (
+                        <p className="text-red-200/85 text-xs mt-3">
+                            Not working: {connectorRollup.names.join(', ')}
+                        </p>
+                    )}
                 </Card>
             )}
 

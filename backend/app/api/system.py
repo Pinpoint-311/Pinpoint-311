@@ -36,7 +36,7 @@ _cost_limiter = Limiter(key_func=get_remote_address)
 @router.get("/settings", response_model=SystemSettingsResponse)
 async def get_settings(db: AsyncSession = Depends(get_db)):
     """Get system settings (public - for branding)"""
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
     if not settings:
         # Create default settings if none exist
@@ -69,7 +69,7 @@ async def public_origin(db) -> Optional[str]:
 
         from app.models import SystemSettings
 
-        row = (await db.execute(select(SystemSettings).limit(1))).scalar_one_or_none()
+        row = (await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))).scalar_one_or_none()
         if row and (row.custom_domain or "").strip():
             domain = row.custom_domain.strip()
     except Exception:
@@ -828,10 +828,33 @@ async def _test_delivery(capability: str) -> dict:
     """Email and text messages, without sending anything to a resident."""
     import httpx
 
+    from app.services.delivery_providers import (
+        EMAIL_CATALOG, SMS_CATALOG, describe_missing, required_keys,
+    )
     from app.services.secret_manager import get_secret
+
+    async def _nothing_saved(catalog: dict, provider: str) -> Optional[dict]:
+        """"You have not filled this in" beats any statement about the vendor.
+
+        The fallthroughs at the ends of both halves of this function reported on
+        the *provider* -- "there is no way to check http without sending a real
+        text message", "ACS has no check that avoids sending a real message" --
+        without first asking whether the town had entered anything. A clerk who
+        had never touched text messages was told their gateway was untestable,
+        which is true of the gateway and irrelevant to them: what they needed to
+        know is that the boxes are empty.
+        """
+        entry = catalog.get(provider)
+        missing = [k for k in required_keys(entry) if not (await get_secret(k) or "").strip()]
+        if not missing:
+            return None
+        return {"ok": False, "detail": describe_missing(entry, missing), "recorded": False}
 
     if capability == "email":
         provider = (await get_secret("EMAIL_PROVIDER")) or "smtp"
+        blank = await _nothing_saved(EMAIL_CATALOG, provider)
+        if blank:
+            return blank
         if provider == "smtp":
             import asyncio
             import smtplib
@@ -887,6 +910,10 @@ async def _test_delivery(capability: str) -> dict:
     provider = (await get_secret("SMS_PROVIDER")) or "none"
     if provider == "none":
         return {"ok": True, "detail": "Text messages are switched off, as configured."}
+
+    blank = await _nothing_saved(SMS_CATALOG, provider)
+    if blank:
+        return blank
 
     if provider == "twilio":
         sid = await get_secret("TWILIO_ACCOUNT_SID")
@@ -1287,7 +1314,7 @@ async def update_settings(
     _: User = Depends(get_current_admin)
 ):
     """Update system settings (admin only)"""
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
     
     if not settings:
@@ -1545,7 +1572,7 @@ async def get_current_retention_policy(
     """Get current retention policy configuration"""
     from app.services.retention_service import get_retention_policy, get_retention_stats
     
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
     
     state_code = settings.retention_state_code if settings else "NJ"
@@ -1576,7 +1603,7 @@ async def update_retention_policy(
     """Update retention policy configuration (admin only)"""
     from app.services.retention_service import get_retention_policy
 
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
 
     if not settings:
@@ -1697,7 +1724,7 @@ async def export_for_public_records(
     from fastapi.responses import StreamingResponse
     
     # Get current state policy
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
     state_code = settings.retention_state_code if settings else "NJ"
     policy = get_retention_policy(state_code)
@@ -3356,7 +3383,7 @@ async def configure_domain(
         )
     
     # Save domain to settings
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
     if settings:
         settings.custom_domain = domain
@@ -3452,7 +3479,7 @@ async def get_domain_status(
     _: User = Depends(get_current_admin)
 ):
     """Get current domain configuration status"""
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
     
     return {
@@ -3747,6 +3774,7 @@ async def restore_backup_endpoint(
 
 @router.get("/health-dashboard")
 async def get_health_dashboard(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
@@ -3767,11 +3795,18 @@ async def get_health_dashboard(
     
     # Check service health via network (works from inside containers)
     
-    # Backend is running if we're responding to this request
-    health["services"]["backend"] = {
-        "status": "running",
-        "uptime": "Active (responding to requests)"
-    }
+    # Every value in here is a *detail*, not an uptime.
+    #
+    # The field was called "uptime" and held strings like "Port 5173 active"
+    # and "6.2 GB - 12 conns". Nothing in this product measures availability
+    # over a period, so the name promised a statistic that does not exist and
+    # was never computed. Renamed to `detail`; `uptime` is still emitted
+    # alongside it for one release so an older frontend does not blank out.
+    def _svc(status: str, detail: str) -> dict:
+        return {"status": status, "detail": detail, "uptime": detail}
+
+    # True by construction: this code is running, so the backend is.
+    health["services"]["backend"] = _svc("running", "Responding to this request")
     
     # Check frontend via socket - try configured port or common ports
     import os
@@ -3784,42 +3819,55 @@ async def get_health_dashboard(
     # Remove duplicates while preserving order
     frontend_ports = list(dict.fromkeys(frontend_ports))
     
+    # The hostname was hardcoded to 'frontend', which is a docker-compose
+    # service name. On any deployment not using that exact topology -- a single
+    # container, a static bundle behind a CDN, separate hosts -- the connect
+    # fails and the page reports the frontend down while a clerk is looking at
+    # it. Configurable, and the failure below now says "could not check" rather
+    # than "stopped".
+    frontend_host = os.getenv("FRONTEND_HOST", "frontend")
+
     frontend_found = False
     for port in frontend_ports:
         try:
             import socket
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(1)
-            result = sock.connect_ex(('frontend', port))
+            result = sock.connect_ex((frontend_host, port))
             sock.close()
             if result == 0:
-                health["services"]["frontend"] = {
-                    "status": "running",
-                    "uptime": f"Port {port} active"
-                }
+                health["services"]["frontend"] = _svc("running", f"Reachable on port {port}")
                 frontend_found = True
                 break
         except Exception:
             continue
     
     if not frontend_found:
+        # "stopped" would be a claim. All that is known is that nothing
+        # answered at the address we tried, which on an unusual topology says
+        # more about the address than about the frontend.
         health["services"]["frontend"] = {
-            "status": "stopped", 
-            "uptime": f"Checked ports: {frontend_ports[:3]}",
-            "error": "No ports reachable"
+            **_svc("unknown", f"No answer from {frontend_host} on "
+                              f"{', '.join(str(p) for p in frontend_ports[:3])}"),
+            "error": "No ports reachable",
         }
     
     # Database - checked below via SQL
-    health["services"]["db"] = {"status": "pending", "uptime": "Checking..."}
+    health["services"]["db"] = _svc("pending", "Checking...")
     
     # Redis - checked via redis_client
-    health["services"]["redis"] = {"status": "pending", "uptime": "Checking..."}
+    health["services"]["redis"] = _svc("pending", "Checking...")
     
-    # Caddy - if we're receiving requests, it's working
-    health["services"]["caddy"] = {
-        "status": "running",
-        "uptime": "Active (routing requests)"
-    }
+    # Caddy was hardcoded to "running" with no probe at all, on the reasoning
+    # that a received request proves the proxy routed it. That holds only when
+    # the request came through the proxy, and an admin on a port-forward or a
+    # dev server talking to the backend directly gets a confident green tick on
+    # a proxy that may be stopped.
+    #
+    # Now it says which of those it is, and never claims more than it checked.
+    from app.services.system_probes import proxy_status
+    _proxy = proxy_status(request.headers)
+    health["services"]["caddy"] = _svc(_proxy["status"], _proxy["detail"])
     
     # Database size and connection count
     try:
@@ -3834,10 +3882,10 @@ async def get_health_dashboard(
         health["database"]["connections"] = conn_result.scalar()
         health["database"]["status"] = "healthy"
         # Update service status
-        health["services"]["db"] = {
-            "status": "running",
-            "uptime": f"{health['database']['size']} • {health['database']['connections']} conns"
-        }
+        health["services"]["db"] = _svc(
+            "running",
+            f"{health['database']['size']} • {health['database']['connections']} connections",
+        )
     except Exception as e:
         health["database"]["status"] = "error"
         health["database"]["error"] = str(e)
@@ -3865,14 +3913,13 @@ async def get_health_dashboard(
         health["cache"]["used_memory"] = info.get("used_memory_human", "unknown")
         health["cache"]["connected_clients"] = info.get("connected_clients", 0)
         # Update service status
-        health["services"]["redis"] = {
-            "status": "running",
-            "uptime": f"Port {redis_port} • {health['cache']['used_memory']} memory"
-        }
+        health["services"]["redis"] = _svc(
+            "running", f"Port {redis_port} • {health['cache']['used_memory']} memory",
+        )
     except redis.ConnectionError:
         health["cache"]["status"] = "not_configured"
         health["cache"]["error"] = "Redis not available"
-        health["services"]["redis"] = {"status": "stopped", "uptime": "Not reachable"}
+        health["services"]["redis"] = _svc("stopped", "Not reachable")
     except Exception as e:
         health["cache"]["status"] = "error"
         health["cache"]["error"] = str(e)
@@ -4085,7 +4132,7 @@ async def analytics_chat(
     now = datetime.utcnow()
     
     # ========== 1. System Settings (Township Identity) ==========
-    settings_result = await db.execute(select(SystemSettings).limit(1))
+    settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = settings_result.scalar_one_or_none()
     township_name = settings.township_name if settings and hasattr(settings, 'township_name') and settings.township_name else "the municipality"
     context_used.append("system_settings")

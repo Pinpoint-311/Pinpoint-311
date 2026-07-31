@@ -318,3 +318,39 @@ def normalize_provider(capability: str, value: Optional[str]) -> str:
     if candidate in _CATALOGS[capability]:
         return candidate
     return _DEFAULTS[capability]
+
+
+def required_keys(entry: Dict[str, Any] | None) -> list:
+    """The credential keys a provider cannot work without.
+
+    Pulled out so the live test can ask "is there anything saved here at all"
+    before it reports on the connection. Without that check, the fallthrough at
+    the end of the SMS test answered "there is no way to check http without
+    sending a real text message" for a town that had never entered a gateway
+    URL -- true about http in general, and completely wrong about their
+    situation, which is that nothing is configured. The same fallthrough exists
+    for Azure Communication Services on the email side.
+    """
+    if not entry:
+        return []
+    return [
+        f["key"] for f in entry.get("credential_fields", [])
+        if f.get("required") and not f.get("optional")
+    ]
+
+
+def missing_keys(entry: Dict[str, Any] | None, stored: Dict[str, Any]) -> list:
+    """Which required keys have nothing saved against them."""
+    return [k for k in required_keys(entry) if not (stored.get(k) or "").strip()]
+
+
+def describe_missing(entry: Dict[str, Any] | None, missing: list) -> str:
+    """A sentence naming the boxes that are still empty, in the words the form
+    uses -- not the environment-variable names, which are ours and not theirs."""
+    if not entry or not missing:
+        return ""
+    labels = {f["key"]: f.get("label", f["key"]) for f in entry.get("credential_fields", [])}
+    named = [labels.get(k, k) for k in missing]
+    if len(named) == 1:
+        return f"{named[0]} has not been filled in yet."
+    return f"{', '.join(named[:-1])} and {named[-1]} have not been filled in yet."
