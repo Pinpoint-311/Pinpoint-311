@@ -148,3 +148,115 @@ async def _settings_url(db) -> Optional[str]:
         return f"{origin.rstrip('/')}/admin?tab=integration" if origin else None
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Infrastructure
+# ---------------------------------------------------------------------------
+
+async def probe_system(db, *, readings=None, health=None, alerts=None):
+    """Record disk, database, cache and backup state as health rows.
+
+    Deliberately the same table, the same escalation and the same mute as the
+    connectors, rather than a second alerting path beside the first. Two paths
+    would drift, and the town would learn which one to trust the hard way.
+
+    `readings` is injectable so the whole thing runs in CI, which has no disk
+    quota worth failing, no PostgreSQL and no Redis.
+    """
+    from app.services import system_probes as probes
+
+    if health is None:
+        from app.services import connector_health as health
+    if readings is None:
+        readings = await _collect_readings(db)
+
+    recorded = {}
+    for connector, outcome in readings.items():
+        # "We could not measure this" is not "this is broken" -- the same rule
+        # the connector sweep follows for things it cannot check.
+        if outcome.get("recorded") is False:
+            recorded[connector] = "unmeasured"
+            continue
+        try:
+            if outcome["ok"]:
+                await health.record_success(db, connector)
+            else:
+                await health.record_failure(db, connector, outcome["detail"])
+            recorded[connector] = "ok" if outcome["ok"] else "failing"
+        except Exception:
+            logger.warning("[Probe] could not record %s", sanitize_for_log(connector))
+    if alerts is not None:
+        await alerts(db)
+    return {"probes": recorded, "labels": {k: probes.label_for(k) for k in readings}}
+
+
+async def _collect_readings(db) -> Dict[str, Dict[str, Any]]:
+    """The real measurements. Every one is guarded: a probe that raises must
+    not take the other three with it."""
+    import shutil
+
+    from sqlalchemy import text
+
+    from app.services import system_probes as probes
+
+    out: Dict[str, Dict[str, Any]] = {}
+
+    # Disk. The path that matters is wherever PostgreSQL and uploads live; with
+    # no better answer available from inside the container, the root volume is
+    # the one that fills.
+    try:
+        usage = shutil.disk_usage("/")
+        percent = (usage.used / usage.total) * 100 if usage.total else None
+        free_gb = usage.free / (1024 ** 3)
+        out["system:disk"] = probes.classify_disk(percent, free_label=f"{free_gb:.1f} GB")
+    except Exception:
+        out["system:disk"] = probes.classify_disk(None)
+
+    try:
+        await db.execute(text("SELECT 1"))
+        out["system:database"] = probes.classify_reachable("The database", True)
+    except Exception as e:
+        # Never the exception text.
+        #
+        # This string is stored in connector_health.last_error, shown on the
+        # card, and put in the alert email. A PostgreSQL connection failure
+        # routinely quotes the DSN back at you -- host, user and password --
+        # so a database that goes down would email its own credentials to
+        # every administrator, and leave them in a table and an inbox
+        # afterwards. The type is enough to act on; the rest goes to the log,
+        # through the sanitiser, where it is already handled.
+        logger.warning("[Probe] database unreachable: %s", sanitize_for_log(str(e)[:300]))
+        out["system:database"] = probes.classify_reachable(
+            "The database", False, probes.failure_summary(e))
+
+    try:
+        from app.core.redis_client import redis_client
+        if redis_client is None:
+            # Not configured is not broken. Redis is optional here.
+            out["system:cache"] = {"ok": True, "detail": "No cache configured.", "recorded": False}
+        else:
+            await redis_client.ping()
+            out["system:cache"] = probes.classify_reachable("The cache", True)
+    except Exception as e:
+        # Same reasoning as the database above: a Redis URL carries a password.
+        logger.warning("[Probe] cache unreachable: %s", sanitize_for_log(str(e)[:300]))
+        out["system:cache"] = probes.classify_reachable(
+            "The cache", False, probes.failure_summary(e))
+
+    try:
+        from datetime import datetime, timezone
+
+        from app.services.backup_service import get_backup_status
+        status = await get_backup_status()
+        last = (status or {}).get("last_backup_at") or (status or {}).get("last_backup")
+        if isinstance(last, str):
+            from datetime import datetime as _dt
+            last = _dt.fromisoformat(last.replace("Z", "+00:00"))
+        out["system:backups"] = probes.classify_backup(last, datetime.now(timezone.utc))
+    except Exception:
+        # Backups not being configured at all is a real and supported state for
+        # a town whose host takes them, so this is not reported as a failure.
+        out["system:backups"] = {"ok": True, "detail": "Backup status unavailable.", "recorded": False}
+
+    return out

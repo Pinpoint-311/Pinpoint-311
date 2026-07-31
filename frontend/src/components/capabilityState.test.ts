@@ -48,6 +48,28 @@ describe('capabilityState', () => {
         expect(capabilityState({ configured: true }, health('working'))).toBe('working');
     });
 
+    it('says "cannot be tested" rather than "not working" when there is no test', () => {
+        // A generic HTTP SMS gateway cannot be exercised without sending a real
+        // text message, so the backend returns ok:false with recorded:false.
+        // Passing that straight through as a failure put a red "Not working"
+        // pill on a connector whose own message said it could not be checked --
+        // a badge that can never go green, which is the thing this whole page
+        // is built around not doing.
+        expect(capabilityState({ configured: true, verifiable: false }, health('unknown')))
+            .toBe('unverifiable');
+    });
+
+    it('does not let a stale health row override "cannot be tested"', () => {
+        expect(capabilityState({ configured: true, verifiable: false }, health('down')))
+            .toBe('unverifiable');
+    });
+
+    it('still reports "not set up" over "cannot be tested"', () => {
+        // No credentials is the more actionable of the two, and the only one
+        // the clerk can do something about.
+        expect(capabilityState({ configured: false, verifiable: false }, undefined)).toBe('unset');
+    });
+
     it('prefers a test run in this session over the stored health row', () => {
         // Pressing "Test now" and watching the card stay green because the
         // nightly sweep last succeeded is the whole reason that button exists.

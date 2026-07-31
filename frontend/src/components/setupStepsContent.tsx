@@ -116,7 +116,7 @@ defineSteps('identity', 'auth0', (ctx) => [
                 Then press <B>Save Changes</B> at the bottom.
             </>
         ),
-        trouble: <>Do this before the next step. A tenant missing the callback URL accepts the password and then fails on the redirect, which looks like a wrong secret.</>,
+        note: <>Do this before the next step. A tenant missing the callback URL accepts the password and then fails on the redirect, which looks like a wrong secret.</>,
     },
     {
         body: <>Copy the three values from that same Settings page into these boxes.</>,
@@ -154,7 +154,7 @@ defineSteps('identity', 'entra', (ctx) => [
                 another tenant. Press <B>Register</B>.
             </>
         ),
-        trouble: <>The redirect type matters. "Single-page application" is offered right below Web and looks equivalent; it is not, and staff sign-in will fail on the way back with an error about the flow.</>,
+        note: <>The redirect type matters. "Single-page application" is offered right below Web and looks equivalent; it is not, and staff sign-in will fail on the way back with an error about the flow.</>,
     },
     {
         body: (
@@ -251,7 +251,7 @@ defineSteps('identity', 'okta', (ctx) => [
             </>
         ),
         fields: ['OKTA_ISSUER'],
-        trouble: <>You can check the value before saving: paste <C>{'<issuer>'}/.well-known/openid-configuration</C> into a browser. A page of JSON means it is right; a 404 or an error means it is not. That takes ten seconds and saves diagnosing a login loop.</>,
+        note: <>You can check the value before saving: paste <C>{'<issuer>'}/.well-known/openid-configuration</C> into a browser. A page of JSON means it is right; a 404 or an error means it is not. That takes ten seconds and saves diagnosing a login loop.</>,
     },
 ]);
 
@@ -274,7 +274,7 @@ defineSteps('identity', 'oidc', (ctx) => [
                 accounts by email address, so a provider that does not release it cannot be used.
             </>
         ),
-        trouble: <>If they offer a "public client", that is the wrong kind: it issues no secret. Say confidential, or server-side.</>,
+        note: <>If they offer a "public client", that is the wrong kind: it issues no secret. Say confidential, or server-side.</>,
     },
     {
         body: (
@@ -332,7 +332,7 @@ defineSteps('maps', 'google', (ctx) => [
     {
         body: <>Paste the key here. The Map ID is optional and only changes how the map looks — leave it empty.</>,
         fields: ['GOOGLE_MAPS_API_KEY', 'GOOGLE_MAPS_MAP_ID'],
-        trouble: <>Changes to a Google key can take up to five minutes. If the map is still grey straight after saving, wait before changing anything else.</>,
+        note: <>Changes to a Google key can take up to five minutes. If the map is still grey straight after saving, wait before changing anything else.</>,
     },
 ]);
 
@@ -364,7 +364,7 @@ defineSteps('maps', 'esri', () => [
             </>
         ),
         check: <>a key string starting <C>AAPK</C>. (<C>AAPT</C> is Esri's prefix for short-lived access tokens — if that is what you have, it is not the right credential.)</>,
-        trouble: <>Write the expiry date somewhere the town will see it. Keys expire at 00:00:00 GMT on the date you set, and when one lapses the map goes blank with no warning and nothing in the console saying why.</>,
+        note: <>Write the expiry date somewhere the town will see it. Keys expire at 00:00:00 GMT on the date you set, and when one lapses the map goes blank with no warning and nothing in the console saying why.</>,
     },
     {
         body: (
@@ -376,7 +376,7 @@ defineSteps('maps', 'esri', () => [
             </>
         ),
         fields: ['ARCGIS_API_KEY', 'ARCGIS_BASEMAP_ID', 'ARCGIS_LOCATOR_URL'],
-        trouble: <>A town locator is worth asking for. It knows your street names, your address ranges and your recent subdivisions, which a national geocoder often does not.</>,
+        note: <>A town locator is worth asking for. It knows your street names, your address ranges and your recent subdivisions, which a national geocoder often does not.</>,
     },
 ]);
 
@@ -403,7 +403,7 @@ defineSteps('maps', 'azure', () => [
             </>
         ),
         fields: ['AZURE_MAPS_KEY'],
-        trouble: <>Take the primary key and leave the secondary alone. The pair exists so a key can be rotated without downtime — using both at once removes the point of having two.</>,
+        note: <>Take the primary key and leave the secondary alone. The pair exists so a key can be rotated without downtime — using both at once removes the point of having two.</>,
     },
 ]);
 
@@ -455,7 +455,7 @@ defineSteps('maps', 'apple', () => [
             </>
         ),
         fields: ['APPLE_MAPKIT_TEAM_ID', 'APPLE_MAPKIT_KEY_ID', 'APPLE_MAPKIT_PRIVATE_KEY'],
-        trouble: <>Open it with a text editor, not Word — a word processor will add formatting that makes the key unreadable. The header and footer lines are part of the key, not decoration.</>,
+        note: <>Open it with a text editor, not Word — a word processor will add formatting that makes the key unreadable. The header and footer lines are part of the key, not decoration.</>,
     },
 ]);
 
@@ -482,7 +482,7 @@ defineSteps('ai', 'vertex', () => [
                 or Editor: this account only ever needs to ask the model a question.
             </>
         ),
-        trouble: <>The broad roles are one click away and it is tempting to take them to avoid a permissions problem later. A leaked key with Vertex AI User can run up a model bill; the same key with Editor can delete the project.</>,
+        note: <>The broad roles are one click away and it is tempting to take them to avoid a permissions problem later. A leaked key with Vertex AI User can run up a model bill; the same key with Editor can delete the project.</>,
     },
     {
         body: (
@@ -506,7 +506,7 @@ defineSteps('ai', 'azure', () => [
                 every Azure subscription is eligible for the standard models.
             </>
         ),
-        trouble: <>Older write-ups describe a registration form and a wait of a day or two. Microsoft removed that for general access; a form is now only required for specific restricted features, none of which Pinpoint uses. If someone tells you to apply and wait, they are working from stale instructions.</>,
+        note: <>Older write-ups describe a registration form and a wait of a day or two. Microsoft removed that for general access; a form is now only required for specific restricted features, none of which Pinpoint uses. If someone tells you to apply and wait, they are working from stale instructions.</>,
     },
     {
         body: (
@@ -528,7 +528,7 @@ defineSteps('ai', 'azure', () => [
             </>
         ),
         fields: ['AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_DEPLOYMENT', 'AZURE_OPENAI_API_VERSION'],
-        trouble: <>The endpoint is the base address ending in a slash, not the full chat-completions URL from the sample code.</>,
+        note: <>The endpoint is the base address ending in a slash, not the full chat-completions URL from the sample code.</>,
     },
 ]);
 
@@ -551,7 +551,7 @@ defineSteps('ai', 'bedrock', () => [
             </>
         ),
         check: <>the model showing <B>Access granted</B> rather than Available to request.</>,
-        trouble: <>If submitting fails, the account may not have AWS Marketplace subscription permission — that lives under <B>Billing → Marketplace settings</B> and usually needs whoever owns the AWS account.</>,
+        note: <>If submitting fails, the account may not have AWS Marketplace subscription permission — that lives under <B>Billing → Marketplace settings</B> and usually needs whoever owns the AWS account.</>,
     },
     {
         body: (
@@ -590,7 +590,7 @@ defineSteps('translation', 'google', () => [
             </>
         ),
         fields: ['GOOGLE_CLOUD_PROJECT'],
-        trouble: <>The project <B>ID</B>, not the display name. They are often similar and occasionally identical; the ID is the one shown in the project picker in smaller grey type.</>,
+        note: <>The project <B>ID</B>, not the display name. They are often similar and occasionally identical; the ID is the one shown in the project picker in smaller grey type.</>,
     },
 ]);
 
@@ -614,7 +614,7 @@ defineSteps('translation', 'azure', () => [
             </>
         ),
         fields: ['AZURE_TRANSLATOR_KEY', 'AZURE_TRANSLATOR_REGION', 'AZURE_TRANSLATOR_ENDPOINT'],
-        trouble: <>The region must be the short form shown on that page, like <C>eastus</C>, not "East US". A mismatched region fails authentication and reports it as a bad key.</>,
+        note: <>The region must be the short form shown on that page, like <C>eastus</C>, not "East US". A mismatched region fails authentication and reports it as a bad key.</>,
     },
 ]);
 
@@ -627,7 +627,7 @@ defineSteps('translation', 'aws', () => [
                 name is what permits translating text.
             </>
         ),
-        trouble: <>If you already made an IAM user for Bedrock or SES, add this policy to that one rather than creating another set of keys to keep track of.</>,
+        note: <>If you already made an IAM user for Bedrock or SES, add this policy to that one rather than creating another set of keys to keep track of.</>,
     },
     {
         body: <>Take an access key from that user's <B>Security credentials</B> tab and enter it with your region.</>,
@@ -648,7 +648,7 @@ defineSteps('email', 'smtp', () => [
                 status update, the replies land wherever this sends from.
             </>
         ),
-        trouble: <>Microsoft 365 and Google Workspace both restrict plain SMTP by default — on Microsoft it is switched off unless an administrator turns it back on. Worse, Microsoft is removing password-based SMTP from Exchange Online at the end of December 2026: existing tenants have it disabled by default from then, and tenants created afterwards cannot use it at all. If your town is on Microsoft 365, choosing SMTP today buys you a few months. Amazon SES or Azure Communication Services is the durable answer.</>,
+        note: <>Microsoft 365 and Google Workspace both restrict plain SMTP by default — on Microsoft it is switched off unless an administrator turns it back on. Worse, Microsoft is removing password-based SMTP from Exchange Online at the end of December 2026: existing tenants have it disabled by default from then, and tenants created afterwards cannot use it at all. If your town is on Microsoft 365, choosing SMTP today buys you a few months. Amazon SES or Azure Communication Services is the durable answer.</>,
     },
     {
         body: (
@@ -702,7 +702,7 @@ defineSteps('email', 'ses', () => [
             </>
         ),
         fields: ['AWS_REGION', 'SES_FROM_EMAIL', 'SMTP_FROM_NAME', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'],
-        trouble: <>The region must be the one where you verified the domain. SES identities do not exist across regions, and a mismatch reports as an unverified sender.</>,
+        note: <>The region must be the one where you verified the domain. SES identities do not exist across regions, and a mismatch reports as an unverified sender.</>,
     },
 ]);
 
@@ -715,7 +715,7 @@ defineSteps('email', 'acs', () => [
                 and they must be in the <B>same geography</B> — you cannot connect them otherwise.
             </>
         ),
-        trouble: <>Two resources with near-identical names is genuinely confusing. The Email one owns the domain; the plain Communication Services one owns the endpoint and key.</>,
+        note: <>Two resources with near-identical names is genuinely confusing. The Email one owns the domain; the plain Communication Services one owns the endpoint and key.</>,
     },
     {
         body: (
@@ -764,7 +764,7 @@ defineSteps('sms', 'twilio', () => [
     {
         body: <>Buy or select a number under <B>Phone Numbers → Manage → Active numbers</B>, and enter it in <C>+1XXXXXXXXXX</C> form.</>,
         fields: ['TWILIO_PHONE_NUMBER'],
-        trouble: <>It has to be a number you own in Twilio. A trial account can only text numbers you have verified.</>,
+        note: <>It has to be a number you own in Twilio. A trial account can only text numbers you have verified.</>,
     },
 ]);
 
@@ -788,7 +788,7 @@ defineSteps('sms', 'sns', () => [
                 unregistered traffic heavily.
             </>
         ),
-        trouble: <>Start the 10DLC registration early. It is a carrier process rather than an AWS one, and it is not immediate.</>,
+        note: <>Start the 10DLC registration early. It is a carrier process rather than an AWS one, and it is not immediate.</>,
     },
     {
         body: (
@@ -813,7 +813,7 @@ defineSteps('sms', 'acs', () => [
                 can come back to.
             </>
         ),
-        trouble: <>You also need a paid Azure subscription. Phone numbers cannot be acquired on a trial or with free credits, and availability depends on your subscription's billing country.</>,
+        note: <>You also need a paid Azure subscription. Phone numbers cannot be acquired on a trial or with free credits, and availability depends on your subscription's billing country.</>,
     },
     {
         body: (
@@ -854,7 +854,7 @@ defineSteps('sms', 'http', () => [
             </>
         ),
         fields: ['SMS_HTTP_API_URL', 'SMS_HTTP_API_KEY'],
-        trouble: <>If their API expects a different shape or a different header, this will fail on every send. Check with them before relying on it, and send yourself a test message from the button below.</>,
+        note: <>If their API expects a different shape or a different header, this will fail on every send. Check with them before relying on it, and send yourself a test message from the button below.</>,
     },
 ]);
 
@@ -989,7 +989,7 @@ defineSteps('kms', 'azure', () => [
             </>
         ),
         check: <>Soft delete: Enabled, Purge protection: Enabled, and a Delete lock on the vault.</>,
-        trouble: <>Also check that everyday staff accounts do not hold Delete or Purge on keys.</>,
+        note: <>Also check that everyday staff accounts do not hold Delete or Purge on keys.</>,
     },
     {
         body: <>{ACCOUNT_SURVIVES}</>,
@@ -1087,7 +1087,7 @@ defineSteps('redaction', 'google', () => [
             </>
         ),
         check: <>"API Enabled" on the Cloud Vision API page.</>,
-        trouble: <>{UNCONFIGURED_DETECTOR}</>,
+        note: <>{UNCONFIGURED_DETECTOR}</>,
     },
     { body: REDACTION_CHOICE, fields: ['REDACT_FACES', 'REDACT_PLATES'], trouble: VERIFY_WITH_A_PHOTO },
 ]);
@@ -1103,7 +1103,7 @@ defineSteps('redaction', 'aws', () => [
             </>
         ),
         check: <>both actions listed on the IAM user's policy.</>,
-        trouble: <>{UNCONFIGURED_DETECTOR}</>,
+        note: <>{UNCONFIGURED_DETECTOR}</>,
     },
     { body: REDACTION_CHOICE, fields: ['REDACT_FACES', 'REDACT_PLATES'], trouble: VERIFY_WITH_A_PHOTO },
 ]);
@@ -1124,7 +1124,7 @@ defineSteps('redaction', 'azure', () => [
                 want plates, you can skip the face resource entirely.
             </>
         ),
-        trouble: <>If your town cannot get through that review, pick a different detector. Google and Amazon have no equivalent gate, and the on-server option has none at all.</>,
+        note: <>If your town cannot get through that review, pick a different detector. Google and Amazon have no equivalent gate, and the on-server option has none at all.</>,
     },
     {
         body: (
@@ -1146,7 +1146,7 @@ defineSteps('redaction', 'azure', () => [
             </>
         ),
         fields: ['AZURE_VISION_ENDPOINT', 'AZURE_VISION_KEY'],
-        trouble: <>A multi-service Azure AI resource covers the vision half, but not Face — that one is always its own resource.</>,
+        note: <>A multi-service Azure AI resource covers the vision half, but not Face — that one is always its own resource.</>,
     },
     { body: REDACTION_CHOICE, fields: ['REDACT_FACES', 'REDACT_PLATES'] },
 ]);
@@ -1160,7 +1160,7 @@ defineSteps('redaction', 'local', () => [
                 building, which is the real reason to keep it.
             </>
         ),
-        trouble: <>It is the default because the alternative was worse. A deployment with no cloud credentials used to blur nothing at all while the page displayed Google Cloud Vision as the provider. Imperfect blurring beats none; that is the whole argument, and it is worth knowing which one you are relying on.</>,
+        note: <>It is the default because the alternative was worse. A deployment with no cloud credentials used to blur nothing at all while the page displayed Google Cloud Vision as the provider. Imperfect blurring beats none; that is the whole argument, and it is worth knowing which one you are relying on.</>,
     },
     {
         body: (
@@ -1172,7 +1172,7 @@ defineSteps('redaction', 'local', () => [
                 problem, one of them is worth the setup.
             </>
         ),
-        trouble: <>The safest arrangement for a town with no cloud account is to keep this on <em>and</em> have a person look at photos before they are published, rather than treating either one as sufficient on its own.</>,
+        note: <>The safest arrangement for a town with no cloud account is to keep this on <em>and</em> have a person look at photos before they are published, rather than treating either one as sufficient on its own.</>,
     },
     { body: REDACTION_CHOICE, fields: ['REDACT_FACES', 'REDACT_PLATES'], trouble: VERIFY_WITH_A_PHOTO },
 ]);

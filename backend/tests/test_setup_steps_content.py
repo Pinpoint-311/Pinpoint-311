@@ -221,8 +221,8 @@ def test_the_guide_no_longer_asks_for_an_invented_backup_passphrase():
 # Pitfalls
 # ---------------------------------------------------------------------------
 
-def test_every_provider_warns_about_something(declarations):
-    """`trouble` is where the failures that do not announce themselves live.
+def test_every_provider_records_the_traps_it_has(declarations):
+    """Somebody has walked this path and written down what bit them.
 
     Every path on this page has at least one: a key that Google issues without
     billing and that renders a grey box; an Entra secret shown once with a
@@ -233,17 +233,24 @@ def test_every_provider_warns_about_something(declarations):
 
     Redaction was the gap this caught: three of its four paths had no warning at
     all, and one of them is the default every install now lands on.
-    """
-    import re
 
+    Widened from `trouble` to `trouble or note`. It used to demand an amber
+    warning on every path, which is part of how there came to be one on every
+    other step -- writing a new walk meant adding a warning whether or not the
+    path had anything alarming in it, and the real ones then had to compete
+    with them. The intent survives: what must exist is evidence somebody walked
+    it. Whether that evidence is alarming is a separate question, answered by
+    `test_warnings_are_rare_enough_to_read`.
+    """
     source = CONTENT.read_text()
     calls = list(re.finditer(r"defineSteps\(\s*'([a-z]+)'\s*,\s*'([a-z0-9]+)'", source))
     missing = []
     for i, call in enumerate(calls):
         end = calls[i + 1].start() if i + 1 < len(calls) else len(source)
-        if "trouble:" not in source[call.start():end]:
+        block = source[call.start():end]
+        if "trouble:" not in block and "note:" not in block:
             missing.append(f"{call.group(1)}:{call.group(2)}")
-    assert not missing, f"no pitfall warning written for: {missing}"
+    assert not missing, f"nothing written down about the traps in: {missing}"
 
 
 def test_the_key_deletion_warnings_are_present():

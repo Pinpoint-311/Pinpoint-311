@@ -62,7 +62,7 @@ async def bootstrap_township(
     """Replace the interactive first-run flow when the panel creates a town:
     set township name/domain, create/assign the initial admin, and return a
     one-time onboarding link (short-lived signed token)."""
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings_row = result.scalar_one_or_none()
     if not settings_row:
         settings_row = SystemSettings()
@@ -294,7 +294,7 @@ async def set_managed_settings(
     """
     incoming = body.settings or {}
 
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
     if not settings:
         settings = SystemSettings()

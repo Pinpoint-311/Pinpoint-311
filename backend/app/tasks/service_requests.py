@@ -136,7 +136,7 @@ def analyze_request(self, request_id: int):
         from datetime import datetime
         
         async with SessionLocal() as db:
-            settings_result = await db.execute(select(SystemSettings).limit(1))
+            settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
             settings = settings_result.scalar_one_or_none()
 
             # Fetch the request first — enrichment below runs for it regardless of
@@ -386,7 +386,7 @@ def send_branded_notification(request_id: int, notification_type: str, old_statu
             await configure_notifications(db)
             
             # Get system settings for branding
-            settings_result = await db.execute(select(SystemSettings).limit(1))
+            settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
             settings = settings_result.scalar_one_or_none()
             
             township_name = settings.township_name if settings else "Your Township"
@@ -522,7 +522,7 @@ def send_comment_notification_task(request_id: int, comment_author: str, comment
             await configure_notifications(db)
             
             # Get system settings for branding
-            settings_result = await db.execute(select(SystemSettings).limit(1))
+            settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
             settings = settings_result.scalar_one_or_none()
             
             township_name = settings.township_name if settings else "Your Township"
@@ -599,7 +599,7 @@ def send_department_notification(request_id: int, department_email: str):
             await configure_notifications(db)
             
             # Get system settings for branding and module checks
-            settings_result = await db.execute(select(SystemSettings).limit(1))
+            settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
             settings = settings_result.scalar_one_or_none()
             
             modules = settings.modules if settings else {}
@@ -773,7 +773,7 @@ def notify_staff_of_activity(request_id: int, event: str, actor: str = None):
         async with SessionLocal() as db:
             await configure_notifications(db)
 
-            settings_result = await db.execute(select(SystemSettings).limit(1))
+            settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
             settings = settings_result.scalar_one_or_none()
             modules = settings.modules if settings else {}
             sms_enabled_globally = modules.get('sms_alerts', False)
@@ -972,7 +972,7 @@ def enforce_retention_policy():
         
         async with SessionLocal() as db:
             # Get retention settings
-            settings_result = await db.execute(select(SystemSettings).limit(1))
+            settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
             settings = settings_result.scalar_one_or_none()
             
             if not settings:
@@ -1113,7 +1113,7 @@ def send_weekly_digest():
             await configure_notifications(db)
             
             # Get system settings for branding
-            settings_result = await db.execute(select(SystemSettings).limit(1))
+            settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
             settings = settings_result.scalar_one_or_none()
             
             township_name = settings.township_name if settings else "Your Township"
@@ -1436,7 +1436,7 @@ def proactive_health_scan():
             result = await evaluate(db)
             checks = result["checks"]
 
-            settings_res = await db.execute(select(SystemSettings).limit(1))
+            settings_res = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
             settings = settings_res.scalar_one_or_none()
             if not settings:
                 return {"status": "no_settings"}

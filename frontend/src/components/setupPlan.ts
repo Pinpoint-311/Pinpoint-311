@@ -119,6 +119,27 @@ const VENDOR_ORDER: Vendor[] = [
     'local', 'storage', 'sentry',
 ];
 
+/**
+ * The two settings that belong to no provider, defined once.
+ *
+ * They were written twice: here, for the guide, and again by hand in the
+ * "Other settings" block on the same page. Two copies of a credential form is
+ * how the guide and the cards drifted last time -- one said Okta's issuer was
+ * the org URL and the other said the opposite -- so these are exported and
+ * both surfaces render the same array.
+ */
+export const BACKUP_SECRETS = [
+    { key: 'BACKUP_S3_BUCKET', label: 'Bucket name' },
+    { key: 'BACKUP_S3_ENDPOINT', label: 'Endpoint URL', help: 'Leave blank for AWS S3. Set it for Oracle, MinIO, Backblaze and the rest.' },
+    { key: 'BACKUP_S3_REGION', label: 'Region' },
+    { key: 'BACKUP_S3_ACCESS_KEY', label: 'Access key ID', secret: true },
+    { key: 'BACKUP_S3_SECRET_KEY', label: 'Secret access key', secret: true },
+];
+
+export const SENTRY_SECRETS = [
+    { key: 'SENTRY_DSN', label: 'Sentry DSN', secret: true, help: 'Project Settings → Client Keys (DSN).' },
+];
+
 export function buildPlan(input: PlanInput): PlanTask[] {
     const { cloud, idp, maps, wanted } = input;
     const want = (f: string) => wanted.has(f);
@@ -216,23 +237,16 @@ export function buildPlan(input: PlanInput): PlanTask[] {
             id: 'backups',
             title: 'Automatic backups',
             blurb: 'A nightly copy of everything, kept somewhere other than this server.',
-            secrets: [
-                { key: 'BACKUP_S3_BUCKET', label: 'Bucket name' },
-                { key: 'BACKUP_S3_ENDPOINT', label: 'Endpoint URL', help: 'Leave blank for AWS S3. Set it for Oracle, MinIO, Backblaze and the rest.' },
-                { key: 'BACKUP_S3_REGION', label: 'Region' },
-                { key: 'BACKUP_S3_ACCESS_KEY', label: 'Access key ID', secret: true },
-                { key: 'BACKUP_S3_SECRET_KEY', label: 'Secret access key', secret: true },
-            ],
+            secrets: BACKUP_SECRETS,
         });
     }
-
 
     if (want('errors')) {
         add('sentry', {
             id: 'errors',
             title: 'Crash reporting',
             blurb: 'Sends crash reports somewhere off this server, so they survive a restart.',
-            secrets: [{ key: 'SENTRY_DSN', label: 'Sentry DSN', secret: true, help: 'Project Settings → Client Keys (DSN).' }],
+            secrets: SENTRY_SECRETS,
         });
     }
 
@@ -268,4 +282,67 @@ export function buildPlan(input: PlanInput): PlanTask[] {
 /** The first task not yet finished, which is where the wizard should be. */
 export function nextIncomplete(tasks: PlanTask[], done: (t: PlanTask) => boolean): PlanTask | undefined {
     return tasks.find(t => !done(t));
+}
+
+
+/**
+ * What is still outstanding, split by *why*.
+ *
+ * The collapsed "Setup Instructions" panel gave no sign that anything the town
+ * had ticked was unfinished, so a half-configured deployment looked identical
+ * to a finished one until somebody opened it.
+ *
+ * The split is the point. "Not set up" and "not working" are different
+ * problems with different fixes -- one needs a credential entered, the other
+ * needs a credential replaced -- and a single "3 issues" badge that merges them
+ * sends a clerk to the wrong place. There is a third case that is neither:
+ * something configured that cannot be checked from here at all, which is not
+ * outstanding work and is deliberately not counted.
+ *
+ * Pure, and fed the same tasks the wizard renders, so the badge cannot claim
+ * something different from the list underneath it.
+ */
+export interface PlanSummary {
+    notSetUp: PlanItem[];
+    notWorking: PlanItem[];
+    total: number;
+}
+
+export function summarise(
+    tasks: PlanTask[],
+    opts: {
+        /** Whether this item's credentials are stored. */
+        isDone: (item: PlanItem) => boolean;
+        /** 'failing' when a live check failed. Anything else is not a fault:
+         *  unknown means nobody has looked, and unverifiable means nobody can. */
+        stateOf?: (item: PlanItem) => string | null | undefined;
+    },
+): PlanSummary {
+    const notSetUp: PlanItem[] = [];
+    const notWorking: PlanItem[] = [];
+    const seen = new Set<string>();
+    for (const task of tasks) {
+        for (const item of task.items) {
+            // Grouping by vendor can list the same capability under one task
+            // only, but guard anyway -- a double count is a badge that says 4
+            // above a list of 3.
+            if (seen.has(item.id)) continue;
+            seen.add(item.id);
+            if (!opts.isDone(item)) {
+                notSetUp.push(item);
+            } else if (opts.stateOf?.(item) === 'failing') {
+                notWorking.push(item);
+            }
+        }
+    }
+    return { notSetUp, notWorking, total: seen.size };
+}
+
+/** "Maps", "Maps and AI triage", "Maps, AI triage and 2 more". */
+export function nameList(items: PlanItem[], max = 2): string {
+    const titles = items.map(i => i.title);
+    if (titles.length === 0) return '';
+    if (titles.length === 1) return titles[0];
+    if (titles.length <= max) return `${titles.slice(0, -1).join(', ')} and ${titles[titles.length - 1]}`;
+    return `${titles.slice(0, max).join(', ')} and ${titles.length - max} more`;
 }

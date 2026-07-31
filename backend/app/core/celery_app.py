@@ -47,6 +47,13 @@ celery_app.conf.update(
         # service and stops being true without warning. Without this the only
         # way to learn a key was revoked is an admin pressing Test, or a
         # resident who never got their email.
+        # Infrastructure, hourly. A disk fills in hours; a connector's
+        # credentials do not expire faster than once a day.
+        "hourly-system-probe": {
+            "task": "app.tasks.connector_checks.probe_system",
+            "schedule": 60 * 60,
+            "options": {"queue": "default"}
+        },
         "daily-connector-check": {
             "task": "app.tasks.connector_checks.verify_connectors",
             "schedule": 60 * 60 * 24,  # Every 24 hours

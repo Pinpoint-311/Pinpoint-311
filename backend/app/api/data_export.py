@@ -125,7 +125,7 @@ async def export_requests(
     requests = await get_requests_for_export(db, start_date, end_date, status, service_code)
     
     # Get township name for filename
-    settings_result = await db.execute(select(SystemSettings).limit(1))
+    settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = settings_result.scalar_one_or_none()
     township_name = settings.township_name.replace(" ", "_") if settings else "township"
     
@@ -305,7 +305,7 @@ async def export_statistics(
     avg_resolution_hours = sum(resolution_times) / len(resolution_times) if resolution_times else 0
     
     # Get township info
-    settings_result = await db.execute(select(SystemSettings).limit(1))
+    settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = settings_result.scalar_one_or_none()
     township_name = settings.township_name.replace(" ", "_") if settings else "township"
     

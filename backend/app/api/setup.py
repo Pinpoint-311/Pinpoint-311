@@ -415,7 +415,7 @@ async def configure_auth0(
             try:
                 # Get current system settings for branding
                 from app.models import SystemSettings
-                settings_result = await db.execute(select(SystemSettings).limit(1))
+                settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
                 settings = settings_result.scalar_one_or_none()
                 
                 primary_color = settings.primary_color if settings else "#6366f1"

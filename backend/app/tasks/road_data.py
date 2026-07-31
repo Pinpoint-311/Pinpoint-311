@@ -93,7 +93,7 @@ async def _load_boundary_and_state(db) -> Tuple[Optional[Dict[str, Any]], Option
     """
     from app.models import SystemSettings
 
-    row = (await db.execute(select(SystemSettings).limit(1))).scalar_one_or_none()
+    row = (await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))).scalar_one_or_none()
     if not row:
         return None, None, "pinpoint"
 

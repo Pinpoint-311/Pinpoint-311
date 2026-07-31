@@ -384,8 +384,9 @@ function TaskItem({
  * is not an instruction a clerk can act on: it reads as something to hand to
  * IT, and it was the only place on this page asking anyone to edit a file.
  */
-function PlainSecrets({
+export function PlainSecrets({
     fields, values, onChange, onSave, saving, isConfigured, onSaved, className = '',
+    blockedReason,
 }: {
     fields: { key: string; label: string; secret?: boolean; help?: string }[];
     values: Record<string, string>;
@@ -395,6 +396,14 @@ function PlainSecrets({
     isConfigured: (key: string) => boolean;
     onSaved: () => void;
     className?: string;
+    /** Why saving is not allowed yet, if it is not.
+     *
+     * Added for one caller and it earns its place there: backup settings must
+     * not be savable until somebody has confirmed they kept a copy of the
+     * encryption passphrase. Without that, a town ends up with nightly backups
+     * encrypted by a passphrase nobody wrote down -- which is not a backup, and
+     * is discovered at restore time. */
+    blockedReason?: string | null;
 }) {
     const pending = fields.filter(f => values[f.key]).map(f => f.key);
     const allStored = fields.every(f => isConfigured(f.key));
@@ -418,12 +427,19 @@ function PlainSecrets({
                 <button
                     type="button"
                     onClick={async () => { await onSave(pending); onSaved(); }}
-                    disabled={pending.length === 0 || saving !== null}
+                    disabled={pending.length === 0 || saving !== null || !!blockedReason}
+                    title={blockedReason || undefined}
                     className="inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-semibold text-white bg-primary-500 hover:bg-primary-400 border border-primary-400/50 transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
                 >
                     {saving ? 'Saving…' : 'Save'}
                 </button>
-                {allStored && (
+                {blockedReason && (
+                    <span className="text-[11px] text-amber-200/90 inline-flex items-center gap-1.5">
+                        <AlertCircle className="w-3.5 h-3.5" aria-hidden="true" />
+                        {blockedReason}
+                    </span>
+                )}
+                {!blockedReason && allStored && (
                     <span className="text-[11px] text-emerald-300/80 inline-flex items-center gap-1.5">
                         <Check className="w-3.5 h-3.5" aria-hidden="true" />
                         Saved. Leave a box blank to keep what is stored.
