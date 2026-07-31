@@ -217,7 +217,18 @@ async def _collect_readings(db) -> Dict[str, Dict[str, Any]]:
         await db.execute(text("SELECT 1"))
         out["system:database"] = probes.classify_reachable("The database", True)
     except Exception as e:
-        out["system:database"] = probes.classify_reachable("The database", False, str(e)[:200])
+        # Never the exception text.
+        #
+        # This string is stored in connector_health.last_error, shown on the
+        # card, and put in the alert email. A PostgreSQL connection failure
+        # routinely quotes the DSN back at you -- host, user and password --
+        # so a database that goes down would email its own credentials to
+        # every administrator, and leave them in a table and an inbox
+        # afterwards. The type is enough to act on; the rest goes to the log,
+        # through the sanitiser, where it is already handled.
+        logger.warning("[Probe] database unreachable: %s", sanitize_for_log(str(e)[:300]))
+        out["system:database"] = probes.classify_reachable(
+            "The database", False, probes.failure_summary(e))
 
     try:
         from app.core.redis_client import redis_client
@@ -228,7 +239,10 @@ async def _collect_readings(db) -> Dict[str, Dict[str, Any]]:
             await redis_client.ping()
             out["system:cache"] = probes.classify_reachable("The cache", True)
     except Exception as e:
-        out["system:cache"] = probes.classify_reachable("The cache", False, str(e)[:200])
+        # Same reasoning as the database above: a Redis URL carries a password.
+        logger.warning("[Probe] cache unreachable: %s", sanitize_for_log(str(e)[:300]))
+        out["system:cache"] = probes.classify_reachable(
+            "The cache", False, probes.failure_summary(e))
 
     try:
         from datetime import datetime, timezone

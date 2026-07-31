@@ -75,3 +75,39 @@ class TestNaming:
     def test_a_connector_is_not_mistaken_for_a_probe(self):
         for connector in ("ai", "maps", "email", "sms"):
             assert not P.is_system(connector)
+
+
+class TestFailuresDoNotLeakCredentials:
+    """A failing connection must not publish its own connection string.
+
+    `last_error` is stored in the database, rendered on the provider card and
+    included in the alert email. The drivers that raise these errors put the
+    DSN in the message -- psycopg quotes it, and a Redis URL carries its
+    password inline -- so passing the exception text through would turn a
+    database outage into a credential disclosure with a wide audience and a
+    long tail.
+    """
+
+    def test_the_connection_string_never_reaches_the_summary(self):
+        secret = "postgresql://pinpoint:hunter2@db.internal:5432/pinpoint311"
+        exc = OSError(f'could not connect to server: "{secret}"')
+        summary = P.failure_summary(exc)
+        assert "hunter2" not in summary
+        assert "db.internal" not in summary
+        assert secret not in summary
+
+    def test_a_redis_password_does_not_survive_either(self):
+        exc = ConnectionError("Error connecting to redis://:s3cr3t@cache:6379/0")
+        assert "s3cr3t" not in P.failure_summary(exc)
+
+    def test_it_still_says_something_an_administrator_can_act_on(self):
+        """Redacting to nothing would be its own failure: an alert saying only
+        "it broke" cannot be triaged."""
+        summary = P.failure_summary(TimeoutError("..."))
+        assert "TimeoutError" in summary
+        assert "server log" in summary
+
+    def test_the_probe_uses_it(self):
+        out = P.classify_reachable("The database", False, P.failure_summary(OSError("dsn=secret")))
+        assert "secret" not in out["detail"]
+        assert out["ok"] is False

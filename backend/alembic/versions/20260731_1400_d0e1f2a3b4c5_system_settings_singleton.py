@@ -37,36 +37,44 @@ def upgrade() -> None:
     columns = [c["name"] for c in inspector.get_columns(TABLE)]
     if "id" not in columns:
         return
-    value_columns = [c for c in columns if c != "id"]
 
-    ids = [r[0] for r in bind.execute(
-        sa.text(f"SELECT id FROM {TABLE} ORDER BY id")  # nosec B608 - fixed identifier
-    )]
+    # Reflected, so the statements below are built from SQLAlchemy objects
+    # rather than from formatted strings. The identifiers here come from the
+    # database rather than from a request, but SQL assembled by string
+    # formatting is worth avoiding on sight -- it is indistinguishable, to a
+    # reader and to a scanner, from the version of this that is a vulnerability.
+    table = sa.Table(TABLE, sa.MetaData(), autoload_with=bind)
+    value_columns = [c for c in table.columns if c.name != "id"]
+
+    ids = [row[0] for row in bind.execute(sa.select(table.c.id).order_by(table.c.id))]
     if len(ids) > 1:
         keep, drop = ids[0], ids[1:]
         # Carry over anything the duplicates hold that the canonical row does
         # not. A value on a duplicate is still a value somebody typed into this
         # product; deleting the row without this would discard configuration.
         #
-        # Oldest duplicate first, so an earlier answer beats a later one -- the
-        # same tie-break as choosing the row to keep.
+        # Oldest duplicate first, so an earlier answer beats a later one --
+        # the same tie-break as choosing the row to keep.
         for column in value_columns:
-            bind.execute(
-                sa.text(
-                    f"UPDATE {TABLE} AS target SET {column} = source.{column} "  # nosec B608
-                    f"FROM (SELECT {column} FROM {TABLE} WHERE id = ANY(:drop) "  # nosec B608
-                    f"AND {column} IS NOT NULL ORDER BY id LIMIT 1) AS source "
-                    f"WHERE target.id = :keep AND target.{column} IS NULL"
-                ),
-                {"drop": drop, "keep": keep},
-            )
-        bind.execute(sa.text(f"DELETE FROM {TABLE} WHERE id = ANY(:drop)"), {"drop": drop})  # nosec B608
+            source = bind.execute(
+                sa.select(column)
+                .where(sa.and_(table.c.id.in_(drop), column.isnot(None)))
+                .order_by(table.c.id)
+                .limit(1)
+            ).scalar()
+            if source is not None:
+                bind.execute(
+                    sa.update(table)
+                    .where(sa.and_(table.c.id == keep, column.is_(None)))
+                    .values({column.name: source})
+                )
+        bind.execute(sa.delete(table).where(table.c.id.in_(drop)))
 
     # At most one row, enforced by the database rather than by every caller
     # remembering to check. A unique index on a constant expression is the
     # standard way to say "one row" in PostgreSQL.
     if bind.dialect.name == "postgresql":
-        op.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS {INDEX} ON {TABLE} ((true))")
+        op.execute(sa.text(f'CREATE UNIQUE INDEX IF NOT EXISTS "{INDEX}" ON "{TABLE}" ((true))'))
 
 
 def downgrade() -> None:

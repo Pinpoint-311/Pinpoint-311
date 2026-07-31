@@ -86,6 +86,24 @@ def classify_backup(last_backup_at: Optional[datetime], now: datetime,
     return _outcome(True, f"Last backup {hours} hour{'s' if hours != 1 else ''} ago.")
 
 
+def failure_summary(exc: BaseException) -> str:
+    """What a connection failure may say in public.
+
+    The exception type and nothing else. These strings are stored, rendered on
+    a card and mailed to administrators, and the drivers that raise them put
+    the connection string in the message -- `OperationalError` from psycopg
+    quotes the DSN, and a Redis URL carries its password inline. Repeating that
+    would turn an outage into a credential disclosure with a wide audience and
+    a long tail: a database row, an inbox, and whatever the town forwards it
+    to.
+
+    The type tells an administrator what kind of problem it is, which is what
+    they can act on. The full text goes to the log, sanitised.
+    """
+    name = type(exc).__name__
+    return f"Could not connect ({name}). The full error is in the server log."
+
+
 def classify_reachable(name: str, reachable: bool, detail: str = "") -> Dict[str, Any]:
     if reachable:
         return _outcome(True, detail or f"{name} is reachable.")
