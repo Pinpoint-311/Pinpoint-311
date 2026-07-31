@@ -168,10 +168,14 @@ body {
         position: relative;
         border-radius: 1.5rem;
         border: 1px solid rgba(255, 255, 255, 0.15);
-        background: linear-gradient(to bottom right,
-            rgba(255, 255, 255, 0.08) 0%,
-            rgba(255, 255, 255, 0.03) 50%,
-            rgba(30, 27, 75, 0.30) 100%);
+        /* Dark base, not translucent white.
+         *
+         * This used to lay white 8% over the page, and the page's mid-gradient
+         * is #312e81 -- so the panel resolved to #413f8b and body text at
+         * `white/55` measured 4.01:1 against it, under the 4.5:1 WCAG AA wants.
+         * It read washed out because it was. Same frosted look, dark base:
+         * the same text now measures 5.73:1. */
+        background: rgba(27, 25, 64, 0.88);
         /* 24px, matching Tailwind's backdrop-blur-2xl on the source card.
          * At 40px the panel reads as noticeably heavier and lighter than the
          * service cards beside it -- the blur brightens what it samples. */
@@ -216,9 +220,11 @@ body {
 
     .premium-card {
         position: relative;
+        /* Same reason as .setup-panel above: the white overlay was lightening
+         * an already-light page rather than darkening it. */
         background:
-            linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.015) 100%),
-            linear-gradient(180deg, rgba(38, 34, 92, 0.92) 0%, rgba(20, 18, 52, 0.95) 100%);
+            linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.01) 100%),
+            linear-gradient(180deg, rgba(29, 26, 68, 0.94) 0%, rgba(17, 15, 44, 0.96) 100%);
         border-radius: 20px;
         box-shadow:
             0 1px 0 0 rgba(255, 255, 255, 0.08) inset,
@@ -980,4 +986,43 @@ html.rtl .font-mono {
 /* RTL banner message alignment */
 html.rtl [data-no-translate] {
     direction: rtl;
+}
+
+@layer components {
+    /* Text weights that fail contrast even on the darkened surfaces.
+     *
+     * On the card background, `white/50` and up clear 4.5:1, but `/45`, `/40`
+     * and `/35` come in at 4.28, 3.69 and 3.12 -- fine for large text, not for
+     * the small print they are actually used on.
+     *
+     * Scoped to card interiors rather than applied globally: the same utilities
+     * are used on other backgrounds all over the console, and a blanket
+     * override would change pages nobody has looked at. Two class names of
+     * specificity beats a utility's one, so no !important is needed.
+     */
+    .setup-panel .text-white\/45,
+    .premium-card .text-white\/45,
+    .surface-card .text-white\/45 { color: rgba(255, 255, 255, 0.62); }
+
+    .setup-panel .text-white\/40,
+    .premium-card .text-white\/40,
+    .surface-card .text-white\/40 { color: rgba(255, 255, 255, 0.6); }
+
+    .setup-panel .text-white\/35,
+    .premium-card .text-white\/35,
+    .surface-card .text-white\/35 { color: rgba(255, 255, 255, 0.58); }
+
+    .setup-panel .text-white\/30,
+    .premium-card .text-white\/30,
+    .surface-card .text-white\/30 { color: rgba(255, 255, 255, 0.56); }
+
+    /* The departments and service-category cards are built from inline gradient
+     * utilities rather than a shared class, so they need this marker to pick up
+     * the darkening and the text lift above. That they need it at all is the
+     * inconsistency worth ending later. */
+    .surface-card {
+        background:
+            linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.01) 100%),
+            linear-gradient(180deg, rgba(29, 26, 68, 0.94) 0%, rgba(17, 15, 44, 0.96) 100%) !important;
+    }
 }

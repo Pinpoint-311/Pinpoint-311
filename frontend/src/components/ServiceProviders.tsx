@@ -8,13 +8,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Sparkles, Languages, KeyRound, CheckCircle, AlertCircle,
-    ChevronDown, Loader2, Check, ShieldCheck, RefreshCw,
-    Cloud, MapPin, Lock, Info, Map as MapIcon,
+    Check, CircleDashed, ShieldCheck, RefreshCw,
+    Lock, Map as MapIcon,
     Mail, MessageSquare, Image as ImageIcon,
 } from 'lucide-react';
 
 import { CollapsibleSection } from './ui';
-import { api, ProviderCatalog, ProviderInfo, ProviderModelSpec, CloudProfileState, CloudIdentity } from '../services/api';
+import { StatusPill, CapabilityTile, Action, type CapabilityState } from './capabilityUI';
+import { api, ProviderCatalog, ProviderInfo, ProviderModelSpec, CloudIdentity } from '../services/api';
 import type { ConnectorHealth } from '../types';
 
 // Relative "updated Xh ago" from an epoch-seconds timestamp.
@@ -121,10 +122,44 @@ export interface CapStatus {
     configured?: boolean;
 }
 
-function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus, health, step, guided, identity }: {
+/** What the last live check found, as one word the rest of the page can sort on.
+ *
+ * Deliberately not derived from `configured` alone. "A credential exists in our
+ * database" is the fact the old badge reported, and it stays true through the
+ * key being revoked; it is the reason this page could show eight green ticks on
+ * a town whose AI had been failing for a fortnight.
+ */
+export function capabilityState(s: CapStatus | undefined, health?: ConnectorHealth): CapabilityState | null {
+    if (!s) return null;                      // catalog still loading
+    if (!s.configured) return 'unset';
+    // A test run in this session is fresher than the stored health row.
+    if (s.verified === true) return 'working';
+    if (s.verified === false) return 'failing';
+    if (!health || health.status === 'unknown' || health.status === 'stale') return 'unchecked';
+    return health.status === 'working' ? 'working' : 'failing';
+}
+
+function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus, health, step, guided, identity,
+    variant = 'full', state, expanded, onExpandToggle, onChanged, publicOrigin }: {
     cap: Capability; title: string; blurb: string; icon: typeof Sparkles; delay: number;
     recheckToken: number; reloadToken: number; onStatus: (cap: Capability, s: CapStatus) => void;
     health?: ConnectorHealth;
+    /* How this card is drawn. `full` is the guided walk, unchanged. The other
+     * two are the Spotlight layout the standing cards use once setup is done:
+     * anything wrong gets the whole width, everything healthy shrinks to a
+     * bubble. Same component either way -- a second component would be a second
+     * place for the save-then-test behaviour to drift. */
+    variant?: 'full' | 'spotlight' | 'bubble';
+    state?: CapabilityState | null;
+    /** Controlled by the parent in the Spotlight layout, so opening one card
+     *  can widen its grid cell. */
+    expanded?: boolean;
+    onExpandToggle?: () => void;
+    /** Something was saved or tested here; the setup guide above shares this
+     *  data and has to be told. */
+    onChanged?: () => void;
+    /** The address residents use. See the note on stepCtx below. */
+    publicOrigin?: string | null;
     /* Fetched once by the parent and passed down: the probe is a metadata call
      * and the answer is the same for every card on the page. */
     identity?: CloudIdentity | null;
@@ -147,7 +182,14 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     // most common reason sign-in fails after the password is accepted.
     const [copied, setCopied] = useState<string | null>(null);
     const stepCtx: StepContext = {
-        origin: window.location.origin,
+        /* The configured public address, not wherever this browser happens to
+         * be. An admin on an internal hostname, a port-forward or an IP would
+         * otherwise be shown a redirect URI that can never be redirected to --
+         * and the login then fails *after* the password is accepted, which
+         * reads as a wrong secret rather than a wrong URL. The guide already
+         * did this; the cards render the same walk and did not, so the two
+         * surfaces printed different URLs for the same field. */
+        origin: publicOrigin || window.location.origin,
         copy: (text, id) => {
             navigator.clipboard?.writeText(text).then(
                 () => { setCopied(id); setTimeout(() => setCopied(null), 1600); },
@@ -221,8 +263,11 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             onStatus(cap, { verified: false });
         } finally {
             setBusy(null);
+            // The test endpoint records its outcome, so the guide's view of
+            // this capability is now stale.
+            onChanged?.();
         }
-    }, [cap, onStatus]);
+    }, [cap, onStatus, onChanged]);
 
     // Parent "Recheck all" bumps this token — each card verifies its own live
     // connection and reports the result up for the summary.
@@ -230,6 +275,28 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
         if (recheckToken > 0) handleTest();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [recheckToken]);
+
+    /* "I know about this one."
+     *
+     * Held locally so the button reacts at once, then reconciled by the health
+     * reload the parent runs. It silences the email and nothing else: the card
+     * below keeps whatever colour the connector has earned. */
+    const [mutedUntil, setMutedUntil] = useState<string | null | undefined>(undefined);
+    const [muting, setMuting] = useState(false);
+    const effectiveMute = mutedUntil !== undefined ? mutedUntil : (health?.alerts_muted_until ?? null);
+    const toggleMute = useCallback(async () => {
+        setMuting(true);
+        try {
+            const r = await api.muteConnectorAlerts(cap, effectiveMute ? 0 : undefined);
+            setMutedUntil(r.muted_until);
+            onChanged?.();
+        } catch {
+            // Leaving the button as it was is the honest failure: claiming a
+            // mute that did not take would produce silence nobody asked for.
+        } finally {
+            setMuting(false);
+        }
+    }, [cap, effectiveMute, onChanged]);
 
     const discover = useCallback(async (provider: string) => {
         setRefreshingModels(true);
@@ -279,7 +346,14 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
         );
     }
     if (!catalog) {
-        return <div className="premium-card p-6 h-32 animate-pulse" aria-busy="true" />;
+        return (
+            <div
+                className={variant === 'full'
+                    ? 'premium-card p-6 h-32 animate-pulse'
+                    : 'rounded-3xl border border-white/10 bg-white/[0.04] h-24 animate-pulse'}
+                aria-busy="true"
+            />
+        );
     }
 
     const active: ProviderInfo | undefined = catalog.providers.find(p => p.provider === selected);
@@ -299,7 +373,32 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     /* In guided setup the parent's cursor wins until the clerk clicks a
      * header, at which point their click wins -- being walked through setup
      * should not mean losing the ability to jump back to something. */
-    const isOpen = open !== null ? open : (guided ? !!step?.active : !configured);
+    /* In the Spotlight layout the parent owns which card is open, because
+     * opening one has to widen its cell in the grid -- a card cannot do that to
+     * itself. Everywhere else the card keeps deciding for itself. */
+    const controlled = variant !== 'full';
+    const isOpen = controlled
+        ? !!expanded
+        : (open !== null ? open : (guided ? !!step?.active : !configured));
+    const toggle = controlled
+        ? () => onExpandToggle?.()
+        : () => setOpen(v => (v === null ? !isOpen : !v));
+
+    const shown: CapabilityState = state ?? (configured ? 'unchecked' : 'unset');
+    const bad = shown === 'failing';
+    /* A bubble is the collapsed form of a healthy capability. Opening one
+     * promotes it to the wide treatment, so the fields never appear inside a
+     * third of a column. */
+    const compact = variant === 'bubble' && !isOpen;
+    const lastChecked = health?.status === 'working' ? health.last_success_at : health?.last_error_at;
+    const checkedLine = lastChecked ? `Checked ${relativeTime(lastChecked)}` : 'Not checked yet';
+    /* The provider's own words when there are any. A clerk searching the web
+     * for their error needs the actual string, not our paraphrase of it. */
+    const spotlightDetail = bad
+        ? (health?.last_error || health?.summary || 'The last check failed.')
+        : shown === 'unchecked'
+            ? 'Nothing has used this yet, so we cannot say whether it works.'
+            : blurb;
 
     const handleSave = async () => {
         if (!active) return;
@@ -328,6 +427,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             setError(e?.message || 'Save failed');
         } finally {
             setBusy(null);
+            onChanged?.();
         }
     };
 
@@ -353,10 +453,104 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                wash was doing a job the status line does better and said the
                same thing three times -- tile, tint and badge all meaning
                "configured", which is the least interesting fact here. */
-            className="premium-card overflow-hidden p-5"
+            className={variant === 'full'
+                ? 'premium-card overflow-hidden p-5'
+                : compact
+                    ? 'group relative h-full px-4 py-4 rounded-3xl bg-gradient-to-br from-white/[0.06] via-white/[0.02] to-indigo-950/40 border border-white/10 backdrop-blur-2xl hover:border-primary-400/40 hover:-translate-y-0.5 transition-all duration-300'
+                    : `relative overflow-hidden p-5 sm:p-6 rounded-3xl border backdrop-blur-2xl shadow-[0_14px_40px_rgba(0,0,0,0.4)] ${bad
+                        ? 'bg-gradient-to-br from-red-500/[0.14] via-white/[0.02] to-indigo-950/40 border-red-400/30'
+                        : 'bg-gradient-to-br from-white/[0.08] via-white/[0.02] to-indigo-950/40 border-white/15'}`}
         >
 
             <div className="relative">
+                {/* ── The bubble: a healthy capability, collapsed ── */}
+                {compact ? (
+                    <button
+                        type="button"
+                        onClick={toggle}
+                        aria-expanded={false}
+                        aria-controls={`prov-${cap}`}
+                        className="w-full text-left rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                    >
+                        <div className="flex items-center gap-3">
+                            <CapabilityTile icon={Icon} />
+                            <span className="min-w-0 flex-1">
+                                <span className="block font-semibold text-white text-sm truncate">{title}</span>
+                                <span className="block text-[11px] text-white/50 truncate">
+                                    {configured ? currentName : 'Not set up'}
+                                </span>
+                            </span>
+                            <span
+                                className={`shrink-0 ${shown === 'working' ? 'text-emerald-300' : 'text-white/30'}`}
+                                aria-hidden="true"
+                            >
+                                {shown === 'working' ? <Check className="w-4 h-4" /> : <CircleDashed className="w-4 h-4" />}
+                            </span>
+                        </div>
+                        {/* Nothing about check times on something with no
+                            credentials: the tile already says "Not set up", and
+                            "Not checked yet" underneath reads as a second,
+                            different problem. */}
+                        {configured && <span className="block text-[11px] text-white/45 mt-2.5">{checkedLine}</span>}
+                    </button>
+                ) : variant !== 'full' ? (
+                    /* ── The spotlight: something is wrong, or the clerk opened it ── */
+                    <>
+                        <div
+                            className="aurora-glow w-64 h-64 -top-24 -left-10 opacity-45 pointer-events-none"
+                            style={bad ? { background: 'radial-gradient(closest-side, rgba(244,63,94,0.5), transparent)' } : undefined}
+                            aria-hidden="true"
+                        />
+                        <div className="relative flex items-start gap-5 flex-wrap">
+                            <CapabilityTile icon={Icon} size="lg" tone={bad ? 'alert' : 'normal'} />
+                            <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-3 flex-wrap">
+                                    <h3 className="font-bold text-lg text-white tracking-tight">{title}</h3>
+                                    <StatusPill state={shown} />
+                                </div>
+                                <p className={`text-sm mt-1.5 ${bad ? 'text-red-100/90' : 'text-white/70'}`}>
+                                    {spotlightDetail}
+                                </p>
+                                {effectiveMute && (
+                                    <p className="text-xs text-amber-200/85 mt-1.5">
+                                        Nobody is being emailed about this until{' '}
+                                        {new Date(effectiveMute).toLocaleDateString()}. It is still not working.
+                                    </p>
+                                )}
+                                <p className="text-xs text-white/50 mt-1.5">
+                                    {configured ? currentName : 'No provider credentials yet'}
+                                    {cap === 'ai' && catalog.current_model ? ` · ${catalog.current_model}` : ''}
+                                    {/* A check time under "not set up" reads as a
+                                        contradiction: there are no credentials, so
+                                        whatever was checked was not this. */}
+                                    {configured && lastChecked ? ` · checked ${relativeTime(lastChecked)}` : ''}
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                                {/* Only where there is an alert to silence. A
+                                    capability nobody is being emailed about
+                                    does not need an off switch. */}
+                                {(shown === 'failing' || shown === 'unchecked') && (
+                                    <Action onClick={toggleMute} busy={muting} disabled={muting}
+                                        title={effectiveMute
+                                            ? 'Start emailing administrators about this again'
+                                            : 'Stop emailing administrators about this for a week. The card stays as it is.'}>
+                                        {effectiveMute ? 'Unmute' : 'Mute alerts'}
+                                    </Action>
+                                )}
+                                {configured && (
+                                    <Action onClick={handleTest} busy={busy === 'test'} disabled={busy !== null}>
+                                        {busy === 'test' ? 'Testing…' : 'Test now'}
+                                    </Action>
+                                )}
+                                <Action variant="primary" onClick={toggle} chevron>
+                                    {isOpen ? 'Close' : configured ? 'Edit' : 'Set up'}
+                                </Action>
+                            </div>
+                        </div>
+                    </>
+                ) : (
+                <>
                 {/* Header — same shape as every other connector card: a large
                     gradient icon tile, the name, and a status pill on the right. */}
                 {/* Not one big button any more. "Test now" has to be its own
@@ -366,19 +560,15 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                     <button
                         type="button"
-                        onClick={() => setOpen(v => (v === null ? !isOpen : !v))}
+                        onClick={toggle}
                         aria-expanded={isOpen}
                         aria-controls={`prov-${cap}`}
                         className="flex items-center gap-3.5 min-w-0 flex-1 text-left rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
                     >
-                        <div className="setup-tile relative w-11 h-11 shrink-0 rounded-xl flex items-center justify-center">
-                            <Icon className="w-5 h-5 text-white" />
-                            {guided && step && !configured && (
-                                <span className="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full bg-primary-500 border-2 border-slate-900 text-[10px] font-bold text-white flex items-center justify-center">
-                                    {step.index + 1}
-                                </span>
-                            )}
-                        </div>
+                        <CapabilityTile
+                            icon={Icon}
+                            badge={guided && step && !configured ? step.index + 1 : undefined}
+                        />
                         <div className="min-w-0">
                             <h3 className="font-semibold text-white leading-tight truncate">{title}</h3>
                             {/* The one line worth reading at a glance: which
@@ -401,39 +591,21 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                             Pressing it on an empty card would report a missing
                             credential as a failure, which is true and useless. */}
                         {configured && (
-                            <button
-                                type="button"
-                                onClick={handleTest}
-                                disabled={busy !== null}
-                                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-white/80 hover:text-white bg-white/[0.07] hover:bg-white/[0.13] border border-white/15 transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
-                            >
-                                {busy === 'test'
-                                    ? <><Loader2 className="w-3 h-3 animate-spin" /> Testing…</>
-                                    : 'Test now'}
-                            </button>
+                            <Action size="sm" onClick={handleTest} busy={busy === 'test'} disabled={busy !== null}>
+                                {busy === 'test' ? 'Testing…' : 'Test now'}
+                            </Action>
                         )}
-                        <button
-                            type="button"
-                            onClick={() => setOpen(v => (v === null ? !isOpen : !v))}
-                            aria-expanded={isOpen}
-                            aria-controls={`prov-${cap}`}
-                            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-white/70 hover:text-white hover:bg-white/[0.08] border border-transparent hover:border-white/15 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
-                        >
+                        <Action size="sm" variant="primary" onClick={toggle} chevron>
                             {isOpen ? 'Close' : configured ? 'Edit' : 'Set up'}
-                            <motion.span
-                                animate={{ rotate: isOpen ? 180 : 0 }}
-                                transition={{ duration: 0.25 }}
-                                aria-hidden="true"
-                            >
-                                <ChevronDown className="w-3.5 h-3.5" />
-                            </motion.span>
-                        </button>
+                        </Action>
                     </div>
                 </div>
 
                 <p className="text-white/60 text-sm mb-4">{blurb}</p>
+                </>
+                )}
 
-            {warnings.length > 0 && (
+            {!compact && warnings.length > 0 && (
                 <div className="mt-3 space-y-1.5">
                     {warnings.map(w => (
                         <div key={w.key} className={`rounded-xl px-3 py-2.5 text-xs border flex items-start gap-2 ${w.severity === 'error'
@@ -445,7 +617,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                     ))}
                 </div>
             )}
-            {result && (
+            {!compact && result && (
                 <motion.div
                     initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
                     className={`mt-3 rounded-xl px-3 py-2.5 text-xs border flex items-start gap-2 ${result.ok
@@ -472,63 +644,23 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 className="overflow-hidden"
             >
             <div className="mt-4 pt-4 border-t border-white/10 space-y-5">
-                {/* Provider picker — segmented tiles */}
-                <div>
-                    <Step n={1}>Provider</Step>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2" role="radiogroup" aria-label={`${title} provider`}>
-                        {catalog.providers.map(p => {
-                            const isSel = p.provider === selected;
-                            const isCurrent = p.provider === catalog.current_provider;
-                            const isDefault = catalog.default_provider ? p.provider === catalog.default_provider : false;
-                            return (
-                                <button
-                                    key={p.provider}
-                                    role="radio"
-                                    aria-checked={isSel}
-                                    onClick={() => { setSelected(p.provider); setResult(null); setWarnings([]); setModel(p.default_model || ''); }}
-                                    className={`relative text-left rounded-xl px-3 py-2.5 border transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${isSel
-                                        ? 'bg-gradient-to-br from-primary-500/25 to-primary-700/15 border-primary-400/50 shadow-lg shadow-primary-900/30'
-                                        : 'bg-white/[0.03] border-white/10 hover:bg-white/[0.06] hover:border-white/20'}`}
-                                >
-                                    <div className="flex items-center justify-between gap-2">
-                                        <span className={`text-sm font-medium truncate ${isSel ? 'text-white' : 'text-white/70'}`}>{p.name}</span>
-                                        {isSel && (
-                                            <span className="shrink-0 w-4 h-4 rounded-full bg-primary-400 flex items-center justify-center">
-                                                <Check className="w-3 h-3 text-primary-950" strokeWidth={3} />
-                                            </span>
-                                        )}
-                                    </div>
-                                    {(isCurrent || isDefault) && (
-                                        <div className="flex items-center gap-1.5 mt-1">
-                                            {isCurrent ? (
-                                                <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-300/90">In use</span>
-                                            ) : (
-                                                <span className="text-[10px] font-semibold uppercase tracking-wide text-primary-300/90">Recommended</span>
-                                            )}
-                                        </div>
-                                    )}
-                                </button>
-                            );
-                        })}
-                    </div>
-                    {(active?.description || active?.boundary) && (
-                        <div className="mt-2.5 rounded-lg bg-white/[0.03] border border-white/10 px-3 py-2 space-y-1">
-                            {active?.description && <p className="text-white/55 text-xs leading-relaxed">{active.description}</p>}
-                            {active?.boundary && (
-                                <p className="text-white/60 text-[11px] flex items-center gap-1.5">
-                                    <ShieldCheck className="w-3 h-3 text-primary-300/70 shrink-0" aria-hidden="true" />
-                                    Compliance boundary: {active.boundary}
-                                </p>
-                            )}
-                        </div>
-                    )}
-                </div>
-
-                {/* Switching identity forces a re-login */}
-                {cap === 'identity' && selected !== catalog.current_provider && (
-                    <div className="rounded-lg bg-amber-500/10 border border-amber-400/25 px-3 py-2 text-[11px] text-amber-200 flex items-start gap-2">
-                        <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
-                        Switching sign-in providers signs everyone out — staff will sign in again through {active?.name || 'the new provider'} next time.
+                {/* No provider picker here.
+                 *
+                 * Which provider runs each capability is answered once, in the
+                 * questionnaire at the top of this page, and that answer drives
+                 * the setup guide. A second picker on the card was a second
+                 * place to decide -- the two could disagree, and there was
+                 * nowhere to see which one the town had actually meant. These
+                 * cards edit the credentials of the provider already chosen. */}
+                {(active?.description || active?.boundary) && (
+                    <div className="rounded-lg bg-white/[0.03] border border-white/10 px-3 py-2 space-y-1">
+                        {active?.description && <p className="text-white/55 text-xs leading-relaxed">{active.description}</p>}
+                        {active?.boundary && (
+                            <p className="text-white/60 text-[11px] flex items-center gap-1.5">
+                                <ShieldCheck className="w-3 h-3 text-primary-300/70 shrink-0" aria-hidden="true" />
+                                Compliance boundary: {active.boundary}
+                            </p>
+                        )}
                     </div>
                 )}
 
@@ -543,7 +675,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                     if (!models || models.length === 0) return null;
                     return (
                         <div>
-                            <Step n={2} aside={
+                            <Step n={1} aside={
                                 <button
                                     type="button"
                                     onClick={handleRefreshModels}
@@ -628,7 +760,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
 
                     return (
                         <div>
-                            <Step n={cap === 'ai' ? 3 : 2}>{hasSteps ? 'Set it up' : 'Credentials'}</Step>
+                            <Step n={cap === 'ai' ? 2 : 1}>{hasSteps ? 'Set it up' : 'Credentials'}</Step>
                             <ProviderCredentialSteps
                                 cap={cap}
                                 provider={selected}
@@ -644,22 +776,12 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 })()}
 
                 <div className="flex flex-wrap items-center gap-2.5 pt-1 border-t border-white/5 mt-1">
-                    <button
-                        onClick={handleSave}
-                        disabled={busy !== null}
-                        className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white bg-primary-500 hover:bg-primary-400 border border-primary-400/50 transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-                    >
-                        {busy === 'save'
-                            ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</>
-                            : <>Save &amp; Test</>}
-                    </button>
-                    <button
-                        onClick={handleTest}
-                        disabled={busy !== null}
-                        className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-sm font-medium text-white/90 hover:text-white bg-white/10 hover:bg-white/[0.16] border border-white/25 hover:border-white/35 shadow-sm transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
-                    >
-                        {busy === 'test' ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Testing…</> : 'Test connection'}
-                    </button>
+                    <Action variant="primary" onClick={handleSave} busy={busy === 'save'} disabled={busy !== null}>
+                        {busy === 'save' ? 'Saving…' : 'Save & Test'}
+                    </Action>
+                    <Action onClick={handleTest} busy={busy === 'test'} disabled={busy !== null}>
+                        {busy === 'test' ? 'Testing…' : 'Test connection'}
+                    </Action>
                     {cap === 'identity' && (
                         <span className="text-white/60 text-[11px] ml-auto hidden sm:block">Auth0 by default · Entra, Okta and any OIDC provider also supported</span>
                     )}
@@ -673,195 +795,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     );
 }
 
-const COMPONENT_LABEL: Record<string, string> = {
-    // AI
-    vertex: 'Google Vertex AI', bedrock: 'AWS Bedrock',
-    // shared cloud names
-    azure: 'Azure', google: 'Google', aws: 'AWS',
-    // identity
-    auth0: 'Auth0', entra: 'Microsoft Entra ID', okta: 'Okta', oidc: 'OIDC (e.g. Cognito)',
-    // email / sms
-    smtp: 'SMTP', ses: 'Amazon SES', acs: 'Azure Communication Services',
-    sns: 'Amazon SNS', twilio: 'Twilio',
-};
-
-const label = (v: string) => COMPONENT_LABEL[v] || v || '—';
-const secretsLabel = (v: string) => v === 'google' ? 'Secret Manager' : v === 'azure' ? 'Key Vault' : v === 'aws' ? 'Secrets Manager' : label(v);
-
-// Per-cloud visual identity — a monogram tile + accent so each option reads at a
-// glance without pulling in third-party brand logos (which carry trademark rules).
-const CLOUD_VISUAL: Record<string, { glyph: string; tile: string; ring: string; glow: string }> = {
-    google: { glyph: 'G', tile: 'from-sky-400/30 to-blue-600/20 border-sky-300/40 text-sky-100', ring: 'border-sky-300/50', glow: 'shadow-sky-900/40' },
-    azure:  { glyph: 'A', tile: 'from-cyan-400/30 to-indigo-600/20 border-cyan-300/40 text-cyan-100', ring: 'border-cyan-300/50', glow: 'shadow-cyan-900/40' },
-    aws:    { glyph: 'A', tile: 'from-amber-400/30 to-orange-600/20 border-amber-300/40 text-amber-100', ring: 'border-amber-300/50', glow: 'shadow-amber-900/40' },
-    mixed:  { glyph: '⋯', tile: 'from-white/15 to-white/5 border-white/20 text-white/80', ring: 'border-white/25', glow: 'shadow-black/40' },
-};
-const cloudVisual = (id: string) => CLOUD_VISUAL[id] || CLOUD_VISUAL.mixed;
-
-// Hybrid "one choice" front door: a jurisdiction is authorized under one cloud
-// boundary, so picking it sets AI + translation + secret store together. Identity
-// stays separate (only recommended). Google Maps is fixed.
-function CloudEnvironment({ onApplied }: { onApplied: () => void }) {
-    const [state, setState] = useState<CloudProfileState | null>(null);
-    const [busy, setBusy] = useState<string | null>(null);
-    const [result, setResult] = useState<{ profile: string; warnings: string[]; identity_recommended: string } | null>(null);
-    const [error, setError] = useState<string | null>(null);
-
-    const load = useCallback(async () => {
-        try { setState(await api.getCloudProfile()); }
-        catch (e: any) { setError(e?.message || 'Could not load the cloud environment.'); }
-    }, []);
-    useEffect(() => { load(); }, [load]);
-
-    const apply = async (profileId: string, applyIdentity = false) => {
-        if (!state || state.managed) return;
-        setBusy(profileId); setError(null); setResult(null);
-        try {
-            const r = await api.setCloudProfile(profileId, applyIdentity);
-            setResult({ profile: r.profile, warnings: r.warnings || [], identity_recommended: r.identity_recommended });
-            await load();
-            onApplied(); // refresh the capability cards to show the new selections
-        } catch (e: any) {
-            setError(e?.message || 'Could not switch the cloud environment.');
-        } finally {
-            setBusy(null);
-        }
-    };
-
-    if (error && !state) {
-        return (
-            <div className="mb-5 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200 flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0" /> {error}
-            </div>
-        );
-    }
-    if (!state) return <div className="premium-card p-6 h-40 mb-5 animate-pulse" aria-busy="true" />;
-
-    const identityLabel = COMPONENT_LABEL[state.components.identity] || state.components.identity;
-
-    return (
-        <motion.div
-            initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-            className="premium-card p-5 mb-5"
-        >
-            <div className="flex items-start justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-3 min-w-0">
-                    <div className="relative shrink-0">
-                        <div className="absolute -inset-1 rounded-2xl bg-gradient-to-br from-primary-400/40 to-primary-600/20 blur-md" aria-hidden="true" />
-                        <div className="relative w-11 h-11 rounded-2xl bg-gradient-to-br from-primary-500/30 to-primary-700/20 border border-primary-400/30 flex items-center justify-center shadow-lg shadow-primary-900/40">
-                            <Cloud className="w-5 h-5 text-primary-200" />
-                        </div>
-                    </div>
-                    <div className="min-w-0">
-                        <h3 className="font-semibold text-white tracking-tight">Cloud environment</h3>
-                        <p className="text-white/50 text-xs mt-0.5 max-w-xl leading-relaxed">
-                            One choice sets your AI, translation, secret storage, PII encryption (KMS), and
-                            email/text to match your authorized cloud. Sign-in and Google Maps are configured
-                            separately below.
-                        </p>
-                    </div>
-                </div>
-                {state.managed && (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-white/10 text-white/60 border border-white/10">
-                        <Lock className="w-3 h-3" aria-hidden="true" /> Managed by your state
-                    </span>
-                )}
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-4" role="radiogroup" aria-label="Cloud environment">
-                {state.profiles.map(p => {
-                    const isActive = state.profile === p.id;
-                    const isBusy = busy === p.id;
-                    const vis = cloudVisual(p.id);
-                    const caps = [
-                        { k: 'AI', v: label(p.ai) },
-                        { k: 'Translation', v: label(p.translation) },
-                        { k: 'Secrets', v: secretsLabel(p.secrets) },
-                        { k: 'KMS', v: label(p.kms) },
-                        { k: 'Email', v: label(p.email) },
-                        ...(p.sms ? [{ k: 'Text', v: label(p.sms) }] : []),
-                    ];
-                    return (
-                        <button
-                            key={p.id}
-                            type="button"
-                            role="radio"
-                            aria-checked={isActive}
-                            disabled={state.managed || busy !== null}
-                            onClick={() => apply(p.id)}
-                            className={`group relative text-left rounded-2xl p-4 border transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 disabled:cursor-not-allowed ${isActive
-                                ? `bg-gradient-to-br from-primary-500/20 to-primary-800/10 ${vis.ring} shadow-lg ${vis.glow}`
-                                : 'bg-white/[0.03] border-white/10 hover:bg-white/[0.06] hover:border-white/20 disabled:opacity-60'}`}
-                        >
-                            {isActive && <div className={`absolute -inset-px rounded-2xl border ${vis.ring} opacity-60 pointer-events-none`} aria-hidden="true" />}
-                            <div className="flex items-center gap-3">
-                                <div className={`relative shrink-0 w-9 h-9 rounded-xl bg-gradient-to-br border flex items-center justify-center font-bold text-sm ${vis.tile} ${isActive ? 'shadow-md ' + vis.glow : 'opacity-90 group-hover:opacity-100'}`}>
-                                    {vis.glyph}
-                                </div>
-                                <span className={`font-semibold tracking-tight flex-1 min-w-0 truncate ${isActive ? 'text-white' : 'text-white/80'}`}>{p.label}</span>
-                                {isBusy ? <Loader2 className="w-4 h-4 animate-spin text-primary-200 shrink-0" />
-                                    : isActive && <span className="shrink-0 w-5 h-5 rounded-full bg-primary-400 flex items-center justify-center"><Check className="w-3 h-3 text-primary-950" strokeWidth={3} /></span>}
-                            </div>
-                            <p className="text-[11px] text-white/60 mt-2.5 flex items-start gap-1.5 leading-relaxed">
-                                <ShieldCheck className="w-3 h-3 text-primary-300/70 shrink-0 mt-0.5" aria-hidden="true" />
-                                {p.boundary}
-                            </p>
-                            <div className="mt-3 pt-3 border-t border-white/[0.06] grid grid-cols-2 gap-x-3 gap-y-1.5">
-                                {caps.map(c => (
-                                    <div key={c.k} className="flex flex-col min-w-0">
-                                        <span className="text-[9px] uppercase tracking-wider text-white/35">{c.k}</span>
-                                        <span className="text-[11px] text-white/75 truncate leading-tight">{c.v}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        </button>
-                    );
-                })}
-            </div>
-
-            {state.profile === 'mixed' && (
-                <p className="text-white/50 text-xs mt-3 flex items-center gap-1.5">
-                    <Info className="w-3.5 h-3.5 text-primary-300/70 shrink-0" aria-hidden="true" />
-                    You're running a custom mix of providers. Pick a cloud above to standardize, or fine-tune each capability below.
-                </p>
-            )}
-
-            {result && result.warnings.length > 0 && (
-                <div className="mt-3 rounded-xl bg-amber-500/10 border border-amber-400/30 px-3 py-2.5 text-xs text-amber-200 space-y-1">
-                    {result.warnings.map((w, i) => (
-                        <p key={i} className="flex items-start gap-2"><AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {w}</p>
-                    ))}
-                </div>
-            )}
-
-            {/* Identity is orthogonal — recommend, never force. */}
-            {result && result.identity_recommended && state.components.identity !== result.identity_recommended && !state.managed && (
-                <div className="mt-3 rounded-xl bg-white/[0.04] border border-white/10 px-3 py-2.5 text-xs text-white/60 flex flex-wrap items-center justify-between gap-2">
-                    <span className="flex items-center gap-1.5">
-                        <KeyRound className="w-3.5 h-3.5 text-primary-300/80" aria-hidden="true" />
-                        Recommended sign-in for this cloud: <span className="text-white/85 font-medium">{COMPONENT_LABEL[result.identity_recommended] || result.identity_recommended}</span> (currently {identityLabel}).
-                    </span>
-                    <button
-                        onClick={() => apply(result.profile, true)}
-                        disabled={busy !== null}
-                        className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 font-medium text-primary-100 bg-primary-500/20 hover:bg-primary-500/30 border border-primary-400/30 transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
-                    >
-                        Switch sign-in too
-                    </button>
-                </div>
-            )}
-
-            <div className="mt-3 pt-3 border-t border-white/10 flex items-center gap-1.5 text-[11px] text-white/60">
-                <MapPin className="w-3 h-3 text-primary-300/70 shrink-0" aria-hidden="true" />
-                Mapping is set separately — currently{' '}
-                <span className="text-white/80 font-medium">{state.maps.label}</span>. The cloud choice does not change it.
-            </div>
-        </motion.div>
-    );
-}
-
-export default function ServiceProviders({ show, extras }: {
+export default function ServiceProviders({ show, extras, refreshToken = 0, onChanged, publicOrigin = null }: {
     /* Which capabilities the town said it wants, from the setup questions.
      * Undefined means "no answer yet", which shows everything -- an absent
      * answer must not read as "wanted nothing", the same distinction the
@@ -878,6 +812,18 @@ export default function ServiceProviders({ show, extras }: {
      * across both. Rendered here instead, after the capability cards, so the
      * page has one list. */
     extras?: ReactNode;
+    /* Bumped by the page when the setup guide above saves something.
+     *
+     * The guide and these cards are two views of one set of credentials, on the
+     * same screen, and until now neither told the other anything: a key entered
+     * in the guide left the card below still reading "Not set up", and the
+     * obvious conclusion from that is that the save did not take. */
+    refreshToken?: number;
+    /** The reverse direction: something changed down here, so the guide's ticks
+     *  are stale. */
+    onChanged?: () => void;
+    /** The address residents use, for the callback URLs in the console walks. */
+    publicOrigin?: string | null;
 } = {}) {
     const [recheckToken, setRecheckToken] = useState(0);
     /* Whether this server has an identity the cloud attached to it. Fetched
@@ -910,9 +856,14 @@ export default function ServiceProviders({ show, extras }: {
             setHealth({});
         }
     }, []);
-    useEffect(() => { loadHealth(); }, [loadHealth, recheckToken]);
+    useEffect(() => { loadHealth(); }, [loadHealth, recheckToken, refreshToken]);
 
     const [reloadToken, setReloadToken] = useState(0);
+    /* A save in the guide above changes exactly what these cards read, so pull
+     * both the catalogs and the health rows again. */
+    useEffect(() => {
+        if (refreshToken > 0) setReloadToken(t => t + 1);
+    }, [refreshToken]);
     const [statuses, setStatuses] = useState<Record<string, CapStatus>>({});
 
     const onStatus = useCallback((cap: Capability, s: CapStatus) => {
@@ -931,30 +882,41 @@ export default function ServiceProviders({ show, extras }: {
      * to enter those -- which is what the ordering note below tells them, since
      * the bootstrap card itself lives outside this list. */
     const loaded = visible.filter(c => statuses[c.key]);
-    const onDefaultCount = (loaded || []).filter(c => statuses[c.key]?.onDefault).length;
     const configuredCount = (loaded || []).filter(c => statuses[c.key]?.configured).length;
 
-    /* Guided setup versus the plain card list.
+    /* No guided walk here any more.
      *
-     * Derived rather than stored: guided while anything the town asked for
-     * still has no credentials, cards once it all does. A stored "I am done"
-     * flag would let a half-finished town dismiss the guidance it still needs,
-     * and would need a migration to carry a boolean that the data already
-     * answers.
+     * This section used to run its own step-by-step: a progress bar, a "Step 3
+     * of 8" cursor, and a "Skip the guide" link. The setup guide at the top of
+     * the page does that job, grouped by the account you sign in to rather than
+     * by capability, and having both meant two progress indicators that counted
+     * differently and two places a town could be told what to do next.
      *
-     * `manualMode` is the override -- somebody adding text messages a year
-     * later wants the steps back, and somebody who knows the product wants them
-     * gone. Null means "follow the data". */
-    const [manualMode, setManualMode] = useState<'guided' | 'cards' | null>(null);
-    const everythingConfigured = loaded.length > 0 && configuredCount === loaded.length;
-    const guided = manualMode ? manualMode === 'guided' : !everythingConfigured;
-
-    // The cursor: the first thing still missing credentials. It moves on its own
-    // as each one is saved, because `configured` comes back from the reload the
-    // save already triggers.
-    const cursor = visible.findIndex(c => statuses[c.key] && !statuses[c.key]?.configured);
+     * What is left is what these cards are for: is it working, and where do I
+     * change it. */
     const verifiedCount = (loaded || []).filter(c => statuses[c.key]?.verified === true).length;
     const failedCount = (loaded || []).filter(c => statuses[c.key]?.verified === false).length;
+
+    /* Which card the clerk has opened in the Spotlight layout. Held here rather
+     * than in the card, because opening one has to widen its cell. */
+    const [openCap, setOpenCap] = useState<Capability | null>(null);
+    const capState = (cap: Capability) => capabilityState(statuses[cap], health[cap]);
+    /* Only what is wrong gets the whole width.
+     *
+     * "Not set up" is deliberately not in this list, though the first version
+     * of it was. Rendered against a town mid-setup that put six of eight
+     * capabilities into full-width cards, which is the wall this layout exists
+     * to avoid -- and it was shouting about work the setup guide above is
+     * already walking somebody through. Something switched off is not a fault.
+     *
+     * A capability still loading its catalog has no state yet, and guessing one
+     * would mean flashing "not working" at a town whose page is merely slow. It
+     * waits in the bubble grid, where it renders as a skeleton. */
+    const spotlit = visible.filter(c => {
+        const s = capState(c.key);
+        return s === 'failing' || s === 'unchecked';
+    });
+    const bubbles = visible.filter(c => !spotlit.includes(c));
 
     return (
         <CollapsibleSection
@@ -962,7 +924,7 @@ export default function ServiceProviders({ show, extras }: {
             icon={Sparkles}
             accent="primary"
             defaultOpen={true}
-            subtitle="AI, translation, sign-in & cloud environment — pick a provider, then add its key"
+            subtitle="Whether each one is working, and where to change its credentials"
             trailing={
                 <button
                     onClick={() => setRecheckToken(t => t + 1)}
@@ -972,84 +934,46 @@ export default function ServiceProviders({ show, extras }: {
                 </button>
             }
         >
-            <p className="text-white/60 text-sm max-w-2xl leading-relaxed mb-1">
-                Choose which cloud powers each capability. Every option is pre-built — pick a provider, paste its key, and test.
-                Google and Auth0 are already selected, so for most towns the only step left is adding the credentials.
-            </p>
             {loaded.length > 0 && (
                 <div className="text-[11px] text-white/55 flex flex-wrap items-center gap-x-3 gap-y-0.5 mb-4">
                     <span>{configuredCount === loaded.length
                         ? `All ${loaded.length} have credentials`
                         : `${loaded.length - configuredCount} of ${loaded.length} still need credentials`}</span>
-                    {onDefaultCount !== loaded.length && (
-                        <span className="text-white/40">{loaded.length - onDefaultCount} not on the default provider</span>
-                    )}
                     {verifiedCount > 0 && <span className="text-emerald-300/80 inline-flex items-center gap-1"><CheckCircle className="w-3 h-3" />{verifiedCount} verified</span>}
                     {failedCount > 0 && <span className="text-amber-300/90 inline-flex items-center gap-1"><AlertCircle className="w-3 h-3" />{failedCount} need attention</span>}
                 </div>
             )}
 
-            <CloudEnvironment onApplied={() => setReloadToken(t => t + 1)} />
+            {/* ── Spotlight ──────────────────────────────────────────────
+               Once setup is done the question stops being "how do I
+               configure this" and becomes "is anything wrong". So anything
+               failing, unchecked or missing its credentials takes the full
+               width and says what the provider said; everything healthy
+               shrinks to a bubble that answers "yes, and here is when we
+               last looked".
 
-            {/* One card per row. Three columns worked when these were collapsed
-                summaries, but the configuration is always open now -- provider
-                tiles, credential fields and the model picker all need real
-                width, and at a third of the page they were squeezed into
-                unusable slivers. The connector cards this matches are
-                full-width for the same reason. */}
-            {guided && loaded.length > 0 && (
-                <div className="setup-panel p-4 mb-4 relative">
-                    <div className="relative flex items-center justify-between gap-4 flex-wrap">
-                        <div className="min-w-0">
-                            <p className="text-sm font-semibold text-white">
-                                {everythingConfigured
-                                    ? 'Everything is set up'
-                                    : `Step ${Math.max(0, cursor) + 1} of ${visible.length} — ${visible[Math.max(0, cursor)]?.title}`}
-                            </p>
-                            <p className="text-white/50 text-xs mt-0.5">
-                                One at a time, in order. Save it and the next one opens.
-                            </p>
-                            {configuredCount === 0 && (
-                                <p className="text-amber-200/80 text-xs mt-1.5 leading-relaxed">
-                                    Enter your cloud credentials first, under <strong className="text-amber-100">Other settings</strong> below.
-                                    Keys saved before that go into the encrypted database rather than your secret store.
-                                </p>
-                            )}
+               One grid, not two lists, deliberately. A card that moves
+               between the groups -- which is exactly what pressing "Test
+               now" can do -- keeps its React key and its place in the same
+               parent, so it re-sorts without remounting. Split across two
+               containers it would remount, and a remount mid-edit throws
+               away whatever has been typed into it. */}
+            <div className="relative grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
+                {spotlit.concat(bubbles).map((c) => {
+                    const wide = openCap === c.key || spotlit.includes(c);
+                    return (
+                        <div key={c.key} className={wide ? 'sm:col-span-2 lg:col-span-3' : ''}>
+                            <CapabilityCard cap={c.key} title={c.title} blurb={c.blurb} icon={c.icon} delay={0}
+                                recheckToken={recheckToken} reloadToken={reloadToken} onStatus={onStatus}
+                                health={health[c.key]} identity={identity} onChanged={onChanged}
+                                publicOrigin={publicOrigin}
+                                variant={spotlit.includes(c) ? 'spotlight' : 'bubble'}
+                                state={capState(c.key)}
+                                expanded={openCap === c.key}
+                                onExpandToggle={() => setOpenCap(k => (k === c.key ? null : c.key))} />
                         </div>
-                        <button
-                            type="button"
-                            onClick={() => setManualMode('cards')}
-                            className="text-xs text-white/60 hover:text-white underline underline-offset-2 shrink-0"
-                        >
-                            Skip the guide
-                        </button>
-                    </div>
-                    <div className="relative h-1.5 rounded-full bg-white/10 overflow-hidden mt-3">
-                        <div
-                            className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-teal-400 transition-all duration-500"
-                            style={{ width: `${(configuredCount / Math.max(1, loaded.length)) * 100}%` }}
-                        />
-                    </div>
-                </div>
-            )}
-
-            {!guided && !everythingConfigured && (
-                <button
-                    type="button"
-                    onClick={() => setManualMode('guided')}
-                    className="mb-4 text-xs text-white/60 hover:text-white underline underline-offset-2"
-                >
-                    Walk me through what is left
-                </button>
-            )}
-
-            <div className="relative grid grid-cols-1 gap-4">
-                {visible.map((c, i) => (
-                    <CapabilityCard key={c.key} cap={c.key} title={c.title} blurb={c.blurb} icon={c.icon} delay={i * 0.08}
-                        recheckToken={recheckToken} reloadToken={reloadToken} onStatus={onStatus}
-                        health={health[c.key]} guided={guided} identity={identity}
-                        step={{ index: i, total: visible.length, active: i === cursor }} />
-                ))}
+                    );
+                })}
             </div>
 
             {extras && (

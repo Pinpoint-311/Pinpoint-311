@@ -49,6 +49,7 @@ async def verify_all(
     checks: Optional[Mapping[str, Check]] = None,
     is_configured: Optional[Callable[[str], Awaitable[bool]]] = None,
     health=None,
+    alerts=None,
 ) -> Dict[str, Any]:
     """Run each capability's live check. Returns a summary; never raises."""
     if checks is None or is_configured is None:
@@ -93,4 +94,57 @@ async def verify_all(
     if failing:
         logger.warning("[Health] daily connector check found problems: %s",
                        sanitize_for_log(", ".join(failing)))
-    return {"checked": checked, "failing": failing}
+
+    # Having found out, tell somebody.
+    #
+    # Writing the result to a table and a log line and then waiting for an
+    # administrator to open the settings page is how the original failure mode
+    # survived this whole subsystem: the software knew on Tuesday and the town
+    # found out on Monday, from a resident.
+    alerted = await notify(db, health=health, alerts=alerts)
+    return {"checked": checked, "failing": failing, "alerted": alerted}
+
+
+async def notify(db, *, health=None, alerts=None) -> Dict[str, Any]:
+    """Send the digest for whatever the sweep just recorded. Never raises."""
+    try:
+        if health is None:
+            from app.services import connector_health as health
+        if alerts is None:
+            from app.services import connector_alerts as alerts
+
+        snapshot = await health.snapshot(db)
+        return await alerts.dispatch(
+            db,
+            healths=list(snapshot.values()),
+            town=await _town_name(db),
+            settings_url=await _settings_url(db),
+        )
+    except Exception as exc:
+        logger.warning("[Health] could not send connector alerts: %s",
+                       sanitize_for_log(str(exc)[:300]))
+        return {"sent": False, "reason": "error"}
+
+
+async def _town_name(db) -> str:
+    try:
+        from sqlalchemy import select
+
+        from app.models import SystemSettings
+
+        result = await db.execute(select(SystemSettings.township_name).limit(1))
+        return result.scalar_one_or_none() or "Pinpoint 311"
+    except Exception:
+        return "Pinpoint 311"
+
+
+async def _settings_url(db) -> Optional[str]:
+    """The real address of the settings page, not wherever a browser happened
+    to be. A link built from an internal hostname is a link nobody can open."""
+    try:
+        from app.api.system import public_origin
+
+        origin = await public_origin(db)
+        return f"{origin.rstrip('/')}/admin?tab=integration" if origin else None
+    except Exception:
+        return None

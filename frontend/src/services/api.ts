@@ -493,6 +493,17 @@ class ApiClient {
         return this.request<ConnectorHealthReport>('/system/connectors/health');
     }
 
+    /** "I know about this one." Stops the alert emails; leaves the badge
+     *  alone. `days: 0` lifts a mute early. */
+    async muteConnectorAlerts(connector: string, days?: number): Promise<{
+        connector: string; muted_until: string | null; muted_level: string | null;
+    }> {
+        return this.request(`/system/connectors/${encodeURIComponent(connector)}/mute`, {
+            method: 'POST',
+            body: JSON.stringify(days === undefined ? {} : { days }),
+        });
+    }
+
     async updateUser(id: number, data: UserUpdate): Promise<User> {
         return this.request<User>(`/users/${id}`, {
             method: 'PUT',

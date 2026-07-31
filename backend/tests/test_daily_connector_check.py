@@ -42,6 +42,20 @@ class FakeHealth:
     async def record_failure(self, db, connector, error, provider=None):
         self.failures.append((connector, str(error)))
 
+    async def snapshot(self, db):
+        return {}
+
+
+class FakeAlerts:
+    """Stands in for connector_alerts, recording that it was asked to send."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def dispatch(self, db, *, healths, **kwargs):
+        self.calls.append(list(healths))
+        return {"sent": bool(healths)}
+
 
 @pytest.fixture
 def sweep():
@@ -51,8 +65,9 @@ def sweep():
     def run(checks, configured):
         async def is_configured(capability):
             return capability in configured
-        summary = asyncio.run(
-            verify_all(None, checks=checks, is_configured=is_configured, health=health))
+        summary = asyncio.run(verify_all(
+            None, checks=checks, is_configured=is_configured,
+            health=health, alerts=FakeAlerts()))
         return summary, health
 
     return run
@@ -168,3 +183,48 @@ def test_it_is_registered_to_run_daily():
     assert entry["task"] == "app.tasks.connector_checks.verify_connectors"
     assert entry["schedule"] == 60 * 60 * 24
     assert "app.tasks.connector_checks" in celery_app.conf.include
+
+
+# ---------------------------------------------------------------------------
+# Finding out is only half of it
+# ---------------------------------------------------------------------------
+
+def test_the_sweep_hands_its_findings_to_the_alerting():
+    """The original failure mode survived this whole subsystem for a while: the
+    sweep wrote a row and a log line and waited for an administrator to open
+    the settings page, which for a town where setup is finished may be months.
+    """
+    health = FakeHealth()
+    alerts = FakeAlerts()
+
+    async def is_configured(capability):
+        return True
+
+    result = asyncio.run(verify_all(
+        None, checks={"identity": bad("client secret expired")},
+        is_configured=is_configured, health=health, alerts=alerts))
+
+    assert result["failing"] == ["identity"]
+    assert len(alerts.calls) == 1, "the sweep found a failure and told nobody"
+    assert "alerted" in result
+
+
+def test_alerting_that_explodes_cannot_take_the_sweep_with_it():
+    """The health table is the record. Bookkeeping about who was emailed must
+    never turn a completed sweep into a failed one."""
+    class Exploding:
+        async def dispatch(self, db, **kwargs):
+            raise RuntimeError("smtp is on fire")
+
+    health = FakeHealth()
+
+    async def is_configured(capability):
+        return True
+
+    result = asyncio.run(verify_all(
+        None, checks={"maps": ok()}, is_configured=is_configured,
+        health=health, alerts=Exploding()))
+
+    assert result["checked"]["maps"] == "working"
+    assert health.successes == ["maps"]
+    assert result["alerted"]["sent"] is False

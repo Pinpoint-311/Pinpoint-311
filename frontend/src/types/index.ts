@@ -486,6 +486,10 @@ export interface ConnectorHealth {
     consecutive_failures: number;
     total_successes: number;
     total_failures: number;
+    /** When alert emails for this connector resume. Null means nobody has
+     *  muted it. The badge is never affected -- a mute that hid the problem as
+     *  well as the email would be indistinguishable from broken alerting. */
+    alerts_muted_until?: string | null;
 }
 
 export interface ConnectorHealthReport {

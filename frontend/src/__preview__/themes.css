@@ -1,0 +1,229 @@
+/*
+ * Three candidate card systems, scoped so the real components render under each.
+ *
+ * The problem being solved is measurable, not a matter of taste. The current
+ * panel resolves to #413f8b over the page's mid-gradient, and on that surface
+ * `text-white/55` is 4.01:1 and `text-white/45` is 3.18:1 -- both below the
+ * 4.5:1 that WCAG AA asks for body text. The page reads washed out because it
+ * lays translucent white over an already-light indigo.
+ *
+ * Every option below darkens the surface rather than brightening the text,
+ * because the text is already near-white. Each also applies one card treatment
+ * to everything -- the task panel, the item rows, the stat tiles and the
+ * provider/department/category cards -- so the console stops having three
+ * different ideas of what a card is.
+ */
+
+/* ==========================================================================
+   A — Ink. Near-opaque, flat, quiet. The least decorated of the three:
+   depth comes from a hairline and a soft shadow rather than from blur. This is
+   the one that will read best on a cheap office monitor at 100% brightness.
+   ========================================================================== */
+
+.theme-ink {
+    --surface: #14122e;
+    --surface-raised: #1c1a3c;
+    --line: rgba(255, 255, 255, 0.09);
+    --line-strong: rgba(255, 255, 255, 0.16);
+}
+
+.theme-ink .setup-panel,
+.theme-ink .premium-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 1rem;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+.theme-ink .setup-panel::before,
+.theme-ink .premium-card::before {
+    display: none;
+}
+
+.theme-ink .setup-panel:hover,
+.theme-ink .premium-card:hover {
+    border-color: var(--line-strong);
+    transform: none;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+.theme-ink .setup-tile {
+    background: rgba(129, 140, 248, 0.14);
+    border: 1px solid rgba(129, 140, 248, 0.25);
+    border-radius: 0.625rem;
+    box-shadow: none;
+}
+
+/* Nested surfaces step up, not down: a panel inside a panel is lighter, which
+   is how depth reads without shadows. */
+.theme-ink [class*="bg-white/[0.0"] { background: var(--surface-raised) !important; }
+.theme-ink [class*="rounded-3xl"] { border-radius: 1rem !important; }
+.theme-ink [class*="rounded-2xl"] { border-radius: 0.75rem !important; }
+
+/* ==========================================================================
+   B — Slate glass. Keeps the frosted look this console already has, but over a
+   dark base instead of a light one, so the blur adds depth without washing the
+   text out. Closest to today's design of the three.
+   ========================================================================== */
+
+.theme-slate {
+    --surface: rgba(27, 25, 64, 0.88);
+    --surface-raised: rgba(38, 35, 82, 0.85);
+    --line: rgba(165, 180, 252, 0.18);
+    --line-strong: rgba(165, 180, 252, 0.38);
+}
+
+.theme-slate .setup-panel,
+.theme-slate .premium-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 1.25rem;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    box-shadow:
+        0 1px 0 0 rgba(255, 255, 255, 0.06) inset,
+        0 18px 40px -20px rgba(0, 0, 0, 0.75);
+}
+
+.theme-slate .setup-panel:hover,
+.theme-slate .premium-card:hover {
+    border-color: var(--line-strong);
+    transform: translateY(-2px);
+}
+
+.theme-slate .setup-tile {
+    background: linear-gradient(140deg, rgba(129, 140, 248, 0.3), rgba(168, 85, 247, 0.18));
+    border: 1px solid rgba(165, 180, 252, 0.3);
+}
+
+.theme-slate [class*="bg-white/[0.0"] { background: var(--surface-raised) !important; }
+
+/* ==========================================================================
+   C — Rail. Dark like the others, plus a coloured edge that carries state:
+   indigo for the thing you are on, green for done, amber for needs attention.
+   The status is readable from the shape of the page rather than from reading
+   the badges, which is the one thing neither of the others does.
+   ========================================================================== */
+
+.theme-rail {
+    --surface: #0f0e24;
+    --surface-raised: #17153a;
+    --line: rgba(255, 255, 255, 0.08);
+}
+
+.theme-rail .setup-panel,
+.theme-rail .premium-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid rgba(129, 140, 248, 0.85);
+    border-radius: 0.75rem;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.theme-rail .setup-panel::before,
+.theme-rail .premium-card::before {
+    display: none;
+}
+
+.theme-rail .setup-panel:hover,
+.theme-rail .premium-card:hover {
+    transform: none;
+    border-left-color: rgba(165, 180, 252, 1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.theme-rail .setup-tile {
+    background: rgba(129, 140, 248, 0.12);
+    border: 1px solid rgba(129, 140, 248, 0.2);
+    border-radius: 0.5rem;
+    box-shadow: none;
+}
+
+.theme-rail [class*="bg-white/[0.0"] {
+    background: var(--surface-raised) !important;
+    border-radius: 0.5rem !important;
+}
+.theme-rail [class*="rounded-3xl"],
+.theme-rail [class*="rounded-2xl"] { border-radius: 0.625rem !important; }
+
+/* ==========================================================================
+   Shared: lift the two text weights that fail contrast today.
+   Applied in all three so the comparison is about the surface, not the type.
+   ========================================================================== */
+
+.theme-ink .text-white\/45,
+.theme-slate .text-white\/45,
+.theme-rail .text-white\/45 { color: rgba(255, 255, 255, 0.62) !important; }
+
+.theme-ink .text-white\/50,
+.theme-slate .text-white\/50,
+.theme-rail .text-white\/50 { color: rgba(255, 255, 255, 0.66) !important; }
+
+.theme-ink .text-white\/55,
+.theme-slate .text-white\/55,
+.theme-rail .text-white\/55 { color: rgba(255, 255, 255, 0.7) !important; }
+
+.theme-ink .text-white\/40,
+.theme-slate .text-white\/40,
+.theme-rail .text-white\/40 { color: rgba(255, 255, 255, 0.58) !important; }
+
+.theme-ink .text-white\/35,
+.theme-slate .text-white\/35,
+.theme-rail .text-white\/35 { color: rgba(255, 255, 255, 0.55) !important; }
+
+
+/* ==========================================================================
+   The cards that are not `.premium-card`.
+ *
+ * Departments, service categories and the stat tiles are hand-rolled from
+ * inline gradient utilities rather than a shared class, which is the
+ * inconsistency this exercise is meant to end -- the themes above could not
+ * reach them, and in the first render they stayed light while everything
+ * around them went dark.
+ *
+ * Matched here by their utility classes so the comparison is honest. If one of
+ * these options is chosen, the real change is a single card class in index.css
+ * that all three pages use, not a pile of selectors like this.
+   ========================================================================== */
+
+.theme-ink [class*="from-white/[0.08]"] {
+    background: var(--surface) !important;
+    border-color: var(--line) !important;
+    backdrop-filter: none !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4) !important;
+}
+.theme-slate [class*="from-white/[0.08]"] {
+    background: var(--surface) !important;
+    border-color: var(--line) !important;
+}
+.theme-rail [class*="from-white/[0.08]"] {
+    background: var(--surface) !important;
+    border-color: var(--line) !important;
+    border-left: 3px solid rgba(129, 140, 248, 0.85) !important;
+    backdrop-filter: none !important;
+}
+
+/* The glow bar on top of those cards, which only suits the glass option. */
+.theme-ink [class*="via-primary-400/40"],
+.theme-rail [class*="via-primary-400/40"] { display: none !important; }
+
+/* Stat tiles keep their hue but lose the brightness, so a row of them does not
+   out-shout the content underneath. */
+.theme-ink [class*="from-blue-500/10"],
+.theme-ink [class*="from-emerald-500/10"],
+.theme-ink [class*="from-amber-500/10"],
+.theme-rail [class*="from-blue-500/10"],
+.theme-rail [class*="from-emerald-500/10"],
+.theme-rail [class*="from-amber-500/10"] {
+    background: var(--surface) !important;
+    box-shadow: none !important;
+}
+.theme-slate [class*="from-blue-500/10"],
+.theme-slate [class*="from-emerald-500/10"],
+.theme-slate [class*="from-amber-500/10"] {
+    background: var(--surface) !important;
+}

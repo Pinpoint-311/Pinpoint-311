@@ -14,13 +14,15 @@ import { createRoot } from 'react-dom/client';
  * by side here.
  */
 import '../index.css';
+import './themes.css';
 
 import SetupWizard from '../components/SetupWizard';
+import ServiceProviders from '../components/ServiceProviders';
 import { DepartmentsTab, ServiceCategoriesTab } from '../pages/AdminConsole';
 
 // Canned API so the components render exactly as they would with a real one.
 const CATALOGS: Record<string, any> = {
-    identity: { current_provider: 'entra', configured: { entra: false }, providers: [
+    identity: { current_provider: 'entra', configured: { entra: true }, providers: [
         { provider: 'entra', name: 'Microsoft Entra ID', credential_fields: [
             { key: 'ENTRA_TENANT_ID', label: 'Directory (tenant) ID', secret: false },
             { key: 'ENTRA_CLIENT_ID', label: 'Application (client) ID', secret: false },
@@ -28,18 +30,43 @@ const CATALOGS: Record<string, any> = {
     maps: { current_provider: 'google', configured: { google: true }, providers: [
         { provider: 'google', name: 'Google Maps', credential_fields: [
             { key: 'GOOGLE_MAPS_API_KEY', label: 'Google Maps API key', secret: true }]}]},
-    ai: { current_provider: 'azure', configured: { azure: false }, providers: [
+    ai: { current_provider: 'azure', configured: { azure: true }, current_model: 'gpt-4o', providers: [
         { provider: 'azure', name: 'Azure OpenAI', credential_fields: [
             { key: 'AZURE_OPENAI_ENDPOINT', label: 'Endpoint', secret: false },
             { key: 'AZURE_OPENAI_API_KEY', label: 'API key', secret: true }]}]},
-    translation: { current_provider: 'azure', configured: { azure: false }, providers: [
+    translation: { current_provider: 'azure', configured: { azure: true }, providers: [
         { provider: 'azure', name: 'Azure Translator', credential_fields: [
             { key: 'AZURE_TRANSLATOR_KEY', label: 'Translator key', secret: true },
             { key: 'AZURE_TRANSLATOR_REGION', label: 'Region', secret: false }]}]},
-    kms: { current_provider: 'azure', configured: { azure: false }, providers: [
+    kms: { current_provider: 'azure', configured: { azure: true }, providers: [
         { provider: 'azure', name: 'Azure Key Vault', credential_fields: [
             { key: 'AZURE_KEYVAULT_URL', label: 'Vault URL', secret: false }]}]},
 };
+Object.assign(CATALOGS, {
+    email: { current_provider: 'acs', configured: { acs: true }, providers: [
+        { provider: 'acs', name: 'Azure Communication Services', credential_fields: [
+            { key: 'ACS_CONNECTION_STRING', label: 'Connection string', secret: true }]}]},
+    sms: { current_provider: 'acs', configured: { acs: false }, providers: [
+        { provider: 'acs', name: 'Azure Communication Services', credential_fields: [
+            { key: 'ACS_SMS_FROM', label: 'From number', secret: false }]}]},
+    redaction: { current_provider: 'local', configured: { local: true }, providers: [
+        { provider: 'local', name: 'On this server', credential_fields: [] }]},
+});
+// Deliberately mixed: a page where everything is green is the easy case, and
+// not the one worth looking at.
+const ago = (mins: number) => new Date(Date.now() - mins * 60000).toISOString();
+const HEALTH = { connectors: [
+    { connector: 'identity', status: 'working', last_success_at: ago(360), consecutive_failures: 0 },
+    { connector: 'maps', status: 'working', last_success_at: ago(360), consecutive_failures: 0 },
+    { connector: 'ai', status: 'down', last_error_at: ago(20), consecutive_failures: 4,
+      last_error: '401 — the API key was rejected by Azure OpenAI' },
+    { connector: 'translation', status: 'failing', last_error_at: ago(90), consecutive_failures: 1,
+      last_error: 'Timed out talking to Azure Translator',
+      alerts_muted_until: new Date(Date.now() + 5 * 86400000).toISOString() },
+    { connector: 'email', status: 'unknown', consecutive_failures: 0 },
+    { connector: 'kms', status: 'working', last_success_at: ago(360), consecutive_failures: 0 },
+    { connector: 'redaction', status: 'working', last_success_at: ago(360), consecutive_failures: 0 },
+] };
 const origFetch = window.fetch.bind(window);
 window.fetch = async (input: any, init?: any) => {
     const url = String(typeof input === 'string' ? input : input.url);
@@ -47,6 +74,7 @@ window.fetch = async (input: any, init?: any) => {
     const m = url.match(/\/system\/([a-z]+)\/catalog/);
     if (m && CATALOGS[m[1]]) return json(CATALOGS[m[1]]);
     if (url.includes('cloud-identity')) return json({ attached: false, provider: null, identity: null, skippable_keys: [] });
+    if (url.includes('connectors/health')) return json(HEALTH);
     if (url.includes('/system/')) return json({});
     return origFetch(input, init);
 };
@@ -85,7 +113,7 @@ function Section({ id, title, children }: any) {
 function App() {
     return (
         <div style={{ background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #1e1b4b 100%)', minHeight: '100vh' }}>
-            <Section id="wizard" title="Setup guide">
+            <Section id="wizard" title="Current (for comparison)">
                 <SetupWizard
                     cloud="azure" idp="entra" maps="google"
                     aiProvider="azure" emailProvider="acs" smsProvider="acs" redactionProvider="azure"
@@ -102,6 +130,10 @@ function App() {
                         </div>
                     )}
                 />
+            </Section>
+
+            <Section id="spotlight" title="Service providers — Spotlight, built for real">
+                <ServiceProviders />
             </Section>
 
             <Section id="departments" title="Departments">

@@ -267,7 +267,7 @@ function BubblyServiceCard({ service, onEdit, onDelete }: {
 
     return (
         <div ref={setNodeRef} style={style} className={`group ${isDragging ? 'relative z-50' : ''}`}>
-            <div className={`relative p-6 rounded-3xl bg-gradient-to-br from-white/[0.08] via-white/[0.03] to-indigo-950/30 border border-white/15 backdrop-blur-2xl shadow-[0_10px_30px_rgba(0,0,0,0.3)] hover:shadow-[0_20px_50px_rgba(99,102,241,0.2)] hover:border-primary-400/50 hover:-translate-y-1 transition-all duration-300 ${isDragging ? 'ring-2 ring-primary-500 shadow-2xl scale-[1.03]' : ''}`}>
+            <div className={`surface-card relative p-6 rounded-3xl bg-gradient-to-br from-white/[0.08] via-white/[0.03] to-indigo-950/30 border border-white/15 backdrop-blur-2xl shadow-[0_10px_30px_rgba(0,0,0,0.3)] hover:shadow-[0_20px_50px_rgba(99,102,241,0.2)] hover:border-primary-400/50 hover:-translate-y-1 transition-all duration-300 ${isDragging ? 'ring-2 ring-primary-500 shadow-2xl scale-[1.03]' : ''}`}>
                 {/* Glow accent bar on top */}
                 <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-primary-400/40 to-transparent rounded-t-3xl" />
 
@@ -544,7 +544,7 @@ export function DepartmentsTab({
                                          * anyone using a keyboard and made the
                                          * two pages read as unrelated. */
                                         <div key={dept.id} className="group">
-                                            <div className="relative p-6 rounded-3xl bg-gradient-to-br from-white/[0.08] via-white/[0.03] to-indigo-950/30 border border-white/15 backdrop-blur-2xl shadow-[0_10px_30px_rgba(0,0,0,0.3)] hover:shadow-[0_20px_50px_rgba(99,102,241,0.2)] hover:border-primary-400/50 hover:-translate-y-1 transition-all duration-300">
+                                            <div className="surface-card relative p-6 rounded-3xl bg-gradient-to-br from-white/[0.08] via-white/[0.03] to-indigo-950/30 border border-white/15 backdrop-blur-2xl shadow-[0_10px_30px_rgba(0,0,0,0.3)] hover:shadow-[0_20px_50px_rgba(99,102,241,0.2)] hover:border-primary-400/50 hover:-translate-y-1 transition-all duration-300">
                                                 <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-primary-400/40 to-transparent rounded-t-3xl" />
 
                                                 <div className="flex items-center gap-3 mb-4">
