@@ -91,16 +91,54 @@ def test_getting_worse_is_announced_again():
                     alerted_at=NOW - timedelta(hours=1), now=NOW) == "escalated"
 
 
-def test_the_same_problem_tomorrow_is_not_mentioned_again():
-    """This is the whole reason the state columns exist. Daily repetition of an
-    unchanged fact is how an alert channel becomes a folder."""
+def test_something_still_broken_tomorrow_is_mentioned_again():
+    """One interval for both levels was wrong in the direction that matters.
+
+    Under a flat weekly reminder, staff sign-in could be completely down on the
+    Monday and not raised again until the following Monday. A week is a long
+    time for something to be broken, and the mail stops the moment it recovers.
+    """
     assert A.decide(level=A.BROKEN, previous_level=A.BROKEN,
+                    alerted_at=NOW - timedelta(days=1), now=NOW) == "reminder"
+
+
+def test_something_broken_is_not_mentioned_twice_in_one_day():
+    """Daily, not per sweep. A manual recheck must not send a second copy."""
+    assert A.decide(level=A.BROKEN, previous_level=A.BROKEN,
+                    alerted_at=NOW - timedelta(hours=6), now=NOW) is None
+
+
+def test_something_merely_at_risk_does_not_nag_daily():
+    """Not yet an outage, so it does not earn an outage's cadence."""
+    assert A.decide(level=A.AT_RISK, previous_level=A.AT_RISK,
                     alerted_at=NOW - timedelta(days=1), now=NOW) is None
 
 
-def test_a_problem_still_there_a_week_later_is_mentioned_again():
-    assert A.decide(level=A.BROKEN, previous_level=A.BROKEN,
-                    alerted_at=NOW - timedelta(days=7), now=NOW) == "reminder"
+def test_but_three_days_of_intermittent_failure_is_no_longer_a_blip():
+    assert A.decide(level=A.AT_RISK, previous_level=A.AT_RISK,
+                    alerted_at=NOW - timedelta(days=3), now=NOW) == "reminder"
+
+
+def test_broken_is_chased_harder_than_at_risk():
+    """The property, rather than the two numbers: whatever the intervals are,
+    an outage must never be raised less often than a warning."""
+    assert A.REMIND_AFTER[A.BROKEN] < A.REMIND_AFTER[A.AT_RISK]
+
+
+def test_a_level_with_no_interval_configured_errs_towards_saying_something():
+    """The guard is for a real future mistake: adding a third severity to RANK
+    and forgetting to give it a cadence. Silence would be the wrong default --
+    a connector could sit in that state forever, mentioned exactly once."""
+    assert A.decide(level=A.AT_RISK, previous_level=A.AT_RISK,
+                    alerted_at=NOW - timedelta(days=1), now=NOW,
+                    remind_after={A.BROKEN: timedelta(days=1)}) == "reminder"
+
+
+def test_every_level_that_can_be_alerted_on_has_an_interval():
+    """Which is what stops that guard from ever being needed."""
+    for level in A.RANK:
+        if level != A.HEALTHY:
+            assert level in A.REMIND_AFTER, f"{level} would fall back to a default"
 
 
 def test_partial_improvement_is_not_worth_an_email():
@@ -137,7 +175,7 @@ def test_only_the_connectors_that_changed_are_in_the_plan():
     healths = [
         FakeHealth("email", "working"),
         FakeHealth("identity", "down"),
-        FakeHealth("sms", "down", alerted_level=A.BROKEN, alerted_at=NOW - timedelta(days=1)),
+        FakeHealth("sms", "down", alerted_level=A.BROKEN, alerted_at=NOW - timedelta(hours=2)),
     ]
     plan = A.plan(healths, now=NOW)
     assert [a.connector for a in plan] == ["identity"]
@@ -382,6 +420,6 @@ def test_the_recorded_state_is_what_silences_tomorrow():
     broken = A.Alert(connector="ai", level=A.BROKEN, kind="new", summary="")
     level, at = A.next_state(broken, now=NOW)
     assert A.decide(level=A.BROKEN, previous_level=level, alerted_at=at,
-                    now=NOW + timedelta(days=1)) is None
+                    now=NOW + timedelta(hours=2)) is None
     assert A.decide(level=A.BROKEN, previous_level=level, alerted_at=at,
-                    now=NOW + timedelta(days=8)) == "reminder"
+                    now=NOW + timedelta(days=1)) == "reminder"

@@ -10,9 +10,10 @@ Monday morning, and nobody aware that the software knew on Tuesday.
 Two levels, because the interesting one is the earlier one:
 
     broken    three or more failures in a row. It is not working now.
-    at risk   something failed, but not consistently -- or nothing has
-              succeeded in over a week, so the last evidence we have is old
-              enough that a key could have been revoked without us noticing.
+    at risk   something failed, but not consistently -- or the daily sweep has
+              gone several days without recording a success, so the last
+              evidence we have is old enough that a key could have been revoked
+              without us noticing.
 
 "At risk" is the whole point of sending anything. A clerk told on the first
 failed call has days to renew a secret; a clerk told when sign-in is fully down
@@ -24,7 +25,10 @@ What this deliberately does not do
 *Not one email per connector per day.* An alert that arrives every morning
 whether or not anything changed is filtered into a folder within a fortnight,
 and then the one that mattered is in the folder too. Mail goes out when a
-connector's level *changes*, and at most once a week while it stays there.
+connector's level *changes*, and after that on a cadence set by how bad it is:
+daily while something is broken, every third day while something is at risk.
+One digest covers all of them, so a cloud outage that takes four connectors
+down is one message and not four.
 
 *Not an alert for things that are switched off.* The sweep does not test what
 is not configured, so nothing unconfigured reaches this module.
@@ -54,9 +58,22 @@ HEALTHY = "healthy"
 RANK = {HEALTHY: 0, AT_RISK: 1, BROKEN: 2}
 
 # How long a connector may sit in the same state before it is mentioned again.
-# Long enough not to become background noise, short enough that something
-# broken in the week before a council meeting is raised more than once.
-REMIND_AFTER = timedelta(days=7)
+#
+# Per level, because one interval for both was wrong in the direction that
+# matters. A single weekly reminder meant staff sign-in could be completely
+# down on the Monday and not mentioned again until the following Monday --
+# which is not a quiet mailbox, it is a week of an outage nobody was nudged
+# about.
+#
+# Something broken is worth a line every day: the sweep runs daily, the mail
+# stops the moment it recovers, and a clerk who is already dealing with it has
+# a genuine reason to see it until they are not. Something at risk is not yet
+# an outage and does not earn that, but three days of a connector failing
+# intermittently is no longer a blip either.
+REMIND_AFTER: Dict[str, timedelta] = {
+    BROKEN: timedelta(days=1),
+    AT_RISK: timedelta(days=3),
+}
 
 # What a clerk should call each connector. The internal names are fine in a
 # table and wrong in a sentence: "sms is down" is not something to forward to
@@ -88,7 +105,8 @@ def alert_level(status: str) -> str:
     """Map a health status onto what, if anything, is worth saying.
 
     `stale` counts as at risk rather than healthy on purpose. It means no
-    successful call in over a week -- so the connector is not known to be
+    successful call across several consecutive daily sweeps -- so the connector
+    is not known to be
     broken, and it is also not known to work, and the whole reason this
     subsystem exists is that those two are not the same thing.
     """
@@ -120,7 +138,7 @@ def decide(
     previous_level: Optional[str],
     alerted_at: Optional[datetime],
     now: datetime,
-    remind_after: timedelta = REMIND_AFTER,
+    remind_after: Dict[str, timedelta] = REMIND_AFTER,
 ) -> Optional[str]:
     """Whether to send anything about one connector, and what kind of thing.
 
@@ -148,14 +166,18 @@ def decide(
         return "reminder"
     if alerted_at.tzinfo is None:
         alerted_at = alerted_at.replace(tzinfo=timezone.utc)
-    return "reminder" if (now - alerted_at) >= remind_after else None
+    # An unrecognised level falls back to the shorter interval. Erring towards
+    # saying something is the right direction for a state we do not have a rule
+    # for.
+    gap = remind_after.get(level, REMIND_AFTER[BROKEN])
+    return "reminder" if (now - alerted_at) >= gap else None
 
 
 def plan(
     healths: Iterable[Any],
     *,
     now: Optional[datetime] = None,
-    remind_after: timedelta = REMIND_AFTER,
+    remind_after: Dict[str, timedelta] = REMIND_AFTER,
 ) -> List[Alert]:
     """Work out what to send, from health rows that carry their own alert state.
 
@@ -328,7 +350,7 @@ async def dispatch(
     town: Optional[str] = None,
     settings_url: Optional[str] = None,
     now: Optional[datetime] = None,
-    remind_after: timedelta = REMIND_AFTER,
+    remind_after: Dict[str, timedelta] = REMIND_AFTER,
 ) -> Dict[str, Any]:
     """Send one digest, then remember what was said. Never raises.
 
@@ -393,7 +415,8 @@ def next_state(alert: Alert, *, now: datetime) -> tuple:
     A recovery clears the state rather than recording "healthy". If it stored a
     level instead, the connector's next failure would be compared against a
     stale entry and reported as a reminder -- so the mail saying it had broken
-    again would arrive only if it stayed broken for a week, or not at all.
+    again would arrive a day late at best, and not at all if it recovered and
+    broke again inside the reminder window.
     """
     if alert.kind == "recovered":
         return (None, None)
