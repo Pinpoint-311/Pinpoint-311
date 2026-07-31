@@ -242,8 +242,6 @@ def test_every_provider_records_the_traps_it_has(declarations):
     it. Whether that evidence is alarming is a separate question, answered by
     `test_warnings_are_rare_enough_to_read`.
     """
-    import re
-
     source = CONTENT.read_text()
     calls = list(re.finditer(r"defineSteps\(\s*'([a-z]+)'\s*,\s*'([a-z0-9]+)'", source))
     missing = []

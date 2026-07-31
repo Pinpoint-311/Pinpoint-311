@@ -9,7 +9,6 @@ somebody will put in front of a council.
 
 from datetime import timedelta
 
-import pytest
 
 from app.services import uptime as U
 
@@ -79,7 +78,7 @@ class TestTheStatusMapsThatDisagreed:
         for path in root.rglob("*.py"):
             if path.name == "uptime.py":
                 continue
-            for m in re.finditer(r'in \[\s*"healthy",\s*"configured"', path.read_text()):
+            if re.search(r'in \[\s*"healthy",\s*"configured"', path.read_text()):
                 offenders.append(str(path.relative_to(root)))
         assert not offenders, f"a second healthy-status list has appeared: {offenders}"
 

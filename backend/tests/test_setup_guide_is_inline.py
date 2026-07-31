@@ -460,5 +460,4 @@ def test_the_silent_failures_kept_their_warning():
     ):
         assert phrase in source, f"a silent-failure warning was demoted: {phrase}"
         i = source.index(phrase)
-        line_start = source.rfind("\n", 0, source.rfind("trouble:", 0, i) if "trouble:" in source[:i] else 0)
         assert "trouble:" in source[max(0, i - 400):i], f"{phrase} is no longer a warning"

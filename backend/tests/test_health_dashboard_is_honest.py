@@ -8,7 +8,6 @@ stopped on any other topology.
 
 from pathlib import Path
 
-import pytest
 
 SOURCE = (Path(__file__).resolve().parents[1] / "app/api/system.py").read_text()
 DASHBOARD = SOURCE[SOURCE.index('@router.get("/health-dashboard")'):]

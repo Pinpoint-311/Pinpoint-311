@@ -27,8 +27,8 @@ Pure. The samples are passed in.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from datetime import timedelta
+from typing import Any, Dict
 
 # How often the background sampler runs. The expected-sample count is derived
 # from this, so the two cannot drift apart without the coverage figure noticing.
