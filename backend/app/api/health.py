@@ -508,7 +508,9 @@ async def get_uptime_stats(
     Get aggregated uptime statistics (24h, 7d, 30d percentages).
     """
     from sqlalchemy import func as sql_func
-    
+
+    from app.services.uptime import describe, summarise
+
     stats = {}
     periods = {"24h": 24, "7d": 168, "30d": 720}
     
@@ -532,12 +534,16 @@ async def get_uptime_stats(
         for service_name, total, healthy_count in rows:
             if service_name not in stats:
                 stats[service_name] = {}
-            uptime_pct = (healthy_count / total * 100) if total > 0 else 0
-            stats[service_name][period_name] = {
-                "uptime_percent": round(uptime_pct, 2),
-                "checks": total,
-                "healthy": healthy_count or 0
-            }
+            # Denominator is time, not rows.
+            #
+            # The sampler runs inside the backend, so a backend outage produces
+            # no rows rather than rows saying "down" -- and healthy/total over
+            # the rows that exist returns a *higher* figure the worse the
+            # outage was. Twelve samples in a day is about an hour of uptime and
+            # the old arithmetic called it 100%.
+            summary = summarise(total=total, healthy=healthy_count or 0, hours=hours)
+            summary["summary"] = describe(summary)
+            stats[service_name][period_name] = summary
     
     return {"services": stats}
 
@@ -583,13 +589,15 @@ async def trigger_uptime_check(
         ("translation_api", check_translation_api),
     ]
     
+    from app.services.uptime import uptime_status
+
     results = {}
     for service_name, check_func in services_to_check:
         start = time.time()
         try:
             check_result = await check_func(db)
             response_time = int((time.time() - start) * 1000)
-            status = "healthy" if check_result["status"] in ["healthy", "configured", "fallback"] else "down"
+            status = uptime_status(check_result["status"])
             error = None if status == "healthy" else check_result.get("message")
         except Exception as e:
             response_time = int((time.time() - start) * 1000)

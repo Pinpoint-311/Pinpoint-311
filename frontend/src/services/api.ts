@@ -1650,11 +1650,29 @@ export interface UptimeHistory {
     }>>;
 }
 
+/** One service over one period.
+ *
+ * `reliable` is false when too little of the period was sampled to draw a
+ * conclusion. The sampler runs inside the backend, so a backend outage leaves
+ * a hole rather than a run of "down" rows -- and a percentage computed over
+ * the rows that exist gets *higher* the worse the outage was. Never print
+ * `uptime_percent` as a headline without checking this. */
+export interface UptimePeriod {
+    uptime_percent: number;
+    checks: number;
+    healthy: number;
+    expected_checks?: number;
+    missed_checks?: number;
+    coverage_percent?: number;
+    reliable?: boolean;
+    summary?: string;
+}
+
 export interface UptimeStats {
     services: Record<string, {
-        '24h'?: { uptime_percent: number; checks: number; healthy: number };
-        '7d'?: { uptime_percent: number; checks: number; healthy: number };
-        '30d'?: { uptime_percent: number; checks: number; healthy: number };
+        '24h'?: UptimePeriod;
+        '7d'?: UptimePeriod;
+        '30d'?: UptimePeriod;
     }>;
 }
 

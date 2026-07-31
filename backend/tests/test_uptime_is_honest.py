@@ -1,0 +1,95 @@
+"""An in-process sampler cannot see its own outage, so it must say so.
+
+The failure mode is specific and quiet: the sampler runs inside the backend, so
+a backend outage produces *no rows* rather than rows saying "down". Dividing
+healthy samples by total samples then returns a higher number the worse the
+outage was, and 100% over a day the service spent mostly dead is a figure
+somebody will put in front of a council.
+"""
+
+from datetime import timedelta
+
+import pytest
+
+from app.services import uptime as U
+
+
+class TestTheOutageItCannotSee:
+    def test_a_full_day_of_samples_is_trustworthy(self):
+        s = U.summarise(total=288, healthy=288, hours=24)
+        assert s["uptime_percent"] == 100.0
+        assert s["reliable"] is True
+        assert s["missed_checks"] == 0
+
+    def test_an_outage_shows_up_as_missing_checks_not_as_downtime(self):
+        """Twelve samples in a day means the server was up for about an hour of
+        it. The naive figure for that is 100%."""
+        s = U.summarise(total=12, healthy=12, hours=24)
+        assert s["uptime_percent"] == 100.0      # what the old maths returned
+        assert s["reliable"] is False            # and what stops it being quoted
+        assert s["missed_checks"] == 276
+        assert s["coverage_percent"] < 5
+
+    def test_the_sentence_says_the_server_was_probably_down(self):
+        text = U.describe(U.summarise(total=12, healthy=12, hours=24))
+        assert "expected" in text
+        assert "server itself was down" in text
+
+    def test_a_service_that_really_was_down_still_reads_as_down(self):
+        """The caveat must not swallow a genuine failure."""
+        s = U.summarise(total=288, healthy=144, hours=24)
+        assert s["uptime_percent"] == 50.0
+        assert s["reliable"] is True
+
+    def test_nothing_measured_claims_nothing(self):
+        s = U.summarise(total=0, healthy=0, hours=24)
+        assert s["reliable"] is False
+        assert U.describe(s) == "Not measured over this period."
+
+    def test_coverage_cannot_exceed_the_period(self):
+        """Two app replicas each run their own sampler, so the row count can
+        exceed what one sampler would produce. That is not 200% coverage."""
+        s = U.summarise(total=600, healthy=600, hours=24)
+        assert s["coverage_percent"] == 100.0
+
+
+class TestTheStatusMapsThatDisagreed:
+    def test_a_switched_off_service_is_not_downtime(self):
+        """The background sampler counted "disabled" as healthy and the manual
+        "Check now" button did not, so pressing the button on the health page
+        recorded a switched-off service as down and dented its uptime. Looking
+        at the number made the number worse."""
+        assert U.uptime_status("disabled") == "healthy"
+
+    def test_the_other_benign_outcomes_agree_too(self):
+        for status in ("healthy", "configured", "fallback"):
+            assert U.uptime_status(status) == "healthy"
+
+    def test_a_real_failure_is_still_down(self):
+        for status in ("down", "error", "unhealthy", "", "misconfigured"):
+            assert U.uptime_status(status) == "down"
+
+    def test_there_is_only_one_such_map_left(self):
+        """Two lists in two files is how they diverged in the first place."""
+        import re
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1] / "app"
+        offenders = []
+        for path in root.rglob("*.py"):
+            if path.name == "uptime.py":
+                continue
+            for m in re.finditer(r'in \[\s*"healthy",\s*"configured"', path.read_text()):
+                offenders.append(str(path.relative_to(root)))
+        assert not offenders, f"a second healthy-status list has appeared: {offenders}"
+
+
+class TestExpectedSamples:
+    def test_derived_from_the_interval_rather_than_hardcoded(self):
+        assert U.expected_samples(24, timedelta(minutes=5)) == 288
+        assert U.expected_samples(1, timedelta(minutes=5)) == 12
+        assert U.expected_samples(24, timedelta(minutes=1)) == 1440
+
+    def test_a_nonsense_interval_does_not_divide_by_zero(self):
+        assert U.expected_samples(24, timedelta(0)) == 0
+        assert U.summarise(total=5, healthy=5, hours=24, interval=timedelta(0))["coverage_percent"] == 0.0

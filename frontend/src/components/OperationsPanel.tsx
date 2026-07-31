@@ -368,11 +368,27 @@ export default function OperationsPanel() {
                                     {(['24h', '7d', '30d'] as const).map(period => {
                                         const stats = periods[period];
                                         const pct = stats?.uptime_percent ?? 0;
-                                        const color = pct >= 99 ? 'text-green-400' : pct >= 95 ? 'text-yellow-400' : 'text-red-400';
+                                        /* A figure we did not watch enough of
+                                           the period to stand behind is shown
+                                           greyed with a dash, not in green.
+                                           100% across 12 of an expected 288
+                                           checks means the server spent the day
+                                           down -- printing that in green is the
+                                           worst thing this panel could do. */
+                                        const trustworthy = stats?.reliable !== false && (stats?.checks ?? 0) > 0;
+                                        const color = !trustworthy ? 'text-white/45'
+                                            : pct >= 99 ? 'text-green-400' : pct >= 95 ? 'text-yellow-400' : 'text-red-400';
                                         return (
-                                            <div key={period} className="text-center">
-                                                <p className={`text-lg font-bold ${color}`}>{pct.toFixed(1)}%</p>
+                                            <div key={period} className="text-center" title={stats?.summary}>
+                                                <p className={`text-lg font-bold ${color}`}>
+                                                    {trustworthy ? `${pct.toFixed(1)}%` : '—'}
+                                                </p>
                                                 <p className="text-gray-500 text-xs">{period}</p>
+                                                {!trustworthy && (stats?.checks ?? 0) > 0 && (
+                                                    <p className="text-amber-300/80 text-[10px] leading-tight mt-0.5">
+                                                        only {stats?.checks} of {stats?.expected_checks} checks
+                                                    </p>
+                                                )}
                                             </div>
                                         );
                                     })}
@@ -390,6 +406,14 @@ export default function OperationsPanel() {
                 {uptimeHistory && Object.keys(uptimeHistory.services).length > 0 && (
                     <div className="space-y-3">
                         <p className="text-gray-400 text-xs">Last 48 hours (newest → oldest)</p>
+                        {/* Not the backend's own uptime, and it cannot be:
+                            the sampler runs inside the backend. Saying which
+                            it is beats a number a council report will read as
+                            the other one. */}
+                        <p className="text-white/45 text-[11px] -mt-2">
+                            Whether each dependency answered, sampled every five minutes while this
+                            server was running. Gaps are periods nothing was recorded.
+                        </p>
                         {Object.entries(uptimeHistory.services).map(([serviceName, checks]) => (
                             <div key={serviceName} className="flex items-center gap-2">
                                 <span className="text-white text-sm w-28 truncate capitalize">{serviceName.replace(/_/g, ' ')}</span>

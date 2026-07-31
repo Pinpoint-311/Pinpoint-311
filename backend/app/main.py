@@ -210,12 +210,14 @@ async def lifespan(app: FastAPI):
                         ("translation_api", check_translation_api),
                     ]
                     
+                    from app.services.uptime import uptime_status
+
                     for service_name, check_func in services_to_check:
                         start = time.time()
                         try:
                             check_result = await check_func(db)
                             response_time = int((time.time() - start) * 1000)
-                            status = "healthy" if check_result["status"] in ["healthy", "configured", "fallback", "disabled"] else "down"
+                            status = uptime_status(check_result["status"])
                             error = None if status == "healthy" else check_result.get("message")
                         except Exception as e:
                             response_time = int((time.time() - start) * 1000)
