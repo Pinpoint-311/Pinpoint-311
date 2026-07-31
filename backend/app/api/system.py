@@ -981,6 +981,43 @@ class CloudProfileRequest(BaseModel):
     apply_identity: bool = False
 
 
+@router.get("/providers/status")
+async def get_provider_status(_: User = Depends(get_current_admin)):
+    """Which provider each capability is on, and which providers are set up.
+
+    One request instead of eight. The setup guide's task list needs to know
+    whether each item is finished before anything is opened, and the only
+    honest answer is per *provider* rather than per capability.
+
+    That distinction is the bug this exists to fix. The page was deciding from
+    the stored secrets, where "maps is configured" meant any map provider's key
+    was present -- so a town that had set up Google Maps and then switched to
+    Esri saw a green tick against a provider with no credentials at all, and the
+    guide skipped straight past the thing it most needed to ask for.
+    """
+    from app.core.sanitize import sanitize_for_log
+    from app.services.secret_manager import get_secret
+
+    out: Dict[str, Any] = {}
+    for capability, select_key in _PROVIDER_SELECT_KEY.items():
+        try:
+
+            providers = await providers_for(capability)
+            current = ((await get_secret(select_key)) or "").strip().lower()
+            out[capability] = {
+                "current_provider": current or None,
+                "configured": await _configured_map(providers),
+            }
+        except Exception as exc:
+            # One capability failing to report must not blank the other seven.
+            # An absent entry reads as "unknown", which the page shows as
+            # unfinished -- the safe direction, since the cost is asking about
+            # something already done rather than skipping something that isn't.
+            logger.warning("provider status failed for %s: %s",
+                           sanitize_for_log(capability), sanitize_for_log(str(exc)))
+    return out
+
+
 @router.get("/providers/cloud-identity")
 async def cloud_identity(_: User = Depends(get_current_admin)):
     """Whether this server already has an identity on its cloud.
