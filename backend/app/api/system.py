@@ -36,7 +36,7 @@ _cost_limiter = Limiter(key_func=get_remote_address)
 @router.get("/settings", response_model=SystemSettingsResponse)
 async def get_settings(db: AsyncSession = Depends(get_db)):
     """Get system settings (public - for branding)"""
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
     if not settings:
         # Create default settings if none exist
@@ -69,7 +69,7 @@ async def public_origin(db) -> Optional[str]:
 
         from app.models import SystemSettings
 
-        row = (await db.execute(select(SystemSettings).limit(1))).scalar_one_or_none()
+        row = (await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))).scalar_one_or_none()
         if row and (row.custom_domain or "").strip():
             domain = row.custom_domain.strip()
     except Exception:
@@ -828,10 +828,33 @@ async def _test_delivery(capability: str) -> dict:
     """Email and text messages, without sending anything to a resident."""
     import httpx
 
+    from app.services.delivery_providers import (
+        EMAIL_CATALOG, SMS_CATALOG, describe_missing, required_keys,
+    )
     from app.services.secret_manager import get_secret
+
+    async def _nothing_saved(catalog: dict, provider: str) -> Optional[dict]:
+        """"You have not filled this in" beats any statement about the vendor.
+
+        The fallthroughs at the ends of both halves of this function reported on
+        the *provider* -- "there is no way to check http without sending a real
+        text message", "ACS has no check that avoids sending a real message" --
+        without first asking whether the town had entered anything. A clerk who
+        had never touched text messages was told their gateway was untestable,
+        which is true of the gateway and irrelevant to them: what they needed to
+        know is that the boxes are empty.
+        """
+        entry = catalog.get(provider)
+        missing = [k for k in required_keys(entry) if not (await get_secret(k) or "").strip()]
+        if not missing:
+            return None
+        return {"ok": False, "detail": describe_missing(entry, missing), "recorded": False}
 
     if capability == "email":
         provider = (await get_secret("EMAIL_PROVIDER")) or "smtp"
+        blank = await _nothing_saved(EMAIL_CATALOG, provider)
+        if blank:
+            return blank
         if provider == "smtp":
             import asyncio
             import smtplib
@@ -887,6 +910,10 @@ async def _test_delivery(capability: str) -> dict:
     provider = (await get_secret("SMS_PROVIDER")) or "none"
     if provider == "none":
         return {"ok": True, "detail": "Text messages are switched off, as configured."}
+
+    blank = await _nothing_saved(SMS_CATALOG, provider)
+    if blank:
+        return blank
 
     if provider == "twilio":
         sid = await get_secret("TWILIO_ACCOUNT_SID")
@@ -1287,7 +1314,7 @@ async def update_settings(
     _: User = Depends(get_current_admin)
 ):
     """Update system settings (admin only)"""
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
     
     if not settings:
@@ -1545,7 +1572,7 @@ async def get_current_retention_policy(
     """Get current retention policy configuration"""
     from app.services.retention_service import get_retention_policy, get_retention_stats
     
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
     
     state_code = settings.retention_state_code if settings else "NJ"
@@ -1576,7 +1603,7 @@ async def update_retention_policy(
     """Update retention policy configuration (admin only)"""
     from app.services.retention_service import get_retention_policy
 
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
 
     if not settings:
@@ -1697,7 +1724,7 @@ async def export_for_public_records(
     from fastapi.responses import StreamingResponse
     
     # Get current state policy
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
     state_code = settings.retention_state_code if settings else "NJ"
     policy = get_retention_policy(state_code)
@@ -3356,7 +3383,7 @@ async def configure_domain(
         )
     
     # Save domain to settings
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
     if settings:
         settings.custom_domain = domain
@@ -3452,7 +3479,7 @@ async def get_domain_status(
     _: User = Depends(get_current_admin)
 ):
     """Get current domain configuration status"""
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
     
     return {
@@ -4085,7 +4112,7 @@ async def analytics_chat(
     now = datetime.utcnow()
     
     # ========== 1. System Settings (Township Identity) ==========
-    settings_result = await db.execute(select(SystemSettings).limit(1))
+    settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = settings_result.scalar_one_or_none()
     township_name = settings.township_name if settings and hasattr(settings, 'township_name') and settings.township_name else "the municipality"
     context_used.append("system_settings")

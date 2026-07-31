@@ -332,7 +332,7 @@ async def cleanup_old_backups(retention_days: int = None) -> Dict[str, Any]:
             from sqlalchemy import select
             
             async with SessionLocal() as db:
-                result = await db.execute(select(SystemSettings))
+                result = await db.execute(select(SystemSettings).order_by(SystemSettings.id))
                 settings = result.scalar_one_or_none()
                 
                 state_code = settings.retention_state_code if settings else "NJ"

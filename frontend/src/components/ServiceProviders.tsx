@@ -891,6 +891,18 @@ export default function ServiceProviders({ show, extras, refreshToken = 0, onCha
 
     const ALWAYS = new Set<Capability>(['identity', 'maps']);
     const visible = CAPS.filter(c => !show || ALWAYS.has(c.key) || show.has(c.key));
+    /* The other half of the answer.
+     *
+     * Hiding what a town did not tick made the page honest about what it has
+     * and silent about what it could have -- so "we cannot do that" became the
+     * standing assumption for anything switched off during a five-minute
+     * questionnaire months earlier. There is no way to discover otherwise
+     * except by going back to a page that does not say it holds the answer.
+     *
+     * Listed, not offered. Turning one on means going through its setup, and a
+     * toggle here that quietly enabled a capability with no credentials behind
+     * it would be a switch that appears to work and does nothing. */
+    const notChosen = show ? CAPS.filter(c => !ALWAYS.has(c.key) && !show.has(c.key)) : [];
 
     /* Order matters, and not only for readability.
      *
@@ -1002,6 +1014,43 @@ export default function ServiceProviders({ show, extras, refreshToken = 0, onCha
                     );
                 })}
             </div>
+
+            {notChosen.length > 0 && (
+                <div className="mt-8">
+                    <div className="flex items-center gap-3 mb-4">
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-white/45">Switched off</h3>
+                        <div className="h-px flex-1 bg-white/10" />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {notChosen.map(c => (
+                            <div
+                                key={c.key}
+                                className="relative px-4 py-4 rounded-3xl bg-gradient-to-br from-white/[0.035] via-white/[0.01] to-indigo-950/30 border border-white/[0.08] backdrop-blur-2xl"
+                            >
+                                <div className="flex items-center gap-3">
+                                    {/* Deliberately the same tile as a live
+                                        capability, at lower contrast. These are
+                                        the same objects, not a different class
+                                        of thing -- one is simply switched off. */}
+                                    <span className="opacity-50">
+                                        <CapabilityTile icon={c.icon} size="sm" />
+                                    </span>
+                                    <div className="min-w-0 flex-1">
+                                        <p className="font-semibold text-white/75 text-sm truncate">{c.title}</p>
+                                        <p className="text-[11px] text-white/50">Not switched on</p>
+                                    </div>
+                                </div>
+                                <p className="text-[11px] text-white/55 mt-2.5 leading-relaxed line-clamp-2">{c.blurb}</p>
+                            </div>
+                        ))}
+                    </div>
+                    <p className="text-[11px] text-white/55 mt-3.5">
+                        These are built and ready — nothing here needs writing. Tick one in the
+                        questions at the top of <strong className="text-white/75">Setup Instructions</strong> and
+                        its steps appear in the guide.
+                    </p>
+                </div>
+            )}
 
             {extras && (
                 <div className="mt-8">

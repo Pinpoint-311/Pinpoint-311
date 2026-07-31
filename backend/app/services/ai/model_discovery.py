@@ -227,7 +227,7 @@ async def load_db_cache(db) -> Dict[str, Any]:
     """Read the shared (fleet-wide) model cache off SystemSettings."""
     from sqlalchemy import select as _select
     from app.models import SystemSettings
-    row = (await db.execute(_select(SystemSettings).limit(1))).scalar_one_or_none()
+    row = (await db.execute(_select(SystemSettings).order_by(SystemSettings.id).limit(1))).scalar_one_or_none()
     return dict((row.ai_models_cache or {})) if row else {}
 
 
@@ -236,7 +236,7 @@ async def save_db_cache(db, provider: str, entry: Dict[str, Any]) -> None:
     from sqlalchemy import select as _select
     from sqlalchemy.orm.attributes import flag_modified
     from app.models import SystemSettings
-    row = (await db.execute(_select(SystemSettings).limit(1))).scalar_one_or_none()
+    row = (await db.execute(_select(SystemSettings).order_by(SystemSettings.id).limit(1))).scalar_one_or_none()
     if not row:
         row = SystemSettings()
         db.add(row)

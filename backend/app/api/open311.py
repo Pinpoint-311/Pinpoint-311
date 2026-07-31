@@ -56,7 +56,7 @@ async def resolve_is_public(db: AsyncSession, requested_is_public) -> bool:
         return True
     try:
         from app.models import SystemSettings
-        result = await db.execute(select(SystemSettings).limit(1))
+        result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
         settings_row = result.scalar_one_or_none()
         modules = (settings_row.modules if settings_row else None) or {}
         # `private_reports` was the key's original name; read it too so a town

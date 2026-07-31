@@ -139,7 +139,7 @@ async def persist_boundary(db, geojson_data: dict, name: str = None,
     """
     from app.models import SystemSettings
 
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
     if not settings:
         settings = SystemSettings()
@@ -258,7 +258,7 @@ async def get_maps_config(db: AsyncSession = Depends(get_db)):
         logging.getLogger(__name__).warning(f"Could not get Google Maps Map ID: {e}")
     
     # Get township settings
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
     
     # Which provider this town renders with, and only the credentials that
@@ -550,7 +550,7 @@ async def save_township_boundary(
     """Save the township boundary GeoJSON to system settings"""
     try:
         # Get or create system settings
-        result = await db.execute(select(SystemSettings).limit(1))
+        result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
         settings = result.scalar_one_or_none()
         
         if not settings:
