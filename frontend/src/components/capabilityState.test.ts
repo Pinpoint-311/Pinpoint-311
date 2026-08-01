@@ -13,9 +13,12 @@ import { capabilityState } from './ServiceProviders';
  * just mislabels a card, it files a broken connector under "healthy" and hides
  * it in a bubble.
  */
+// Module scope, so every block below shares one definition of what a health
+// row looks like rather than each growing its own.
+const health = (status: string, extra: Record<string, unknown> = {}) =>
+    ({ connector: 'x', status, consecutive_failures: 0, ...extra }) as never;
+
 describe('capabilityState', () => {
-    const health = (status: string, extra: Record<string, unknown> = {}) =>
-        ({ connector: 'x', status, consecutive_failures: 0, ...extra }) as never;
 
     it('says nothing at all until the catalog has loaded', () => {
         // Not "unset". A page that is merely slow must not accuse a town of
@@ -79,5 +82,33 @@ describe('capabilityState', () => {
 
     it('does not let a session test override the absence of credentials', () => {
         expect(capabilityState({ configured: false, verified: true }, health('working'))).toBe('unset');
+    });
+});
+
+describe('a check result outlives the session that ran it', () => {
+    it('remembers "cannot be tested" from the stored health row', () => {
+        // Without this the answer lives only in the browser session that ran
+        // the test: reload, and the card is back to "not checked yet",
+        // inviting another press of a button that can never succeed.
+        expect(capabilityState({ configured: true }, health('unknown', { verifiable: false })))
+            .toBe('unverifiable');
+    });
+
+    it('lets a fresh session result override the stored one', () => {
+        // A town that swapped an HTTP gateway for Twilio must not keep being
+        // told its text messages cannot be tested.
+        expect(capabilityState({ configured: true, verified: true, verifiable: true },
+                               health('working', { verifiable: false })))
+            .toBe('working');
+    });
+
+    it('still puts "not set up" ahead of "cannot be tested"', () => {
+        expect(capabilityState({ configured: false }, health('unknown', { verifiable: false })))
+            .toBe('unset');
+    });
+
+    it('treats an absent flag as unknown rather than as unverifiable', () => {
+        // Rows written before the column existed have neither value.
+        expect(capabilityState({ configured: true }, health('unknown'))).toBe('unchecked');
     });
 });

@@ -490,6 +490,14 @@ export interface ConnectorHealth {
      *  muted it. The badge is never affected -- a mute that hid the problem as
      *  well as the email would be indistinguishable from broken alerting. */
     alerts_muted_until?: string | null;
+    /** What the last check said, either way. A card that knows only *when* it
+     *  was checked cannot say what it found. */
+    last_result?: string | null;
+    /** False when this provider cannot be checked from here at all. Stored, so
+     *  the answer survives the session that produced it -- otherwise the card
+     *  reverts to "not checked yet" and invites another press of a button that
+     *  can never succeed. */
+    verifiable?: boolean | null;
 }
 
 export interface ConnectorHealthReport {
