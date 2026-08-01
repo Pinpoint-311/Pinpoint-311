@@ -1,4 +1,5 @@
 import { createRoot } from 'react-dom/client';
+import { Database, Activity } from 'lucide-react';
 
 /**
  * A local harness for looking at admin pages.
@@ -133,7 +134,25 @@ function App() {
             </Section>
 
             <Section id="spotlight" title="Service providers — Spotlight, built for real">
-                <ServiceProviders />
+                <ServiceProviders
+                    plainSettings={[
+                        {
+                            id: 'backups', title: 'Automatic backups',
+                            subtitle: 'Encrypted, on S3-compatible storage',
+                            icon: Database, configured: true,
+                            fields: [{ key: 'BACKUP_S3_BUCKET', label: 'Bucket name' }],
+                        },
+                        {
+                            id: 'errors', title: 'Crash reporting', subtitle: 'Sentry',
+                            icon: Activity, configured: false,
+                            fields: [{ key: 'SENTRY_DSN', label: 'Sentry DSN', secret: true }],
+                        },
+                    ]}
+                    plainSecrets={{
+                        values: {}, onChange: () => {}, onSave: async () => {},
+                        saving: null, isConfigured: () => false, onSaved: () => {},
+                    }}
+                />
             </Section>
 
             <Section id="departments" title="Departments">

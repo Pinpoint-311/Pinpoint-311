@@ -11,7 +11,11 @@ Key features:
 """
 
 import logging
-from datetime import datetime, timedelta
+
+from app.services.retention_scrub import (
+    REDACT, apply_scrub, fields_for_mode, normalise_mode,
+)
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -227,7 +231,7 @@ async def get_records_for_archival(
     
     policy = get_retention_policy(state_code)
     retention_days = override_days if override_days else policy["retention_days"]
-    cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
     
     # Query closed records older than retention period, not already archived,
     # not deleted, and not under legal hold
@@ -247,10 +251,58 @@ async def get_records_for_archival(
     return result.scalars().all()
 
 
+
+async def record_archival(db: AsyncSession, record: Any, action: str,
+                          cleared: Optional[List[str]] = None) -> None:
+    """Leave the archival itself on the request's timeline.
+
+    A record whose contents changed with nothing saying why reads like data
+    loss rather than policy. It is also the answer to "did this actually run",
+    which until now could only be inferred from a field going blank.
+
+    Best-effort: the timeline entry is bookkeeping and must never be the reason
+    a retention run fails to archive.
+    """
+    try:
+        from app.models import RequestAuditLog
+
+        db.add(RequestAuditLog(
+            service_request_id=record.id,
+            # The mode is in the action, so the trail distinguishes a
+            # targeted redaction from a full purge without anyone reading
+            # extra_data to find out which happened.
+            action=f"retention_{action}",
+            new_value=action,
+            actor_type="staff",
+            actor_name="Retention policy",
+            extra_data={"mode": action, "cleared": cleared or []},
+        ))
+    except Exception:  # pragma: no cover - bookkeeping only
+        logger.warning("[Retention] could not write the timeline entry for %s", record.id)
+
+
+async def scrub_comments(db: AsyncSession, record_id: int) -> int:
+    """Clear the text of every comment on a request.
+
+    The rows stay. A deleted comment leaves a gap in a conversation that staff
+    and residents both remember having, and the count is part of the record.
+    Only the words go.
+    """
+    from app.models import RequestComment
+
+    rows = (await db.execute(
+        select(RequestComment).where(RequestComment.service_request_id == record_id)
+    )).scalars().all()
+    for row in rows:
+        row.content = "[Comment archived per retention policy]"
+    return len(rows)
+
+
 async def archive_record(
     db: AsyncSession,
     record_id: int,
-    archive_mode: str = "anonymize"
+    archive_mode: str = REDACT,
+    scrub_fields: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Archive a record by anonymizing PII or marking for deletion.
@@ -281,34 +333,34 @@ async def archive_record(
             "record_id": record_id
         }
     
-    if archive_mode == "delete":
-        # Hard delete - remove from database entirely
-        await db.delete(record)
-        await db.commit()
-        return {
-            "status": "deleted",
-            "record_id": record_id,
-            "service_request_id": record.service_request_id
-        }
-    else:
-        # Anonymize - remove PII but keep statistical data
-        record.first_name = "[ARCHIVED]"
-        record.last_name = "[ARCHIVED]"
-        record.email = f"archived-{record.id}@retention.local"
-        record.phone = None
-        record.description = "[Content archived per retention policy]"
-        record.staff_notes = None
-        record.media_urls = []
-        record.archived_at = datetime.utcnow()
-        
-        await db.commit()
-        
-        return {
-            "status": "anonymized",
-            "record_id": record_id,
-            "service_request_id": record.service_request_id,
-            "archived_at": record.archived_at.isoformat()
-        }
+    # Redact clears the fields this town chose. Purge clears all of them and
+    # leaves the row as a shell that still counts. Neither removes the record:
+    # see the note in retention_scrub about why hard deletion is gone.
+    chosen = fields_for_mode(archive_mode, scrub_fields)
+    cleared = apply_scrub(record, chosen)
+    if "comments" in set(chosen):
+        await scrub_comments(db, record.id)
+        cleared.append("comments")
+    record.archived_at = datetime.now(timezone.utc)
+
+    await db.flush()
+    # Into the hash chain, via the insert listener on RequestAuditLog. A
+    # redaction that leaves no trace is indistinguishable from data loss, and
+    # this is the trail an auditor is shown when asked what happened to a
+    # record that is now mostly blank.
+    await record_archival(db, record, normalise_mode(archive_mode), cleared)
+    await db.commit()
+
+    return {
+        # Callers count on this string; renaming what the run is *called* is a
+        # separate change from renaming what it *did*.
+        "status": "anonymized",
+        "mode": normalise_mode(archive_mode),
+        "record_id": record_id,
+        "service_request_id": record.service_request_id,
+        "archived_at": record.archived_at.isoformat(),
+        "cleared": cleared,
+    }
 
 
 async def get_retention_stats(
@@ -332,7 +384,7 @@ async def get_retention_stats(
     
     policy = get_retention_policy(state_code)
     retention_days = override_days if override_days else policy["retention_days"]
-    cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
     
     # Count records eligible for archival
     eligible_query = select(func.count(ServiceRequest.id)).where(

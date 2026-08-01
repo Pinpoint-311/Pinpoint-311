@@ -16,7 +16,7 @@ import base64
 import hashlib
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select
@@ -271,7 +271,7 @@ async def _import_external_record(db, integration, record):
         external_id=record.external_id,
         external_status=record.raw_status,
         direction="pulled",
-        last_pulled_at=datetime.utcnow(),
+        last_pulled_at=datetime.now(timezone.utc),
     ))
     db.add(RequestAuditLog(
         service_request_id=sr.id,
@@ -353,7 +353,7 @@ def push_request_to_integrations(self, request_id: int):
                         external_id=record.external_id,
                         external_status=record.raw_status,
                         direction="pushed",
-                        last_pushed_at=datetime.utcnow(),
+                        last_pushed_at=datetime.now(timezone.utc),
                     )
                     db.add(link)
                     await _log(db, integration.id, "push", "success",
@@ -405,7 +405,7 @@ def push_status_to_integrations(self, request_id: int, notes: str = None):
                         provider=integration.platform,
                     )
                     link.external_status = connector.map_status_out(sr.status)
-                    link.last_pushed_at = datetime.utcnow()
+                    link.last_pushed_at = datetime.now(timezone.utc)
                     link.sync_error = None
                     await _log(db, integration.id, "push_status", "success",
                                f"{sr.service_request_id} -> {sr.status}", 1)
@@ -458,7 +458,7 @@ def pull_integration_updates():
                                 if new_sr:
                                     imported += 1
                             continue
-                        link.last_pulled_at = datetime.utcnow()
+                        link.last_pulled_at = datetime.now(timezone.utc)
                         if record.raw_status and record.raw_status != link.external_status:
                             link.external_status = record.raw_status
                         sr = (await db.execute(
@@ -478,9 +478,9 @@ def pull_integration_updates():
                             continue
                         old_status = sr.status
                         sr.status = record.status
-                        sr.updated_datetime = datetime.utcnow()
+                        sr.updated_datetime = datetime.now(timezone.utc)
                         if record.status == "closed":
-                            sr.closed_datetime = datetime.utcnow()
+                            sr.closed_datetime = datetime.now(timezone.utc)
                             if record.resolution and not sr.completion_message:
                                 sr.completion_message = record.resolution
                             elif record.status_notes:
@@ -497,7 +497,7 @@ def pull_integration_updates():
                         ))
                         updated += 1
 
-                    integration.last_sync_at = datetime.utcnow()
+                    integration.last_sync_at = datetime.now(timezone.utc)
                     integration.last_sync_status = "success"
                     integration.last_sync_error = None
                     await _log(db, integration.id, "pull", "success",
@@ -508,7 +508,7 @@ def pull_integration_updates():
                     # Clear any pending-rollback state before writing the error
                     # log, so one bad record can't poison the whole beat cycle.
                     await db.rollback()
-                    integration.last_sync_at = datetime.utcnow()
+                    integration.last_sync_at = datetime.now(timezone.utc)
                     integration.last_sync_status = "error"
                     integration.last_sync_error = str(e)[:1000]
                     await _log(db, integration.id, "pull", "error", str(e))
@@ -554,15 +554,15 @@ def refresh_request_from_integrations(self, request_id: int):
                         continue
                     if record.raw_status and record.raw_status != link.external_status:
                         link.external_status = record.raw_status
-                    link.last_pulled_at = datetime.utcnow()
+                    link.last_pulled_at = datetime.now(timezone.utc)
                     if await _apply_work_order_fields(db, sr, record, integration):
                         applied += 1
                     if record.status and record.status != sr.status:
                         old = sr.status
                         sr.status = record.status
-                        sr.updated_datetime = datetime.utcnow()
+                        sr.updated_datetime = datetime.now(timezone.utc)
                         if record.status == "closed":
-                            sr.closed_datetime = datetime.utcnow()
+                            sr.closed_datetime = datetime.now(timezone.utc)
                             if record.resolution and not sr.completion_message:
                                 sr.completion_message = record.resolution
                             if not sr.closed_substatus:
@@ -688,7 +688,7 @@ def pull_integration_comments():
                                 external_ref=ref,
                             ))
                             imported += 1
-                        link.last_pulled_at = datetime.utcnow()
+                        link.last_pulled_at = datetime.now(timezone.utc)
 
                     if imported or links:
                         await _log(db, integration.id, "pull_comments", "success",
@@ -741,7 +741,7 @@ def sync_integration_assets():
                         )).scalar_one_or_none()
                     if layer:
                         layer.geojson = geojson
-                        layer.updated_at = datetime.utcnow()
+                        layer.updated_at = datetime.now(timezone.utc)
                     else:
                         layer = MapLayer(
                             name=f"{integration.display_name} Assets"[:100],

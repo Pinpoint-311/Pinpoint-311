@@ -9,6 +9,7 @@ This service analyzes service requests using Google's Gemini model to provide:
 """
 
 import json
+import os
 import re
 import logging
 from datetime import datetime
@@ -263,62 +264,30 @@ async def analyze_with_gemini(
         # Refresh the credentials
         credentials.refresh(Request())
         
-        # Build the API endpoint
-        # Gemini 3 models are currently available on global endpoints
+        # Which publisher, and therefore which protocol.
+        #
+        # Model Garden serves Anthropic alongside Google, and they are not
+        # interchangeable at the wire: different path, different verb,
+        # different body, different response shape. Building a Gemini request
+        # for a Claude model produces a 404 that reads like a wrong model name.
+        from app.services.ai import vertex_publishers as vp
+
         model_id = model or "gemini-3.1-flash-lite"
-        endpoint = f"https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/{model_id}:generateContent"
-        
-        # Build the request payload
-        contents = []
-        parts = []
-        
-        # Add images if provided (for multimodal analysis)
-        if image_data:
-            for i, img_b64 in enumerate(image_data[:3]):  # Max 3 images
-                # Handle data URLs
-                if img_b64.startswith('data:'):
-                    # Extract base64 part from data URL
-                    match = re.match(r'data:image/(\w+);base64,(.+)', img_b64)
-                    if match:
-                        mime_type = f"image/{match.group(1)}"
-                        b64_data = match.group(2)
-                    else:
-                        continue
-                else:
-                    mime_type = "image/jpeg"
-                    b64_data = img_b64
-                
-                parts.append({
-                    "inline_data": {
-                        "mime_type": mime_type,
-                        "data": b64_data
-                    }
-                })
-        
-        # Add text prompt
-        parts.append({"text": prompt})
-        
-        contents.append({"role": "user", "parts": parts})
-        
-        payload = {
-            "contents": contents,
-            "generationConfig": {
-                "temperature": 0.2,
-                "topP": 0.8,
-                "maxOutputTokens": 4096,  # Larger for thinking responses
-                "thinkingConfig": {
-                    "includeThoughts": True,
-                    "thinkingLevel": "HIGH"  # Enable deep reasoning as requested
-                }
-            },
-            "safetySettings": [
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-            ]
-        }
-        
+        location = os.getenv("VERTEX_AI_LOCATION") or "global"
+        endpoint = vp.endpoint_for(model_id, project_id, location)
+
+        images: List[Dict[str, str]] = []
+        for img_b64 in (image_data or [])[:3]:
+            if img_b64.startswith('data:'):
+                match = re.match(r'data:image/(\w+);base64,(.+)', img_b64)
+                if not match:
+                    continue
+                images.append({"mime_type": f"image/{match.group(1)}", "data": match.group(2)})
+            else:
+                images.append({"mime_type": "image/jpeg", "data": img_b64})
+
+        payload = vp.build_payload(model_id, prompt, images)
+
         # Make the API call
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -341,13 +310,7 @@ async def analyze_with_gemini(
         # budget went to "thinking"), still report the call as REACHABLE so
         # connectivity checks don't false-negative on a working configuration.
         try:
-            candidates = result.get('candidates') or []
-            text_response = ""
-            if candidates:
-                for part in candidates[0].get('content', {}).get('parts', []):
-                    # Skip "thought" parts — only the answer text carries the JSON.
-                    if 'text' in part and not part.get('thought'):
-                        text_response += part['text']
+            text_response = vp.extract_text(model_id, result)
             json_match = re.search(r'```json\s*(.*?)\s*```', text_response, re.DOTALL)
             json_str = json_match.group(1) if json_match else text_response.strip()
             if not json_str:

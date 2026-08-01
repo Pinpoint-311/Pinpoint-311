@@ -66,7 +66,7 @@ def classify(
         return "met" if elapsed <= sla_hours else "breached"
 
     # Still open — measure against the clock.
-    reference = now or datetime.utcnow()
+    reference = now or datetime.now(timezone.utc)
     age = hours_between(requested_at, reference)
     if age is None:
         return "no_sla"

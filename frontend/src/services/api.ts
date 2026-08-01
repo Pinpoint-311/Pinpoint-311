@@ -631,7 +631,7 @@ class ApiClient {
      *  text. That is not a failure, and the backend deliberately does not write
      *  it to connector health. Dropping the flag here is what made those show
      *  up as "Not working". */
-    async testProvider(capability: string): Promise<{ ok: boolean; detail: string; recorded?: boolean }> {
+    async testProvider(capability: string): Promise<{ ok: boolean; detail: string; recorded?: boolean; configured?: boolean }> {
         return this.request(`/system/providers/${capability}/test`, { method: 'POST' });
     }
 
@@ -1088,17 +1088,48 @@ class ApiClient {
     async updateRetentionPolicy(params: {
         state_code?: string;
         override_days?: number;
-        mode?: 'anonymize' | 'delete';
+        mode?: 'redact' | 'purge';
+        scrub_fields?: string[];
     }): Promise<{ status: string; state_code: string; override_days: number | null; mode: string }> {
         const queryParams = new URLSearchParams();
         if (params.state_code) queryParams.append('state_code', params.state_code);
         if (params.override_days !== undefined) queryParams.append('override_days', params.override_days.toString());
         if (params.mode) queryParams.append('mode', params.mode);
+        // Repeated key rather than a joined string: FastAPI reads a list that
+        // way, and an empty selection has to survive the trip as an explicit
+        // "none" rather than vanishing.
+        (params.scrub_fields || []).forEach(f => queryParams.append('scrub_fields', f));
         return this.request(`/system/retention/policy?${queryParams.toString()}`, { method: 'POST' });
     }
 
-    async runRetentionNow(): Promise<{ status: string; task_id: string; message: string }> {
-        return this.request('/system/retention/run', { method: 'POST' });
+    async getTownTimezone(): Promise<{
+        timezone: string; offset: string; configured: boolean;
+        common: { id: string; offset: string }[];
+    }> {
+        return this.request('/system/timezone');
+    }
+
+    async setTownTimezone(timezone: string): Promise<{ timezone: string; offset: string }> {
+        return this.request('/system/timezone', { method: 'POST', body: JSON.stringify({ timezone }) });
+    }
+
+    /** What "Run now" would actually do, before it does it. */
+    async previewRetentionRun(): Promise<{
+        eligible: number; on_legal_hold: number; will_act_on?: number;
+        mode: 'redact' | 'purge'; state_code?: string; policy_name?: string;
+        retention_days?: number; cutoff_date?: string | null;
+        confirmation_required?: string | null; blocked?: string;
+        /** What a run will actually empty, in the words the settings screen uses. */
+        scrub_fields?: string[];
+    }> {
+        return this.request('/system/retention/preview');
+    }
+
+    async runRetentionNow(confirm?: string): Promise<{ status: string; task_id: string; message: string }> {
+        return this.request('/system/retention/run', {
+            method: 'POST',
+            body: JSON.stringify(confirm ? { confirm } : {}),
+        });
     }
 
     async getLegalHoldRequests(): Promise<{
@@ -1461,8 +1492,19 @@ export interface RetentionState {
     public_records_law: string;
 }
 
+export interface ScrubField {
+    id: string;
+    label: string;
+    detail: string;
+    default: boolean;
+    selected: boolean;
+}
+
 export interface RetentionPolicyConfig {
     state_code: string;
+    /** The catalog and this town's choice in one object, so the screen never
+     *  holds its own copy of what the fields are called. */
+    scrub_fields?: ScrubField[];
     policy: {
         state_code: string;
         name: string;
@@ -1473,7 +1515,7 @@ export interface RetentionPolicyConfig {
     };
     override_days: number | null;
     effective_days: number;
-    mode: 'anonymize' | 'delete';
+    mode: 'redact' | 'purge';
     stats: {
         retention_policy: object;
         cutoff_date: string;

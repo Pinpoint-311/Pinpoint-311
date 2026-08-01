@@ -9,7 +9,7 @@ import os
 import logging
 import tempfile
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 import boto3
 from botocore.config import Config as BotoConfig
@@ -191,7 +191,7 @@ async def create_backup() -> Dict[str, Any]:
     if not config:
         return {"status": "error", "message": "Backup not configured - add S3 credentials in Admin Console → Secrets"}
     
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     backup_name = f"{BACKUP_PREFIX}{timestamp}{BACKUP_EXTENSION}"
     
     try:
@@ -226,7 +226,7 @@ async def create_backup() -> Dict[str, Any]:
                         'ContentType': 'application/octet-stream',
                         'Metadata': {
                             'unencrypted-size': str(dump_size),
-                            'created-at': datetime.utcnow().isoformat()
+                            'created-at': datetime.now(timezone.utc).isoformat()
                         }
                     }
                 )
@@ -238,7 +238,7 @@ async def create_backup() -> Dict[str, Any]:
                 "backup_name": backup_name,
                 "size_bytes": encrypted_size,
                 "unencrypted_size_bytes": dump_size,
-                "created_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
                 "bucket": config["BACKUP_S3_BUCKET"]
             }
             
@@ -271,13 +271,13 @@ async def list_backups() -> Dict[str, Any]:
                     ts_str = name.replace(BACKUP_PREFIX, "").replace(BACKUP_EXTENSION, "")
                     created_at = datetime.strptime(ts_str, "%Y%m%d_%H%M%S")
                 except Exception:
-                    created_at = obj.get('LastModified', datetime.utcnow())
+                    created_at = obj.get('LastModified', datetime.now(timezone.utc))
                 
                 backups.append({
                     "name": name,
                     "size_bytes": obj['Size'],
                     "created_at": created_at.isoformat() if isinstance(created_at, datetime) else str(created_at),
-                    "age_days": (datetime.utcnow() - created_at).days if isinstance(created_at, datetime) else 0
+                    "age_days": (datetime.now(timezone.utc) - created_at).days if isinstance(created_at, datetime) else 0
                 })
         
         # Sort by date, newest first
@@ -342,7 +342,7 @@ async def cleanup_old_backups(retention_days: int = None) -> Dict[str, Any]:
             logger.warning(f"Could not get retention policy, using 7 years: {e}")
             retention_days = 7 * 365  # Default to 7 years
     
-    cutoff = datetime.utcnow() - timedelta(days=retention_days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
     
     try:
         result = await list_backups()
@@ -531,7 +531,7 @@ async def restore_backup(backup_name: str) -> Dict[str, Any]:
                 "backup_name": backup_name,
                 "encrypted_size_bytes": encrypted_size,
                 "decrypted_size_bytes": decrypted_size,
-                "restored_at": datetime.utcnow().isoformat(),
+                "restored_at": datetime.now(timezone.utc).isoformat(),
                 "warning": "Database has been restored. You may need to restart the application."
             }
             

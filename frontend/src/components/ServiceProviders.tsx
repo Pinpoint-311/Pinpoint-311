@@ -8,13 +8,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Sparkles, Languages, KeyRound, CheckCircle, AlertCircle,
-    Check, CircleDashed, HelpCircle, ShieldCheck, RefreshCw,
+    Check, CircleDashed, HelpCircle, ShieldCheck, RefreshCw, Search,
     Lock, Map as MapIcon,
     Mail, MessageSquare, Image as ImageIcon,
 } from 'lucide-react';
 
 import { CollapsibleSection } from './ui';
-import { StatusPill, CapabilityTile, Action, type CapabilityState } from './capabilityUI';
+import { StatusPill, CapabilityTile, Action, hasAlert, type CapabilityState } from './capabilityUI';
+import { PlainSecrets } from './SetupWizard';
 import { api, ProviderCatalog, ProviderInfo, ProviderModelSpec, CloudIdentity } from '../services/api';
 import type { ConnectorHealth } from '../types';
 
@@ -208,6 +209,13 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const [liveModels, setLiveModels] = useState<ProviderModelSpec[] | null>(null);
     const [modelsMeta, setModelsMeta] = useState<{ source?: string; fetched_at?: number | null } | null>(null);
     const [staleOverride, setStaleOverride] = useState<boolean | null>(null);
+    /* Filters the model tiles.
+     *
+     * Declared, which the version in #433 was not -- it used the setter and the
+     * value five times with no useState, so opening any AI card threw a
+     * ReferenceError. `vite build` passed anyway, because esbuild strips types
+     * without resolving identifiers, and nothing in CI runs tsc. */
+    const [modelSearch, setModelSearch] = useState('');
     const [warnings, setWarnings] = useState<{ key: string; severity: string; message: string }[]>([]);
     /* Collapsed by default, expanded when something needs attention.
      *
@@ -266,9 +274,13 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             // test here", not "the test failed". Passing t.ok straight through
             // is what put a red "Not working" on an HTTP SMS gateway whose own
             // message said it could not be checked.
-            onStatus(cap, t.recorded === false
-                ? { verifiable: false, verified: null }
-                : { verifiable: true, verified: t.ok });
+            // `configured: false` beats everything: the test looked for the
+            // credentials and they are not there, whatever the catalog said.
+            onStatus(cap, t.configured === false
+                ? { configured: false, verifiable: undefined, verified: null }
+                : t.recorded === false
+                    ? { verifiable: false, verified: null }
+                    : { verifiable: true, verified: t.ok });
         } catch (e: any) {
             setResult({ ok: false, detail: e?.message || 'Test failed' });
             onStatus(cap, { verified: false });
@@ -433,9 +445,11 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             // Immediately verify
             const t = await api.testProvider(cap);
             setResult(t);
-            onStatus(cap, t.recorded === false
-                ? { verifiable: false, verified: null }
-                : { verifiable: true, verified: t.ok });
+            onStatus(cap, t.configured === false
+                ? { configured: false, verifiable: undefined, verified: null }
+                : t.recorded === false
+                    ? { verifiable: false, verified: null }
+                    : { verifiable: true, verified: t.ok });
         } catch (e: any) {
             setError(e?.message || 'Save failed');
         } finally {
@@ -506,9 +520,22 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                             credentials: the tile already says "Not set up", and
                             "Not checked yet" underneath reads as a second,
                             different problem. */}
-                        {configured && (
+                        {configured ? (
                             <span className="block text-[11px] text-white/45 mt-2.5">
-                                {shown === 'unverifiable' ? 'Set up. There is no way to test this one from here.' : checkedLine}
+                                {shown === 'unverifiable'
+                                    ? 'Set up. There is no way to test this one from here.'
+                                    : checkedLine}
+                            </span>
+                        ) : (
+                            /* Somewhere to go.
+                             *
+                             * A card that says "Not set up" and stops is a dead
+                             * end: the questionnaire and the steps are back up
+                             * the page, and nothing here said so. This is a
+                             * town that asked for the feature, so the useful
+                             * thing is the next action, not the diagnosis. */
+                            <span className="block text-[11px] text-amber-200/85 mt-2.5">
+                                Add its credentials in Setup Instructions, above.
                             </span>
                         )}
                     </button>
@@ -549,7 +576,12 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                 {/* Only where there is an alert to silence. A
                                     capability nobody is being emailed about
                                     does not need an off switch. */}
-                                {(shown === 'failing' || shown === 'unchecked') && (
+                                {/* Only where something is actually alerting.
+                                    Derived from the health status rather than
+                                    from the pill, because "not checked yet"
+                                    covers both `unknown`, which never alerts,
+                                    and `stale`, which does. */}
+                                {(hasAlert(health?.status) || !!effectiveMute) && (
                                     <Action onClick={toggleMute} busy={muting} disabled={muting}
                                         title={effectiveMute
                                             ? 'Start emailing administrators about this again'
@@ -705,16 +737,49 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                     {refreshingModels ? 'Checking…' : 'Refresh from provider'}
                                 </button>
                             }>Model</Step>
-                            {/* Tiles, not a <select>. The model list is short, the
-                                choice is consequential, and a dropdown hides every
-                                option but one -- including the "new" markers that
-                                live discovery just added. Same control as the
-                                provider picker above, so the page has one idiom. */}
+                            {/* Tiles, not a <select>. The choice is consequential and
+                                a dropdown hides every option but one -- including the
+                                "new" markers live discovery just added. Same control as
+                                the provider picker above, so the page has one idiom.
+
+                                Searchable once the list is long enough to scroll:
+                                Vertex Model Garden legitimately returns a couple of
+                                hundred entries, and scanning those as tiles is worse
+                                than the dropdown this replaced. */}
+                            {models.length > 8 && (
+                                <div className="relative mb-2">
+                                    <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-white/50 pointer-events-none" aria-hidden="true" />
+                                    <input
+                                        type="search"
+                                        id={`model-search-${cap}`}
+                                        value={modelSearch}
+                                        onChange={e => setModelSearch(e.target.value)}
+                                        /* A real label, not just a placeholder: the
+                                           placeholder disappears the moment somebody
+                                           types, and this console is audited for AA. */
+                                        aria-label={`Search the ${models.length} models ${active.name} offers`}
+                                        placeholder={`Search ${models.length} models — try "flash", "claude", "mini"`}
+                                        className="w-full bg-white/[0.04] border border-white/10 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white placeholder-white/50 focus:outline-none focus:border-primary-400/60 transition-colors"
+                                    />
+                                </div>
+                            )}
                             {(() => {
                                 const chosen = model || active.default_model || models[0].id;
+                                const q = modelSearch.trim().toLowerCase();
+                                const filtered = q
+                                    ? models.filter(m => m.id.toLowerCase().includes(q)
+                                        || m.label.toLowerCase().includes(q))
+                                    : models;
+                                if (filtered.length === 0) {
+                                    return (
+                                        <p className="py-4 text-center text-xs text-white/60 bg-white/[0.02] border border-white/10 rounded-xl">
+                                            No model matches “{modelSearch}”.
+                                        </p>
+                                    );
+                                }
                                 return (
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2" role="radiogroup" aria-label="AI model">
-                                        {models.map(m => {
+                                    <div className="max-h-80 overflow-y-auto pr-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2" role="radiogroup" aria-label="AI model">
+                                        {filtered.map(m => {
                                             const isSel = m.id === chosen;
                                             return (
                                                 <button
@@ -814,7 +879,122 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     );
 }
 
-export default function ServiceProviders({ show, extras, refreshToken = 0, onChanged, publicOrigin = null }: {
+
+/**
+ * A setting with no provider behind it, drawn as one of the cards.
+ *
+ * Backups and crash reporting were rendered below the grid in an "Other
+ * settings" block, in a completely different treatment and at a different
+ * size, and they read as a separate class of thing. They are not: they are
+ * something the town either has set up or has not, exactly like the eight
+ * above them. The only real difference is that there is nothing to pick
+ * between and nothing to test, so the card carries no provider name and no
+ * "Test now".
+ *
+ * Same shell, same tile, same expand-to-full-width behaviour, so restyling the
+ * capability cards restyles these too rather than leaving them behind again.
+ */
+export interface PlainSetting {
+    id: string;
+    title: string;
+    subtitle: string;
+    icon: typeof Sparkles;
+    fields: { key: string; label: string; secret?: boolean; help?: string }[];
+    configured: boolean;
+    /** Anything the plain fields cannot express -- the backup passphrase, which
+     *  is generated rather than typed and shown exactly once. */
+    body?: ReactNode;
+    /** Why saving is refused, if it is. */
+    blockedReason?: string | null;
+}
+
+function PlainSettingCard({ setting, expanded, onToggle, secrets }: {
+    setting: PlainSetting;
+    expanded: boolean;
+    onToggle: () => void;
+    secrets: PlainSecretsBridge;
+}) {
+    const { title, subtitle, icon: Icon, fields, configured, body } = setting;
+    return (
+        <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+            className={!expanded
+                ? 'group relative h-full px-4 py-4 rounded-3xl bg-gradient-to-br from-white/[0.06] via-white/[0.02] to-indigo-950/40 border border-white/10 backdrop-blur-2xl hover:border-primary-400/40 hover:-translate-y-0.5 transition-all duration-300'
+                : 'relative overflow-hidden p-5 sm:p-6 rounded-3xl border backdrop-blur-2xl shadow-[0_14px_40px_rgba(0,0,0,0.4)] bg-gradient-to-br from-white/[0.08] via-white/[0.02] to-indigo-950/40 border-white/15'}
+        >
+            <div className="relative">
+                {!expanded ? (
+                    <button
+                        type="button"
+                        onClick={onToggle}
+                        aria-expanded={false}
+                        className="w-full text-left rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                    >
+                        <div className="flex items-center gap-3">
+                            <CapabilityTile icon={Icon} />
+                            <span className="min-w-0 flex-1">
+                                <span className="block font-semibold text-white text-sm truncate">{title}</span>
+                                <span className="block text-[11px] text-white/50 truncate">
+                                    {configured ? subtitle : 'Not set up'}
+                                </span>
+                            </span>
+                            <span className={`shrink-0 ${configured ? 'text-emerald-300' : 'text-white/30'}`} aria-hidden="true">
+                                {configured ? <Check className="w-4 h-4" /> : <CircleDashed className="w-4 h-4" />}
+                            </span>
+                        </div>
+                        <span className={`block text-[11px] mt-2.5 ${configured ? 'text-white/45' : 'text-amber-200/85'}`}>
+                            {configured
+                                ? 'Set up. Nothing here reports back, so there is nothing to test.'
+                                : 'Add its details in Setup Instructions, above.'}
+                        </span>
+                    </button>
+                ) : (
+                    <>
+                        <div className="flex items-start justify-between gap-4 flex-wrap">
+                            <div className="flex items-start gap-4 min-w-0 flex-1">
+                                <CapabilityTile icon={Icon} size="lg" />
+                                <div className="min-w-0">
+                                    <div className="flex items-center gap-3 flex-wrap">
+                                        <h3 className="font-bold text-lg text-white tracking-tight">{title}</h3>
+                                        <StatusPill state={configured ? 'done' : 'unset'} />
+                                    </div>
+                                    <p className="text-sm text-white/60 mt-1">{subtitle}</p>
+                                </div>
+                            </div>
+                            <Action variant="primary" onClick={onToggle} chevron>Close</Action>
+                        </div>
+                        <div className="mt-4 pt-4 border-t border-white/10">
+                            <PlainSecrets
+                                fields={fields}
+                                values={secrets.values}
+                                onChange={secrets.onChange}
+                                onSave={secrets.onSave}
+                                saving={secrets.saving}
+                                isConfigured={secrets.isConfigured}
+                                onSaved={secrets.onSaved}
+                                blockedReason={setting.blockedReason}
+                            />
+                            {body}
+                        </div>
+                    </>
+                )}
+            </div>
+        </motion.div>
+    );
+}
+
+export interface PlainSecretsBridge {
+    values: Record<string, string>;
+    onChange: (key: string, value: string) => void;
+    onSave: (keys: string[]) => Promise<void>;
+    saving: string | null;
+    isConfigured: (key: string) => boolean;
+    onSaved: () => void;
+}
+
+export default function ServiceProviders({ show, extras, footer, extraOff = [], plainSettings = [], plainSecrets, refreshToken = 0, onChanged, publicOrigin = null }: {
     /* Which capabilities the town said it wants, from the setup questions.
      * Undefined means "no answer yet", which shows everything -- an absent
      * answer must not read as "wanted nothing", the same distinction the
@@ -831,6 +1011,22 @@ export default function ServiceProviders({ show, extras, refreshToken = 0, onCha
      * across both. Rendered here instead, after the capability cards, so the
      * page has one list. */
     extras?: ReactNode;
+    /** One quiet line under everything. Not a section: the block this replaced
+     *  had a heading announcing a group that ended up containing one sentence. */
+    footer?: ReactNode;
+    /* Features the town switched off that are not capabilities.
+     *
+     * Backups and crash reporting have no provider catalog, so they are absent
+     * from CAPS and could never appear in the switched-off list -- which is
+     * exactly the pair somebody is most likely to untick and then wonder where
+     * they went. Passed in rather than hardcoded here, because the
+     * questionnaire owns the feature list. */
+    extraOff?: { id: string; title: string; blurb: string; icon: typeof Sparkles }[];
+    /** Settings with no provider behind them, drawn as cards in the same grid.
+     *  They were in a separate block below, in a different treatment at a
+     *  different size, reading as a different class of thing. */
+    plainSettings?: PlainSetting[];
+    plainSecrets?: PlainSecretsBridge;
     /* Bumped by the page when the setup guide above saves something.
      *
      * The guide and these cards are two views of one set of credentials, on the
@@ -902,7 +1098,12 @@ export default function ServiceProviders({ show, extras, refreshToken = 0, onCha
      * Listed, not offered. Turning one on means going through its setup, and a
      * toggle here that quietly enabled a capability with no credentials behind
      * it would be a switch that appears to work and does nothing. */
-    const notChosen = show ? CAPS.filter(c => !ALWAYS.has(c.key) && !show.has(c.key)) : [];
+    const notChosen = [
+        ...(show ? CAPS.filter(c => !ALWAYS.has(c.key) && !show.has(c.key)) : []).map(c => ({
+            id: c.key as string, title: c.title, blurb: c.blurb, icon: c.icon,
+        })),
+        ...extraOff,
+    ];
 
     /* Order matters, and not only for readability.
      *
@@ -932,7 +1133,11 @@ export default function ServiceProviders({ show, extras, refreshToken = 0, onCha
 
     /* Which card the clerk has opened in the Spotlight layout. Held here rather
      * than in the card, because opening one has to widen its cell. */
-    const [openCap, setOpenCap] = useState<Capability | null>(null);
+    /* Which card is expanded. A string rather than a Capability, because the
+     * plain settings -- backups, crash reporting -- share this grid and this
+     * behaviour, and giving them a second piece of open-state would let two
+     * cards be open at once. */
+    const [openCap, setOpenCap] = useState<string | null>(null);
     const capState = (cap: Capability) => capabilityState(statuses[cap], health[cap]);
     /* Only what is wrong gets the whole width.
      *
@@ -975,6 +1180,16 @@ export default function ServiceProviders({ show, extras, refreshToken = 0, onCha
                     <span>{configuredCount === loaded.length
                         ? `All ${loaded.length} have credentials`
                         : `${loaded.length - configuredCount} of ${loaded.length} still need credentials`}</span>
+                    {/* Named, and pointed somewhere.
+                        A count on its own makes a clerk hunt for which ones,
+                        and the answer to "so what do I do" is up the page in a
+                        panel this section never mentioned. */}
+                    {configuredCount < loaded.length && (
+                        <span className="text-amber-200/85">
+                            {loaded.filter(c => !statuses[c.key]?.configured).map(c => c.title).join(', ')}
+                            {' — set these up in Setup Instructions, above'}
+                        </span>
+                    )}
                     {verifiedCount > 0 && <span className="text-emerald-300/80 inline-flex items-center gap-1"><CheckCircle className="w-3 h-3" />{verifiedCount} verified</span>}
                     {failedCount > 0 && <span className="text-amber-300/90 inline-flex items-center gap-1"><AlertCircle className="w-3 h-3" />{failedCount} not working</span>}
                     {unverifiableCount > 0 && (
@@ -1013,6 +1228,21 @@ export default function ServiceProviders({ show, extras, refreshToken = 0, onCha
                         </div>
                     );
                 })}
+
+                {/* In the grid, not below it. */}
+                {plainSecrets && plainSettings.map(setting => (
+                    <div
+                        key={setting.id}
+                        className={openCap === setting.id ? 'sm:col-span-2 lg:col-span-3' : ''}
+                    >
+                        <PlainSettingCard
+                            setting={setting}
+                            secrets={plainSecrets}
+                            expanded={openCap === setting.id}
+                            onToggle={() => setOpenCap(k => (k === setting.id ? null : setting.id))}
+                        />
+                    </div>
+                ))}
             </div>
 
             {notChosen.length > 0 && (
@@ -1024,7 +1254,7 @@ export default function ServiceProviders({ show, extras, refreshToken = 0, onCha
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                         {notChosen.map(c => (
                             <div
-                                key={c.key}
+                                key={c.id}
                                 className="relative px-4 py-4 rounded-3xl bg-gradient-to-br from-white/[0.035] via-white/[0.01] to-indigo-950/30 border border-white/[0.08] backdrop-blur-2xl"
                             >
                                 <div className="flex items-center gap-3">
@@ -1051,6 +1281,8 @@ export default function ServiceProviders({ show, extras, refreshToken = 0, onCha
                     </p>
                 </div>
             )}
+
+            {footer && <div className="mt-6">{footer}</div>}
 
             {extras && (
                 <div className="mt-8">

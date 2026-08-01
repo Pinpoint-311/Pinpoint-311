@@ -21,6 +21,7 @@ from app.schemas import (
     StatisticsResponse
 )
 from app.core.auth import get_current_admin, get_current_staff
+from app.services.system_settings import get_settings as read_settings_row
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -180,7 +181,16 @@ async def _configured_map(providers: List[Dict[str, Any]]) -> Dict[str, bool]:
         present = True
         for key in required:
             try:
-                if not await get_secret(key):
+                # `.strip()`, so that a value of " " is absent here as well as
+                # everywhere else.
+                #
+                # Two definitions of empty had drifted apart. This one counted
+                # any truthy string, and the live test stripped before checking
+                # -- so a whitespace credential made a provider "configured"
+                # and simultaneously untestable, and the card said "Set up.
+                # There is no way to test this one from here" about a service
+                # nobody had entered anything for.
+                if not (await get_secret(key) or "").strip():
                     present = False
                     break
             except Exception:
@@ -848,7 +858,19 @@ async def _test_delivery(capability: str) -> dict:
         missing = [k for k in required_keys(entry) if not (await get_secret(k) or "").strip()]
         if not missing:
             return None
-        return {"ok": False, "detail": describe_missing(entry, missing), "recorded": False}
+        # `configured: False` rather than only `recorded: False`.
+        #
+        # These are different facts and the frontend was collapsing them: it
+        # read "not recorded" as "this provider cannot be tested", which is
+        # true of an HTTP gateway in general and wrong about a town that has
+        # entered nothing. Saying which it is lets the card correct itself even
+        # when the catalog disagrees.
+        return {
+            "ok": False,
+            "detail": describe_missing(entry, missing),
+            "recorded": False,
+            "configured": False,
+        }
 
     if capability == "email":
         provider = (await get_secret("EMAIL_PROVIDER")) or "smtp"
@@ -1582,12 +1604,19 @@ async def get_current_retention_policy(
     policy = get_retention_policy(state_code)
     stats = await get_retention_stats(db, state_code, override_days)
     
+    from app.services.retention_scrub import describe_selection, normalise_mode
+
     return {
         "state_code": state_code,
         "policy": policy,
         "override_days": override_days,
         "effective_days": override_days if override_days else policy["retention_days"],
-        "mode": mode,
+        "mode": normalise_mode(mode),
+        # The catalog and this town's choice in one object, so the screen never
+        # has to hold its own copy of what the fields are called.
+        "scrub_fields": describe_selection(
+            getattr(settings, "retention_scrub_fields", None) if settings else None
+        ),
         "stats": stats
     }
 
@@ -1597,6 +1626,7 @@ async def update_retention_policy(
     state_code: str = None,
     override_days: int = None,
     mode: str = None,
+    scrub_fields: Optional[List[str]] = Query(None),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
@@ -1637,9 +1667,20 @@ async def update_retention_policy(
             settings.retention_days_override = override_days
     
     if mode:
-        if mode not in ["anonymize", "delete"]:
-            raise HTTPException(400, "Mode must be 'anonymize' or 'delete'")
-        settings.retention_mode = mode
+        from app.services.retention_scrub import MODES, normalise_mode
+        resolved = normalise_mode(mode)
+        if resolved not in MODES:
+            raise HTTPException(400, f"Mode must be one of: {', '.join(MODES)}")
+        settings.retention_mode = resolved
+
+    if scrub_fields is not None:
+        from app.services.retention_scrub import FIELD_IDS, normalise_fields
+        unknown = [f for f in scrub_fields if f not in FIELD_IDS]
+        if unknown:
+            # Rejected rather than quietly dropped. A field silently ignored is
+            # a town believing it removes something it does not.
+            raise HTTPException(400, f"Unknown fields to scrub: {', '.join(sorted(unknown))}")
+        settings.retention_scrub_fields = normalise_fields(scrub_fields)
     
     await db.commit()
     await db.refresh(settings)
@@ -1648,24 +1689,151 @@ async def update_retention_policy(
         "status": "updated",
         "state_code": settings.retention_state_code,
         "override_days": settings.retention_days_override,
-        "mode": settings.retention_mode
+        "mode": settings.retention_mode,
+        "scrub_fields": settings.retention_scrub_fields,
+    }
+
+
+@router.get("/timezone")
+async def get_town_timezone(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Which clock the console shows times on.
+
+    Storage does not move. Every timestamp column is timestamptz and stays in
+    UTC; this only decides what a screen converts it into.
+    """
+    from app.services.town_time import COMMON_TIMEZONES, normalise_timezone, offset_label
+
+    settings = await read_settings_row(db)
+    current = normalise_timezone(getattr(settings, "timezone", None) if settings else None)
+    return {
+        "timezone": current,
+        "offset": offset_label(current),
+        "configured": bool(getattr(settings, "timezone", None)) if settings else False,
+        "common": [{"id": z, "offset": offset_label(z)} for z in COMMON_TIMEZONES],
+    }
+
+
+@router.post("/timezone")
+async def set_town_timezone(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    from app.services.town_time import is_valid_timezone, offset_label
+
+    name = str(payload.get("timezone", "")).strip()
+    if not is_valid_timezone(name):
+        # Rejected rather than quietly falling back to UTC. Silently storing
+        # something other than what was chosen is how a town ends up certain
+        # its times are local when they are not.
+        raise HTTPException(status_code=400, detail=f"Not a timezone this server recognises: {name or '(empty)'}")
+
+    settings = await read_settings_row(db, create=True)
+    settings.timezone = name
+    await db.commit()
+    return {"timezone": name, "offset": offset_label(name)}
+
+
+@router.get("/retention/preview")
+async def preview_retention_run(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """What pressing "Run now" would actually do.
+
+    The button had no preview and no confirmation. In `delete` mode it
+    permanently destroys resident records on one click, and the response came
+    back before the task had touched anything, so nothing on screen could say
+    what happened. Somebody deserves to see the number and the mode before
+    that, not after.
+    """
+    from app.models import ServiceRequest
+    from app.services.retention_scrub import describe_selection, normalise_mode
+    from app.services.retention_service import get_retention_policy, get_retention_stats
+
+    settings = await read_settings_row(db)
+    if settings is not None and getattr(settings, "legal_hold", False):
+        return {
+            "eligible": 0,
+            "on_legal_hold": 0,
+            "mode": getattr(settings, "retention_mode", None) or "anonymize",
+            "blocked": "legal_hold",
+        }
+
+    state_code = (settings.retention_state_code if settings else None) or "NJ"
+    override_days = settings.retention_days_override if settings else None
+    mode = normalise_mode(settings.retention_mode if settings else None)
+    policy = get_retention_policy(state_code)
+    stats = await get_retention_stats(db, state_code, override_days)
+
+    # Flagged records are past their date and must not be touched. They are
+    # counted separately rather than hidden, because "142 eligible" and "142
+    # eligible, 3 of which will be skipped" are different sentences to somebody
+    # approving a deletion.
+    held = (await db.execute(
+        select(func.count(ServiceRequest.id)).where(
+            and_(ServiceRequest.status == "closed", ServiceRequest.flagged.is_(True))
+        )
+    )).scalar() or 0
+
+    eligible = stats.get("eligible_for_archival", 0) if isinstance(stats, dict) else 0
+    return {
+        "eligible": eligible,
+        "on_legal_hold": held,
+        "will_act_on": max(0, eligible - held),
+        "mode": mode,
+        "state_code": state_code,
+        "policy_name": policy.get("name"),
+        "retention_days": override_days or policy.get("retention_days"),
+        "cutoff_date": stats.get("cutoff_date") if isinstance(stats, dict) else None,
+        # The word the caller has to send back. Deleting resident records on a
+        # single click is not something to make easy.
+        # Purge clears every field on every eligible record and cannot be
+        # undone, so it is typed out rather than clicked.
+        "confirmation_required": "PURGE" if mode == "purge" else None,
+        "scrub_fields": [
+            f["label"] for f in describe_selection(
+                getattr(settings, "retention_scrub_fields", None) if settings else None
+            ) if f["selected"]
+        ],
     }
 
 
 @router.post("/retention/run")
 async def run_retention_now(
+    payload: Dict[str, Any] = Body(default_factory=dict),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
-    """Manually trigger retention enforcement (admin only)"""
+    """Run retention enforcement now.
+
+    In `delete` mode this permanently destroys records, so it requires the
+    caller to echo back a confirmation word. A modal alone is a client-side
+    courtesy; anything that can be done by a stray fetch should not be able to
+    delete resident data.
+    """
     from app.tasks.service_requests import enforce_retention_policy
-    
-    # Trigger async task
+
+    from app.services.retention_scrub import normalise_mode
+
+    settings = await read_settings_row(db)
+    mode = normalise_mode(settings.retention_mode if settings else None)
+    if mode == "purge" and str(payload.get("confirm", "")).strip() != "PURGE":
+        raise HTTPException(
+            status_code=400,
+            detail='This policy clears every field on every eligible record and cannot be '
+                   'undone. Send confirm="PURGE" to proceed.',
+        )
+
     task = enforce_retention_policy.delay()
     return {
         "status": "triggered",
         "task_id": task.id,
-        "message": "Retention enforcement task started"
+        "mode": mode,
+        "message": "Retention enforcement started. It works through every eligible record.",
     }
 
 
@@ -1718,7 +1886,7 @@ async def export_for_public_records(
     """
     from app.services.retention_service import get_retention_policy
     from app.models import ServiceRequest
-    from datetime import datetime
+    from datetime import datetime, timezone
     import csv
     import io
     from fastapi.responses import StreamingResponse
@@ -1748,7 +1916,7 @@ async def export_for_public_records(
     # Write header with public records law info
     output.write(f"# {policy['public_records_law']} EXPORT\n")
     output.write(f"# State: {policy['name']} ({state_code})\n")
-    output.write(f"# Generated: {datetime.utcnow().isoformat()}Z\n")
+    output.write(f"# Generated: {datetime.now(timezone.utc).isoformat()}Z\n")
     output.write(f"# Total Records: {len(records)}\n")
     output.write(f"# Exported by: {current_user.username}\n")
     output.write("#\n")
@@ -1780,7 +1948,7 @@ async def export_for_public_records(
     
     # Create filename with law name
     law_abbrev = policy['public_records_law'].split('(')[0].strip().replace(' ', '_')
-    filename = f"{law_abbrev}_export_{datetime.utcnow().strftime('%Y%m%d')}.csv"
+    filename = f"{law_abbrev}_export_{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
     
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -1885,8 +2053,8 @@ async def get_advanced_statistics(
     except Exception:
         pass  # Redis unavailable
 
-    from datetime import datetime
-    now = datetime.utcnow()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
     
     # ========== Basic Counts ==========
     
@@ -2413,7 +2581,7 @@ async def get_advanced_statistics(
     if peak_month:
         # Extract month name from YYYY-MM format
         try:
-            from datetime import datetime as dt
+            from datetime import datetime as dt, timezone
             peak_month = dt.strptime(peak_month, "%Y-%m").strftime("%B")
         except Exception:
             pass  # Month format conversion failed, keep original
@@ -2927,10 +3095,10 @@ async def switch_version(
     from app.core.managed import ensure_not_managed
     ensure_not_managed("Upgrading")
     import httpx
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     project_root = os.environ.get("PROJECT_ROOT", "/project")
-    deployment_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    deployment_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     backup_dir = "/project/backups"
     
     # Auto-detect the Docker Compose project name from running containers
@@ -2978,7 +3146,7 @@ async def switch_version(
             "step": step,
             "success": success,
             "detail": detail,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         })
         if not success:
             state["errors"].append(f"{step}: {detail}")
@@ -3782,10 +3950,10 @@ async def get_health_dashboard(
     Comprehensive system health dashboard for non-technical administrators.
     Returns status of all services, database metrics, and last backup info.
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
     
     health = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "services": {},
         "database": {},
         "cache": {},
@@ -3973,12 +4141,12 @@ async def execute_runbook(
     """
     from app.core.managed import ensure_not_managed
     ensure_not_managed("Infrastructure runbook execution")
-    from datetime import datetime
+    from datetime import datetime, timezone
     
     result = {
         "action": action,
         "executed_by": current_user.email,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "status": "success",
         "details": {}
     }
@@ -4126,10 +4294,10 @@ async def analytics_chat(
     Gathers comprehensive context from across the platform (excluding resident PII)
     and uses Gemini 3.1 Flash-Lite to answer questions.
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
     
     context_used = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     
     # ========== 1. System Settings (Township Identity) ==========
     settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
@@ -4224,13 +4392,13 @@ async def analytics_chat(
     ai_summaries = []
     flagged_requests = []
     for r in all_requests:
-        if r.vertex_ai_summary:
+        if r.ai_summary:
             ai_summaries.append({
                 "id": r.service_request_id,
                 "category": r.service_name,
                 "address": r.address or "Unknown",
-                "summary": r.vertex_ai_summary[:200],
-                "classification": r.vertex_ai_classification,
+                "summary": r.ai_summary[:200],
+                "classification": r.ai_classification,
                 "priority": (r.ai_analysis or {}).get("priority_score") if isinstance(r.ai_analysis, dict) else None
             })
         if r.flagged:
@@ -4461,7 +4629,7 @@ async def analytics_chat(
         }
         if r.ai_analysis and isinstance(r.ai_analysis, dict):
             detail["ai_priority"] = r.ai_analysis.get("priority_score")
-            detail["ai_category"] = r.vertex_ai_classification
+            detail["ai_category"] = r.ai_classification
         if r.flagged:
             detail["flagged"] = True
             detail["flag_reason"] = r.flag_reason

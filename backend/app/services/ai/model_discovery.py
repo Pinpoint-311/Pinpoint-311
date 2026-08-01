@@ -71,58 +71,89 @@ def model_is_available(models: List[Dict[str, str]], model_id: Optional[str]) ->
 # --------------------------- per-provider discovery --------------------------
 
 async def _discover_vertex(creds: Dict[str, str]) -> Optional[List[Dict[str, str]]]:
+    """List Vertex models, across the publishers we can actually call.
+
+    Model Garden carries Anthropic, Meta, Mistral and more alongside Gemini,
+    and a town on Vertex should be able to choose them. But only the ones with
+    a handler are offered: listing a publisher the caller cannot speak to gives
+    a clerk a model they can select, save, and watch fail at triage.
+    """
     project = creds.get("VERTEX_AI_PROJECT")
     if not project:
         return None
+    # Honoured, not hardcoded. A town that set a region did so for a reason,
+    # and this product is sold on compliance boundaries.
     location = creds.get("VERTEX_AI_LOCATION") or "global"
     sa_json = creds.get("VERTEX_AI_SERVICE_ACCOUNT_KEY")
 
     def _sync() -> Optional[List[Dict[str, str]]]:
         import json
+
         import google.auth
+        import httpx
         from google.auth.transport.requests import Request
         from google.oauth2 import service_account
-        import httpx
+
+        from app.services.ai.vertex_publishers import ANTHROPIC, GOOGLE, SUPPORTED_PUBLISHERS
 
         scopes = ["https://www.googleapis.com/auth/cloud-platform"]
         if sa_json:
-            info = json.loads(sa_json)
-            credentials = service_account.Credentials.from_service_account_info(info, scopes=scopes)
+            credentials = service_account.Credentials.from_service_account_info(
+                json.loads(sa_json), scopes=scopes)
         else:
             credentials, _ = google.auth.default(scopes=scopes)
         credentials.refresh(Request())
+        headers = {"Authorization": f"Bearer {credentials.token}"}
 
-        host = "aiplatform.googleapis.com" if location == "global" else f"{location}-aiplatform.googleapis.com"
-        url = f"https://{host}/v1/publishers/google/models"
         out: List[Dict[str, str]] = []
-        page_token = None
-        for _ in range(5):  # bound pagination
-            params = {"pageSize": 200}
-            if page_token:
-                params["pageToken"] = page_token
-            resp = httpx.get(url, params=params,
-                             headers={"Authorization": f"Bearer {credentials.token}"}, timeout=15.0)
-            resp.raise_for_status()
-            data = resp.json()
-            for m in data.get("publisherModels", []) or data.get("models", []):
-                name = m.get("name", "")
-                mid = name.split("/")[-1] if name else m.get("modelId", "")
-                # Gemini text-generation models only; drop embeddings/vision-only variants.
-                if not mid or "gemini" not in mid.lower():
-                    continue
-                if any(x in mid.lower() for x in ("embedding", "vision", "aqa")):
-                    continue
-                out.append({"id": mid, "label": mid})
-            page_token = data.get("nextPageToken")
-            if not page_token:
-                break
-        # de-dupe, stable
-        seen, uniq = set(), []
-        for m in out:
-            if m["id"] not in seen:
-                seen.add(m["id"])
-                uniq.append(m)
-        return uniq or None
+        seen = set()
+        failures = []
+        for publisher in SUPPORTED_PUBLISHERS:
+            # Anthropic models are not listed from the global endpoint.
+            region = location
+            if publisher == ANTHROPIC and region in ("", "global"):
+                region = "us-east5"
+            host = ("aiplatform.googleapis.com" if region in ("", "global")
+                    else f"{region}-aiplatform.googleapis.com")
+            url = f"https://{host}/v1/publishers/{publisher}/models"
+            page_token = None
+            try:
+                for _ in range(5):  # bound pagination
+                    params = {"pageSize": 200}
+                    if page_token:
+                        params["pageToken"] = page_token
+                    resp = httpx.get(url, params=params, headers=headers, timeout=15.0)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    for m in data.get("publisherModels", []) or data.get("models", []):
+                        name = m.get("name", "")
+                        mid = name.split("/")[-1] if name else m.get("modelId", "")
+                        if not mid or mid in seen:
+                            continue
+                        # Text generation only. An embedding or image model in
+                        # a triage picker is a choice that fails at request
+                        # time rather than at selection.
+                        if any(x in mid.lower() for x in ("embedding", "aqa", "imagen", "veo")):
+                            continue
+                        seen.add(mid)
+                        label = m.get("displayName") or mid
+                        prefix = "" if publisher == GOOGLE else f"{publisher.capitalize()} "
+                        out.append({
+                            "id": mid,
+                            "label": f"{prefix}{label}" if label == mid else f"{prefix}{label} ({mid})",
+                        })
+                    page_token = data.get("nextPageToken")
+                    if not page_token:
+                        break
+            except Exception as e:
+                # Recorded rather than swallowed. One publisher being
+                # unavailable is normal; all of them failing silently while the
+                # picker shows a short list is how a town concludes the product
+                # only supports Gemini.
+                failures.append(f"{publisher}: {type(e).__name__}")
+        if failures:
+            logger.info("[AI models] some Vertex publishers did not list: %s", ", ".join(failures))
+        return out or None
 
     return await asyncio.get_event_loop().run_in_executor(None, _sync)
 

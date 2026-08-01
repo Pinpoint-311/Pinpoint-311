@@ -40,11 +40,18 @@ AI_CATALOG: Dict[str, Dict[str, Any]] = {
         "name": "Azure Government AI",
         "boundary": "Azure Government / GCC High (FedRAMP High / DoD)",
         "description": "Azure OpenAI (GPT models) in US government regions. Best for Microsoft/M365 states.",
+        # Azure addresses a model by the *deployment name* the town chose, not
+        # by the model name -- which is why discovery lists deployments. These
+        # are the conventional names, and they resolve only where a deployment
+        # was named to match; the moment credentials are saved, discovery
+        # replaces them with what the town actually has.
         "models": [
-            {"id": "gpt-4o-mini", "label": "GPT-4o mini (fast, cheap)"},
-            {"id": "gpt-4o", "label": "GPT-4o (higher quality)"},
+            {"id": "gpt-4.1-mini", "label": "GPT-4.1 mini (fast, cheap)"},
+            {"id": "gpt-4.1", "label": "GPT-4.1 (higher quality, long context)"},
+            {"id": "gpt-4o-mini", "label": "GPT-4o mini"},
+            {"id": "gpt-4o", "label": "GPT-4o"},
         ],
-        "default_model": "gpt-4o-mini",
+        "default_model": "gpt-4.1-mini",
         "credential_fields": [
             {"key": "AZURE_OPENAI_ENDPOINT", "label": "Azure OpenAI Endpoint", "secret": False},
             {"key": "AZURE_OPENAI_API_KEY", "label": "API Key", "secret": True},

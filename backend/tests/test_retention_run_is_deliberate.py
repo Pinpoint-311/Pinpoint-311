@@ -1,0 +1,174 @@
+"""Running retention is destructive, unbounded, and was one click away.
+
+Two separate problems, reported together.
+
+It stopped after a hundred records with nothing on screen saying so, which for
+a town with five thousand expired records meant fifty presses of a button that
+looked finished each time -- while the retention policy the town publishes says
+those records are gone. The gap between the claim and the database widened
+every day nobody noticed.
+
+And in `delete` mode it destroys resident records permanently, with no preview,
+no confirmation, and a response that returned before the task had touched
+anything.
+"""
+
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+TASK = (ROOT / "app/tasks/service_requests.py").read_text()
+API = (ROOT / "app/api/system.py").read_text()
+BLOCK = TASK[TASK.index("def enforce_retention_policy"):]
+BLOCK = BLOCK[:BLOCK.index("\n@celery_app.task")]
+
+
+def _const(name: str) -> int:
+    """Read a module constant without importing the module.
+
+    `app.tasks.service_requests` imports Celery, which CI does not install, so
+    importing it here would skip these tests in exactly the environment that is
+    supposed to enforce them.
+    """
+    m = re.search(rf"^{name} = (\d+)$", TASK, re.M)
+    assert m, f"{name} is gone"
+    return int(m.group(1))
+
+
+class TestItProcessesEverything:
+    def test_it_no_longer_stops_at_a_hundred(self):
+        assert "limit=100" not in BLOCK, "the hundred-record cap is back"
+
+    def test_it_keeps_going_until_there_is_nothing_left(self):
+        assert "while True:" in BLOCK
+        assert "limit=BATCH_SIZE" in BLOCK
+
+    def test_it_still_works_in_batches(self):
+        """Not one transaction over five thousand rows: that holds locks for
+        the duration and fails all-or-nothing."""
+        assert 1 <= _const("BATCH_SIZE") <= 1000
+
+    def test_a_batch_of_untouchable_records_does_not_loop_for_ever(self):
+        """Records under legal hold stay eligible by design -- they are past
+        their date and must not be archived -- so a batch of nothing but held
+        records would be re-fetched for ever."""
+        assert "archived_this_batch == 0" in BLOCK
+
+    def test_the_runaway_guard_is_far_above_any_real_backlog(self):
+        assert _const("BATCH_SIZE") * _const("MAX_BATCHES") >= 100_000
+
+    def test_hitting_the_guard_is_reported_rather_than_called_success(self):
+        assert "more_remaining" in BLOCK
+
+
+class TestItAsksFirst:
+    def test_there_is_a_preview(self):
+        assert '"/retention/preview"' in API
+        assert "async def preview_retention_now" in API or "async def preview_retention_run" in API
+
+    def test_the_preview_separates_what_will_be_skipped(self):
+        """"142 eligible" and "142 eligible, 3 of which will be skipped" are
+        different sentences to somebody approving a deletion."""
+        for field in ('"eligible"', '"on_legal_hold"', '"will_act_on"'):
+            assert field in API
+
+    def test_the_preview_says_which_mode_is_in_force(self):
+        """Anonymise and delete are not the same act and the button never said
+        which one it was about to perform."""
+        assert '"mode": mode' in API
+
+    def test_deleting_requires_the_word_back(self):
+        """A modal is a client-side courtesy. Anything a stray fetch can do
+        should not include destroying resident records."""
+        block = API[API.index("async def run_retention_now"):]
+        block = block[:block.index("\n@router")]
+        assert 'confirm' in block
+        assert '"PURGE"' in block
+        assert "status_code=400" in block
+
+    def test_redacting_does_not_demand_the_word(self):
+        """Targeted enough not to need ceremony; asking for a password every
+        time is how people learn to type it without reading.
+
+        Purge still does: it clears every field on every eligible record and
+        cannot be undone."""
+        block = API[API.index("async def run_retention_now"):]
+        block = block[:block.index("\n@router")]
+        assert 'mode == "purge"' in block
+
+    def test_a_legal_hold_is_reported_before_anything_is_offered(self):
+        assert '"blocked": "legal_hold"' in API
+
+
+class TestTheTownChoosesWhatIsRemoved:
+    """The list of what a retention run clears was fixed in code."""
+
+    def test_the_setting_is_stored(self):
+        models = (ROOT / "app/models.py").read_text()
+        assert "retention_scrub_fields" in models
+
+    def test_the_api_returns_the_catalog_with_the_choice_marked(self):
+        assert "describe_selection" in API
+
+    def test_an_unknown_field_is_rejected_rather_than_dropped(self):
+        """Silently ignoring one leaves a town believing it removes something
+        it does not."""
+        assert "Unknown fields to scrub" in API
+
+    def test_the_task_reads_the_choice(self):
+        assert "retention_scrub_fields" in TASK
+        assert "scrub_fields" in TASK
+
+    def test_the_preview_names_what_will_be_cleared(self):
+        """"142 records" without saying what happens to them is not consent."""
+        block = API[API.index("async def preview_retention_run"):]
+        block = block[:block.index("\n@router")]
+        assert "scrub_fields" in block
+
+
+class TestTheWordItUses:
+    def test_the_api_no_longer_demands_the_old_word(self):
+        assert '"anonymize", "delete"' not in API
+
+    def test_what_is_already_stored_still_works(self):
+        """Towns have `anonymize` in their database now. Rejecting it on read
+        would break the policy screen for every one of them."""
+        from app.services.retention_scrub import normalise_mode
+
+        assert normalise_mode("anonymize") == "redact"
+
+    def test_the_migration_moves_the_stored_value_too(self):
+        """So the database and the screen agree, rather than the screen
+        translating forever."""
+        migration = next(
+            (ROOT / "alembic/versions").glob("*retention_scrub_fields*")
+        ).read_text()
+        assert "retention_mode = :new" in migration
+        assert 'old="anonymize"' in migration
+        assert 'new="redact"' in migration
+
+
+def test_the_word_asked_for_is_the_word_checked():
+    """The preview said PURGE and the endpoint checked for DELETE, so typing
+    what you were told would have been rejected. A confirmation that cannot be
+    satisfied is worse than none: it teaches people the button is broken."""
+    required = re.search(r'"confirmation_required": "(\w+)"', API).group(1)
+    checked = re.search(r'strip\(\) != "(\w+)"', API).group(1)
+    assert required == checked, f"asked for {required}, checks for {checked}"
+
+
+def test_hard_deletion_is_gone_from_the_service():
+    """It could never have worked: NOT NULL foreign keys from the audit log and
+    the comments with no cascade, so the flush failed on every record."""
+    service = (ROOT / "app/services/retention_service.py").read_text()
+    assert "db.delete(" not in service
+
+
+def test_the_redaction_lands_in_the_tamper_evident_trail():
+    """The chain hashes any RequestAuditLog insert, so writing the row is what
+    puts a redaction in it. A redaction that leaves no trace is
+    indistinguishable from data loss."""
+    service = (ROOT / "app/services/retention_service.py").read_text()
+    assert "RequestAuditLog(" in service
+    assert 'action=f"retention_{action}"' in service
+    assert '"cleared"' in service

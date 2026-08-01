@@ -161,7 +161,7 @@ async def _db_connection_check(db) -> Dict[str, Any]:
 
 async def _backup_age_check() -> Dict[str, Any]:
     try:
-        from datetime import datetime
+        from datetime import datetime, timezone
         from app.services.backup_service import get_backup_status
         status_info = await get_backup_status()
         last = status_info.get("last_backup") if isinstance(status_info, dict) else None
@@ -174,7 +174,7 @@ async def _backup_age_check() -> Dict[str, Any]:
         created = last["created_at"]
         if isinstance(created, str):
             created = datetime.fromisoformat(created.replace("Z", "").replace("+00:00", ""))
-        hours = (datetime.utcnow() - created).total_seconds() / 3600
+        hours = (datetime.now(timezone.utc) - created).total_seconds() / 3600
         status = classify_metric(round(hours, 1), warn=36, crit=72)
         return _check(
             "backup", "Backup freshness", status, round(hours, 1),
@@ -343,12 +343,12 @@ async def collect_checks(db) -> List[Dict[str, Any]]:
 
 async def evaluate(db) -> Dict[str, Any]:
     """Full proactive-health evaluation for the API/alerting layers."""
-    from datetime import datetime
+    from datetime import datetime, timezone
     checks = await collect_checks(db)
     overall = rollup_status(checks)
     return {
         "overall_status": overall,
         "summary": clerk_summary(overall),
         "checks": checks,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
