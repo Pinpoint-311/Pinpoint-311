@@ -2,10 +2,10 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    Key, Shield, CheckCircle, CircleDashed, Activity,
+    Key, CheckCircle, CircleDashed, Activity,
     AlertCircle, ChevronDown, ChevronUp,
     ExternalLink, Database, BookOpen,
-    ListChecks, HardDrive, Bell,
+    ListChecks, Bell,
 } from 'lucide-react';
 
 import { Card, Button, Badge, CollapsibleSection } from './ui';
@@ -16,8 +16,6 @@ import GovtechIntegrations from './GovtechIntegrations';
 import ServiceProviders from './ServiceProviders';
 import SetupWizard from './SetupWizard';
 import { buildPlan, summarise, nameList, BACKUP_SECRETS, SENTRY_SECRETS } from './setupPlan';
-import { PlainSecrets } from './SetupWizard';
-import { CapabilityTile, StatusPill } from './capabilityUI';
 // Registers every provider's setup steps as a side effect, so the guide can
 // render them inline rather than pointing at the cards that do.
 import './setupStepsContent';
@@ -652,6 +650,77 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         </div>
     );
 
+    /* The backup passphrase, rendered inside the backups card.
+     *
+     * Deliberately not one of the plain credential fields: it is generated
+     * rather than typed, shown exactly once, and gated on somebody confirming
+     * they kept a copy. A generic form would lose all three, and losing it
+     * means a town's backups cannot be restored.
+     */
+    const renderBackupPassphrase = () => (
+        <div className="mt-4 pt-4 border-t border-white/10">
+    <div>
+        <label className="text-sm text-white/60 mb-1.5 block">Encryption Passphrase</label>
+        {!backupKey ? (
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                <p className="text-white/50 text-xs mb-2.5">
+                    {isConfigured('BACKUP_ENCRYPTION_KEY')
+                        ? "A passphrase is already set and backups are being encrypted with it. Creating a new one means older backups can only be restored with the old passphrase — so only do this if the current one has been exposed."
+                        : "Backups are encrypted before they leave this server. We'll create the passphrase for you — you don't need to think one up."}
+                </p>
+                <Button
+                    size="sm"
+                    variant="ghost"
+                    className="w-full border border-white/15 hover:bg-white/10"
+                    onClick={async () => {
+                        try {
+                            const { key } = await api.generateBackupKey();
+                            setBackupKey(key);
+                        } catch (err: any) {
+                            setSaveMessage(`❌ ${err.message || 'Could not create a passphrase'}`);
+                        }
+                    }}
+                >
+                    {isConfigured('BACKUP_ENCRYPTION_KEY')
+                        ? 'Replace backup passphrase'
+                        : 'Create backup passphrase'}
+                </Button>
+            </div>
+        ) : (
+            <div className="rounded-xl border border-amber-400/30 bg-amber-500/[0.07] p-3 space-y-2.5">
+                <p className="text-amber-100/90 text-xs leading-relaxed">
+                    This is shown once. Put a copy somewhere that is <strong>not this
+                    server</strong> — a password manager, or a sealed envelope in the
+                    clerk's safe. Without it, a backup cannot be restored, and that is the
+                    one thing we cannot do for you.
+                </p>
+                <div className="flex items-center gap-2">
+                    <code className="flex-1 bg-black/40 rounded-lg px-3 py-2 text-[11px] text-amber-200 break-all select-all">
+                        {backupKey}
+                    </code>
+                    <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => navigator.clipboard?.writeText(backupKey)}
+                    >
+                        Copy
+                    </Button>
+                </div>
+                <label className="flex items-start gap-2 text-xs text-white/70 cursor-pointer">
+                    <input
+                        type="checkbox"
+                        checked={backupKeyAcknowledged}
+                        onChange={(e) => setBackupKeyAcknowledged(e.target.checked)}
+                        className="mt-0.5 accent-amber-400"
+                    />
+                    I have saved a copy of this passphrase somewhere off this server.
+                </label>
+            </div>
+        )}
+    </div>
+        </div>
+    );
+
     return (
         <div className="space-y-6">
             {/* Header */}
@@ -974,6 +1043,38 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                        provider catalog, so they are not in CAPS and could never
                        show up as switched off -- which is the pair somebody is
                        most likely to untick and then wonder about. */
+                    /* In the grid, as cards, alongside the eight capabilities. */
+                    plainSettings={[
+                        ...(wantedFeatures.has('backups') ? [{
+                            id: 'backups',
+                            title: 'Automatic backups',
+                            subtitle: 'Encrypted, on S3-compatible storage',
+                            icon: Database,
+                            fields: BACKUP_SECRETS,
+                            configured: !!backupConfigured,
+                            blockedReason:
+                                (backupKeyAcknowledged || (!backupKey && isConfigured('BACKUP_ENCRYPTION_KEY')))
+                                    ? null
+                                    : 'Create the encryption passphrase below and confirm you have kept a copy first.',
+                            body: renderBackupPassphrase(),
+                        }] : []),
+                        ...(wantedFeatures.has('errors') ? [{
+                            id: 'errors',
+                            title: 'Crash reporting',
+                            subtitle: 'Sentry',
+                            icon: Activity,
+                            fields: SENTRY_SECRETS,
+                            configured: !!isConfigured('SENTRY_DSN'),
+                        }] : []),
+                    ]}
+                    plainSecrets={{
+                        values: secretValues,
+                        onChange: (k, v) => setSecretValues(p => ({ ...p, [k]: v })),
+                        onSave: async (keys) => { for (const k of keys) await handleSave(k); },
+                        saving: savingKey,
+                        isConfigured: (k) => !!isConfigured(k),
+                        onSaved: () => undefined,
+                    }}
                     extraOff={[
                         ...(wantedFeatures.has('backups') ? [] : [{
                             id: 'backups', title: 'Automatic backups', icon: Database,
@@ -987,239 +1088,22 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                     refreshToken={providerRefresh}
                     publicOrigin={publicOrigin}
                     onChanged={() => { onRefresh(); loadProviderStatus(); }}
-                    extras={
-                        <>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            {/* The Google Cloud card that used to open this
-                                section has gone. Its instructions and its two
-                                boxes now sit together in the setup guide's
-                                Google task, so the walk that says "download
-                                this file" ends where the file is added rather
-                                than pointing thousands of pixels down the page.
-
-                                Nothing replaces it for Azure or AWS, and that
-                                is correct: neither has an account-level
-                                credential to enter. */}
-                            {/* Where the stored data actually lives.
-                              *
-                              * This used to be two buttons -- "Vault Local Secrets to GCP
-                              * Identity" and "Re-encrypt All PII Data (after key rotation)" --
-                              * which asked a clerk to recognise the need for work they had no
-                              * way to know about. Both now run on a schedule, so all that is
-                              * left is one sentence.
-                              *
-                              * Deliberately outside the Google Cloud card. Secret storage and
-                              * key management are pluggable, and anything nested in that card
-                              * is invisible to a town on Azure or AWS -- which is exactly the
-                              * town most likely to want to know where its credentials are. */}
-                            <div className="px-1">
-                                <StorageStatusLine />
-                            </div>
-
-
-                            {/* Crash reporting.
-                                One field, and it was written out by hand here
-                                as well as in setupPlan.ts. Both now render the
-                                same SENTRY_SECRETS array through the same
-                                component the guide uses -- two copies of a
-                                credential form is exactly how the guide and
-                                the cards drifted last time. */}
-                            <div className="premium-card p-5">
-                                <div className="flex items-center gap-3.5 mb-3.5">
-                                    <CapabilityTile icon={Activity} size="sm" />
-                                    <div className="min-w-0 flex-1">
-                                        <h3 className="font-semibold text-white">Crash reporting</h3>
-                                        <p className="text-white/55 text-xs">
-                                            Sends crash reports off this server, so they survive a restart.
-                                        </p>
-                                    </div>
-                                    <StatusPill state={isConfigured('SENTRY_DSN') ? 'done' : 'unset'} />
-                                </div>
-                                <PlainSecrets
-                                    fields={SENTRY_SECRETS}
-                                    values={secretValues}
-                                    onChange={(k, v) => setSecretValues(p => ({ ...p, [k]: v }))}
-                                    onSave={async (keys) => { for (const k of keys) await handleSave(k); }}
-                                    saving={savingKey}
-                                    isConfigured={(k) => !!isConfigured(k)}
-                                    onSaved={() => undefined}
-                                />
-                            </div>
-
-                            {/* Database Backups - Premium Card (locked in managed mode: the state owns backups) */}
-                            {managedMode ? (
-                                <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6">
-                                    <div className="flex items-center gap-4 mb-2">
-                                        <div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-white/10">
-                                            <HardDrive className="w-7 h-7 text-white/50" />
-                                        </div>
-                                        <div>
-                                            <h3 className="font-bold text-lg text-white/70">Database Backups</h3>
-                                            <p className="text-white/40 text-sm">Encrypted off-site backups</p>
-                                        </div>
-                                        <span className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-white/10 text-white/60 border border-white/15">
-                                            <Shield className="w-3.5 h-3.5" />
-                                            Managed by your state
-                                        </span>
-                                    </div>
-                                    <p className="text-white/50 text-sm">
-                                        Automated encrypted backups run under your state hosting program's disaster-recovery plan. Nothing to configure here.
-                                    </p>
-                                </div>
-                            ) : (
-                            <motion.div
-                                initial={{ opacity: 0, y: 20 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: 0.5 }}
-                                className={`relative rounded-3xl border p-6 transition-all duration-300 ${backupConfigured
-                                    ? 'bg-gradient-to-br from-amber-500/10 via-yellow-500/5 to-orange-500/10 border-amber-500/30 shadow-lg shadow-amber-500/10'
-                                    : 'setup-panel border-transparent'
-                                    }`}
-                            >
-                                {backupConfigured && (
-                                    <div className="absolute inset-0 bg-gradient-to-r from-amber-500/5 via-transparent to-orange-500/5 pointer-events-none" />
-                                )}
-
-                                <div className="relative">
-                                    <div className="flex items-start justify-between mb-4">
-                                        <div className="flex items-center gap-4">
-                                            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 ${backupConfigured
-                                                ? 'bg-gradient-to-br from-amber-400 to-orange-500 shadow-lg shadow-amber-500/30'
-                                                : 'setup-tile'
-                                                }`}>
-                                                <HardDrive className="w-7 h-7 text-white" />
-                                            </div>
-                                            <div>
-                                                <h3 className="font-bold text-lg text-white">Database Backups</h3>
-                                                <p className="text-white/50 text-sm">Encrypted S3-compatible storage</p>
-                                            </div>
-                                        </div>
-                                        {backupConfigured ? (
-                                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30 shadow-lg shadow-amber-500/10">
-                                                <CheckCircle className="w-3.5 h-3.5" />
-                                                Configured
-                                            </span>
-                                        ) : (
-                                            <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-white/10 text-white/50 border border-white/10">
-                                                Optional
-                                            </span>
-                                        )}
-                                    </div>
-
-                                    <p className="text-white/60 text-sm mb-4">
-                                        Backups are encrypted with AES-256 and stored in your S3-compatible bucket. Backup cleanup follows your configured retention policy.
-                                        See the <strong className="text-amber-300">Setup Instructions</strong> above for provider-specific guidance.
-                                    </p>
-
-                                    {/* The five S3 boxes were written by hand
-                                        here and again in setupPlan.ts. Both
-                                        now render BACKUP_SECRETS through the
-                                        same component the guide uses.
-
-                                        The passphrase below is not part of
-                                        that array on purpose: it is generated
-                                        rather than typed, it is shown exactly
-                                        once, and it needs the acknowledgement
-                                        checkbox. Folding it into a generic
-                                        credential form would lose all three,
-                                        and losing it means a town's backups
-                                        cannot be restored. */}
-                                    {!backupConfigured || secretValues['BACKUP_S3_BUCKET'] !== undefined ? (
-                                        <div className="space-y-3">
-                                            <PlainSecrets
-                                                fields={BACKUP_SECRETS}
-                                                values={secretValues}
-                                                onChange={(k, v) => setSecretValues(p => ({ ...p, [k]: v }))}
-                                                onSave={async (keys) => { for (const k of keys) await handleSave(k); }}
-                                                saving={savingKey}
-                                                isConfigured={(k) => !!isConfigured(k)}
-                                                onSaved={() => undefined}
-                                                blockedReason={
-                                                    (backupKeyAcknowledged || (!backupKey && isConfigured('BACKUP_ENCRYPTION_KEY')))
-                                                        ? null
-                                                        : 'Create the encryption passphrase below and confirm you have kept a copy first.'
-                                                }
-                                            />
-
-                                            <div>
-                                                <label className="text-sm text-white/60 mb-1.5 block">Encryption Passphrase</label>
-                                                {!backupKey ? (
-                                                    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                                                        <p className="text-white/50 text-xs mb-2.5">
-                                                            {isConfigured('BACKUP_ENCRYPTION_KEY')
-                                                                ? "A passphrase is already set and backups are being encrypted with it. Creating a new one means older backups can only be restored with the old passphrase — so only do this if the current one has been exposed."
-                                                                : "Backups are encrypted before they leave this server. We'll create the passphrase for you — you don't need to think one up."}
-                                                        </p>
-                                                        <Button
-                                                            size="sm"
-                                                            variant="ghost"
-                                                            className="w-full border border-white/15 hover:bg-white/10"
-                                                            onClick={async () => {
-                                                                try {
-                                                                    const { key } = await api.generateBackupKey();
-                                                                    setBackupKey(key);
-                                                                } catch (err: any) {
-                                                                    setSaveMessage(`❌ ${err.message || 'Could not create a passphrase'}`);
-                                                                }
-                                                            }}
-                                                        >
-                                                            {isConfigured('BACKUP_ENCRYPTION_KEY')
-                                                                ? 'Replace backup passphrase'
-                                                                : 'Create backup passphrase'}
-                                                        </Button>
-                                                    </div>
-                                                ) : (
-                                                    <div className="rounded-xl border border-amber-400/30 bg-amber-500/[0.07] p-3 space-y-2.5">
-                                                        <p className="text-amber-100/90 text-xs leading-relaxed">
-                                                            This is shown once. Put a copy somewhere that is <strong>not this
-                                                            server</strong> — a password manager, or a sealed envelope in the
-                                                            clerk's safe. Without it, a backup cannot be restored, and that is the
-                                                            one thing we cannot do for you.
-                                                        </p>
-                                                        <div className="flex items-center gap-2">
-                                                            <code className="flex-1 bg-black/40 rounded-lg px-3 py-2 text-[11px] text-amber-200 break-all select-all">
-                                                                {backupKey}
-                                                            </code>
-                                                            <Button
-                                                                size="sm"
-                                                                variant="ghost"
-                                                                onClick={() => navigator.clipboard?.writeText(backupKey)}
-                                                            >
-                                                                Copy
-                                                            </Button>
-                                                        </div>
-                                                        <label className="flex items-start gap-2 text-xs text-white/70 cursor-pointer">
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={backupKeyAcknowledged}
-                                                                onChange={(e) => setBackupKeyAcknowledged(e.target.checked)}
-                                                                className="mt-0.5 accent-amber-400"
-                                                            />
-                                                            I have saved a copy of this passphrase somewhere off this server.
-                                                        </label>
-                                                    </div>
-                                                )}
-                                            </div>
-
-                                        </div>
-                                    ) : (
-                                        <div className="space-y-3">
-                                            <div className="flex items-center gap-2">
-                                                <div className="flex-1 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center px-4">
-                                                    <CheckCircle className="w-4 h-4 text-amber-400 mr-2" />
-                                                    <span className="text-amber-200 text-sm">Backup storage configured</span>
-                                                </div>
-                                                <Button size="sm" variant="ghost" onClick={() => setSecretValues(p => ({ ...p, 'BACKUP_S3_BUCKET': '' }))}>
-                                                    Change
-                                                </Button>
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            </motion.div>
-                            )}
+                    /* The "Other settings" block is gone.
+                     *
+                     * Its Google Cloud card moved into the setup guide, and its
+                     * backups and crash-reporting cards moved into the grid, so
+                     * all that was left was one status line under a heading
+                     * announcing a section containing nothing else. */
+                    footer={
+                        <div className="px-1">
+                            {/* Where the stored data actually lives. Deliberately
+                                not nested in any provider's card: secret storage
+                                and key management are pluggable, and anything
+                                inside the Google card is invisible to the town on
+                                Azure or AWS -- which is the town most likely to
+                                want to know where its credentials are. */}
+                            <StorageStatusLine />
                         </div>
-                        </>
                     }
                 />
             </div>

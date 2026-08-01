@@ -83,11 +83,12 @@ describe('the setup page after the Other-settings surgery', () => {
     });
 
     it('still offers crash reporting and backups', async () => {
-        // Both were rewritten to render shared field definitions. If either
-        // vanished during the edit, this is where it shows up.
+        // They are cards in the provider grid now rather than a separate block
+        // below it, so they are collapsed bubbles carrying their title. If
+        // either vanished during the move, this is where it shows up.
         const text = await mount();
         expect(text).toContain('Crash reporting');
-        expect(text).toMatch(/Database Backups/i);
+        expect(text).toContain('Automatic backups');
     });
 
     it('no longer carries a Google Cloud card in Other settings', async () => {
@@ -96,10 +97,12 @@ describe('the setup page after the Other-settings surgery', () => {
         expect(text).not.toContain('GCP Project ID');
     });
 
-    it('asks for the backup bucket by the shared label', async () => {
-        // Proves the shared array is what rendered, not a surviving hand-written
-        // copy that happens to look similar.
+    it('draws them as cards rather than as a separate block', async () => {
+        // The whole point of the move. Collapsed, they say whether they are set
+        // up and where to go, exactly like the eight capabilities beside them --
+        // and the credential fields appear on expand, from the shared array.
         const text = await mount();
-        expect(text).toContain('Bucket name');
+        expect(text).not.toContain('Other settings');
+        expect(text).toMatch(/Not set up|Set up/);
     });
 });

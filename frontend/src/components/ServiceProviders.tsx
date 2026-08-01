@@ -15,6 +15,7 @@ import {
 
 import { CollapsibleSection } from './ui';
 import { StatusPill, CapabilityTile, Action, hasAlert, type CapabilityState } from './capabilityUI';
+import { PlainSecrets } from './SetupWizard';
 import { api, ProviderCatalog, ProviderInfo, ProviderModelSpec, CloudIdentity } from '../services/api';
 import type { ConnectorHealth } from '../types';
 
@@ -838,7 +839,122 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     );
 }
 
-export default function ServiceProviders({ show, extras, extraOff = [], refreshToken = 0, onChanged, publicOrigin = null }: {
+
+/**
+ * A setting with no provider behind it, drawn as one of the cards.
+ *
+ * Backups and crash reporting were rendered below the grid in an "Other
+ * settings" block, in a completely different treatment and at a different
+ * size, and they read as a separate class of thing. They are not: they are
+ * something the town either has set up or has not, exactly like the eight
+ * above them. The only real difference is that there is nothing to pick
+ * between and nothing to test, so the card carries no provider name and no
+ * "Test now".
+ *
+ * Same shell, same tile, same expand-to-full-width behaviour, so restyling the
+ * capability cards restyles these too rather than leaving them behind again.
+ */
+export interface PlainSetting {
+    id: string;
+    title: string;
+    subtitle: string;
+    icon: typeof Sparkles;
+    fields: { key: string; label: string; secret?: boolean; help?: string }[];
+    configured: boolean;
+    /** Anything the plain fields cannot express -- the backup passphrase, which
+     *  is generated rather than typed and shown exactly once. */
+    body?: ReactNode;
+    /** Why saving is refused, if it is. */
+    blockedReason?: string | null;
+}
+
+function PlainSettingCard({ setting, expanded, onToggle, secrets }: {
+    setting: PlainSetting;
+    expanded: boolean;
+    onToggle: () => void;
+    secrets: PlainSecretsBridge;
+}) {
+    const { title, subtitle, icon: Icon, fields, configured, body } = setting;
+    return (
+        <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+            className={!expanded
+                ? 'group relative h-full px-4 py-4 rounded-3xl bg-gradient-to-br from-white/[0.06] via-white/[0.02] to-indigo-950/40 border border-white/10 backdrop-blur-2xl hover:border-primary-400/40 hover:-translate-y-0.5 transition-all duration-300'
+                : 'relative overflow-hidden p-5 sm:p-6 rounded-3xl border backdrop-blur-2xl shadow-[0_14px_40px_rgba(0,0,0,0.4)] bg-gradient-to-br from-white/[0.08] via-white/[0.02] to-indigo-950/40 border-white/15'}
+        >
+            <div className="relative">
+                {!expanded ? (
+                    <button
+                        type="button"
+                        onClick={onToggle}
+                        aria-expanded={false}
+                        className="w-full text-left rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                    >
+                        <div className="flex items-center gap-3">
+                            <CapabilityTile icon={Icon} />
+                            <span className="min-w-0 flex-1">
+                                <span className="block font-semibold text-white text-sm truncate">{title}</span>
+                                <span className="block text-[11px] text-white/50 truncate">
+                                    {configured ? subtitle : 'Not set up'}
+                                </span>
+                            </span>
+                            <span className={`shrink-0 ${configured ? 'text-emerald-300' : 'text-white/30'}`} aria-hidden="true">
+                                {configured ? <Check className="w-4 h-4" /> : <CircleDashed className="w-4 h-4" />}
+                            </span>
+                        </div>
+                        <span className={`block text-[11px] mt-2.5 ${configured ? 'text-white/45' : 'text-amber-200/85'}`}>
+                            {configured
+                                ? 'Set up. Nothing here reports back, so there is nothing to test.'
+                                : 'Add its details in Setup Instructions, above.'}
+                        </span>
+                    </button>
+                ) : (
+                    <>
+                        <div className="flex items-start justify-between gap-4 flex-wrap">
+                            <div className="flex items-start gap-4 min-w-0 flex-1">
+                                <CapabilityTile icon={Icon} size="lg" />
+                                <div className="min-w-0">
+                                    <div className="flex items-center gap-3 flex-wrap">
+                                        <h3 className="font-bold text-lg text-white tracking-tight">{title}</h3>
+                                        <StatusPill state={configured ? 'done' : 'unset'} />
+                                    </div>
+                                    <p className="text-sm text-white/60 mt-1">{subtitle}</p>
+                                </div>
+                            </div>
+                            <Action variant="primary" onClick={onToggle} chevron>Close</Action>
+                        </div>
+                        <div className="mt-4 pt-4 border-t border-white/10">
+                            <PlainSecrets
+                                fields={fields}
+                                values={secrets.values}
+                                onChange={secrets.onChange}
+                                onSave={secrets.onSave}
+                                saving={secrets.saving}
+                                isConfigured={secrets.isConfigured}
+                                onSaved={secrets.onSaved}
+                                blockedReason={setting.blockedReason}
+                            />
+                            {body}
+                        </div>
+                    </>
+                )}
+            </div>
+        </motion.div>
+    );
+}
+
+export interface PlainSecretsBridge {
+    values: Record<string, string>;
+    onChange: (key: string, value: string) => void;
+    onSave: (keys: string[]) => Promise<void>;
+    saving: string | null;
+    isConfigured: (key: string) => boolean;
+    onSaved: () => void;
+}
+
+export default function ServiceProviders({ show, extras, footer, extraOff = [], plainSettings = [], plainSecrets, refreshToken = 0, onChanged, publicOrigin = null }: {
     /* Which capabilities the town said it wants, from the setup questions.
      * Undefined means "no answer yet", which shows everything -- an absent
      * answer must not read as "wanted nothing", the same distinction the
@@ -855,6 +971,9 @@ export default function ServiceProviders({ show, extras, extraOff = [], refreshT
      * across both. Rendered here instead, after the capability cards, so the
      * page has one list. */
     extras?: ReactNode;
+    /** One quiet line under everything. Not a section: the block this replaced
+     *  had a heading announcing a group that ended up containing one sentence. */
+    footer?: ReactNode;
     /* Features the town switched off that are not capabilities.
      *
      * Backups and crash reporting have no provider catalog, so they are absent
@@ -863,6 +982,11 @@ export default function ServiceProviders({ show, extras, extraOff = [], refreshT
      * they went. Passed in rather than hardcoded here, because the
      * questionnaire owns the feature list. */
     extraOff?: { id: string; title: string; blurb: string; icon: typeof Sparkles }[];
+    /** Settings with no provider behind them, drawn as cards in the same grid.
+     *  They were in a separate block below, in a different treatment at a
+     *  different size, reading as a different class of thing. */
+    plainSettings?: PlainSetting[];
+    plainSecrets?: PlainSecretsBridge;
     /* Bumped by the page when the setup guide above saves something.
      *
      * The guide and these cards are two views of one set of credentials, on the
@@ -969,7 +1093,11 @@ export default function ServiceProviders({ show, extras, extraOff = [], refreshT
 
     /* Which card the clerk has opened in the Spotlight layout. Held here rather
      * than in the card, because opening one has to widen its cell. */
-    const [openCap, setOpenCap] = useState<Capability | null>(null);
+    /* Which card is expanded. A string rather than a Capability, because the
+     * plain settings -- backups, crash reporting -- share this grid and this
+     * behaviour, and giving them a second piece of open-state would let two
+     * cards be open at once. */
+    const [openCap, setOpenCap] = useState<string | null>(null);
     const capState = (cap: Capability) => capabilityState(statuses[cap], health[cap]);
     /* Only what is wrong gets the whole width.
      *
@@ -1060,6 +1188,21 @@ export default function ServiceProviders({ show, extras, extraOff = [], refreshT
                         </div>
                     );
                 })}
+
+                {/* In the grid, not below it. */}
+                {plainSecrets && plainSettings.map(setting => (
+                    <div
+                        key={setting.id}
+                        className={openCap === setting.id ? 'sm:col-span-2 lg:col-span-3' : ''}
+                    >
+                        <PlainSettingCard
+                            setting={setting}
+                            secrets={plainSecrets}
+                            expanded={openCap === setting.id}
+                            onToggle={() => setOpenCap(k => (k === setting.id ? null : setting.id))}
+                        />
+                    </div>
+                ))}
             </div>
 
             {notChosen.length > 0 && (
@@ -1098,6 +1241,8 @@ export default function ServiceProviders({ show, extras, extraOff = [], refreshT
                     </p>
                 </div>
             )}
+
+            {footer && <div className="mt-6">{footer}</div>}
 
             {extras && (
                 <div className="mt-8">
