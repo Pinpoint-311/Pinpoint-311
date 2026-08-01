@@ -21,7 +21,10 @@ from app.services.ai.base import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_API_VERSION = "2024-06-01"
-DEFAULT_DEPLOYMENT = "gpt-4o-mini"
+# Kept in step with the catalog's default_model in registry.py; a test fails
+# if they drift. Two defaults for the same thing is how a town ends up on a
+# deployment the picker never offered.
+DEFAULT_DEPLOYMENT = "gpt-4.1-mini"
 
 
 class AzureOpenAIProvider(AIProvider):

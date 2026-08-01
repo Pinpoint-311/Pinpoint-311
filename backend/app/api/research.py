@@ -1337,7 +1337,7 @@ async def export_csv(
             
             # AI analysis data
             # AI priority is now in ai_analysis JSON, not a separate column
-            ai_summary = sanitize_description(req.vertex_ai_summary) if req.vertex_ai_summary else None
+            ai_summary = sanitize_description(req.ai_summary) if req.ai_summary else None
             ai_priority = req.ai_analysis.get('priority_score') if req.ai_analysis else None
             ai_priority_diff = None
             if ai_priority and req.manual_priority_score:
@@ -1419,7 +1419,7 @@ async def export_csv(
                 req.flag_reason,
                 ai_priority,  # Now from ai_analysis.priority_score
                 ai_summary,
-                bool(req.vertex_ai_analyzed_at),
+                bool(req.ai_analyzed_at),
                 ai_priority_diff,
                 req.status,
                 req.closed_substatus,
@@ -1568,7 +1568,7 @@ async def export_geojson(
             asset_type = req.matched_asset.get('asset_type') or req.matched_asset.get('layer_name')
         
         # AI priority is now in ai_analysis JSON, not a separate column
-        ai_summary = sanitize_description(req.vertex_ai_summary) if req.vertex_ai_summary else None
+        ai_summary = sanitize_description(req.ai_summary) if req.ai_summary else None
         ai_priority = req.ai_analysis.get('priority_score') if req.ai_analysis else None
         ai_priority_diff = None
         if ai_priority and req.manual_priority_score:
@@ -1665,7 +1665,7 @@ async def export_geojson(
                 "moderation_flag_reason": req.flag_reason,
                 "ai_priority_score": ai_priority,  # Now from ai_analysis.priority_score
                 "ai_summary_sanitized": ai_summary,
-                "ai_analyzed": bool(req.vertex_ai_analyzed_at),
+                "ai_analyzed": bool(req.ai_analyzed_at),
                 "ai_vs_manual_priority_diff": ai_priority_diff,
                 
                 # Status & Resolution
@@ -2824,7 +2824,7 @@ def build_dataset_row(req, _eq, privacy_mode, *, operational=False, include_pii=
     days_to_first_update = days_to_first_staff_action(req)
     ai_analysis = req.ai_analysis if isinstance(req.ai_analysis, dict) else {}
     ai_priority = ai_analysis.get("priority_score")
-    ai_summary = sanitize_description(req.vertex_ai_summary) if req.vertex_ai_summary else None
+    ai_summary = sanitize_description(req.ai_summary) if req.ai_summary else None
     ai_priority_diff = (
         round(req.manual_priority_score - ai_priority, 2)
         if (ai_priority is not None and req.manual_priority_score is not None) else None
@@ -2860,7 +2860,7 @@ def build_dataset_row(req, _eq, privacy_mode, *, operational=False, include_pii=
         "moderation_flag_reason": req.flag_reason,
         "ai_priority_score": ai_priority,
         "ai_summary_sanitized": ai_summary,
-        "ai_analyzed": bool(req.vertex_ai_analyzed_at),
+        "ai_analyzed": bool(req.ai_analyzed_at),
         "ai_vs_manual_priority_diff": ai_priority_diff,
         "status": req.status,
         "closed_substatus": req.closed_substatus,

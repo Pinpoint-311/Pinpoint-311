@@ -3,7 +3,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.sql import func
 from geoalchemy2 import Geometry
-from datetime import datetime
+from datetime import datetime, timezone
 from app.db.session import Base
 # encryption is imported lazily in hybrid properties to avoid circular imports
 
@@ -286,12 +286,12 @@ class ServiceRequest(Base):
     delete_justification = Column(Text)
     
     # Vertex AI Analysis
-    vertex_ai_summary = Column(Text)  # AI-generated summary
-    vertex_ai_classification = Column(String(100))  # AI category classification
+    ai_summary = Column(Text)  # AI-generated summary
+    ai_classification = Column(String(100))  # AI category classification
     # NOTE: AI priority score is stored ONLY in ai_analysis JSON, not as a separate column
     # This ensures staff must explicitly accept AI suggestions before they take effect
     manual_priority_score = Column(Float)  # Human-approved priority (1-10), required for prioritization
-    vertex_ai_analyzed_at = Column(DateTime(timezone=True))
+    ai_analyzed_at = Column(DateTime(timezone=True))
     
     # Document retention / archival
     archived_at = Column(DateTime(timezone=True), index=True)  # When record was archived
@@ -345,7 +345,12 @@ class RequestAuditLog(Base):
     actor_name = Column(String(100))  # Username or "Resident"
     
     # When (Python-side default so the value is present at insert time for hashing)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), default=datetime.utcnow)
+    # `lambda` rather than `datetime.utcnow`, which is a *reference* and so
+    # survived the sweep that fixed the calls. SQLAlchemy invokes it at insert
+    # and gets a naive value for a timestamptz column -- and this one is hashed
+    # into the audit chain, so the offset would be baked into the entry.
+    created_at = Column(DateTime(timezone=True), server_default=func.now(),
+                        default=lambda: datetime.now(timezone.utc))
 
     # Additional context (JSON for flexibility)
     extra_data = Column(JSON)  # { substatus, completion_message, etc. }
@@ -374,7 +379,12 @@ class AuditAnchor(Base):
     __tablename__ = "audit_anchors"
 
     id = Column(Integer, primary_key=True, index=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), default=datetime.utcnow)
+    # `lambda` rather than `datetime.utcnow`, which is a *reference* and so
+    # survived the sweep that fixed the calls. SQLAlchemy invokes it at insert
+    # and gets a naive value for a timestamptz column -- and this one is hashed
+    # into the audit chain, so the offset would be baked into the entry.
+    created_at = Column(DateTime(timezone=True), server_default=func.now(),
+                        default=lambda: datetime.now(timezone.utc))
     head_hash = Column(String(64))   # latest RequestAuditLog.entry_hash at anchor time
     entry_count = Column(Integer)    # number of hashed entries at anchor time
 
@@ -462,7 +472,7 @@ def _request_audit_hash_chain(session, flush_context, instances):
     ).scalar()
     for row in pending:
         if row.created_at is None:
-            row.created_at = datetime.utcnow()
+            row.created_at = datetime.now(timezone.utc)
         row.previous_hash = running
         row.entry_hash = compute_request_audit_hash(row, running)
         running = row.entry_hash
@@ -499,6 +509,15 @@ class SystemSettings(Base):
     retention_state_code = Column(String(2), default="NJ")  # State for retention rules
     retention_days_override = Column(Integer)  # Custom override (null = use state default)
     retention_mode = Column(String(20), default="anonymize")  # "anonymize" or "delete"
+    # Which fields a retention run clears. NULL means never configured, which
+    # is read as the defaults rather than as "nothing": a town upgrading into
+    # this keeps the behaviour it already had. An empty list is a deliberate
+    # choice and is honoured.
+    retention_scrub_fields = Column(JSON)
+
+    # The town's own clock, for display only. Everything is stored in UTC and
+    # stays that way; this is what a clerk's screen converts into.
+    timezone = Column(String(64))
 
     # Instance-wide legal / litigation hold. When true, ALL retention purging is
     # suspended (nothing is deleted or anonymized) until it is lifted. Either the

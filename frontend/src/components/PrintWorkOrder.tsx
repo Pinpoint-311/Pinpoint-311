@@ -98,7 +98,7 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
         ` : '';
 
         // Build AI analysis HTML - use correct field names with improved tag styling
-        const qualitativeText = ai?.qualitative_analysis ?? request.vertex_ai_summary ?? null;
+        const qualitativeText = ai?.qualitative_analysis ?? request.ai_summary ?? null;
         const safetyFlagsHtml = ai?.safety_flags?.length ? `
             <div class="ai-tags safety-tags">
                 <strong>Safety Flags:</strong>
@@ -110,10 +110,10 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
             <div class="section ai-analysis">
                 <h3>${icons.brain} AI Analysis</h3>
                 ${qualitativeText ? `<p><strong>Summary:</strong> ${qualitativeText}</p>` : ''}
-                ${ai?.classification || request.vertex_ai_classification ? `
+                ${ai?.classification || request.ai_classification ? `
                     <div class="ai-tags">
                         <strong>Classification:</strong>
-                        <span class="tag tag-purple">${ai?.classification || request.vertex_ai_classification}</span>
+                        <span class="tag tag-purple">${ai?.classification || request.ai_classification}</span>
                     </div>
                 ` : ''}
                 ${ai?.root_cause ? `<p><strong>Root Cause:</strong> ${ai.root_cause}</p>` : ''}

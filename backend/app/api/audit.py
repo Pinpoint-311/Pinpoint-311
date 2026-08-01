@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, desc
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import io
 import csv
 
@@ -50,14 +50,14 @@ async def get_audit_logs(
             conditions.append(AuditLog.timestamp < end_dt)
         except ValueError:
             # Invalid date format, fall back to days
-            since = datetime.utcnow() - timedelta(days=days or 7)
+            since = datetime.now(timezone.utc) - timedelta(days=days or 7)
             conditions.append(AuditLog.timestamp >= since)
     elif days:
-        since = datetime.utcnow() - timedelta(days=days)
+        since = datetime.now(timezone.utc) - timedelta(days=days)
         conditions.append(AuditLog.timestamp >= since)
     else:
         # Default to last 7 days
-        since = datetime.utcnow() - timedelta(days=7)
+        since = datetime.now(timezone.utc) - timedelta(days=7)
         conditions.append(AuditLog.timestamp >= since)
     
     # Event type filter
@@ -137,7 +137,7 @@ async def get_audit_stats(
     
     Admin only endpoint.
     """
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
     
     # Total events
     total_result = await db.execute(
@@ -197,7 +197,7 @@ async def get_audit_stats(
     unique_users = unique_result.scalar() or 0
     
     # Recent failures (last 24 hours)
-    recent_since = datetime.utcnow() - timedelta(hours=24)
+    recent_since = datetime.now(timezone.utc) - timedelta(hours=24)
     recent_failures_result = await db.execute(
         select(func.count(AuditLog.id))
         .where(
@@ -248,13 +248,13 @@ async def export_audit_logs(
             conditions.append(AuditLog.timestamp >= start_dt)
             conditions.append(AuditLog.timestamp < end_dt)
         except ValueError:
-            since = datetime.utcnow() - timedelta(days=days or 30)
+            since = datetime.now(timezone.utc) - timedelta(days=days or 30)
             conditions.append(AuditLog.timestamp >= since)
     elif days:
-        since = datetime.utcnow() - timedelta(days=days)
+        since = datetime.now(timezone.utc) - timedelta(days=days)
         conditions.append(AuditLog.timestamp >= since)
     else:
-        since = datetime.utcnow() - timedelta(days=30)
+        since = datetime.now(timezone.utc) - timedelta(days=30)
         conditions.append(AuditLog.timestamp >= since)
     
     if event_type and event_type != "all":
@@ -314,7 +314,7 @@ async def export_audit_logs(
         iter([output.getvalue()]),
         media_type="text/csv",
         headers={
-            "Content-Disposition": f"attachment; filename=audit_logs_{datetime.utcnow().strftime('%Y%m%d')}.csv"
+            "Content-Disposition": f"attachment; filename=audit_logs_{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
         }
     )
 
@@ -337,7 +337,7 @@ async def verify_audit_log_integrity(
     return {
         "integrity_valid": is_valid,
         "message": "Audit log chain is intact" if is_valid else "WARNING: Tampering detected in audit logs",
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
 

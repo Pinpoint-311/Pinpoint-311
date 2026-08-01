@@ -9,7 +9,7 @@ import csv
 import io
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
@@ -129,7 +129,7 @@ async def export_requests(
     settings = settings_result.scalar_one_or_none()
     township_name = settings.township_name.replace(" ", "_") if settings else "township"
     
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     
     # Staff exports use the SAME analytical schema as the research export (one
     # shared row builder, so the two can never drift apart), plus the operational
@@ -180,7 +180,7 @@ async def export_requests(
         data = {
             "export_info": {
                 "township": settings.township_name if settings else "Unknown",
-                "exported_at": datetime.utcnow().isoformat(),
+                "exported_at": datetime.now(timezone.utc).isoformat(),
                 "exported_by": current_user.full_name,
                 "total_records": len(requests),
                 "filters": {
@@ -210,7 +210,7 @@ async def export_requests(
             "type": "FeatureCollection",
             "properties": {
                 "township": settings.township_name if settings else "Unknown",
-                "exported_at": datetime.utcnow().isoformat(),
+                "exported_at": datetime.now(timezone.utc).isoformat(),
                 "total_features": len(requests)
             },
             "features": [
@@ -312,7 +312,7 @@ async def export_statistics(
     stats = {
         "export_info": {
             "township": settings.township_name if settings else "Unknown",
-            "exported_at": datetime.utcnow().isoformat(),
+            "exported_at": datetime.now(timezone.utc).isoformat(),
             "exported_by": current_user.full_name,
             "date_range": {
                 "start": start_date.isoformat() if start_date else "all time",
@@ -329,7 +329,7 @@ async def export_statistics(
         "by_department": by_department
     }
     
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     
     if format.lower() == "json":
         json_str = json.dumps(stats, indent=2)
@@ -348,7 +348,7 @@ async def export_statistics(
         # Summary section
         writer.writerow(["Pinpoint 311 Statistics Export"])
         writer.writerow(["Township", settings.township_name if settings else "Unknown"])
-        writer.writerow(["Exported At", datetime.utcnow().isoformat()])
+        writer.writerow(["Exported At", datetime.now(timezone.utc).isoformat()])
         writer.writerow(["Date Range", f"{start_date or 'All time'} to {end_date or 'Present'}"])
         writer.writerow([])
         

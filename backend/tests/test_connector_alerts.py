@@ -596,3 +596,29 @@ def test_the_card_can_tell_that_alerts_are_muted():
     """A mute that silenced the email and left no trace on screen would be
     indistinguishable from the alerting being broken."""
     assert '"alerts_muted_until"' in _system_api()
+
+
+def test_the_mute_button_appears_exactly_where_an_alert_exists():
+    """The frontend decides whether to offer "Mute alerts" from a list of
+    statuses. If that list drifts from `alert_level`, the button either offers
+    to silence something that was never going to make a sound, or hides on a
+    connector that is emailing every day.
+
+    `stale` is why this is pinned rather than eyeballed: it displays as "not
+    checked yet" and it alerts, so neither the raw status nor what the card
+    shows answers the question on its own.
+    """
+    import re
+    from pathlib import Path
+
+    ui = (Path(__file__).resolve().parents[2] / "frontend/src/components/capabilityUI.tsx").read_text()
+    m = re.search(r"ALERTING_STATUSES = \[(.*?)\]", ui, re.S)
+    assert m, "the frontend no longer declares which statuses alert"
+    frontend = set(re.findall(r"'([a-z]+)'", m.group(1)))
+
+    backend = {s for s in ("down", "failing", "stale", "working", "unknown")
+               if A.alert_level(s) != A.HEALTHY}
+    assert frontend == backend, (
+        f"the mute button and the alerting rules disagree: "
+        f"frontend={sorted(frontend)} backend={sorted(backend)}"
+    )

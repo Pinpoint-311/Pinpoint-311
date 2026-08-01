@@ -2199,7 +2199,7 @@ export default function StaffDashboard() {
                                             {(() => {
                                                 const ai = selectedRequest.ai_analysis as any;
                                                 const priorityScore = ai?.priority_score ?? null;
-                                                const qualitativeText = ai?.qualitative_analysis ?? selectedRequest.vertex_ai_summary ?? null;
+                                                const qualitativeText = ai?.qualitative_analysis ?? selectedRequest.ai_summary ?? null;
                                                 const hasError = ai?._error;
 
                                                 // Computed (non-AI) triage facts — populated for every request
@@ -2627,9 +2627,9 @@ export default function StaffDashboard() {
 
                                                                     {/* Footer with timestamp */}
                                                                     <div className="flex items-center justify-between pt-3 border-t border-white/5">
-                                                                        {selectedRequest.vertex_ai_analyzed_at && (
+                                                                        {selectedRequest.ai_analyzed_at && (
                                                                             <p className="text-white/20 text-[9px]">
-                                                                                Analyzed {new Date(selectedRequest.vertex_ai_analyzed_at).toLocaleString()}
+                                                                                Analyzed {new Date(selectedRequest.ai_analyzed_at).toLocaleString()}
                                                                             </p>
                                                                         )}
                                                                         {!hasError && (

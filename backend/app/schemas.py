@@ -314,10 +314,10 @@ class ServiceRequestDetailResponse(ServiceRequestResponse):
     delete_justification: Optional[str] = None
     custom_fields: Optional[Dict[str, Any]] = {}
     # Vertex AI Analysis (priority_score is in ai_analysis JSON only)
-    vertex_ai_summary: Optional[str] = None
-    vertex_ai_classification: Optional[str] = None
+    ai_summary: Optional[str] = None
+    ai_classification: Optional[str] = None
     manual_priority_score: Optional[float] = None  # Human-approved priority
-    vertex_ai_analyzed_at: Optional[datetime] = None
+    ai_analyzed_at: Optional[datetime] = None
 
 
 # ============ Manual Intake ============

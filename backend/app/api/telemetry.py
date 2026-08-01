@@ -10,7 +10,7 @@ PII-shaped may originate here.
 import hmac
 import time
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import func, select, text
@@ -59,7 +59,7 @@ async def get_telemetry(
     # error bodies can echo request contents).
     integration_health: dict[str, str] = {}
     try:
-        since = datetime.utcnow() - timedelta(hours=24)
+        since = datetime.now(timezone.utc) - timedelta(hours=24)
         result = await db.execute(
             select(UptimeRecord.service_name, UptimeRecord.status)
             .where(UptimeRecord.checked_at >= since)
@@ -74,7 +74,7 @@ async def get_telemetry(
     # only counters, never request contents.
     api_usage: dict[str, dict[str, int]] = {}
     try:
-        since = datetime.utcnow() - timedelta(days=30)
+        since = datetime.now(timezone.utc) - timedelta(days=30)
         result = await db.execute(
             select(
                 ApiUsageRecord.service_name,
@@ -105,5 +105,5 @@ async def get_telemetry(
         "request_counts": dict(request_counts),
         "integration_health": integration_health,
         "api_usage": api_usage,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }

@@ -133,7 +133,7 @@ def analyze_request(self, request_id: int):
             analyze_with_gemini,
             strip_pii
         )
-        from datetime import datetime
+        from datetime import datetime, timezone
         
         async with SessionLocal() as db:
             settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
@@ -248,8 +248,8 @@ def analyze_request(self, request_id: int):
                         else:
                             analysis.update(ai_result)
                             ai_ran = True
-                            request.vertex_ai_summary = ai_result.get("qualitative_analysis", "")
-                            request.vertex_ai_analyzed_at = datetime.utcnow()
+                            request.ai_summary = ai_result.get("qualitative_analysis", "")
+                            request.ai_analyzed_at = datetime.now(timezone.utc)
                     # Keep the computed similar_reports even if the AI result omitted them.
                     if historical_context.get("similar_reports"):
                         analysis["similar_reports"] = historical_context["similar_reports"]
@@ -951,6 +951,15 @@ def purge_old_ip_addresses():
         return {"status": "error", "error": str(e)}
 
 
+# How many records one query pulls, and how many such queries one run makes.
+#
+# The batch keeps transactions short; the ceiling is a runaway guard rather than
+# a policy, and at 200,000 records it is far above any town's real backlog. A
+# run that reaches it says so in its result instead of reporting success.
+BATCH_SIZE = 200
+MAX_BATCHES = 1000
+
+
 @celery_app.task
 def enforce_retention_policy():
     """
@@ -964,6 +973,7 @@ def enforce_retention_policy():
 
     async def _enforce():
         from app.models import SystemSettings
+        from app.services.retention_scrub import REDACT, normalise_fields, normalise_mode
         from app.services.retention_service import (
             get_records_for_archival,
             archive_record,
@@ -979,7 +989,8 @@ def enforce_retention_policy():
                 logger.warning("[Retention] No system settings found, using defaults")
                 state_code = "NJ"
                 override_days = None
-                archive_mode = "anonymize"
+                archive_mode = REDACT
+                scrub_fields = normalise_fields(None)
             else:
                 # Instance-wide legal hold: freeze ALL purging until it is lifted.
                 if getattr(settings, "legal_hold", False):
@@ -987,43 +998,81 @@ def enforce_retention_policy():
                     return {"status": "skipped_legal_hold", "archived": 0}
                 state_code = settings.retention_state_code or "NJ"
                 override_days = settings.retention_days_override
-                archive_mode = settings.retention_mode or "anonymize"
+                archive_mode = normalise_mode(settings.retention_mode)
+                scrub_fields = normalise_fields(getattr(settings, "retention_scrub_fields", None))
             
             policy = get_retention_policy(state_code)
             logger.info(f"[Retention] Enforcing policy: {policy['name']} ({policy['retention_years']} years)")
             
-            # Get records eligible for archival (limit 100 per run to avoid overwhelming)
-            records = await get_records_for_archival(db, state_code, override_days, limit=100)
-            
-            if not records:
-                logger.info("[Retention] No records eligible for archival")
-                return {"status": "success", "archived": 0, "policy": policy}
-            
-            logger.info(f"[Retention] Found {len(records)} records eligible for archival")
-            
+            # Everything eligible, in batches.
+            #
+            # This used to take the first hundred and stop, with no sign on
+            # screen that it had. A town with five thousand expired records
+            # needed fifty presses of a button that looked like it had finished,
+            # or fifty nights -- and the retention policy it publishes says the
+            # records are gone, so the gap between the claim and the database
+            # widened every day.
+            #
+            # Batched rather than one query, because the whole point is that
+            # this set can be large: a single transaction over five thousand
+            # rows holds locks for the duration and fails all-or-nothing.
+            #
+            # `skipped` is what stops this looping forever. Records under legal
+            # hold stay eligible by design -- they are past their date and must
+            # not be touched -- so a batch of nothing but held records would be
+            # fetched again for ever. Once a pass archives none of what it was
+            # given, there is nothing left this run can act on.
             archived_count = 0
             skipped_count = 0
             errors = []
-            
-            for record in records:
-                try:
-                    result = await archive_record(db, record.id, archive_mode)
-                    if result["status"] in ["anonymized", "deleted"]:
-                        archived_count += 1
-                        logger.info(f"[Retention] Archived record {record.service_request_id}")
-                    else:
-                        skipped_count += 1
-                        logger.info(f"[Retention] Skipped record {record.service_request_id}: {result.get('message')}")
-                except Exception as e:
-                    errors.append({"record_id": record.id, "error": str(e)})
-                    logger.error(f"[Retention] Error archiving {record.id}: {e}")
-            
+            batches = 0
+
+            while True:
+                records = await get_records_for_archival(db, state_code, override_days, limit=BATCH_SIZE)
+                if not records:
+                    break
+                batches += 1
+                archived_this_batch = 0
+                for record in records:
+                    try:
+                        result = await archive_record(db, record.id, archive_mode, scrub_fields)
+                        if result["status"] in ["anonymized", "deleted"]:
+                            archived_count += 1
+                            archived_this_batch += 1
+                        else:
+                            skipped_count += 1
+                            logger.info(
+                                "[Retention] Skipped %s: %s",
+                                record.service_request_id, result.get("message"),
+                            )
+                    except Exception as e:
+                        errors.append({"record_id": record.id, "error": str(e)})
+                        logger.error("[Retention] Error archiving %s: %s", record.id, e)
+                if archived_this_batch == 0:
+                    # Nothing in that batch could be acted on, and the query is
+                    # deterministic, so the next one would return the same rows.
+                    break
+                if batches >= MAX_BATCHES:
+                    logger.warning(
+                        "[Retention] Stopped after %s batches with records still eligible. "
+                        "Run again to continue.", batches,
+                    )
+                    break
+
+            logger.info(
+                "[Retention] %s archived, %s skipped, %s errors across %s batches",
+                archived_count, skipped_count, len(errors), batches,
+            )
             return {
                 "status": "success",
                 "policy": policy,
                 "archived": archived_count,
                 "skipped": skipped_count,
-                "errors": len(errors)
+                "errors": len(errors),
+                "batches": batches,
+                # True when the cap stopped it early, so a caller can say so
+                # rather than reporting a finished job that is not finished.
+                "more_remaining": batches >= MAX_BATCHES,
             }
     
     try:
@@ -1102,7 +1151,7 @@ def send_weekly_digest():
     Respects individual staff notification preferences.
     """
     import logging
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     from sqlalchemy import func, and_
     logger = logging.getLogger(__name__)
     
@@ -1175,7 +1224,7 @@ def send_weekly_digest():
                         func.sum(case((ServiceRequest.status == 'in_progress', 1), else_=0)).label('in_progress'),
                         func.sum(case((and_(
                             ServiceRequest.status.in_(['open', 'in_progress']),
-                            ServiceRequest.requested_datetime < datetime.utcnow() - timedelta(days=7)
+                            ServiceRequest.requested_datetime < datetime.now(timezone.utc) - timedelta(days=7)
                         ), 1), else_=0)).label('overdue')
                     ).where(
                         and_(
@@ -1190,7 +1239,7 @@ def send_weekly_digest():
                         func.sum(case((ServiceRequest.status == 'in_progress', 1), else_=0)).label('in_progress'),
                         func.sum(case((and_(
                             ServiceRequest.status.in_(['open', 'in_progress']),
-                            ServiceRequest.requested_datetime < datetime.utcnow() - timedelta(days=7)
+                            ServiceRequest.requested_datetime < datetime.now(timezone.utc) - timedelta(days=7)
                         ), 1), else_=0)).label('overdue')
                     ).where(
                         and_(
@@ -1230,7 +1279,7 @@ def send_weekly_digest():
                 # Build request list HTML
                 requests_html = ""
                 for req in oldest_requests:
-                    age_days = (datetime.utcnow() - req.requested_datetime).days if req.requested_datetime else 0
+                    age_days = (datetime.now(timezone.utc) - req.requested_datetime).days if req.requested_datetime else 0
                     age_str = f"{age_days}d" if age_days > 0 else "Today"
                     status_color = "#22c55e" if req.status == "in_progress" else "#f59e0b"
                     requests_html += f"""

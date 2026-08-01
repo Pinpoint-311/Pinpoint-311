@@ -5,7 +5,7 @@ Implements NIST 800-53 AU-2, AU-3, AU-6, AU-9, AU-12 controls.
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
@@ -77,7 +77,7 @@ class AuditService:
             "username": username,
             "user_id": user_id,
             "ip_address": ip_address,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "session_id": session_id,
             "details": details or {}
         }

@@ -203,10 +203,10 @@ export interface ServiceRequestDetail extends ServiceRequest {
     completion_photo_url: string | null;
     delete_justification: string | null;
     // Vertex AI Analysis (priority_score is in ai_analysis JSON only)
-    vertex_ai_summary: string | null;
-    vertex_ai_classification: string | null;
+    ai_summary: string | null;
+    ai_classification: string | null;
     manual_priority_score: number | null;  // Human-approved priority
-    vertex_ai_analyzed_at: string | null;
+    ai_analyzed_at: string | null;
 }
 
 export interface RequestComment {

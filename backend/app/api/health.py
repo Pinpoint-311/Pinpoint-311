@@ -453,7 +453,7 @@ async def version_info(db: AsyncSession = Depends(get_db)):
 
 # ==================== UPTIME MONITORING ====================
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import desc
 from app.models import UptimeRecord
 
@@ -471,7 +471,7 @@ async def get_uptime_history(
         hours: Number of hours to look back (default 24, max 168 = 7 days)
     """
     hours = min(hours, 168)  # Cap at 7 days
-    since = datetime.utcnow() - timedelta(hours=hours)
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
     
     result = await db.execute(
         select(UptimeRecord)
@@ -515,7 +515,7 @@ async def get_uptime_stats(
     periods = {"24h": 24, "7d": 168, "30d": 720}
     
     for period_name, hours in periods.items():
-        since = datetime.utcnow() - timedelta(hours=hours)
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
         
         # Get total checks and healthy checks per service
         result = await db.execute(

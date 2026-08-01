@@ -5,7 +5,7 @@ create and update requests in Pinpoint."""
 import logging
 import secrets as pysecrets
 import uuid as uuid_module
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -202,7 +202,7 @@ async def update_integration(
             merged.update(stored)
             integration.credentials = merged
 
-    integration.updated_at = datetime.utcnow()
+    integration.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(integration)
     from app.core.sanitize import sanitize_for_log
@@ -474,9 +474,9 @@ async def integration_webhook(
             if payload.status and payload.status != sr.status:
                 old_status = sr.status
                 sr.status = payload.status
-                sr.updated_datetime = datetime.utcnow()
+                sr.updated_datetime = datetime.now(timezone.utc)
                 if payload.status == "closed":
-                    sr.closed_datetime = datetime.utcnow()
+                    sr.closed_datetime = datetime.now(timezone.utc)
                 db.add(RequestAuditLog(
                     service_request_id=sr.id,
                     action="status_change",
@@ -545,7 +545,7 @@ async def integration_webhook(
         external_id=payload.external_id,
         external_status=payload.status,
         direction="pulled",
-        last_pulled_at=datetime.utcnow(),
+        last_pulled_at=datetime.now(timezone.utc),
     ))
     db.add(RequestAuditLog(
         service_request_id=sr.id,

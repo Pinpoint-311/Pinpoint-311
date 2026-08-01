@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 import logging
 
@@ -951,7 +951,7 @@ async def update_request_status(
             if field == "status":
                 value = value.value
                 if value == "closed" and request.status != "closed":
-                    request.closed_datetime = datetime.utcnow()
+                    request.closed_datetime = datetime.now(timezone.utc)
             elif field == "closed_substatus":
                 value = value.value  # Convert enum to string
             # Special handling for boolean flagged field
@@ -959,7 +959,7 @@ async def update_request_status(
                 logger.debug(f"[LEGAL HOLD] Setting flagged from {request.flagged} to {value} for request {request.service_request_id}")
             setattr(request, field, value)
     
-    request.updated_datetime = datetime.utcnow()
+    request.updated_datetime = datetime.now(timezone.utc)
     
     # Force flush to ensure changes are written
     await db.flush()
@@ -1189,10 +1189,10 @@ async def delete_request(
         raise HTTPException(status_code=400, detail="Request already deleted")
     
     # Soft delete
-    request.deleted_at = datetime.utcnow()
+    request.deleted_at = datetime.now(timezone.utc)
     request.deleted_by = current_user.username
     request.delete_justification = delete_data.justification
-    request.updated_datetime = datetime.utcnow()
+    request.updated_datetime = datetime.now(timezone.utc)
     
     # Add audit log entry
     audit_entry = RequestAuditLog(
@@ -1232,7 +1232,7 @@ async def restore_request(
     request.deleted_at = None
     request.deleted_by = None
     request.delete_justification = None
-    request.updated_datetime = datetime.utcnow()
+    request.updated_datetime = datetime.now(timezone.utc)
     
     # Add audit log entry
     audit_entry = RequestAuditLog(
@@ -1275,7 +1275,7 @@ async def accept_ai_priority(
     
     # Set the manual priority score to the AI suggestion
     request.manual_priority_score = float(ai_priority)
-    request.updated_datetime = datetime.utcnow()
+    request.updated_datetime = datetime.now(timezone.utc)
     
     # Add audit log entry
     audit_entry = RequestAuditLog(
