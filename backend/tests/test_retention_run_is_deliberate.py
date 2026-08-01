@@ -95,3 +95,51 @@ class TestItAsksFirst:
 
     def test_a_legal_hold_is_reported_before_anything_is_offered(self):
         assert '"blocked": "legal_hold"' in API
+
+
+class TestTheTownChoosesWhatIsRemoved:
+    """The list of what a retention run clears was fixed in code."""
+
+    def test_the_setting_is_stored(self):
+        models = (ROOT / "app/models.py").read_text()
+        assert "retention_scrub_fields" in models
+
+    def test_the_api_returns_the_catalog_with_the_choice_marked(self):
+        assert "describe_selection" in API
+
+    def test_an_unknown_field_is_rejected_rather_than_dropped(self):
+        """Silently ignoring one leaves a town believing it removes something
+        it does not."""
+        assert "Unknown fields to scrub" in API
+
+    def test_the_task_reads_the_choice(self):
+        assert "retention_scrub_fields" in TASK
+        assert "scrub_fields" in TASK
+
+    def test_the_preview_names_what_will_be_cleared(self):
+        """"142 records" without saying what happens to them is not consent."""
+        block = API[API.index("async def preview_retention_run"):]
+        block = block[:block.index("\n@router")]
+        assert "scrub_fields" in block
+
+
+class TestTheWordItUses:
+    def test_the_api_no_longer_demands_the_old_word(self):
+        assert '"anonymize", "delete"' not in API
+
+    def test_what_is_already_stored_still_works(self):
+        """Towns have `anonymize` in their database now. Rejecting it on read
+        would break the policy screen for every one of them."""
+        from app.services.retention_scrub import normalise_mode
+
+        assert normalise_mode("anonymize") == "redact"
+
+    def test_the_migration_moves_the_stored_value_too(self):
+        """So the database and the screen agree, rather than the screen
+        translating forever."""
+        migration = next(
+            (ROOT / "alembic/versions").glob("*retention_scrub_fields*")
+        ).read_text()
+        assert "retention_mode = :new" in migration
+        assert 'old="anonymize"' in migration
+        assert 'new="redact"' in migration

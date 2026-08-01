@@ -499,6 +499,11 @@ class SystemSettings(Base):
     retention_state_code = Column(String(2), default="NJ")  # State for retention rules
     retention_days_override = Column(Integer)  # Custom override (null = use state default)
     retention_mode = Column(String(20), default="anonymize")  # "anonymize" or "delete"
+    # Which fields a retention run clears. NULL means never configured, which
+    # is read as the defaults rather than as "nothing": a town upgrading into
+    # this keeps the behaviour it already had. An empty list is a deliberate
+    # choice and is honoured.
+    retention_scrub_fields = Column(JSON)
 
     # Instance-wide legal / litigation hold. When true, ALL retention purging is
     # suspended (nothing is deleted or anonymized) until it is lifted. Either the

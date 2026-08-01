@@ -973,6 +973,7 @@ def enforce_retention_policy():
 
     async def _enforce():
         from app.models import SystemSettings
+        from app.services.retention_scrub import REDACT, normalise_fields, normalise_mode
         from app.services.retention_service import (
             get_records_for_archival,
             archive_record,
@@ -988,7 +989,8 @@ def enforce_retention_policy():
                 logger.warning("[Retention] No system settings found, using defaults")
                 state_code = "NJ"
                 override_days = None
-                archive_mode = "anonymize"
+                archive_mode = REDACT
+                scrub_fields = normalise_fields(None)
             else:
                 # Instance-wide legal hold: freeze ALL purging until it is lifted.
                 if getattr(settings, "legal_hold", False):
@@ -996,7 +998,8 @@ def enforce_retention_policy():
                     return {"status": "skipped_legal_hold", "archived": 0}
                 state_code = settings.retention_state_code or "NJ"
                 override_days = settings.retention_days_override
-                archive_mode = settings.retention_mode or "anonymize"
+                archive_mode = normalise_mode(settings.retention_mode)
+                scrub_fields = normalise_fields(getattr(settings, "retention_scrub_fields", None))
             
             policy = get_retention_policy(state_code)
             logger.info(f"[Retention] Enforcing policy: {policy['name']} ({policy['retention_years']} years)")
@@ -1032,7 +1035,7 @@ def enforce_retention_policy():
                 archived_this_batch = 0
                 for record in records:
                     try:
-                        result = await archive_record(db, record.id, archive_mode)
+                        result = await archive_record(db, record.id, archive_mode, scrub_fields)
                         if result["status"] in ["anonymized", "deleted"]:
                             archived_count += 1
                             archived_this_batch += 1

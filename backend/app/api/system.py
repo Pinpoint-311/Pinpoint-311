@@ -1604,12 +1604,19 @@ async def get_current_retention_policy(
     policy = get_retention_policy(state_code)
     stats = await get_retention_stats(db, state_code, override_days)
     
+    from app.services.retention_scrub import describe_selection, normalise_mode
+
     return {
         "state_code": state_code,
         "policy": policy,
         "override_days": override_days,
         "effective_days": override_days if override_days else policy["retention_days"],
-        "mode": mode,
+        "mode": normalise_mode(mode),
+        # The catalog and this town's choice in one object, so the screen never
+        # has to hold its own copy of what the fields are called.
+        "scrub_fields": describe_selection(
+            getattr(settings, "retention_scrub_fields", None) if settings else None
+        ),
         "stats": stats
     }
 
@@ -1619,6 +1626,7 @@ async def update_retention_policy(
     state_code: str = None,
     override_days: int = None,
     mode: str = None,
+    scrub_fields: Optional[List[str]] = Query(None),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
@@ -1659,9 +1667,20 @@ async def update_retention_policy(
             settings.retention_days_override = override_days
     
     if mode:
-        if mode not in ["anonymize", "delete"]:
-            raise HTTPException(400, "Mode must be 'anonymize' or 'delete'")
-        settings.retention_mode = mode
+        from app.services.retention_scrub import DELETE, REDACT, normalise_mode
+        resolved = normalise_mode(mode)
+        if resolved not in (REDACT, DELETE):
+            raise HTTPException(400, f"Mode must be '{REDACT}' or '{DELETE}'")
+        settings.retention_mode = resolved
+
+    if scrub_fields is not None:
+        from app.services.retention_scrub import FIELD_IDS, normalise_fields
+        unknown = [f for f in scrub_fields if f not in FIELD_IDS]
+        if unknown:
+            # Rejected rather than quietly dropped. A field silently ignored is
+            # a town believing it removes something it does not.
+            raise HTTPException(400, f"Unknown fields to scrub: {', '.join(sorted(unknown))}")
+        settings.retention_scrub_fields = normalise_fields(scrub_fields)
     
     await db.commit()
     await db.refresh(settings)
@@ -1670,7 +1689,8 @@ async def update_retention_policy(
         "status": "updated",
         "state_code": settings.retention_state_code,
         "override_days": settings.retention_days_override,
-        "mode": settings.retention_mode
+        "mode": settings.retention_mode,
+        "scrub_fields": settings.retention_scrub_fields,
     }
 
 
@@ -1688,6 +1708,7 @@ async def preview_retention_run(
     that, not after.
     """
     from app.models import ServiceRequest
+    from app.services.retention_scrub import describe_selection, normalise_mode
     from app.services.retention_service import get_retention_policy, get_retention_stats
 
     settings = await read_settings_row(db)
@@ -1701,7 +1722,7 @@ async def preview_retention_run(
 
     state_code = (settings.retention_state_code if settings else None) or "NJ"
     override_days = settings.retention_days_override if settings else None
-    mode = (settings.retention_mode if settings else None) or "anonymize"
+    mode = normalise_mode(settings.retention_mode if settings else None)
     policy = get_retention_policy(state_code)
     stats = await get_retention_stats(db, state_code, override_days)
 
@@ -1728,6 +1749,11 @@ async def preview_retention_run(
         # The word the caller has to send back. Deleting resident records on a
         # single click is not something to make easy.
         "confirmation_required": "DELETE" if mode == "delete" else None,
+        "scrub_fields": [
+            f["label"] for f in describe_selection(
+                getattr(settings, "retention_scrub_fields", None) if settings else None
+            ) if f["selected"]
+        ],
     }
 
 
@@ -1746,8 +1772,10 @@ async def run_retention_now(
     """
     from app.tasks.service_requests import enforce_retention_policy
 
+    from app.services.retention_scrub import normalise_mode
+
     settings = await read_settings_row(db)
-    mode = (settings.retention_mode if settings else None) or "anonymize"
+    mode = normalise_mode(settings.retention_mode if settings else None)
     if mode == "delete" and str(payload.get("confirm", "")).strip() != "DELETE":
         raise HTTPException(
             status_code=400,

@@ -11,7 +11,12 @@ Key features:
 """
 
 import logging
-from datetime import datetime, timedelta
+
+from app.services.retention_scrub import (  # noqa: F401
+    AI_ANALYSIS_KEEP, DELETE, REDACT, apply_scrub, normalise_fields,
+    normalise_mode, scrub_ai_analysis,
+)
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -247,10 +252,55 @@ async def get_records_for_archival(
     return result.scalars().all()
 
 
+
+async def record_archival(db: AsyncSession, record: Any, action: str,
+                          cleared: Optional[List[str]] = None) -> None:
+    """Leave the archival itself on the request's timeline.
+
+    A record whose contents changed with nothing saying why reads like data
+    loss rather than policy. It is also the answer to "did this actually run",
+    which until now could only be inferred from a field going blank.
+
+    Best-effort: the timeline entry is bookkeeping and must never be the reason
+    a retention run fails to archive.
+    """
+    try:
+        from app.models import RequestAuditLog
+
+        db.add(RequestAuditLog(
+            service_request_id=record.id,
+            action="retention_archived" if action == "anonymized" else "retention_deleted",
+            new_value=action,
+            actor_type="staff",
+            actor_name="Retention policy",
+            extra_data={"mode": action, "cleared": cleared or []},
+        ))
+    except Exception:  # pragma: no cover - bookkeeping only
+        logger.warning("[Retention] could not write the timeline entry for %s", record.id)
+
+
+async def scrub_comments(db: AsyncSession, record_id: int) -> int:
+    """Clear the text of every comment on a request.
+
+    The rows stay. A deleted comment leaves a gap in a conversation that staff
+    and residents both remember having, and the count is part of the record.
+    Only the words go.
+    """
+    from app.models import RequestComment
+
+    rows = (await db.execute(
+        select(RequestComment).where(RequestComment.service_request_id == record_id)
+    )).scalars().all()
+    for row in rows:
+        row.content = "[Comment archived per retention policy]"
+    return len(rows)
+
+
 async def archive_record(
     db: AsyncSession,
     record_id: int,
-    archive_mode: str = "anonymize"
+    archive_mode: str = REDACT,
+    scrub_fields: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Archive a record by anonymizing PII or marking for deletion.
@@ -281,8 +331,15 @@ async def archive_record(
             "record_id": record_id
         }
     
-    if archive_mode == "delete":
-        # Hard delete - remove from database entirely
+    if normalise_mode(archive_mode) == DELETE:
+        # Hard delete - remove from database entirely.
+        #
+        # The timeline entry goes in first and is deliberately left behind: it
+        # records that a request existed and was destroyed under policy, which
+        # is the only trace an auditor can be shown afterwards. See the note in
+        # record_archival about the audit chain.
+        await record_archival(db, record, "deleted")
+        await db.flush()
         await db.delete(record)
         await db.commit()
         return {
@@ -291,23 +348,26 @@ async def archive_record(
             "service_request_id": record.service_request_id
         }
     else:
-        # Anonymize - remove PII but keep statistical data
-        record.first_name = "[ARCHIVED]"
-        record.last_name = "[ARCHIVED]"
-        record.email = f"archived-{record.id}@retention.local"
-        record.phone = None
-        record.description = "[Content archived per retention policy]"
-        record.staff_notes = None
-        record.media_urls = []
-        record.archived_at = datetime.utcnow()
-        
+        # Redact -- clear the fields this town chose, and nothing else.
+        cleared = apply_scrub(record, scrub_fields)
+        if "comments" in set(normalise_fields(scrub_fields)):
+            await scrub_comments(db, record.id)
+            cleared.append("comments")
+        record.archived_at = datetime.now(timezone.utc)
+
+        await db.flush()
+        await record_archival(db, record, "anonymized", cleared)
         await db.commit()
         
         return {
+            # Kept as "anonymized" in the return value on purpose: callers
+            # count on this string, and renaming what the run *is* called is a
+            # separate change from renaming what it *did*.
             "status": "anonymized",
             "record_id": record_id,
             "service_request_id": record.service_request_id,
-            "archived_at": record.archived_at.isoformat()
+            "archived_at": record.archived_at.isoformat(),
+            "cleared": cleared,
         }
 
 
