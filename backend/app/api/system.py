@@ -22,6 +22,8 @@ from app.schemas import (
 )
 from app.core.auth import get_current_admin, get_current_staff
 from app.services.system_settings import get_settings as read_settings_row
+from app.services.enqueue import QUEUE_UNAVAILABLE
+from app.core.sanitize import sanitize_for_log
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -1844,7 +1846,16 @@ async def run_retention_now(
                    'undone. Send confirm="PURGE" to proceed.',
         )
 
-    task = enforce_retention_policy.delay()
+    # Not swallowed. The admin typed a confirmation word to get here and is
+    # being handed a task id to watch; answering "triggered" for a job that
+    # never reached a worker would be the worst version of this -- a retention
+    # run they believe happened, on the strength of which they stop checking.
+    try:
+        task = enforce_retention_policy.delay()
+    except Exception as exc:
+        logger.warning("[Retention] could not queue enforcement: %s", sanitize_for_log(str(exc)))
+        raise HTTPException(status_code=503, detail=QUEUE_UNAVAILABLE)
+
     return {
         "status": "triggered",
         "task_id": task.id,

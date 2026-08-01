@@ -69,6 +69,12 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
     const [comments, setComments] = useState<RequestComment[]>([]);
     const [newComment, setNewComment] = useState('');
     const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+    // Why a post failed, in the resident's words. The moderation rejection is
+    // written to be read by the person who typed the comment, and until now it
+    // went to console.error -- so a rejected comment, a broken endpoint and a
+    // dropped network request all looked the same from the outside: the button
+    // stops spinning and nothing appears.
+    const [commentError, setCommentError] = useState<string | null>(null);
     const [isLoadingComments, setIsLoadingComments] = useState(false);
     const [copied, setCopied] = useState(false);
     const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
@@ -202,7 +208,13 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
 
     const loadAuditLog = async (requestId: string) => {
         try {
-            const log = await api.getAuditLog(requestId);
+            // The public endpoint, because this is the public tracker. The
+            // staff one requires a session, so for a logged-out resident --
+            // which is everybody following a tracking link -- it answered 401
+            // and the timeline was permanently empty. It also redacts staff
+            // usernames, which is the correct behaviour on a page anyone with
+            // the link can open.
+            const log = await api.getPublicAuditLog(requestId);
             setAuditLog(log);
         } catch (err) {
             console.error('Failed to load audit log:', err);
@@ -214,12 +226,19 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
         if (!selectedRequest || !newComment.trim()) return;
 
         setIsSubmittingComment(true);
+        setCommentError(null);
         try {
             await api.addPublicComment(selectedRequest.service_request_id, newComment.trim());
+            // Only cleared once it is actually saved. Clearing first loses
+            // something somebody typed to a network blip, with no copy of it.
             setNewComment('');
             await loadComments(selectedRequest.service_request_id);
         } catch (err) {
-            console.error('Failed to add comment:', err);
+            setCommentError(
+                err instanceof Error && err.message
+                    ? err.message
+                    : "Your comment could not be posted. Please try again."
+            );
         } finally {
             setIsSubmittingComment(false);
         }
@@ -632,10 +651,24 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                         <Textarea
                             placeholder={"Share your thoughts or updates..."}
                             value={newComment}
-                            onChange={(e) => setNewComment(e.target.value)}
+                            onChange={(e) => {
+                                setNewComment(e.target.value);
+                                // The message described the last attempt. Once
+                                // they start rewording it, it is stale advice.
+                                if (commentError) setCommentError(null);
+                            }}
                             rows={3}
                             className="mb-3 bg-transparent border-white/20 focus:border-primary-500"
                         />
+                        {commentError && (
+                            <div
+                                role="alert"
+                                className="mb-3 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200"
+                            >
+                                <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                                <span>{commentError}</span>
+                            </div>
+                        )}
                         <div className="flex justify-end">
                             <Button
                                 onClick={handleAddComment}

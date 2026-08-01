@@ -225,14 +225,35 @@ class ApiClient {
         const preferredLanguage = localStorage.getItem('preferred_language') || 'en';
         headers['Accept-Language'] = preferredLanguage;
 
+        // Whether *this* request carried a session, captured before it goes
+        // out. See the 401 branch below.
+        const sentWithToken = !!this.token;
+
         const response = await fetch(`${API_BASE}${endpoint}`, {
             ...options,
             headers,
         });
 
         if (!response.ok) {
-            // Auto-redirect on session expiry (401)
-            if (response.status === 401 && this.onUnauthorized) {
+            // Auto-logout on session expiry (401) -- but only for a request
+            // that actually presented a session.
+            //
+            // A 401 on a request with no token does not mean "your session
+            // ended". It means "that endpoint needs a login", and treating the
+            // two the same is why people were being signed out at random.
+            //
+            // The mechanism: AuthProvider restores the token from
+            // localStorage inside a useEffect. React runs child effects before
+            // parent ones, so a page that loads data on mount can fire its
+            // first request before the token has been put back. On the
+            // protected routes ProtectedRoute holds children back until that
+            // finishes, but the resident portal is public and ungated -- and
+            // it calls at least one staff-only endpoint. The unauthenticated
+            // request came back 401 and this handler deleted a perfectly good
+            // token out of localStorage.
+            //
+            // Intermittent, because it is a race; "random, while navigating".
+            if (response.status === 401 && this.onUnauthorized && sentWithToken) {
                 this.onUnauthorized();
             }
             const error = await response.json().catch(() => ({ detail: 'Request failed' }));
@@ -359,9 +380,20 @@ class ApiClient {
         return this.request<RequestComment[]>(`/open311/v2/public/requests/${requestId}/comments`);
     }
 
+    // The comment goes in the body, not the query string. Two reasons, and the
+    // first one is that the query-string version never worked: the endpoint
+    // declares `content` as Body(embed=True), so a POST with no body was
+    // answered 422 and every comment a resident tried to leave was dropped.
+    //
+    // The second is why the endpoint is right to want a body. A URL is logged
+    // everywhere -- the access log, the reverse proxy, the CDN, the browser's
+    // history, the Referer header on the next click. A resident's comment can
+    // name a neighbour or describe what happened to them, and none of those
+    // places is somewhere a town has decided to keep that.
     async addPublicComment(requestId: string, content: string): Promise<RequestComment> {
-        return this.request<RequestComment>(`/open311/v2/public/requests/${requestId}/comments?content=${encodeURIComponent(content)}`, {
+        return this.request<RequestComment>(`/open311/v2/public/requests/${requestId}/comments`, {
             method: 'POST',
+            body: JSON.stringify({ content }),
         });
     }
 

@@ -7,9 +7,10 @@ from sqlalchemy import select
 from typing import List
 
 from app.db.session import get_db
-from app.models import RequestComment, ServiceRequest, User
+from app.models import RequestAuditLog, RequestComment, ServiceRequest, User
 from app.schemas import RequestCommentCreate, RequestCommentResponse
 from app.core.auth import get_current_user, get_current_staff
+from app.services.enqueue import enqueue
 
 router = APIRouter(prefix="/api/requests", tags=["comments"])
 
@@ -66,13 +67,33 @@ async def create_comment(
     )
     
     db.add(comment)
+
+    # Same timeline entry as the public path. `new_value` carries the
+    # visibility rather than the text: an internal note is a different event to
+    # a reply the resident can read, and the timeline is shown to both.
+    #
+    # The comment body stays in request_comments, which is what the retention
+    # policy scrubs. The audit trail is append-only, so a copy here would be a
+    # copy the scrub cannot reach.
+    db.add(RequestAuditLog(
+        service_request_id=request_id,
+        action="comment_added",
+        new_value=comment_data.visibility.value,
+        actor_type="staff",
+        actor_name=current_user.username,
+    ))
     await db.commit()
     await db.refresh(comment)
-    
+
+    # Everything below is enqueued, never called: the comment is committed, and
+    # a broker that is unreachable must cost a notification rather than turn a
+    # saved comment into a 500 that invites the author to post it twice.
+    #
     # Send notification to resident if comment is public/external
     if comment_data.visibility.value == "external":
         from app.tasks.service_requests import send_comment_notification_task
-        send_comment_notification_task.delay(
+        enqueue(
+            send_comment_notification_task,
             request_id,
             current_user.full_name or current_user.username,
             comment_data.content
@@ -80,12 +101,12 @@ async def create_comment(
 
         # Mirror the comment to linked govtech platforms
         from app.tasks.integrations import push_comment_to_integrations
-        push_comment_to_integrations.delay(comment.id)
+        enqueue(push_comment_to_integrations, comment.id)
 
     # Notify assigned staff / department of the comment (internal or external),
     # respecting each user's notification preferences. The commenter is skipped.
     from app.tasks.service_requests import notify_staff_of_activity
-    notify_staff_of_activity.delay(request_id, "comments", actor=current_user.username)
+    enqueue(notify_staff_of_activity, request_id, "comments", actor=current_user.username)
 
     return comment
 
