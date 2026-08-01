@@ -502,9 +502,6 @@ class ApiClient {
     }
 
     // Public staff list (no auth required, for resident portal filters)
-    async getPublicStaffList(): Promise<User[]> {
-        return this.request<User[]>('/users/staff/public');
-    }
 
     async createUser(data: UserCreate): Promise<User> {
         return this.request<User>('/users/', {

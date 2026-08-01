@@ -49,24 +49,22 @@ async def list_staff_members(
     return result.scalars().all()
 
 
-class PublicStaffResponse(BaseModel):
-    username: str
-    full_name: str | None
-    role: str
-    
-    class Config:
-        from_attributes = True
-
-
-@router.get("/staff/public", response_model=List[PublicStaffResponse])
-async def list_staff_public(db: AsyncSession = Depends(get_db)):
-    """List staff usernames for public filters (no auth required)"""
-    result = await db.execute(
-        select(User)
-        .where(User.role.in_(['staff', 'admin']), User.is_active == True)
-        .order_by(User.full_name, User.username)
-    )
-    return result.scalars().all()
+# GET /users/staff/public is deliberately gone.
+#
+# It served the full roster of every active staff and admin account --
+# username, full name, and role -- to anyone who asked, with no auth. Its only
+# caller was the resident portal, which loaded it to populate the "Assigned
+# Staff" checkboxes on the public map, and its docstring said so: "for public
+# filters".
+#
+# That filter is now staff-only, so the endpoint has no remaining purpose and
+# is pure exposure. A username list is the first half of a credential-stuffing
+# attempt, and `role` labelled which of those usernames were administrators.
+#
+# The staff map reads the authenticated /users/staff instead. If something ever
+# genuinely needs to show residents who works for the town -- a "contact your
+# department" page -- that wants names and job titles chosen for publication,
+# not a dump of the login table.
 
 
 @router.get("/", response_model=List[UserResponse])

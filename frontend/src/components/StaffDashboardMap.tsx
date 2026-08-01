@@ -1,16 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { MapPin, Layers, Search, X, ChevronDown, ChevronRight, Users } from 'lucide-react';
-import { ServiceRequest, ServiceDefinition } from '../types';
+import { ServiceRequest, ServiceDefinition, User, Department } from '../types';
+import { MapLayer } from '../services/api';
 import { useTranslation } from '../context/TranslationContext';
 import {
+    GeoJsonLayerHandle,
     MapProviderId,
     MapRenderer,
     MarkerLayer,
     MarkerOptions,
     PopupHandle,
     boundsOfGeoJson,
+    assetIcon,
     createMap,
+    extractFeatures,
     legacyMapProviderConfig,
+    requestIcon,
     el,
     popupRoot,
 } from '../maps';
@@ -22,6 +27,26 @@ interface StaffDashboardMapProps {
     provider?: MapProviderId;
     requests: ServiceRequest[];
     services: ServiceDefinition[];
+    departments: Department[];
+    users: User[];
+    mapLayers: MapLayer[];
+    /**
+     * Show the filters that expose how the town works internally: which
+     * department owns a report, who it is assigned to, its priority score, and
+     * the toggles for the operational map layers.
+     *
+     * Off by default, so a new caller has to opt in rather than opt out. The
+     * resident portal renders this same map and must not get them.
+     *
+     * This flag is a *layout* decision and nothing more. It is compiled into a
+     * public JS bundle, so anyone can flip it in a debugger -- the reason that
+     * is not a hole is that the data behind these filters is not served to an
+     * unauthenticated caller at all. `assigned_to` and `assigned_department_id`
+     * are absent from the public requests payload, and the departments list is
+     * staff-only. Flipping the flag on the resident portal renders empty
+     * checkboxes over data that is not there.
+     */
+    operationalFilters?: boolean;
     townshipBoundary?: object | null;
     defaultCenter?: { lat: number; lng: number };
     defaultZoom?: number;
@@ -41,6 +66,10 @@ export default function StaffDashboardMap({
     provider,
     requests,
     services,
+    departments,
+    users,
+    mapLayers,
+    operationalFilters = false,
     townshipBoundary,
     defaultCenter = { lat: 40.3573, lng: -74.6672 },
     defaultZoom = 14,
@@ -49,8 +78,12 @@ export default function StaffDashboardMap({
     const { language } = useTranslation();
     const mapRef = useRef<HTMLDivElement>(null);
     const mapInstanceRef = useRef<MapRenderer | null>(null);
+    // Request pins cluster; layer asset pucks do not. Two layers, so clustering
+    // is a property of the set rather than something bolted on afterwards.
     const requestLayerRef = useRef<MarkerLayer | null>(null);
+    const layerMarkerLayerRef = useRef<MarkerLayer | null>(null);
     const popupRef = useRef<PopupHandle | null>(null);
+    const layerDataRef = useRef<GeoJsonLayerHandle[]>([]);
 
     // Filter state
     const [statusFilters, setStatusFilters] = useState({
@@ -59,7 +92,11 @@ export default function StaffDashboardMap({
         closed: true,
     });
     const [categoryFilters, setCategoryFilters] = useState<Record<string, boolean>>({});
+    const [departmentFilters, setDepartmentFilters] = useState<Record<number, boolean>>({});
+    const [staffFilters, setStaffFilters] = useState<Record<string, boolean>>({});
+    const [layerFilters, setLayerFilters] = useState<Record<number, boolean>>({});
     const [assignmentFilter, setAssignmentFilter] = useState<string>('');
+    const [priorityFilters, setPriorityFilters] = useState<Record<string, boolean>>({ high: true, medium: true, low: true });
 
     // UI state
     const [isLoading, setIsLoading] = useState(true);
@@ -75,6 +112,10 @@ export default function StaffDashboardMap({
     const [expandedSections, setExpandedSections] = useState({
         status: true,
         categories: false,
+        departments: false,
+        staff: false,
+        priority: false,
+        layers: true,
         assignment: false,
     });
 
@@ -86,6 +127,37 @@ export default function StaffDashboardMap({
         });
         setCategoryFilters(newFilters);
     }, [services]);
+
+    // Initialize layer filters when mapLayers change
+    useEffect(() => {
+        const newFilters: Record<number, boolean> = {};
+        mapLayers.forEach(layer => {
+            newFilters[layer.id] = layerFilters[layer.id] ?? true;
+        });
+        setLayerFilters(newFilters);
+    }, [mapLayers]);
+
+    // Initialize department filters when departments change
+    useEffect(() => {
+        const newFilters: Record<number, boolean> = {};
+        departments.forEach(d => {
+            newFilters[d.id] = departmentFilters[d.id] ?? true;
+        });
+        // Add "unassigned" option
+        newFilters[0] = departmentFilters[0] ?? true;
+        setDepartmentFilters(newFilters);
+    }, [departments]);
+
+    // Initialize staff filters when users change
+    useEffect(() => {
+        const newFilters: Record<string, boolean> = {};
+        users.forEach(u => {
+            newFilters[u.username] = staffFilters[u.username] ?? true;
+        });
+        // Add "unassigned" option
+        newFilters[''] = staffFilters[''] ?? true;
+        setStaffFilters(newFilters);
+    }, [users]);
 
     // Load the configured map provider and attach the map
     useEffect(() => {
@@ -153,6 +225,7 @@ export default function StaffDashboardMap({
                         }),
                     },
                 });
+                layerMarkerLayerRef.current = map.createMarkerLayer();
 
                 // Track map type changes for panel styling
                 map.on('basemaptypechange', ({ type }) => setMapType(type || 'hybrid'));
@@ -172,7 +245,9 @@ export default function StaffDashboardMap({
 
         return () => {
             isMounted = false;
+            layerDataRef.current = [];
             requestLayerRef.current = null;
+            layerMarkerLayerRef.current = null;
             popupRef.current = null;
             mapInstanceRef.current?.destroy();
             mapInstanceRef.current = null;
@@ -204,7 +279,13 @@ export default function StaffDashboardMap({
     useEffect(() => {
         if (!mapInstanceRef.current) return;
         updateMarkers();
-    }, [requests, statusFilters, categoryFilters, assignmentFilter, mapReady]);
+    }, [requests, statusFilters, categoryFilters, departmentFilters, staffFilters, assignmentFilter, priorityFilters, operationalFilters, mapReady]);
+
+    // Update GeoJSON layers when layer filters change
+    useEffect(() => {
+        if (!mapInstanceRef.current) return;
+        updateLayers();
+    }, [mapLayers, layerFilters, mapReady]);
 
     const updateMarkers = () => {
         const map = mapInstanceRef.current;
@@ -218,6 +299,26 @@ export default function StaffDashboardMap({
 
             // Category filter
             if (categoryFilters[r.service_code] === false) return false;
+
+            // Department filter - only filter if departments are loaded.
+            // Skipped entirely when the panel is hidden: a checkbox nobody can
+            // see must never be able to remove a pin from the map.
+            const requestDeptId = (r as any).assigned_department_id ?? 0;
+            if (operationalFilters && Object.keys(departmentFilters).length > 0) {
+                // Convert to number for comparison (filter keys are numbers)
+                const deptKey = Number(requestDeptId) || 0;
+                if (departmentFilters[deptKey] === false) {
+                    return false;
+                }
+            }
+
+            // Staff filter - only filter if users are loaded
+            const requestStaff = (r as any).assigned_to ?? '';
+            if (operationalFilters && Object.keys(staffFilters).length > 0) {
+                if (staffFilters[requestStaff] === false) {
+                    return false;
+                }
+            }
 
             // Assignment filter - search in assigned_to, service_name, or description
             if (assignmentFilter) {
@@ -238,20 +339,19 @@ export default function StaffDashboardMap({
             // Must have coordinates
             if (!r.lat || !r.long) return false;
 
+            // Priority filter
+            const ai = (r as any).ai_analysis;
+            const priority = (r as any).manual_priority_score ?? ai?.priority_score ?? 5;
+            const priorityLevel = priority >= 8 ? 'high' : priority >= 5 ? 'medium' : 'low';
+            if (operationalFilters && !priorityFilters[priorityLevel]) return false;
+
             return true;
         });
 
         // Create markers
         const markers: MarkerOptions[] = filteredRequests.map(request => ({
             position: { lat: request.lat!, lng: request.long! },
-            icon: {
-                type: 'circle',
-                radius: 10,
-                fillColor: STATUS_COLORS[request.status as keyof typeof STATUS_COLORS] || '#6366f1',
-                fillOpacity: 1,
-                strokeColor: '#ffffff',
-                strokeWidth: 2,
-            },
+            icon: requestIcon(STATUS_COLORS[request.status as keyof typeof STATUS_COLORS]),
             title: request.service_name,
             onClick: async (_e, marker) => {
                 const popup = popupRef.current;
@@ -335,6 +435,93 @@ export default function StaffDashboardMap({
         requestLayer.setMarkers(markers);
     };
 
+    const updateLayers = () => {
+        const map = mapInstanceRef.current;
+        const layerMarkers = layerMarkerLayerRef.current;
+        if (!map || !layerMarkers) return;
+
+        // Clear existing layer data and markers
+        layerDataRef.current.forEach(d => d.remove());
+        layerDataRef.current = [];
+        layerMarkers.clear();
+        const pointMarkers: MarkerOptions[] = [];
+
+        // Render active layers
+        mapLayers.forEach(layer => {
+            if (!layerFilters[layer.id]) return;
+            if (layer.visible_on_map === false) return;
+
+            try {
+                if (!layer.geojson) return;
+
+                // Points get bespoke markers, so the vector layer hides them.
+                layerDataRef.current.push(map.addGeoJsonLayer({
+                    data: layer.geojson,
+                    pointRendering: 'hidden',
+                    style: {
+                        fillColor: layer.fill_color,
+                        fillOpacity: layer.fill_opacity,
+                        strokeColor: layer.stroke_color,
+                        strokeWidth: layer.stroke_width,
+                    },
+                }));
+
+                extractFeatures(layer.geojson).forEach((feature) => {
+                    if (feature.geometryType !== 'Point' || !feature.position) return;
+                    const props = feature.properties as Record<string, any>;
+
+                    pointMarkers.push({
+                        position: feature.position,
+                        icon: assetIcon(layer.fill_color, layer.stroke_color),
+                        title: props.name || layer.name,
+                        onClick: (_e, marker) => {
+                            const popup = popupRef.current;
+                            if (!popup) return;
+
+                            popup.setContent(popupRoot(
+                                'padding: 16px; background: #1f2937; border-radius: 12px; min-width: 180px;',
+                                [
+                                    el('div', {
+                                        style: 'display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.1);',
+                                        children: [
+                                            el('span', {
+                                                style: `width: 14px; height: 14px; border-radius: 50%; background: ${layer.fill_color}; box-shadow: 0 0 8px ${layer.fill_color}80;`,
+                                            }),
+                                            el('h4', {
+                                                style: 'margin: 0; color: #f9fafb; font-size: 15px; font-weight: 600;',
+                                                text: String(props.name || layer.name),
+                                            }),
+                                        ],
+                                    }),
+                                    // Keys and values both come from an uploaded
+                                    // GeoJSON, so both are set as text.
+                                    ...Object.entries(props)
+                                        .filter(([k]) => k !== 'name')
+                                        .map(([k, v]) => el('p', {
+                                            style: 'margin: 6px 0; font-size: 13px; color: #e5e7eb;',
+                                            children: [
+                                                el('span', { style: 'color: #9ca3af;', text: `${k}:` }),
+                                                ` ${v}`,
+                                            ],
+                                        })),
+                                    Object.keys(props).filter(k => k !== 'name').length === 0
+                                        ? el('p', { style: 'color: #9ca3af; font-size: 13px; margin: 0;', text: 'No additional properties' })
+                                        : null,
+                                ],
+                            ));
+                            popup.openAt(marker);
+                        },
+                    });
+                });
+
+            } catch (e) {
+                console.error('Error rendering layer:', layer.name, e);
+            }
+        });
+
+        layerMarkers.setMarkers(pointMarkers);
+    };
+
     const toggleSection = (section: keyof typeof expandedSections) => {
         setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
     };
@@ -345,6 +532,30 @@ export default function StaffDashboardMap({
             newFilters[key] = value;
         });
         setCategoryFilters(newFilters);
+    };
+
+    const toggleAllDepartments = (value: boolean) => {
+        const newFilters: Record<number, boolean> = {};
+        Object.keys(departmentFilters).forEach(key => {
+            newFilters[Number(key)] = value;
+        });
+        setDepartmentFilters(newFilters);
+    };
+
+    const toggleAllStaff = (value: boolean) => {
+        const newFilters: Record<string, boolean> = {};
+        Object.keys(staffFilters).forEach(key => {
+            newFilters[key] = value;
+        });
+        setStaffFilters(newFilters);
+    };
+
+    const toggleAllLayers = (value: boolean) => {
+        const newFilters: Record<number, boolean> = {};
+        Object.keys(layerFilters).forEach(key => {
+            newFilters[Number(key)] = value;
+        });
+        setLayerFilters(newFilters);
     };
 
     if (!apiKey) {
@@ -480,6 +691,225 @@ export default function StaffDashboardMap({
                         )}
                     </div>
 
+                    {/* Department Filters */}
+                    {operationalFilters && (
+                    <div className="border-b border-white/5">
+                        <button
+                            onClick={() => toggleSection('departments')}
+                            className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
+                        >
+                            <span className="text-sm font-semibold text-white">{"Departments"}</span>
+                            {expandedSections.departments ? (
+                                <ChevronDown className="w-4 h-4 text-white/50" />
+                            ) : (
+                                <ChevronRight className="w-4 h-4 text-white/50" />
+                            )}
+                        </button>
+                        {expandedSections.departments && (
+                            <div className="px-4 pb-4 space-y-2">
+                                <div className="flex gap-3 mb-3 pb-2 border-b border-white/5">
+                                    <button
+                                        onClick={() => toggleAllDepartments(true)}
+                                        className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                    >
+                                        Select All
+                                    </button>
+                                    <span className="text-white/20">|</span>
+                                    <button
+                                        onClick={() => toggleAllDepartments(false)}
+                                        className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                    >
+                                        Clear All
+                                    </button>
+                                </div>
+                                <label className="flex items-center gap-3 cursor-pointer group">
+                                    <input
+                                        type="checkbox"
+                                        checked={departmentFilters[0] ?? true}
+                                        onChange={(e) => setDepartmentFilters(prev => ({ ...prev, [0]: e.target.checked }))}
+                                        className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
+                                    />
+                                    <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors italic">
+                                        Unassigned
+                                    </span>
+                                </label>
+                                {departments.map(dept => (
+                                    <label key={dept.id} className="flex items-center gap-3 cursor-pointer group">
+                                        <input
+                                            type="checkbox"
+                                            checked={departmentFilters[dept.id] ?? true}
+                                            onChange={(e) => setDepartmentFilters(prev => ({ ...prev, [dept.id]: e.target.checked }))}
+                                            className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
+                                        />
+                                        <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors">
+                                            {dept.name}
+                                        </span>
+                                    </label>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    )}
+
+                    {/* Staff Filters */}
+                    {operationalFilters && (
+                    <div className="border-b border-white/5">
+                        <button
+                            onClick={() => toggleSection('staff')}
+                            className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
+                        >
+                            <span className="text-sm font-semibold text-white">{"Assigned Staff"}</span>
+                            {expandedSections.staff ? (
+                                <ChevronDown className="w-4 h-4 text-white/50" />
+                            ) : (
+                                <ChevronRight className="w-4 h-4 text-white/50" />
+                            )}
+                        </button>
+                        {expandedSections.staff && (
+                            <div className="px-4 pb-4 space-y-2">
+                                <div className="flex gap-3 mb-3 pb-2 border-b border-white/5">
+                                    <button
+                                        onClick={() => toggleAllStaff(true)}
+                                        className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                    >
+                                        {"Select All"}
+                                    </button>
+                                    <span className="text-white/20">|</span>
+                                    <button
+                                        onClick={() => toggleAllStaff(false)}
+                                        className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                    >
+                                        {"Clear All"}
+                                    </button>
+                                </div>
+                                <label className="flex items-center gap-3 cursor-pointer group">
+                                    <input
+                                        type="checkbox"
+                                        checked={staffFilters[''] ?? true}
+                                        onChange={(e) => setStaffFilters(prev => ({ ...prev, ['']: e.target.checked }))}
+                                        className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
+                                    />
+                                    <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors italic">
+                                        {"Unassigned"}
+                                    </span>
+                                </label>
+                                {users.filter(u => u.role === 'staff' || u.role === 'admin').map(user => (
+                                    <label key={user.username} className="flex items-center gap-3 cursor-pointer group">
+                                        <input
+                                            type="checkbox"
+                                            checked={staffFilters[user.username] ?? true}
+                                            onChange={(e) => setStaffFilters(prev => ({ ...prev, [user.username]: e.target.checked }))}
+                                            className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
+                                        />
+                                        <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors">
+                                            {user.full_name || user.username}
+                                        </span>
+                                    </label>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    )}
+
+                    {/* Priority Level Filter */}
+                    {operationalFilters && (
+                    <div className="border-b border-white/5">
+                        <button
+                            onClick={() => toggleSection('priority')}
+                            className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
+                        >
+                            <span className="text-sm font-semibold text-white">{"Priority Level"}</span>
+                            {expandedSections.priority ? (
+                                <ChevronDown className="w-4 h-4 text-white/50" />
+                            ) : (
+                                <ChevronRight className="w-4 h-4 text-white/50" />
+                            )}
+                        </button>
+                        {expandedSections.priority && (
+                            <div className="px-4 pb-4 space-y-2">
+                                {[
+                                    { value: 'high', label: "High (8-10)", color: '#ef4444' },
+                                    { value: 'medium', label: "Medium (5-7)", color: '#f59e0b' },
+                                    { value: 'low', label: "Low (1-4)", color: '#22c55e' },
+                                ].map(option => (
+                                    <label key={option.value} className="flex items-center gap-3 cursor-pointer group">
+                                        <input
+                                            type="checkbox"
+                                            checked={priorityFilters[option.value]}
+                                            onChange={(e) => setPriorityFilters(prev => ({ ...prev, [option.value]: e.target.checked }))}
+                                            className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
+                                        />
+                                        <span
+                                            className="w-4 h-4 rounded-full shadow-lg"
+                                            style={{ backgroundColor: option.color }}
+                                        />
+                                        <span className="text-sm text-white/80 group-hover:text-white transition-colors">
+                                            {option.label}
+                                        </span>
+                                    </label>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    )}
+
+                    {/* GeoJSON Layers */}
+                    {operationalFilters && mapLayers.length > 0 && (
+                        <div className="border-b border-white/5">
+                            <button
+                                onClick={() => toggleSection('layers')}
+                                className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
+                            >
+                                <span className="text-sm font-semibold text-white">{"Map Layers"}</span>
+                                {expandedSections.layers ? (
+                                    <ChevronDown className="w-4 h-4 text-white/50" />
+                                ) : (
+                                    <ChevronRight className="w-4 h-4 text-white/50" />
+                                )}
+                            </button>
+                            {expandedSections.layers && (
+                                <div className="px-4 pb-4 space-y-2">
+                                    <div className="flex gap-3 mb-3 pb-2 border-b border-white/5">
+                                        <button
+                                            onClick={() => toggleAllLayers(true)}
+                                            className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                        >
+                                            {"Show All"}
+                                        </button>
+                                        <span className="text-white/20">|</span>
+                                        <button
+                                            onClick={() => toggleAllLayers(false)}
+                                            className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                        >
+                                            {"Hide All"}
+                                        </button>
+                                    </div>
+                                    {mapLayers.map(layer => (
+                                        <label key={layer.id} className="flex items-center gap-3 cursor-pointer group">
+                                            <input
+                                                type="checkbox"
+                                                checked={layerFilters[layer.id] ?? true}
+                                                onChange={(e) => setLayerFilters(prev => ({ ...prev, [layer.id]: e.target.checked }))}
+                                                className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
+                                            />
+                                            <span
+                                                className="w-4 h-4 rounded border-2"
+                                                style={{
+                                                    backgroundColor: layer.fill_color,
+                                                    borderColor: layer.stroke_color,
+                                                    opacity: 0.9
+                                                }}
+                                            />
+                                            <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors">
+                                                {layer.name}
+                                            </span>
+                                        </label>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {/* Assignment Filter */}
                     <div>
                         <button
@@ -545,6 +975,20 @@ export default function StaffDashboardMap({
                             <span className="text-white/70 font-medium capitalize">{status.replace('_', ' ')}</span>
                         </div>
                     ))}
+                    {/* The shape, not the colour. An asset layer's colour is
+                        chosen by whoever uploaded it and can be any of the
+                        three above, so a colour swatch here would explain
+                        nothing. */}
+                    {mapLayers.length > 0 && (
+                        <div className="flex items-center gap-2 pl-4 border-l border-white/15">
+                            <span
+                                className="w-3 h-3 bg-white/70 shadow-lg"
+                                style={{ transform: 'rotate(45deg)' }}
+                                aria-hidden="true"
+                            />
+                            <span className="text-white/70 font-medium">Town asset</span>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

@@ -998,6 +998,10 @@ export default function StaffDashboard() {
                                     mapId={mapsConfig.google_maps_map_id}
                                     requests={mapFilteredRequests}
                                     services={services}
+                                    departments={departments}
+                                    users={users}
+                                    mapLayers={mapLayers}
+                                    operationalFilters
                                     townshipBoundary={mapsConfig.township_boundary}
                                     defaultCenter={mapsConfig.default_center}
                                     onRequestSelect={handleMapRequestSelect}

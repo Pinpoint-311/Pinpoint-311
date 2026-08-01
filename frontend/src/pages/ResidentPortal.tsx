@@ -890,7 +890,10 @@ export default function ResidentPortal() {
                                         <StaffDashboardMap
                                             apiKey={mapsApiKey || ''}
                                             requests={allRequests}
+                                            mapLayers={mapLayers}
                                             services={services}
+                                            departments={[]}
+                                            users={[]}
                                             townshipBoundary={townshipBoundary}
                                             onRequestSelect={(requestId) => {
                                                 if (requestId) {

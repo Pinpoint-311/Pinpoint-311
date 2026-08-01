@@ -10,6 +10,7 @@ import {
     MarkerHandle,
     MarkerOptions,
     TOP_MARKER_Z_INDEX,
+    assetIcon,
     backendGeocodingProvider,
     boundsOfGeoJson,
     chainGeocoders,
@@ -323,14 +324,7 @@ export default function LocationPicker({
 
                                 assetMarkers.push({
                                     position,
-                                    icon: {
-                                        type: 'circle',
-                                        radius: 10,
-                                        fillColor: layer.fill_color,
-                                        fillOpacity: 0.95,
-                                        strokeColor: '#ffffff',
-                                        strokeWidth: 2,
-                                    },
+                                    icon: assetIcon(layer.fill_color, layer.stroke_color),
                                     title: props.name || props.asset_id || layer.name,
                                     onClick: (_e, marker) => {
                                         const assetName = props.name || layer.name;
