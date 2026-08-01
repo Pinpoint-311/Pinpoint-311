@@ -153,11 +153,11 @@ async def sla_performance(
     are listed separately so admins can see what isn't covered yet, but they are
     never counted as failing.
     """
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     from app.models import ServiceRequest
     from app.services.sla import summarize_category, overall_summary
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     since = now - timedelta(days=max(1, min(days, 730)))
 
     services_result = await db.execute(select(ServiceDefinition))

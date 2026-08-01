@@ -904,11 +904,15 @@ export default function AdminConsole() {
         policy: { name: string; retention_days: number; retention_years: number; source: string; public_records_law: string };
         override_days: number | null;
         effective_days: number;
-        mode: 'anonymize' | 'delete';
+        mode: 'redact' | 'delete';
         stats: { eligible_for_archival: number; under_legal_hold: number; already_archived: number; cutoff_date: string };
     } | null>(null);
     const [selectedStateCode, setSelectedStateCode] = useState<string>('');
-    const [selectedMode, setSelectedMode] = useState<'anonymize' | 'delete'>('anonymize');
+    const [selectedMode, setSelectedMode] = useState<'redact' | 'delete'>('redact');
+    /* Which fields a retention run clears. Null until the server answers --
+     * rendering the catalog from a hardcoded copy here is how the screen and
+     * the thing it configures drift apart. */
+    const [scrubFields, setScrubFields] = useState<import('../services/api').ScrubField[] | null>(null);
     const [overrideDays, setOverrideDays] = useState<string>('');
     const [isSavingRetention, setIsSavingRetention] = useState(false);
     const [isRunningRetention, setIsRunningRetention] = useState(false);
@@ -1037,7 +1041,8 @@ export default function AdminConsole() {
                         setRetentionStates(states);
                         setRetentionPolicy(policy);
                         setSelectedStateCode(policy.state_code);
-                        setSelectedMode(policy.mode);
+                        setSelectedMode(policy.mode === 'delete' ? 'delete' : 'redact');
+                        setScrubFields(policy.scrub_fields || null);
                         // Reflect the saved override in the input (was always blank before)
                         setOverrideDays(policy.override_days ? String(policy.override_days) : '');
                         // Filter for deleted requests only
@@ -2853,7 +2858,7 @@ export default function AdminConsole() {
                                 {retentionPolicy && (
                                     <AccordionSection
                                         title={`Current Policy: ${retentionPolicy.policy.public_records_law}`}
-                                        subtitle={`${retentionPolicy.policy.name} • ${formatYears(retentionPolicy.effective_days)} retention${retentionPolicy.override_days ? ' (custom override)' : ''} • ${retentionPolicy.mode === 'anonymize' ? 'Anonymize mode' : 'Delete mode'}`}
+                                        subtitle={`${retentionPolicy.policy.name} • ${formatYears(retentionPolicy.effective_days)} retention${retentionPolicy.override_days ? ' (custom override)' : ''} • ${retentionPolicy.mode === 'delete' ? 'Delete mode' : 'Redact mode'}`}
                                         icon={Shield}
                                         iconClassName="text-green-400"
                                         badge={<Badge variant="success">Active</Badge>}
@@ -2878,7 +2883,7 @@ export default function AdminConsole() {
                                             <div className="bg-white/5 rounded-lg p-4">
                                                 <div className="text-white/60 text-sm">Mode</div>
                                                 <div className="text-2xl font-bold text-white capitalize">{retentionPolicy.mode}</div>
-                                                <div className="text-white/40 text-sm">{retentionPolicy.mode === 'anonymize' ? 'PII removed, stats kept' : 'Permanent deletion'}</div>
+                                                <div className="text-white/40 text-sm">{retentionPolicy.mode === 'delete' ? 'Permanent deletion' : 'Chosen fields cleared, record kept'}</div>
                                             </div>
                                         </div>
 
@@ -3166,12 +3171,17 @@ export default function AdminConsole() {
                                             <label className="block text-sm font-medium text-white/70 mb-2">Archival Mode</label>
                                             <select
                                                 value={selectedMode}
-                                                onChange={(e) => setSelectedMode(e.target.value as 'anonymize' | 'delete')}
+                                                onChange={(e) => setSelectedMode(e.target.value as 'redact' | 'delete')}
                                                 className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-amber-400"
                                                 aria-label="Select archival mode"
                                             >
-                                                <option value="anonymize" className="bg-slate-800">Anonymize (Remove PII, keep statistics)</option>
-                                                <option value="delete" className="bg-slate-800">Delete (Permanent removal)</option>
+                                                {/* Not "anonymise". Anonymising means removing what
+                                                    ties data to a person; this also clears the
+                                                    description and the staff notes, which is
+                                                    redaction. The two are not interchangeable when
+                                                    the difference is what a town tells a judge. */}
+                                                <option value="redact" className="bg-slate-800">Redact — clear the fields you choose, keep the record</option>
+                                                <option value="delete" className="bg-slate-800">Delete — remove the record entirely</option>
                                             </select>
                                         </div>
 
@@ -3189,6 +3199,48 @@ export default function AdminConsole() {
                                             <p className="text-white/40 text-xs mt-1">Min 365 days. Must be ≥ state requirement.</p>
                                         </div>
                                     </div>
+
+                                    {/* What a run actually clears.
+                                        This was fixed in code -- names, email, phone, description,
+                                        staff notes and photos, always. A town's retention
+                                        obligations come from its own counsel and its state's
+                                        records law, and deciding for them was not ours to do. */}
+                                    {selectedMode !== 'delete' && scrubFields && (
+                                        <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                                            <h4 className="font-semibold text-white">What gets cleared</h4>
+                                            <p className="text-white/55 text-xs mt-1 mb-4">
+                                                The record stays and still counts in your statistics. Only the
+                                                fields ticked here are emptied.
+                                            </p>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                {scrubFields.map(field => (
+                                                    <label
+                                                        key={field.id}
+                                                        className={`flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition-colors ${field.selected
+                                                            ? 'bg-amber-500/10 border-amber-400/30'
+                                                            : 'bg-white/[0.02] border-white/10 hover:border-white/20'}`}
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={field.selected}
+                                                            onChange={(e) => setScrubFields(prev => (prev || []).map(f =>
+                                                                f.id === field.id ? { ...f, selected: e.target.checked } : f))}
+                                                            className="mt-0.5 accent-amber-400"
+                                                        />
+                                                        <span className="min-w-0">
+                                                            <span className="block text-sm font-medium text-white/90">{field.label}</span>
+                                                            <span className="block text-xs text-white/55 mt-0.5 leading-relaxed">{field.detail}</span>
+                                                        </span>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                            {!scrubFields.some(f => f.selected) && (
+                                                <p className="text-amber-300 text-xs mt-3">
+                                                    Nothing is ticked, so a run would leave every record untouched.
+                                                </p>
+                                            )}
+                                        </div>
+                                    )}
 
                                     {/* Selected State Preview — updates live as state/override change */}
                                     {selectedStateCode && retentionStates.find(s => s.code === selectedStateCode) && (() => {
@@ -3225,6 +3277,8 @@ export default function AdminConsole() {
                                                     await api.updateRetentionPolicy({
                                                         state_code: selectedStateCode,
                                                         mode: selectedMode,
+                                                        scrub_fields: (scrubFields || [])
+                                                            .filter(f => f.selected).map(f => f.id),
                                                         // 0 explicitly clears the override back to the state default;
                                                         // omitting it would leave a previously-set override stuck.
                                                         override_days: overrideDays ? parseInt(overrideDays) : 0

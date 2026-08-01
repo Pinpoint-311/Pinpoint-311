@@ -232,7 +232,7 @@ async def get_records_for_archival(
     
     policy = get_retention_policy(state_code)
     retention_days = override_days if override_days else policy["retention_days"]
-    cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
     
     # Query closed records older than retention period, not already archived,
     # not deleted, and not under legal hold
@@ -392,7 +392,7 @@ async def get_retention_stats(
     
     policy = get_retention_policy(state_code)
     retention_days = override_days if override_days else policy["retention_days"]
-    cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
     
     # Count records eligible for archival
     eligible_query = select(func.count(ServiceRequest.id)).where(

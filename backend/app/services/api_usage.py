@@ -11,7 +11,7 @@ Supports:
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -186,7 +186,7 @@ async def get_usage_summary(
     """
     from app.models import ApiUsageRecord
     
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
     
     query = (
         select(
@@ -292,7 +292,7 @@ async def get_daily_usage(
     """
     from app.models import ApiUsageRecord
     
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
     
     query = (
         select(

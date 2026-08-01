@@ -160,6 +160,8 @@ def scrub_ai_analysis(record: Any) -> None:
     elif analysis is not None:
         # Not a dict, so nothing inside it can be judged safe.
         record.ai_analysis = None
+    # The legacy name is still listed so this keeps working against an ORM
+    # object from a deployment that has not run the rename migration yet.
     for attr in ("ai_summary", "vertex_ai_summary"):
         if hasattr(record, attr):
             setattr(record, attr, None)

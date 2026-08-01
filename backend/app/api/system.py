@@ -1694,6 +1694,49 @@ async def update_retention_policy(
     }
 
 
+@router.get("/timezone")
+async def get_town_timezone(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Which clock the console shows times on.
+
+    Storage does not move. Every timestamp column is timestamptz and stays in
+    UTC; this only decides what a screen converts it into.
+    """
+    from app.services.town_time import COMMON_TIMEZONES, normalise_timezone, offset_label
+
+    settings = await read_settings_row(db)
+    current = normalise_timezone(getattr(settings, "timezone", None) if settings else None)
+    return {
+        "timezone": current,
+        "offset": offset_label(current),
+        "configured": bool(getattr(settings, "timezone", None)) if settings else False,
+        "common": [{"id": z, "offset": offset_label(z)} for z in COMMON_TIMEZONES],
+    }
+
+
+@router.post("/timezone")
+async def set_town_timezone(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    from app.services.town_time import is_valid_timezone, offset_label
+
+    name = str(payload.get("timezone", "")).strip()
+    if not is_valid_timezone(name):
+        # Rejected rather than quietly falling back to UTC. Silently storing
+        # something other than what was chosen is how a town ends up certain
+        # its times are local when they are not.
+        raise HTTPException(status_code=400, detail=f"Not a timezone this server recognises: {name or '(empty)'}")
+
+    settings = await read_settings_row(db, create=True)
+    settings.timezone = name
+    await db.commit()
+    return {"timezone": name, "offset": offset_label(name)}
+
+
 @router.get("/retention/preview")
 async def preview_retention_run(
     db: AsyncSession = Depends(get_db),
@@ -1840,7 +1883,7 @@ async def export_for_public_records(
     """
     from app.services.retention_service import get_retention_policy
     from app.models import ServiceRequest
-    from datetime import datetime
+    from datetime import datetime, timezone
     import csv
     import io
     from fastapi.responses import StreamingResponse
@@ -1870,7 +1913,7 @@ async def export_for_public_records(
     # Write header with public records law info
     output.write(f"# {policy['public_records_law']} EXPORT\n")
     output.write(f"# State: {policy['name']} ({state_code})\n")
-    output.write(f"# Generated: {datetime.utcnow().isoformat()}Z\n")
+    output.write(f"# Generated: {datetime.now(timezone.utc).isoformat()}Z\n")
     output.write(f"# Total Records: {len(records)}\n")
     output.write(f"# Exported by: {current_user.username}\n")
     output.write("#\n")
@@ -1902,7 +1945,7 @@ async def export_for_public_records(
     
     # Create filename with law name
     law_abbrev = policy['public_records_law'].split('(')[0].strip().replace(' ', '_')
-    filename = f"{law_abbrev}_export_{datetime.utcnow().strftime('%Y%m%d')}.csv"
+    filename = f"{law_abbrev}_export_{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
     
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -2007,8 +2050,8 @@ async def get_advanced_statistics(
     except Exception:
         pass  # Redis unavailable
 
-    from datetime import datetime
-    now = datetime.utcnow()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
     
     # ========== Basic Counts ==========
     
@@ -2535,7 +2578,7 @@ async def get_advanced_statistics(
     if peak_month:
         # Extract month name from YYYY-MM format
         try:
-            from datetime import datetime as dt
+            from datetime import datetime as dt, timezone
             peak_month = dt.strptime(peak_month, "%Y-%m").strftime("%B")
         except Exception:
             pass  # Month format conversion failed, keep original
@@ -3049,10 +3092,10 @@ async def switch_version(
     from app.core.managed import ensure_not_managed
     ensure_not_managed("Upgrading")
     import httpx
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     project_root = os.environ.get("PROJECT_ROOT", "/project")
-    deployment_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    deployment_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     backup_dir = "/project/backups"
     
     # Auto-detect the Docker Compose project name from running containers
@@ -3100,7 +3143,7 @@ async def switch_version(
             "step": step,
             "success": success,
             "detail": detail,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         })
         if not success:
             state["errors"].append(f"{step}: {detail}")
@@ -3904,10 +3947,10 @@ async def get_health_dashboard(
     Comprehensive system health dashboard for non-technical administrators.
     Returns status of all services, database metrics, and last backup info.
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
     
     health = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "services": {},
         "database": {},
         "cache": {},
@@ -4095,12 +4138,12 @@ async def execute_runbook(
     """
     from app.core.managed import ensure_not_managed
     ensure_not_managed("Infrastructure runbook execution")
-    from datetime import datetime
+    from datetime import datetime, timezone
     
     result = {
         "action": action,
         "executed_by": current_user.email,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "status": "success",
         "details": {}
     }
@@ -4248,10 +4291,10 @@ async def analytics_chat(
     Gathers comprehensive context from across the platform (excluding resident PII)
     and uses Gemini 3.1 Flash-Lite to answer questions.
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
     
     context_used = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     
     # ========== 1. System Settings (Township Identity) ==========
     settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
@@ -4346,13 +4389,13 @@ async def analytics_chat(
     ai_summaries = []
     flagged_requests = []
     for r in all_requests:
-        if r.vertex_ai_summary:
+        if r.ai_summary:
             ai_summaries.append({
                 "id": r.service_request_id,
                 "category": r.service_name,
                 "address": r.address or "Unknown",
-                "summary": r.vertex_ai_summary[:200],
-                "classification": r.vertex_ai_classification,
+                "summary": r.ai_summary[:200],
+                "classification": r.ai_classification,
                 "priority": (r.ai_analysis or {}).get("priority_score") if isinstance(r.ai_analysis, dict) else None
             })
         if r.flagged:
@@ -4583,7 +4626,7 @@ async def analytics_chat(
         }
         if r.ai_analysis and isinstance(r.ai_analysis, dict):
             detail["ai_priority"] = r.ai_analysis.get("priority_score")
-            detail["ai_category"] = r.vertex_ai_classification
+            detail["ai_category"] = r.ai_classification
         if r.flagged:
             detail["flagged"] = True
             detail["flag_reason"] = r.flag_reason

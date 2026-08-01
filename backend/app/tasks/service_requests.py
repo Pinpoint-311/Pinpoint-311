@@ -133,7 +133,7 @@ def analyze_request(self, request_id: int):
             analyze_with_gemini,
             strip_pii
         )
-        from datetime import datetime
+        from datetime import datetime, timezone
         
         async with SessionLocal() as db:
             settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
@@ -248,8 +248,8 @@ def analyze_request(self, request_id: int):
                         else:
                             analysis.update(ai_result)
                             ai_ran = True
-                            request.vertex_ai_summary = ai_result.get("qualitative_analysis", "")
-                            request.vertex_ai_analyzed_at = datetime.utcnow()
+                            request.ai_summary = ai_result.get("qualitative_analysis", "")
+                            request.ai_analyzed_at = datetime.now(timezone.utc)
                     # Keep the computed similar_reports even if the AI result omitted them.
                     if historical_context.get("similar_reports"):
                         analysis["similar_reports"] = historical_context["similar_reports"]
@@ -1151,7 +1151,7 @@ def send_weekly_digest():
     Respects individual staff notification preferences.
     """
     import logging
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     from sqlalchemy import func, and_
     logger = logging.getLogger(__name__)
     
@@ -1224,7 +1224,7 @@ def send_weekly_digest():
                         func.sum(case((ServiceRequest.status == 'in_progress', 1), else_=0)).label('in_progress'),
                         func.sum(case((and_(
                             ServiceRequest.status.in_(['open', 'in_progress']),
-                            ServiceRequest.requested_datetime < datetime.utcnow() - timedelta(days=7)
+                            ServiceRequest.requested_datetime < datetime.now(timezone.utc) - timedelta(days=7)
                         ), 1), else_=0)).label('overdue')
                     ).where(
                         and_(
@@ -1239,7 +1239,7 @@ def send_weekly_digest():
                         func.sum(case((ServiceRequest.status == 'in_progress', 1), else_=0)).label('in_progress'),
                         func.sum(case((and_(
                             ServiceRequest.status.in_(['open', 'in_progress']),
-                            ServiceRequest.requested_datetime < datetime.utcnow() - timedelta(days=7)
+                            ServiceRequest.requested_datetime < datetime.now(timezone.utc) - timedelta(days=7)
                         ), 1), else_=0)).label('overdue')
                     ).where(
                         and_(
@@ -1279,7 +1279,7 @@ def send_weekly_digest():
                 # Build request list HTML
                 requests_html = ""
                 for req in oldest_requests:
-                    age_days = (datetime.utcnow() - req.requested_datetime).days if req.requested_datetime else 0
+                    age_days = (datetime.now(timezone.utc) - req.requested_datetime).days if req.requested_datetime else 0
                     age_str = f"{age_days}d" if age_days > 0 else "Today"
                     status_color = "#22c55e" if req.status == "in_progress" else "#f59e0b"
                     requests_html += f"""
