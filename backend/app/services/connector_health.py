@@ -82,6 +82,9 @@ class Health:
     # already said this on Tuesday" without a second query per connector.
     alerted_level: Optional[str] = None
     alerted_at: Optional[datetime] = None
+    # What the last check said, either way, and whether one is even possible.
+    last_result: Optional[str] = None
+    verifiable: Optional[bool] = None
 
     @property
     def ok(self) -> bool:
@@ -140,6 +143,8 @@ def to_health(row: Any, *, now: Optional[datetime] = None) -> Health:
         total_failures=getattr(row, "total_failures", 0) or 0,
         alerted_level=getattr(row, "alerted_level", None),
         alerted_at=getattr(row, "alerted_at", None),
+        last_result=getattr(row, "last_result", None),
+        verifiable=getattr(row, "verifiable", None),
     )
 
 
@@ -171,7 +176,8 @@ async def _row(db, connector: str):
     return row
 
 
-async def record_success(db, connector: str, provider: Optional[str] = None) -> None:
+async def record_success(db, connector: str, provider: Optional[str] = None,
+                         detail: Optional[str] = None) -> None:
     """A real call worked. Never raises."""
     try:
         now = datetime.now(timezone.utc)
@@ -179,6 +185,10 @@ async def record_success(db, connector: str, provider: Optional[str] = None) -> 
         row.provider = provider or row.provider
         row.last_attempt_at = now
         row.last_success_at = now
+        # Kept, so a card can say what the last check found rather than only
+        # when it happened.
+        row.last_result = (detail or "")[:500] or None
+        row.verifiable = True
         # Reset, not decrement: the connector demonstrably works right now, and
         # carrying old failures forward would keep it amber after it recovered.
         row.consecutive_failures = 0
@@ -187,6 +197,32 @@ async def record_success(db, connector: str, provider: Optional[str] = None) -> 
         await db.commit()
     except Exception as exc:
         logger.warning("[Health] could not record success for %s: %s",
+                       sanitize_for_log(connector), sanitize_for_log(str(exc)))
+
+
+async def record_unverifiable(db, connector: str, detail: str,
+                              provider: Optional[str] = None) -> None:
+    """We tried, and this provider cannot be checked from here at all.
+
+    Recorded so the answer survives the browser session that produced it.
+    Without this the card reverts to "not checked yet" on reload and invites
+    somebody to press a button that can never succeed -- and worse, a genuinely
+    unchecked connector and one that is unverifiable by nature look identical.
+
+    Deliberately touches neither the success nor the failure counters. It is
+    not evidence either way, and letting it move the failure count would feed
+    the escalation that emails administrators about a connector nobody can do
+    anything about.
+    """
+    try:
+        row = await _row(db, connector)
+        row.provider = provider or row.provider
+        row.last_attempt_at = datetime.now(timezone.utc)
+        row.last_result = (detail or "")[:500] or None
+        row.verifiable = False
+        await db.commit()
+    except Exception as exc:
+        logger.warning("[Health] could not record unverifiable for %s: %s",
                        sanitize_for_log(connector), sanitize_for_log(str(exc)))
 
 
@@ -200,6 +236,8 @@ async def record_failure(db, connector: str, error: Any,
         row.last_attempt_at = now
         row.last_error_at = now
         row.last_error = clean_error(error)
+        row.last_result = row.last_error
+        row.verifiable = True
         row.consecutive_failures = (row.consecutive_failures or 0) + 1
         row.total_failures = (row.total_failures or 0) + 1
         await db.commit()

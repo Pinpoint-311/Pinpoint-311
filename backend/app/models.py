@@ -1006,6 +1006,25 @@ class ConnectorHealth(Base):
     alert_muted_until = Column(DateTime(timezone=True))
     alert_muted_level = Column(String(16))
 
+    # What the last check actually said, whichever way it went.
+    #
+    # A failure kept its message in `last_error`; a success kept nothing but a
+    # timestamp. So "Twilio credentials accepted, nothing was sent" or "SES
+    # reachable, 12 of 50,000 sent today" was shown once and gone on reload,
+    # leaving a card that says "checked 6 hours ago" and cannot say what it
+    # found. The evidence is the useful part.
+    last_result = Column(Text)
+
+    # False when the provider cannot be checked from here at all -- a generic
+    # HTTP SMS gateway needs a real message sent. Stored, because otherwise
+    # that answer lives only in the browser session that ran the test and the
+    # card reverts to "not checked yet" on reload, inviting somebody to press
+    # a button that can never succeed.
+    #
+    # Deliberately not a status: it is not healthy, not broken, and not
+    # unknown, and folding it into any of those loses the distinction.
+    verifiable = Column(Boolean)
+
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 

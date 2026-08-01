@@ -137,7 +137,17 @@ export interface CapStatus {
 export function capabilityState(s: CapStatus | undefined, health?: ConnectorHealth): CapabilityState | null {
     if (!s) return null;                      // catalog still loading
     if (!s.configured) return 'unset';
-    if (s.verifiable === false) return 'unverifiable';
+    /* The session's answer when there is one, the stored one otherwise.
+     *
+     * Not an `||` of the two: a town that swapped an HTTP gateway for Twilio
+     * has `verifiable: true` from the test it just ran and `false` still in
+     * the health row, and reading both would keep telling it that text
+     * messages cannot be checked. The stored value is a fallback for a fresh
+     * page, not a second opinion. */
+    const knownUnverifiable = s.verifiable !== undefined
+        ? s.verifiable === false
+        : health?.verifiable === false;
+    if (knownUnverifiable) return 'unverifiable';
     // A test run in this session is fresher than the stored health row.
     if (s.verified === true) return 'working';
     if (s.verified === false) return 'failing';
@@ -418,7 +428,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     /* The provider's own words when there are any. A clerk searching the web
      * for their error needs the actual string, not our paraphrase of it. */
     const spotlightDetail = bad
-        ? (health?.last_error || health?.summary || 'The last check failed.')
+        ? (health?.last_error || health?.last_result || health?.summary || 'The last check failed.')
         : shown === 'unchecked'
             ? 'Nothing has used this yet, so we cannot say whether it works.'
             : blurb;
@@ -523,7 +533,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                         {configured ? (
                             <span className="block text-[11px] text-white/45 mt-2.5">
                                 {shown === 'unverifiable'
-                                    ? 'Set up. There is no way to test this one from here.'
+                                    ? (health?.last_result || 'Set up. There is no way to test this one from here.')
                                     : checkedLine}
                             </span>
                         ) : (
