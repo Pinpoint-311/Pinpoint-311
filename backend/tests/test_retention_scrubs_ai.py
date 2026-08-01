@@ -140,6 +140,52 @@ class TestTheTownChooses:
                                          "staff_notes", "media", "ai_analysis"}
 
 
+class TestHardDeleteIsGone:
+    """`delete` could never have worked, and making it work would have broken
+    something else.
+
+    It called db.delete(record) while request_audit_logs and request_comments
+    hold NOT NULL foreign keys back to it with no cascade, so the flush failed
+    on every record -- and every record has an audit entry, because submitting
+    one writes it. Each failure was caught per record, so the run reported
+    success with nothing archived.
+
+    Making it succeed meant deleting the audit rows, which form a hash chain
+    the compliance page advertises as tamper-evident.
+    """
+
+    def test_purge_clears_every_field(self):
+        r = Rec(ai_analysis=dict(REAL_ANALYSIS))
+        cleared = S.apply_scrub(r, S.fields_for_mode("purge"))
+        # Everything except comments, which lives in another table.
+        assert set(cleared) == set(S.FIELD_IDS) - {"comments"}
+        assert r.first_name == "[ARCHIVED]" and r.phone is None
+        assert r.address is None and r.lat is None and r.location is None
+
+    def test_purge_ignores_a_narrower_selection(self):
+        """A caller must not be able to apply a redact-sized list and report it
+        as a purge."""
+        assert set(S.fields_for_mode("purge", ["phone"])) == set(S.FIELD_IDS)
+
+    def test_a_town_set_to_delete_gets_the_strongest_option_that_works(self):
+        assert S.normalise_mode("delete") == "purge"
+
+    def test_redact_still_honours_the_choice(self):
+        assert S.fields_for_mode("redact", ["phone"]) == ["phone"]
+
+    def test_delete_is_no_longer_an_accepted_mode(self):
+        assert "delete" not in S.MODES
+        assert set(S.MODES) == {"redact", "purge"}
+
+    def test_the_row_survives_so_it_still_counts(self):
+        """The point of keeping a shell: a town's own history of how many
+        reports it handled must not be a casualty of retention."""
+        r = Rec(ai_analysis=dict(REAL_ANALYSIS))
+        S.apply_scrub(r, S.fields_for_mode("purge"))
+        assert r.id == 7
+        assert r.ai_analysis == {} or "priority_score" in r.ai_analysis
+
+
 class TestTheWord:
     def test_the_mode_is_no_longer_called_anonymising(self):
         assert S.REDACT == "redact"
@@ -147,8 +193,10 @@ class TestTheWord:
     def test_what_towns_already_have_stored_still_reads(self):
         assert S.normalise_mode("anonymize") == "redact"
 
-    def test_delete_is_untouched(self):
-        assert S.normalise_mode("delete") == "delete"
+    def test_a_stored_delete_now_means_purge(self):
+        """It is the strongest option a town could pick, and it is still the
+        strongest option -- the difference is that it works."""
+        assert S.normalise_mode("delete") == "purge"
 
     def test_nothing_stored_means_redact(self):
         assert S.normalise_mode(None) == "redact"

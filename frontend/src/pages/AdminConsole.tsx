@@ -904,11 +904,11 @@ export default function AdminConsole() {
         policy: { name: string; retention_days: number; retention_years: number; source: string; public_records_law: string };
         override_days: number | null;
         effective_days: number;
-        mode: 'redact' | 'delete';
+        mode: 'redact' | 'purge';
         stats: { eligible_for_archival: number; under_legal_hold: number; already_archived: number; cutoff_date: string };
     } | null>(null);
     const [selectedStateCode, setSelectedStateCode] = useState<string>('');
-    const [selectedMode, setSelectedMode] = useState<'redact' | 'delete'>('redact');
+    const [selectedMode, setSelectedMode] = useState<'redact' | 'purge'>('redact');
     /* Which fields a retention run clears. Null until the server answers --
      * rendering the catalog from a hardcoded copy here is how the screen and
      * the thing it configures drift apart. */
@@ -1041,7 +1041,7 @@ export default function AdminConsole() {
                         setRetentionStates(states);
                         setRetentionPolicy(policy);
                         setSelectedStateCode(policy.state_code);
-                        setSelectedMode(policy.mode === 'delete' ? 'delete' : 'redact');
+                        setSelectedMode(policy.mode === 'purge' ? 'purge' : 'redact');
                         setScrubFields(policy.scrub_fields || null);
                         // Reflect the saved override in the input (was always blank before)
                         setOverrideDays(policy.override_days ? String(policy.override_days) : '');
@@ -2858,7 +2858,7 @@ export default function AdminConsole() {
                                 {retentionPolicy && (
                                     <AccordionSection
                                         title={`Current Policy: ${retentionPolicy.policy.public_records_law}`}
-                                        subtitle={`${retentionPolicy.policy.name} • ${formatYears(retentionPolicy.effective_days)} retention${retentionPolicy.override_days ? ' (custom override)' : ''} • ${retentionPolicy.mode === 'delete' ? 'Delete mode' : 'Redact mode'}`}
+                                        subtitle={`${retentionPolicy.policy.name} • ${formatYears(retentionPolicy.effective_days)} retention${retentionPolicy.override_days ? ' (custom override)' : ''} • ${retentionPolicy.mode === 'purge' ? 'Purge mode' : 'Redact mode'}`}
                                         icon={Shield}
                                         iconClassName="text-green-400"
                                         badge={<Badge variant="success">Active</Badge>}
@@ -2883,7 +2883,7 @@ export default function AdminConsole() {
                                             <div className="bg-white/5 rounded-lg p-4">
                                                 <div className="text-white/60 text-sm">Mode</div>
                                                 <div className="text-2xl font-bold text-white capitalize">{retentionPolicy.mode}</div>
-                                                <div className="text-white/40 text-sm">{retentionPolicy.mode === 'delete' ? 'Permanent deletion' : 'Chosen fields cleared, record kept'}</div>
+                                                <div className="text-white/40 text-sm">{retentionPolicy.mode === 'purge' ? 'Every field cleared, row kept' : 'Chosen fields cleared, row kept'}</div>
                                             </div>
                                         </div>
 
@@ -3171,7 +3171,7 @@ export default function AdminConsole() {
                                             <label className="block text-sm font-medium text-white/70 mb-2">Archival Mode</label>
                                             <select
                                                 value={selectedMode}
-                                                onChange={(e) => setSelectedMode(e.target.value as 'redact' | 'delete')}
+                                                onChange={(e) => setSelectedMode(e.target.value as 'redact' | 'purge')}
                                                 className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-amber-400"
                                                 aria-label="Select archival mode"
                                             >
@@ -3181,7 +3181,14 @@ export default function AdminConsole() {
                                                     redaction. The two are not interchangeable when
                                                     the difference is what a town tells a judge. */}
                                                 <option value="redact" className="bg-slate-800">Redact — clear the fields you choose, keep the record</option>
-                                                <option value="delete" className="bg-slate-800">Delete — remove the record entirely</option>
+                                                {/* Not deletion. It could never have worked --
+                                                    NOT NULL foreign keys from the audit log and the
+                                                    comments, with no cascade -- and making it work
+                                                    meant deleting audit rows that form the
+                                                    tamper-evident chain. Clearing every field
+                                                    removes the personal data and leaves a row that
+                                                    still counts. */}
+                                                <option value="purge" className="bg-slate-800">Purge — clear every field, keep the row for counting</option>
                                             </select>
                                         </div>
 
@@ -3205,7 +3212,7 @@ export default function AdminConsole() {
                                         staff notes and photos, always. A town's retention
                                         obligations come from its own counsel and its state's
                                         records law, and deciding for them was not ours to do. */}
-                                    {selectedMode !== 'delete' && scrubFields && (
+                                    {selectedMode !== 'purge' && scrubFields && (
                                         <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
                                             <h4 className="font-semibold text-white">What gets cleared</h4>
                                             <p className="text-white/55 text-xs mt-1 mb-4">
@@ -3341,11 +3348,11 @@ export default function AdminConsole() {
                                                     return;
                                                 }
 
-                                                const deleting = plan.mode === 'delete';
+                                                const purging = plan.mode === 'purge';
                                                 const ok = await dialog.confirm({
-                                                    title: deleting ? 'Delete records permanently' : 'Anonymise records',
-                                                    variant: deleting ? 'danger' : 'warning',
-                                                    confirmText: deleting ? 'Delete them' : 'Anonymise them',
+                                                    title: purging ? 'Clear every field on these records' : 'Redact these records',
+                                                    variant: purging ? 'danger' : 'warning',
+                                                    confirmText: purging ? 'Clear them' : 'Redact them',
                                                     requireTyped: plan.confirmation_required || undefined,
                                                     message: (
                                                         <div className="space-y-3">
@@ -3355,10 +3362,19 @@ export default function AdminConsole() {
                                                                 the {plan.retention_days}-day retention period for {plan.policy_name || plan.state_code}.
                                                             </p>
                                                             <p>
-                                                                {deleting
-                                                                    ? 'They will be removed from the database entirely. This cannot be undone, and it is not covered by an existing backup taken after they are gone.'
-                                                                    : 'Reporter names, emails and phone numbers will be stripped. The reports themselves stay, so the counts and the map do not change.'}
+                                                                {purging
+                                                                    ? 'Every field is emptied — names, contact details, what the resident wrote, photos, comments and the map pin. The rows stay so your totals do not change, but nothing about the people is recoverable.'
+                                                                    : 'Only the fields you ticked are cleared. The rows stay, so the counts and anything you have not ticked are untouched.'}
                                                             </p>
+                                                            {/* Named, from the server's own list. A
+                                                                clerk approving this should not have
+                                                                to remember which boxes are ticked on
+                                                                a screen they cannot see right now. */}
+                                                            {!!plan.scrub_fields?.length && (
+                                                                <p className="text-white/70 text-sm">
+                                                                    Cleared: {plan.scrub_fields.join(', ')}.
+                                                                </p>
+                                                            )}
                                                             {!!plan.on_legal_hold && (
                                                                 <p className="text-amber-300">
                                                                     {plan.on_legal_hold} flagged {plan.on_legal_hold === 1 ? 'record is' : 'records are'} under

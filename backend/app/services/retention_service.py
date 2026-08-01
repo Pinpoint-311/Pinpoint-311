@@ -13,7 +13,7 @@ Key features:
 import logging
 
 from app.services.retention_scrub import (  # noqa: F401
-    AI_ANALYSIS_KEEP, DELETE, REDACT, apply_scrub, normalise_fields,
+    AI_ANALYSIS_KEEP, PURGE, REDACT, apply_scrub, fields_for_mode,
     normalise_mode, scrub_ai_analysis,
 )
 from datetime import datetime, timedelta, timezone
@@ -269,7 +269,10 @@ async def record_archival(db: AsyncSession, record: Any, action: str,
 
         db.add(RequestAuditLog(
             service_request_id=record.id,
-            action="retention_archived" if action == "anonymized" else "retention_deleted",
+            # The mode is in the action, so the trail distinguishes a
+            # targeted redaction from a full purge without anyone reading
+            # extra_data to find out which happened.
+            action=f"retention_{action}",
             new_value=action,
             actor_type="staff",
             actor_name="Retention policy",
@@ -331,44 +334,34 @@ async def archive_record(
             "record_id": record_id
         }
     
-    if normalise_mode(archive_mode) == DELETE:
-        # Hard delete - remove from database entirely.
-        #
-        # The timeline entry goes in first and is deliberately left behind: it
-        # records that a request existed and was destroyed under policy, which
-        # is the only trace an auditor can be shown afterwards. See the note in
-        # record_archival about the audit chain.
-        await record_archival(db, record, "deleted")
-        await db.flush()
-        await db.delete(record)
-        await db.commit()
-        return {
-            "status": "deleted",
-            "record_id": record_id,
-            "service_request_id": record.service_request_id
-        }
-    else:
-        # Redact -- clear the fields this town chose, and nothing else.
-        cleared = apply_scrub(record, scrub_fields)
-        if "comments" in set(normalise_fields(scrub_fields)):
-            await scrub_comments(db, record.id)
-            cleared.append("comments")
-        record.archived_at = datetime.now(timezone.utc)
+    # Redact clears the fields this town chose. Purge clears all of them and
+    # leaves the row as a shell that still counts. Neither removes the record:
+    # see the note in retention_scrub about why hard deletion is gone.
+    chosen = fields_for_mode(archive_mode, scrub_fields)
+    cleared = apply_scrub(record, chosen)
+    if "comments" in set(chosen):
+        await scrub_comments(db, record.id)
+        cleared.append("comments")
+    record.archived_at = datetime.now(timezone.utc)
 
-        await db.flush()
-        await record_archival(db, record, "anonymized", cleared)
-        await db.commit()
-        
-        return {
-            # Kept as "anonymized" in the return value on purpose: callers
-            # count on this string, and renaming what the run *is* called is a
-            # separate change from renaming what it *did*.
-            "status": "anonymized",
-            "record_id": record_id,
-            "service_request_id": record.service_request_id,
-            "archived_at": record.archived_at.isoformat(),
-            "cleared": cleared,
-        }
+    await db.flush()
+    # Into the hash chain, via the insert listener on RequestAuditLog. A
+    # redaction that leaves no trace is indistinguishable from data loss, and
+    # this is the trail an auditor is shown when asked what happened to a
+    # record that is now mostly blank.
+    await record_archival(db, record, normalise_mode(archive_mode), cleared)
+    await db.commit()
+
+    return {
+        # Callers count on this string; renaming what the run is *called* is a
+        # separate change from renaming what it *did*.
+        "status": "anonymized",
+        "mode": normalise_mode(archive_mode),
+        "record_id": record_id,
+        "service_request_id": record.service_request_id,
+        "archived_at": record.archived_at.isoformat(),
+        "cleared": cleared,
+    }
 
 
 async def get_retention_stats(

@@ -83,15 +83,18 @@ class TestItAsksFirst:
         block = API[API.index("async def run_retention_now"):]
         block = block[:block.index("\n@router")]
         assert 'confirm' in block
-        assert '"DELETE"' in block
+        assert '"PURGE"' in block
         assert "status_code=400" in block
 
-    def test_anonymising_does_not_demand_the_word(self):
-        """Reversible enough not to need ceremony; asking for a password every
-        time is how people learn to type it without reading."""
+    def test_redacting_does_not_demand_the_word(self):
+        """Targeted enough not to need ceremony; asking for a password every
+        time is how people learn to type it without reading.
+
+        Purge still does: it clears every field on every eligible record and
+        cannot be undone."""
         block = API[API.index("async def run_retention_now"):]
         block = block[:block.index("\n@router")]
-        assert 'mode == "delete"' in block
+        assert 'mode == "purge"' in block
 
     def test_a_legal_hold_is_reported_before_anything_is_offered(self):
         assert '"blocked": "legal_hold"' in API
@@ -143,3 +146,29 @@ class TestTheWordItUses:
         assert "retention_mode = :new" in migration
         assert 'old="anonymize"' in migration
         assert 'new="redact"' in migration
+
+
+def test_the_word_asked_for_is_the_word_checked():
+    """The preview said PURGE and the endpoint checked for DELETE, so typing
+    what you were told would have been rejected. A confirmation that cannot be
+    satisfied is worse than none: it teaches people the button is broken."""
+    required = re.search(r'"confirmation_required": "(\w+)"', API).group(1)
+    checked = re.search(r'strip\(\) != "(\w+)"', API).group(1)
+    assert required == checked, f"asked for {required}, checks for {checked}"
+
+
+def test_hard_deletion_is_gone_from_the_service():
+    """It could never have worked: NOT NULL foreign keys from the audit log and
+    the comments with no cascade, so the flush failed on every record."""
+    service = (ROOT / "app/services/retention_service.py").read_text()
+    assert "db.delete(" not in service
+
+
+def test_the_redaction_lands_in_the_tamper_evident_trail():
+    """The chain hashes any RequestAuditLog insert, so writing the row is what
+    puts a redaction in it. A redaction that leaves no trace is
+    indistinguishable from data loss."""
+    service = (ROOT / "app/services/retention_service.py").read_text()
+    assert "RequestAuditLog(" in service
+    assert 'action=f"retention_{action}"' in service
+    assert '"cleared"' in service

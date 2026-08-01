@@ -25,10 +25,29 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 # ---------------------------------------------------------------------------
 
 REDACT = "redact"
-DELETE = "delete"
+PURGE = "purge"
+
+# Hard deletion is gone, and this is why.
+#
+# `delete` called `db.delete(record)` while `request_audit_logs` and
+# `request_comments` hold NOT NULL foreign keys back to it with no cascade, so
+# SQLAlchemy tried to disown the children and the flush failed -- on every
+# record, because submitting one writes an audit entry. Each failure was caught
+# per record and the run reported success with nothing archived. A town on a
+# delete policy was told retention was running and nothing was ever removed.
+#
+# Making it succeed meant deleting the audit rows, and those are a hash chain
+# the compliance page advertises as tamper-evident. Removing rows from the
+# middle makes the verify endpoint report tampering -- correctly -- for a
+# deletion that was entirely legitimate.
+#
+# So the strongest mode clears every field instead. The row survives as a shell
+# that still counts in statistics, the personal data is gone, and the audit
+# chain stays whole and honest.
+MODES = (REDACT, PURGE)
 
 # What towns already have stored. Read, never written.
-LEGACY_MODES = {"anonymize": REDACT}
+LEGACY_MODES = {"anonymize": REDACT, "delete": PURGE}
 
 
 def normalise_mode(mode: Optional[str]) -> str:
@@ -117,6 +136,7 @@ SCRUB_FIELDS: List[Dict[str, Any]] = [
 ]
 
 FIELD_IDS: Set[str] = {f["id"] for f in SCRUB_FIELDS}
+FIELD_IDS_ORDERED: List[str] = [f["id"] for f in SCRUB_FIELDS]
 DEFAULT_FIELDS: List[str] = [f["id"] for f in SCRUB_FIELDS if f["default"]]
 
 # Keys in `ai_analysis` that hold no resident text.
@@ -165,6 +185,17 @@ def scrub_ai_analysis(record: Any) -> None:
     for attr in ("ai_summary", "vertex_ai_summary"):
         if hasattr(record, attr):
             setattr(record, attr, None)
+
+
+def fields_for_mode(mode: Optional[str], fields: Optional[Iterable[str]] = None) -> List[str]:
+    """Purge means everything. Redact means what the town chose.
+
+    One place to ask, so a caller cannot apply a purge with a redact-sized list
+    and report it as a purge.
+    """
+    if normalise_mode(mode) == PURGE:
+        return list(FIELD_IDS_ORDERED)
+    return normalise_fields(fields)
 
 
 def apply_scrub(record: Any, fields: Optional[Iterable[str]] = None) -> List[str]:

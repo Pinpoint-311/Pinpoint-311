@@ -970,6 +970,20 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             <div id="sec-providers">
                 <ServiceProviders
                     show={wantedCapabilities}
+                    /* Backups and crash reporting are features without a
+                       provider catalog, so they are not in CAPS and could never
+                       show up as switched off -- which is the pair somebody is
+                       most likely to untick and then wonder about. */
+                    extraOff={[
+                        ...(wantedFeatures.has('backups') ? [] : [{
+                            id: 'backups', title: 'Automatic backups', icon: Database,
+                            blurb: 'A nightly copy of everything, kept somewhere other than this server.',
+                        }]),
+                        ...(wantedFeatures.has('errors') ? [] : [{
+                            id: 'errors', title: 'Crash reporting', icon: Activity,
+                            blurb: 'Sends crash reports off this server, so they survive a restart.',
+                        }]),
+                    ]}
                     refreshToken={providerRefresh}
                     publicOrigin={publicOrigin}
                     onChanged={() => { onRefresh(); loadProviderStatus(); }}

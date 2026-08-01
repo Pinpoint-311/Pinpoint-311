@@ -838,7 +838,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     );
 }
 
-export default function ServiceProviders({ show, extras, refreshToken = 0, onChanged, publicOrigin = null }: {
+export default function ServiceProviders({ show, extras, extraOff = [], refreshToken = 0, onChanged, publicOrigin = null }: {
     /* Which capabilities the town said it wants, from the setup questions.
      * Undefined means "no answer yet", which shows everything -- an absent
      * answer must not read as "wanted nothing", the same distinction the
@@ -855,6 +855,14 @@ export default function ServiceProviders({ show, extras, refreshToken = 0, onCha
      * across both. Rendered here instead, after the capability cards, so the
      * page has one list. */
     extras?: ReactNode;
+    /* Features the town switched off that are not capabilities.
+     *
+     * Backups and crash reporting have no provider catalog, so they are absent
+     * from CAPS and could never appear in the switched-off list -- which is
+     * exactly the pair somebody is most likely to untick and then wonder where
+     * they went. Passed in rather than hardcoded here, because the
+     * questionnaire owns the feature list. */
+    extraOff?: { id: string; title: string; blurb: string; icon: typeof Sparkles }[];
     /* Bumped by the page when the setup guide above saves something.
      *
      * The guide and these cards are two views of one set of credentials, on the
@@ -926,7 +934,12 @@ export default function ServiceProviders({ show, extras, refreshToken = 0, onCha
      * Listed, not offered. Turning one on means going through its setup, and a
      * toggle here that quietly enabled a capability with no credentials behind
      * it would be a switch that appears to work and does nothing. */
-    const notChosen = show ? CAPS.filter(c => !ALWAYS.has(c.key) && !show.has(c.key)) : [];
+    const notChosen = [
+        ...(show ? CAPS.filter(c => !ALWAYS.has(c.key) && !show.has(c.key)) : []).map(c => ({
+            id: c.key as string, title: c.title, blurb: c.blurb, icon: c.icon,
+        })),
+        ...extraOff,
+    ];
 
     /* Order matters, and not only for readability.
      *
@@ -1058,7 +1071,7 @@ export default function ServiceProviders({ show, extras, refreshToken = 0, onCha
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                         {notChosen.map(c => (
                             <div
-                                key={c.key}
+                                key={c.id}
                                 className="relative px-4 py-4 rounded-3xl bg-gradient-to-br from-white/[0.035] via-white/[0.01] to-indigo-950/30 border border-white/[0.08] backdrop-blur-2xl"
                             >
                                 <div className="flex items-center gap-3">

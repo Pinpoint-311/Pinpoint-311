@@ -1667,10 +1667,10 @@ async def update_retention_policy(
             settings.retention_days_override = override_days
     
     if mode:
-        from app.services.retention_scrub import DELETE, REDACT, normalise_mode
+        from app.services.retention_scrub import MODES, normalise_mode
         resolved = normalise_mode(mode)
-        if resolved not in (REDACT, DELETE):
-            raise HTTPException(400, f"Mode must be '{REDACT}' or '{DELETE}'")
+        if resolved not in MODES:
+            raise HTTPException(400, f"Mode must be one of: {', '.join(MODES)}")
         settings.retention_mode = resolved
 
     if scrub_fields is not None:
@@ -1791,7 +1791,9 @@ async def preview_retention_run(
         "cutoff_date": stats.get("cutoff_date") if isinstance(stats, dict) else None,
         # The word the caller has to send back. Deleting resident records on a
         # single click is not something to make easy.
-        "confirmation_required": "DELETE" if mode == "delete" else None,
+        # Purge clears every field on every eligible record and cannot be
+        # undone, so it is typed out rather than clicked.
+        "confirmation_required": "PURGE" if mode == "purge" else None,
         "scrub_fields": [
             f["label"] for f in describe_selection(
                 getattr(settings, "retention_scrub_fields", None) if settings else None
@@ -1819,10 +1821,11 @@ async def run_retention_now(
 
     settings = await read_settings_row(db)
     mode = normalise_mode(settings.retention_mode if settings else None)
-    if mode == "delete" and str(payload.get("confirm", "")).strip() != "DELETE":
+    if mode == "purge" and str(payload.get("confirm", "")).strip() != "PURGE":
         raise HTTPException(
             status_code=400,
-            detail='This policy deletes records permanently. Send confirm="DELETE" to proceed.',
+            detail='This policy clears every field on every eligible record and cannot be '
+                   'undone. Send confirm="PURGE" to proceed.',
         )
 
     task = enforce_retention_policy.delay()

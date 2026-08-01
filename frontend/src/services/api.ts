@@ -1088,7 +1088,7 @@ class ApiClient {
     async updateRetentionPolicy(params: {
         state_code?: string;
         override_days?: number;
-        mode?: 'redact' | 'delete';
+        mode?: 'redact' | 'purge';
         scrub_fields?: string[];
     }): Promise<{ status: string; state_code: string; override_days: number | null; mode: string }> {
         const queryParams = new URLSearchParams();
@@ -1116,9 +1116,11 @@ class ApiClient {
     /** What "Run now" would actually do, before it does it. */
     async previewRetentionRun(): Promise<{
         eligible: number; on_legal_hold: number; will_act_on?: number;
-        mode: 'anonymize' | 'delete'; state_code?: string; policy_name?: string;
+        mode: 'redact' | 'purge'; state_code?: string; policy_name?: string;
         retention_days?: number; cutoff_date?: string | null;
         confirmation_required?: string | null; blocked?: string;
+        /** What a run will actually empty, in the words the settings screen uses. */
+        scrub_fields?: string[];
     }> {
         return this.request('/system/retention/preview');
     }
@@ -1513,7 +1515,7 @@ export interface RetentionPolicyConfig {
     };
     override_days: number | null;
     effective_days: number;
-    mode: 'redact' | 'delete';
+    mode: 'redact' | 'purge';
     stats: {
         retention_policy: object;
         cutoff_date: string;
