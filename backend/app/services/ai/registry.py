@@ -41,8 +41,12 @@ AI_CATALOG: Dict[str, Dict[str, Any]] = {
         "boundary": "Azure Government / GCC High (FedRAMP High / DoD)",
         "description": "Azure OpenAI (GPT models) in US government regions. Best for Microsoft/M365 states.",
         "models": [
+            {"id": "gpt-5.1", "label": "GPT-5.1 (Reasoning & Advanced Problem Solving)"},
+            {"id": "gpt-4.1", "label": "GPT-4.1 (1M Context, Text & Image)"},
+            {"id": "gpt-4.1-mini", "label": "GPT-4.1 mini (Fast & Efficient)"},
+            {"id": "o3-mini", "label": "o3-mini (Enhanced Reasoning & Code Triage)"},
+            {"id": "gpt-4o", "label": "GPT-4o (Omni Multimodal Quality)"},
             {"id": "gpt-4o-mini", "label": "GPT-4o mini (fast, cheap)"},
-            {"id": "gpt-4o", "label": "GPT-4o (higher quality)"},
         ],
         "default_model": "gpt-4o-mini",
         "credential_fields": [

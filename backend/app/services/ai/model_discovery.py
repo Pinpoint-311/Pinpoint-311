@@ -34,7 +34,7 @@ _TTL_SECONDS = 60 * 60 * 12  # 12h; the daily beat task refreshes the DB copy
 # Hard cap on how many models we keep per provider, so a pathological provider
 # response can't bloat memory or the persisted cache. Chat/gen model lists are
 # tens of entries at most; anything beyond this is noise.
-_MAX_MODELS = 60
+_MAX_MODELS = 300
 
 
 def _curated(provider: str) -> List[Dict[str, str]]:
@@ -74,7 +74,6 @@ async def _discover_vertex(creds: Dict[str, str]) -> Optional[List[Dict[str, str
     project = creds.get("VERTEX_AI_PROJECT")
     if not project:
         return None
-    location = creds.get("VERTEX_AI_LOCATION") or "global"
     sa_json = creds.get("VERTEX_AI_SERVICE_ACCOUNT_KEY")
 
     def _sync() -> Optional[List[Dict[str, str]]]:
@@ -92,37 +91,29 @@ async def _discover_vertex(creds: Dict[str, str]) -> Optional[List[Dict[str, str
             credentials, _ = google.auth.default(scopes=scopes)
         credentials.refresh(Request())
 
-        host = "aiplatform.googleapis.com" if location == "global" else f"{location}-aiplatform.googleapis.com"
-        url = f"https://{host}/v1/publishers/google/models"
+        headers = {"Authorization": f"Bearer {credentials.token}"}
+        publishers = ["google", "anthropic", "meta", "mistral", "cohere", "ai21", "writer", "xai"]
+        
         out: List[Dict[str, str]] = []
-        page_token = None
-        for _ in range(5):  # bound pagination
-            params = {"pageSize": 200}
-            if page_token:
-                params["pageToken"] = page_token
-            resp = httpx.get(url, params=params,
-                             headers={"Authorization": f"Bearer {credentials.token}"}, timeout=15.0)
-            resp.raise_for_status()
-            data = resp.json()
-            for m in data.get("publisherModels", []) or data.get("models", []):
-                name = m.get("name", "")
-                mid = name.split("/")[-1] if name else m.get("modelId", "")
-                # Gemini text-generation models only; drop embeddings/vision-only variants.
-                if not mid or "gemini" not in mid.lower():
+        seen = set()
+        for pub in publishers:
+            url = f"https://us-central1-aiplatform.googleapis.com/v1beta1/publishers/{pub}/models"
+            try:
+                resp = httpx.get(url, headers=headers, timeout=10.0)
+                if resp.status_code != 200:
                     continue
-                if any(x in mid.lower() for x in ("embedding", "vision", "aqa")):
-                    continue
-                out.append({"id": mid, "label": mid})
-            page_token = data.get("nextPageToken")
-            if not page_token:
-                break
-        # de-dupe, stable
-        seen, uniq = set(), []
-        for m in out:
-            if m["id"] not in seen:
-                seen.add(m["id"])
-                uniq.append(m)
-        return uniq or None
+                data = resp.json()
+                for m in data.get("publisherModels", []):
+                    name = m.get("name", "").split("/")[-1]
+                    disp = m.get("displayName", name)
+                    if name not in seen:
+                        seen.add(name)
+                        pub_prefix = pub.capitalize() + " " if pub != "google" else ""
+                        out.append({"id": name, "label": f"{pub_prefix}{disp} ({name})" if disp and disp != name else f"{pub_prefix}{name}"})
+            except Exception:
+                pass
+
+        return out or None
 
     return await asyncio.get_event_loop().run_in_executor(None, _sync)
 
@@ -165,7 +156,7 @@ async def _discover_bedrock(creds: Dict[str, str]) -> Optional[List[Dict[str, st
             if creds.get("AWS_SESSION_TOKEN"):
                 kwargs["aws_session_token"] = creds["AWS_SESSION_TOKEN"]
         client = boto3.client("bedrock", **kwargs)
-        resp = client.list_foundation_models(byOutputModality="TEXT", byInferenceType="ON_DEMAND")
+        resp = client.list_foundation_models()
         out: List[Dict[str, str]] = []
         for m in resp.get("modelSummaries", []):
             mid = m.get("modelId")
@@ -175,7 +166,7 @@ async def _discover_bedrock(creds: Dict[str, str]) -> Optional[List[Dict[str, st
                 continue
             name = m.get("modelName") or mid
             prov = m.get("providerName") or ""
-            label = f"{prov} {name}".strip() or mid
+            label = f"{prov} {name} ({mid})" if prov and name != mid else name
             out.append({"id": mid, "label": label})
         return out or None
 
