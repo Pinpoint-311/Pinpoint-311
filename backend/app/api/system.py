@@ -264,6 +264,9 @@ async def connector_health_report(
                 "last_error_at": h.last_error_at.isoformat() if h.last_error_at else None,
                 "last_error": h.last_error,
                 "consecutive_failures": h.consecutive_failures,
+                # What the last check said, and whether one is even possible.
+                "last_result": h.last_result,
+                "verifiable": h.verifiable,
                 "total_successes": h.total_successes,
                 "total_failures": h.total_failures,
                 # Surfaced so the card can say alerts are muted and until when.
@@ -1023,7 +1026,9 @@ async def test_provider(
     async def _remember(outcome: dict) -> dict:
         try:
             if outcome.get("ok"):
-                await connector_health.record_success(db, capability)
+                # The message too, not just the timestamp. "Checked 6 hours
+                # ago" cannot say what it found.
+                await connector_health.record_success(db, capability, detail=outcome.get("detail"))
             else:
                 await connector_health.record_failure(db, capability, outcome.get("detail", ""))
         except Exception:
@@ -1043,7 +1048,18 @@ async def test_provider(
         # An outcome we could not verify is shown but not written to connector
         # health: "we cannot check this from here" is not "this is broken", and
         # a red badge that can never go green teaches people to ignore badges.
-        return outcome if outcome.get("recorded") is False else await _remember(outcome)
+        if outcome.get("recorded") is False:
+            # Not a failure, and not nothing. Stored as "we tried and cannot
+            # tell", so the answer survives a reload instead of living only in
+            # the session that produced it.
+            try:
+                if outcome.get("configured") is not False:
+                    await connector_health.record_unverifiable(
+                        db, capability, outcome.get("detail", ""))
+            except Exception:
+                pass
+            return outcome
+        return await _remember(outcome)
     except HTTPException:
         raise
     except Exception as e:
