@@ -866,17 +866,21 @@ async def _finalize_new_request(
     db.add(audit_entry)
     await db.commit()
 
+    # Everything from here is follow-up work on a report that is already saved.
+    # It is enqueued rather than called, so an unreachable broker costs a
+    # notification and a line in the log instead of answering "we could not
+    # take your report" for a report that is in the database.
     from app.tasks.service_requests import analyze_request, send_branded_notification, send_department_notification
     # AI triage / priority — same as a resident submission
-    analyze_request.delay(service_request.id)
+    enqueue(analyze_request, service_request.id)
 
     # Push to any connected govtech platforms (Accela, Tyler, CivicPlus, etc.)
     from app.tasks.integrations import push_request_to_integrations
-    push_request_to_integrations.delay(service_request.id)
+    enqueue(push_request_to_integrations, service_request.id)
 
     # Send branded confirmation only when we have a real resident email
     if notify_resident:
-        send_branded_notification.delay(service_request.id, "confirmation")
+        enqueue(send_branded_notification, service_request.id, "confirmation")
 
     # Notify department staff based on their notification preferences
     if assigned_department_id:
@@ -885,7 +889,7 @@ async def _finalize_new_request(
         )
         dept = dept_result.scalar_one_or_none()
         if dept and dept.routing_email:
-            send_department_notification.delay(service_request.id, dept.routing_email)
+            enqueue(send_department_notification, service_request.id, dept.routing_email)
 
 
 @router.get("/requests.json", response_model=List[ServiceRequestResponse])
@@ -1074,8 +1078,14 @@ async def update_request_status(
     
     # Send notification if status changed
     if "status" in update_dict and update_dict["status"] and update_dict["status"].value != old_status:
+        # Enqueued, not called: the status change and its audit entry are
+        # committed above. A broker outage must not roll a completed update
+        # back into an error, because the staffer's next move is to set the
+        # status again and the resident gets two "your report is closed"
+        # emails when the queue recovers.
         from app.tasks.service_requests import send_branded_notification, notify_staff_of_activity
-        send_branded_notification.delay(
+        enqueue(
+            send_branded_notification,
             request.id,
             "status_update",
             old_status=old_status,
@@ -1083,11 +1093,11 @@ async def update_request_status(
         )
 
         # Notify assigned staff / department (respects each user's preferences).
-        notify_staff_of_activity.delay(request.id, "status_changes", actor=current_user.username)
+        enqueue(notify_staff_of_activity, request.id, "status_changes", actor=current_user.username)
 
         # Mirror the status change to linked govtech platforms
         from app.tasks.integrations import push_status_to_integrations
-        push_status_to_integrations.delay(request.id, notes=update_dict.get("completion_message"))
+        enqueue(push_status_to_integrations, request.id, notes=update_dict.get("completion_message"))
     
     # Reload with relationship for response
     await db.refresh(request)

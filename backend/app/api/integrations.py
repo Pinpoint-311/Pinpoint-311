@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_admin, get_current_staff
 from app.db.session import get_db
+from app.services.enqueue import QUEUE_UNAVAILABLE, enqueue
 from app.integrations import (
     PLATFORM_CATALOG, build_connector_for, store_credentials,
 )
@@ -295,9 +296,13 @@ async def trigger_sync(
     integration = await _get_integration(db, integration_id)
     if not integration.enabled:
         raise HTTPException(status_code=400, detail="Enable the integration before syncing")
+    # "Sync started" has to be true. This endpoint exists to start the job, so
+    # a broker that cannot take it is a failed request, not a quiet log line --
+    # otherwise an admin watches nothing happen and has no way to tell whether
+    # the sync ran and found nothing or never ran at all.
     from app.tasks.integrations import pull_integration_comments, pull_integration_updates
-    pull_integration_updates.delay()
-    pull_integration_comments.delay()
+    if not enqueue(pull_integration_updates) or not enqueue(pull_integration_comments):
+        raise HTTPException(status_code=503, detail=QUEUE_UNAVAILABLE)
     return {"message": "Sync started", "platform": integration.platform}
 
 
@@ -321,7 +326,8 @@ async def trigger_asset_sync(
         integration.config = {**(integration.config or {}), "sync_assets": True}
         await db.commit()
     from app.tasks.integrations import sync_integration_assets
-    sync_integration_assets.delay()
+    if not enqueue(sync_integration_assets):
+        raise HTTPException(status_code=503, detail=QUEUE_UNAVAILABLE)
     return {"message": "Asset sync started", "platform": integration.platform}
 
 
@@ -347,7 +353,11 @@ async def refresh_request_work_order(
     if not links:
         return {"ok": False, "detail": "This request isn't linked to any external platform."}
     from app.tasks.integrations import refresh_request_from_integrations
-    refresh_request_from_integrations.delay(sr.id)
+    if not enqueue(refresh_request_from_integrations, sr.id):
+        # Answered as ok:false rather than raised, matching the "not linked to
+        # any platform" case a few lines above -- this endpoint's contract is
+        # an {ok, detail} pair the staff dashboard renders inline.
+        return {"ok": False, "detail": QUEUE_UNAVAILABLE}
     return {"ok": True, "detail": "Refreshing the latest work-order status — updates appear on the request in a moment."}
 
 
@@ -564,11 +574,10 @@ async def integration_webhook(
     await _import_webhook_comments(sr.id)
     await db.commit()
 
-    # Same post-processing as portal submissions (AI triage)
-    try:
-        from app.tasks.service_requests import analyze_request
-        analyze_request.delay(sr.id)
-    except Exception:
-        logger.warning("[Integrations] Could not queue AI analysis for webhook intake")
+    # Same post-processing as portal submissions (AI triage). Incidental: the
+    # request is committed above, and a webhook sender that gets an error back
+    # will redeliver, creating a duplicate report.
+    from app.tasks.service_requests import analyze_request
+    enqueue(analyze_request, sr.id)
 
     return {"message": "created", "service_request_id": sr.service_request_id}

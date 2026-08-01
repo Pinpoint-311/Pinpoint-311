@@ -27,6 +27,22 @@ from app.core.sanitize import sanitize_for_log
 
 logger = logging.getLogger(__name__)
 
+# For the other kind of call site. Some handoffs are not incidental: an admin
+# pressing "Run retention now" or "Sync now" is asking for precisely the queued
+# job and nothing else. Swallowing the failure there would answer "started" for
+# a job that never started -- the exact lie this codebase keeps finding in
+# itself, and worse than the 500 it replaced, because a 500 at least tells
+# somebody to look.
+#
+# So those sites check the return value and raise this. Deliberately plain
+# text and no FastAPI import: this module is reachable from the CI test suite,
+# which installs neither FastAPI nor Celery.
+QUEUE_UNAVAILABLE = (
+    "The background worker is not reachable, so this job did not start. "
+    "Nothing has been changed. Check that the worker and Redis are running, "
+    "then try again."
+)
+
 
 def enqueue(task: Any, *args: Any, **kwargs: Any) -> bool:
     """Queue `task`. Never raises.

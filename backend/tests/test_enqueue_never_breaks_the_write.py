@@ -10,6 +10,7 @@ comment, that means posting it again, and the town gets two.
 """
 
 import logging
+from pathlib import Path
 
 import pytest
 
@@ -76,22 +77,99 @@ def test_a_hostile_task_name_cannot_forge_a_log_line():
     assert enqueue(task) is False
 
 
-def test_the_comment_endpoints_do_not_call_delay_directly():
-    """The regression guard. Adding a `.delay()` back to either comment handler
-    reinstates exactly the failure this module exists to prevent, and it is the
-    natural thing to write.
+ROOT = Path(__file__).resolve().parents[2]
+API = ROOT / "backend/app/api"
 
-    Scoped to the comment paths on purpose: the other API handlers still call
-    `.delay()` unguarded and converting them is a separate change with its own
-    blast radius. Widening this assertion is how that gets finished.
+# The two call sites that still say `.delay()` directly, and why each is
+# allowed to. Both wrap it themselves; neither is an oversight.
+#
+#   system.py  "Run retention now" -- must fail loudly, and does, with its own
+#              try/except raising 503. Not converted to `enqueue()` because it
+#              needs the returned task id, which `enqueue()` does not hand back.
+#   gis.py     road seeding -- already falls back to running inline when the
+#              queue is unavailable, which is better than either swallowing or
+#              raising, and predates this module.
+DELIBERATE = {"system.py": 1, "gis.py": 1}
+
+
+def test_no_handler_calls_delay_unguarded():
+    """The sweep, as a test.
+
+    Every `.delay()` in the API layer is made after `db.commit()`, so an
+    unreachable broker raised out of a handler whose work was already done.
+    Sixteen call sites had that shape. The two below are listed by name with a
+    reason; anything else is a regression, and adding one is the natural thing
+    to write.
     """
-    from pathlib import Path
+    found = {}
+    for path in sorted(API.glob("*.py")):
+        count = path.read_text().count(".delay(")
+        if count:
+            found[path.name] = count
 
-    root = Path(__file__).resolve().parents[2]
-    staff = (root / "backend/app/api/comments.py").read_text()
-    assert ".delay(" not in staff, "use enqueue() -- see the module docstring"
+    assert found == DELIBERATE, (
+        f"unguarded .delay() in {sorted(set(found) - set(DELIBERATE))}, "
+        f"or a count changed: {found} != {DELIBERATE}. Use enqueue() for "
+        f"follow-up work, or enqueue() + QUEUE_UNAVAILABLE where the queued "
+        f"job is the thing being asked for."
+    )
 
-    public = (root / "backend/app/api/open311.py").read_text()
-    handler = public[public.index("async def add_public_comment"):]
-    handler = handler[:handler.index("\n@router")]
-    assert ".delay(" not in handler, "use enqueue() -- see the module docstring"
+
+def test_the_deliberate_exceptions_still_handle_a_broker_failure():
+    """Naming a file in DELIBERATE is not a way of opting out. Each one has to
+    visibly cope with the call raising, or the exemption is just an unguarded
+    `.delay()` with a comment next to it."""
+    for name in DELIBERATE:
+        source = (API / name).read_text()
+        window = source[max(0, source.index(".delay(") - 600):source.index(".delay(") + 600]
+        assert "try:" in window and "except" in window, (
+            f"{name} is exempt from the sweep but does not handle the call failing"
+        )
+
+
+def test_a_job_somebody_asked_for_is_not_reported_as_started_when_it_is_not():
+    """The other half of the rule, and the easier one to get wrong.
+
+    `enqueue()` swallowing is right when the queued work is incidental -- a
+    resident filed a report, the email is a consequence. It is wrong when the
+    queued job *is* the request. "Sync started" and "Retention enforcement
+    started" are claims, and answering them for a job that never reached a
+    worker is the failure this codebase keeps finding in itself: a button that
+    reports success and does nothing. Worse than the 500 it replaced, because a
+    500 at least tells somebody to look.
+    """
+    integrations = (API / "integrations.py").read_text()
+    # Anchored on the returned value, not the bare phrase. The first draft
+    # searched for "Sync started" and matched the sentence in the comment
+    # explaining the guard, which sits *above* it -- so the test failed on
+    # correct code. Prose about a behaviour is not the behaviour.
+    for claim in ('"message": "Sync started"', '"message": "Asset sync started"'):
+        before = integrations[:integrations.index(claim)]
+        # The check must be the thing immediately guarding the claim.
+        assert "QUEUE_UNAVAILABLE" in before[-400:], (
+            f'{claim} is returned without confirming the job was queued'
+        )
+
+    system = (API / "system.py").read_text()
+    triggered = system[:system.index('"status": "triggered"')]
+    assert "QUEUE_UNAVAILABLE" in triggered[-800:], (
+        'retention reports "triggered" without confirming the job was queued'
+    )
+
+
+def test_the_unavailable_message_says_what_to_do_and_what_did_not_happen():
+    """It is read by a clerk, not an operator. "Service unavailable" tells them
+    nothing about whether their data changed."""
+    from app.services.enqueue import QUEUE_UNAVAILABLE
+
+    assert "did not start" in QUEUE_UNAVAILABLE
+    assert "Nothing has been changed" in QUEUE_UNAVAILABLE
+    assert "try again" in QUEUE_UNAVAILABLE
+
+
+def test_the_message_carries_no_hostname_or_credential():
+    """It is rendered in the admin UI and pasted into support threads."""
+    from app.services.enqueue import QUEUE_UNAVAILABLE
+
+    for leak in ("redis://", "amqp://", "://", "@", "password"):
+        assert leak not in QUEUE_UNAVAILABLE, f"{leak!r} in a user-facing string"
