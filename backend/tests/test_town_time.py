@@ -9,7 +9,7 @@ The other half is display. "Closed at 02:14" means nothing to a clerk in New
 Jersey looking at a report closed just before ten the previous night.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from app.services import town_time as T
 

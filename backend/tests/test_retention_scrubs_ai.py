@@ -15,7 +15,6 @@ person; blanking the description of a pothole report is redaction. They are not
 interchangeable words when the difference is what a town tells a judge.
 """
 
-import pytest
 
 from app.services import retention_scrub as S
 

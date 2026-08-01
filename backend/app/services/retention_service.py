@@ -12,9 +12,8 @@ Key features:
 
 import logging
 
-from app.services.retention_scrub import (  # noqa: F401
-    AI_ANALYSIS_KEEP, PURGE, REDACT, apply_scrub, fields_for_mode,
-    normalise_mode, scrub_ai_analysis,
+from app.services.retention_scrub import (
+    REDACT, apply_scrub, fields_for_mode, normalise_mode,
 )
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any

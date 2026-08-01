@@ -10,7 +10,28 @@ The answer is not to hide them. It is to speak their protocol, and to offer
 exactly the publishers we have a handler for.
 """
 
+import re
+from urllib.parse import urlparse
+
 from app.services.ai import vertex_publishers as V
+
+# Vertex hosts are `aiplatform.googleapis.com` or `{region}-aiplatform...` --
+# a hyphen, not a dot. That hyphen is why a substring check was tempting and
+# why `endswith(".aiplatform.googleapis.com")` is wrong; matching the whole
+# host is the only form that is both correct and unambiguous.
+VERTEX_HOST = re.compile(r"^(?:[a-z0-9-]+-)?aiplatform\.googleapis\.com$")
+
+
+def host_of(url: str) -> str:
+    """The actual host, not a substring of the URL.
+
+    CodeQL rates `"-aiplatform.googleapis.com" in url` as a high-severity
+    finding and it is right to: that assertion also passes for
+    `evil-aiplatform.googleapis.com.attacker.com`. In production that pattern
+    is an SSRF bypass, and in a test it is an assertion that does not check
+    what it claims to.
+    """
+    return urlparse(url).hostname or ""
 
 
 class TestWhoseModelIsThis:
@@ -66,14 +87,22 @@ class TestTheEndpoint:
         """Anthropic models are not served there, and the 404 reads like a
         wrong model name rather than a wrong host."""
         url = V.endpoint_for("claude-sonnet-4", "town-311", "global")
-        assert "global" not in url
-        assert "-aiplatform.googleapis.com" in url
+        assert "/locations/global/" not in url
+        assert VERTEX_HOST.match(host_of(url))
+
+    def test_every_request_goes_to_google(self):
+        """The host is asserted rather than searched for. A model id is
+        town-supplied, and it is interpolated into this URL."""
+        for model in ("gemini-3.5-flash", "claude-sonnet-4"):
+            for location in ("", "global", "europe-west4"):
+                host = host_of(V.endpoint_for(model, "p", location))
+                assert VERTEX_HOST.match(host), host
 
     def test_a_configured_region_is_honoured(self):
         """PR #433 hardcoded us-central1 and dropped VERTEX_AI_LOCATION, which
         is the wrong direction for a product sold on compliance boundaries."""
-        assert "europe-west4" in V.endpoint_for("gemini-3.5-flash", "p", "europe-west4")
-        assert "us-east5" in V.endpoint_for("claude-sonnet-4", "p", "us-east5")
+        assert host_of(V.endpoint_for("gemini-3.5-flash", "p", "europe-west4")).startswith("europe-west4-")
+        assert host_of(V.endpoint_for("claude-sonnet-4", "p", "us-east5")).startswith("us-east5-")
 
     def test_a_qualified_id_does_not_leak_into_the_path(self):
         url = V.endpoint_for("anthropic/claude-sonnet-4", "p")
