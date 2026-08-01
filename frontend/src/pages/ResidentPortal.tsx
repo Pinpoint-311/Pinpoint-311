@@ -36,7 +36,7 @@ import StaffDashboardMap from '../components/StaffDashboardMap';
 import { useSettings } from '../context/SettingsContext';
 import { useTranslation } from '../context/TranslationContext';
 import { api, MapLayer } from '../services/api';
-import { ServiceDefinition, ServiceRequestCreate, ServiceRequest, Department, User } from '../types';
+import { ServiceDefinition, ServiceRequestCreate, ServiceRequest } from '../types';
 import { usePageNavigation } from '../hooks/usePageNavigation';
 
 // Icon mapping for service categories
@@ -228,8 +228,6 @@ export default function ResidentPortal() {
     const [photoPreviewUrls, setPhotoPreviewUrls] = useState<string[]>([]);
 
     const [mapLayers, setMapLayers] = useState<MapLayer[]>([]);
-    const [departments, setDepartments] = useState<Department[]>([]);
-    const [users, setUsers] = useState<User[]>([]);
     // Selected asset from map layer (for report logging)
     const [selectedAsset, setSelectedAsset] = useState<{ layerName: string; properties: Record<string, any>; lat: number; lng: number } | null>(null);
 
@@ -258,15 +256,6 @@ export default function ResidentPortal() {
         // Load custom map layers (public endpoint)
         api.getMapLayers().then((layers) => {
             setMapLayers(layers);
-        }).catch(() => { });
-
-        // Load departments and users for map filters
-        api.getDepartments().then((depts) => {
-            setDepartments(depts);
-        }).catch(() => { });
-
-        api.getPublicStaffList().then((userList) => {
-            setUsers(userList);
         }).catch(() => { });
     }, []);
 
@@ -901,10 +890,7 @@ export default function ResidentPortal() {
                                         <StaffDashboardMap
                                             apiKey={mapsApiKey || ''}
                                             requests={allRequests}
-                                            mapLayers={mapLayers}
                                             services={services}
-                                            departments={departments}
-                                            users={users}
                                             townshipBoundary={townshipBoundary}
                                             onRequestSelect={(requestId) => {
                                                 if (requestId) {
