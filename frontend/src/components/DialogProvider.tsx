@@ -1,4 +1,4 @@
-import { useState, useCallback, createContext, useContext, ReactNode } from 'react';
+import { useState, useCallback, useEffect, createContext, useContext, ReactNode } from 'react';
 import { X, AlertTriangle, Info, CheckCircle2, Rocket, Trash2, Shield, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -13,6 +13,13 @@ interface DialogConfig {
     confirmText?: string;
     cancelText?: string;
     icon?: ReactNode;
+    /** A word the person has to type before Confirm becomes available.
+     *
+     * For the small number of actions that destroy data permanently. A dialog
+     * on its own is a speed bump: it appears where a click was already going,
+     * and Confirm is under the cursor. Typing the word is the difference
+     * between agreeing and noticing. */
+    requireTyped?: string;
 }
 
 interface DialogContextType {
@@ -77,6 +84,11 @@ interface DialogProps {
 }
 
 const Dialog = ({ isOpen, config, onConfirm, onCancel, showCancel = true }: DialogProps) => {
+    /* Cleared whenever the dialog opens, so the word typed to authorise one
+     * deletion is never sitting in the box pre-approving the next. */
+    const [typed, setTyped] = useState('');
+    useEffect(() => { if (isOpen) setTyped(''); }, [isOpen]);
+
     const variant = config.variant || 'default';
     const styles = variantStyles[variant];
 
@@ -138,6 +150,20 @@ const Dialog = ({ isOpen, config, onConfirm, onCancel, showCancel = true }: Dial
                                 <div className="text-slate-300 text-base leading-relaxed whitespace-pre-wrap">
                                     {config.message}
                                 </div>
+                                {config.requireTyped && (
+                                    <div className="mt-5">
+                                        <label className="block text-sm text-slate-300 mb-2">
+                                            Type <code className="px-1.5 py-0.5 rounded bg-slate-700 text-white font-semibold">{config.requireTyped}</code> to continue
+                                        </label>
+                                        <input
+                                            autoFocus
+                                            value={typed}
+                                            onChange={(e) => setTyped(e.target.value)}
+                                            className="w-full rounded-xl bg-slate-900 border border-slate-600 px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-red-400"
+                                            placeholder={config.requireTyped}
+                                        />
+                                    </div>
+                                )}
                             </div>
 
                             {/* Actions */}
@@ -152,7 +178,8 @@ const Dialog = ({ isOpen, config, onConfirm, onCancel, showCancel = true }: Dial
                                 )}
                                 <button
                                     onClick={onConfirm}
-                                    className={`px-8 py-3.5 text-base font-medium text-white rounded-xl transition-all ${styles.confirmBtn}`}
+                                    disabled={!!config.requireTyped && typed.trim() !== config.requireTyped}
+                                    className={`px-8 py-3.5 text-base font-medium text-white rounded-xl transition-all disabled:opacity-40 disabled:cursor-not-allowed ${styles.confirmBtn}`}
                                 >
                                     {config.confirmText || 'Confirm'}
                                 </button>

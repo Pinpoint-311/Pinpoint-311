@@ -3248,9 +3248,80 @@ export default function AdminConsole() {
                                         <Button
                                             variant="secondary"
                                             onClick={async () => {
+                                                /* Show the numbers, then ask.
+                                                 *
+                                                 * This button used to run
+                                                 * immediately. In delete mode
+                                                 * that permanently destroys
+                                                 * resident records, and the
+                                                 * response came back before
+                                                 * the task had touched
+                                                 * anything, so nothing on
+                                                 * screen could say what had
+                                                 * happened. */
+                                                setIsRunningRetention(true);
+                                                let plan;
+                                                try {
+                                                    plan = await api.previewRetentionRun();
+                                                } catch (err) {
+                                                    setIsRunningRetention(false);
+                                                    reportError('Could not work out what this would affect', err);
+                                                    return;
+                                                }
+                                                setIsRunningRetention(false);
+
+                                                if (plan.blocked === 'legal_hold') {
+                                                    await dialog.alert({
+                                                        title: 'Legal hold is on',
+                                                        message: 'Nothing will be archived or deleted while the instance-wide legal hold is active. Lift it first if this run is meant to happen.',
+                                                        variant: 'info',
+                                                    });
+                                                    return;
+                                                }
+                                                if (!plan.eligible) {
+                                                    await dialog.alert({
+                                                        title: 'Nothing is due yet',
+                                                        message: `No closed records have passed the ${plan.retention_days}-day retention period, so this run would do nothing.`,
+                                                        variant: 'info',
+                                                    });
+                                                    return;
+                                                }
+
+                                                const deleting = plan.mode === 'delete';
+                                                const ok = await dialog.confirm({
+                                                    title: deleting ? 'Delete records permanently' : 'Anonymise records',
+                                                    variant: deleting ? 'danger' : 'warning',
+                                                    confirmText: deleting ? 'Delete them' : 'Anonymise them',
+                                                    requireTyped: plan.confirmation_required || undefined,
+                                                    message: (
+                                                        <div className="space-y-3">
+                                                            <p>
+                                                                <strong className="text-white">{plan.will_act_on ?? plan.eligible}</strong>{' '}
+                                                                closed {(plan.will_act_on ?? plan.eligible) === 1 ? 'record has' : 'records have'} passed
+                                                                the {plan.retention_days}-day retention period for {plan.policy_name || plan.state_code}.
+                                                            </p>
+                                                            <p>
+                                                                {deleting
+                                                                    ? 'They will be removed from the database entirely. This cannot be undone, and it is not covered by an existing backup taken after they are gone.'
+                                                                    : 'Reporter names, emails and phone numbers will be stripped. The reports themselves stay, so the counts and the map do not change.'}
+                                                            </p>
+                                                            {!!plan.on_legal_hold && (
+                                                                <p className="text-amber-300">
+                                                                    {plan.on_legal_hold} flagged {plan.on_legal_hold === 1 ? 'record is' : 'records are'} under
+                                                                    legal hold and will be left alone.
+                                                                </p>
+                                                            )}
+                                                            <p className="text-slate-400 text-sm">
+                                                                It works through every eligible record, not the first hundred.
+                                                            </p>
+                                                        </div>
+                                                    ),
+                                                });
+                                                if (!ok) return;
+
                                                 setIsRunningRetention(true);
                                                 try {
-                                                    const result = await api.runRetentionNow();
+                                                    const result = await api.runRetentionNow(plan.confirmation_required || undefined);
                                                     setSaveMessage(`Retention task started: ${result.message}`);
                                                     setTimeout(() => {
                                                         setSaveMessage(null);

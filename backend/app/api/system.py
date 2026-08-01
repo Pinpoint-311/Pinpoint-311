@@ -21,6 +21,7 @@ from app.schemas import (
     StatisticsResponse
 )
 from app.core.auth import get_current_admin, get_current_staff
+from app.services.system_settings import get_settings as read_settings_row
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -1673,20 +1674,92 @@ async def update_retention_policy(
     }
 
 
+@router.get("/retention/preview")
+async def preview_retention_run(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """What pressing "Run now" would actually do.
+
+    The button had no preview and no confirmation. In `delete` mode it
+    permanently destroys resident records on one click, and the response came
+    back before the task had touched anything, so nothing on screen could say
+    what happened. Somebody deserves to see the number and the mode before
+    that, not after.
+    """
+    from app.models import ServiceRequest
+    from app.services.retention_service import get_retention_policy, get_retention_stats
+
+    settings = await read_settings_row(db)
+    if settings is not None and getattr(settings, "legal_hold", False):
+        return {
+            "eligible": 0,
+            "on_legal_hold": 0,
+            "mode": getattr(settings, "retention_mode", None) or "anonymize",
+            "blocked": "legal_hold",
+        }
+
+    state_code = (settings.retention_state_code if settings else None) or "NJ"
+    override_days = settings.retention_days_override if settings else None
+    mode = (settings.retention_mode if settings else None) or "anonymize"
+    policy = get_retention_policy(state_code)
+    stats = await get_retention_stats(db, state_code, override_days)
+
+    # Flagged records are past their date and must not be touched. They are
+    # counted separately rather than hidden, because "142 eligible" and "142
+    # eligible, 3 of which will be skipped" are different sentences to somebody
+    # approving a deletion.
+    held = (await db.execute(
+        select(func.count(ServiceRequest.id)).where(
+            and_(ServiceRequest.status == "closed", ServiceRequest.flagged.is_(True))
+        )
+    )).scalar() or 0
+
+    eligible = stats.get("eligible_for_archival", 0) if isinstance(stats, dict) else 0
+    return {
+        "eligible": eligible,
+        "on_legal_hold": held,
+        "will_act_on": max(0, eligible - held),
+        "mode": mode,
+        "state_code": state_code,
+        "policy_name": policy.get("name"),
+        "retention_days": override_days or policy.get("retention_days"),
+        "cutoff_date": stats.get("cutoff_date") if isinstance(stats, dict) else None,
+        # The word the caller has to send back. Deleting resident records on a
+        # single click is not something to make easy.
+        "confirmation_required": "DELETE" if mode == "delete" else None,
+    }
+
+
 @router.post("/retention/run")
 async def run_retention_now(
+    payload: Dict[str, Any] = Body(default_factory=dict),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
-    """Manually trigger retention enforcement (admin only)"""
+    """Run retention enforcement now.
+
+    In `delete` mode this permanently destroys records, so it requires the
+    caller to echo back a confirmation word. A modal alone is a client-side
+    courtesy; anything that can be done by a stray fetch should not be able to
+    delete resident data.
+    """
     from app.tasks.service_requests import enforce_retention_policy
-    
-    # Trigger async task
+
+    settings = await read_settings_row(db)
+    mode = (settings.retention_mode if settings else None) or "anonymize"
+    if mode == "delete" and str(payload.get("confirm", "")).strip() != "DELETE":
+        raise HTTPException(
+            status_code=400,
+            detail='This policy deletes records permanently. Send confirm="DELETE" to proceed.',
+        )
+
     task = enforce_retention_policy.delay()
     return {
         "status": "triggered",
         "task_id": task.id,
-        "message": "Retention enforcement task started"
+        "mode": mode,
+        "message": "Retention enforcement started. It works through every eligible record.",
     }
 
 

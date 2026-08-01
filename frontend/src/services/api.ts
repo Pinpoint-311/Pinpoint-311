@@ -1097,8 +1097,21 @@ class ApiClient {
         return this.request(`/system/retention/policy?${queryParams.toString()}`, { method: 'POST' });
     }
 
-    async runRetentionNow(): Promise<{ status: string; task_id: string; message: string }> {
-        return this.request('/system/retention/run', { method: 'POST' });
+    /** What "Run now" would actually do, before it does it. */
+    async previewRetentionRun(): Promise<{
+        eligible: number; on_legal_hold: number; will_act_on?: number;
+        mode: 'anonymize' | 'delete'; state_code?: string; policy_name?: string;
+        retention_days?: number; cutoff_date?: string | null;
+        confirmation_required?: string | null; blocked?: string;
+    }> {
+        return this.request('/system/retention/preview');
+    }
+
+    async runRetentionNow(confirm?: string): Promise<{ status: string; task_id: string; message: string }> {
+        return this.request('/system/retention/run', {
+            method: 'POST',
+            body: JSON.stringify(confirm ? { confirm } : {}),
+        });
     }
 
     async getLegalHoldRequests(): Promise<{
