@@ -359,9 +359,20 @@ class ApiClient {
         return this.request<RequestComment[]>(`/open311/v2/public/requests/${requestId}/comments`);
     }
 
+    // The comment goes in the body, not the query string. Two reasons, and the
+    // first one is that the query-string version never worked: the endpoint
+    // declares `content` as Body(embed=True), so a POST with no body was
+    // answered 422 and every comment a resident tried to leave was dropped.
+    //
+    // The second is why the endpoint is right to want a body. A URL is logged
+    // everywhere -- the access log, the reverse proxy, the CDN, the browser's
+    // history, the Referer header on the next click. A resident's comment can
+    // name a neighbour or describe what happened to them, and none of those
+    // places is somewhere a town has decided to keep that.
     async addPublicComment(requestId: string, content: string): Promise<RequestComment> {
-        return this.request<RequestComment>(`/open311/v2/public/requests/${requestId}/comments?content=${encodeURIComponent(content)}`, {
+        return this.request<RequestComment>(`/open311/v2/public/requests/${requestId}/comments`, {
             method: 'POST',
+            body: JSON.stringify({ content }),
         });
     }
 
