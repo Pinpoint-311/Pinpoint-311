@@ -18,6 +18,25 @@ import { Check, AlertCircle, CircleDashed, HelpCircle, ChevronDown, Loader2 } fr
  * this file, and there is nowhere else to edit.
  */
 
+/**
+ * The health statuses that actually raise an alert.
+ *
+ * Mirrors `alert_level` in connector_alerts.py, and a backend test fails if the
+ * two lists stop agreeing. Offering "Mute alerts" anywhere else is offering to
+ * silence something that was never going to make a sound: a connector nobody
+ * has checked yet reports `unknown`, which maps to healthy, so the button was
+ * appearing on cards with no alert behind them.
+ *
+ * `stale` is the case that makes this worth deriving rather than eyeballing --
+ * it displays as "not checked yet" but does alert, so neither the raw status
+ * nor the display state answers the question on its own.
+ */
+export const ALERTING_STATUSES = ['down', 'failing', 'stale'] as const;
+
+export function hasAlert(status?: string | null): boolean {
+    return !!status && (ALERTING_STATUSES as readonly string[]).includes(status);
+}
+
 export type CapabilityState =
     | 'working'      // a live check succeeded recently
     | 'failing'      // a live check failed, and we have the provider's words

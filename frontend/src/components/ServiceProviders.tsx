@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 
 import { CollapsibleSection } from './ui';
-import { StatusPill, CapabilityTile, Action, type CapabilityState } from './capabilityUI';
+import { StatusPill, CapabilityTile, Action, hasAlert, type CapabilityState } from './capabilityUI';
 import { api, ProviderCatalog, ProviderInfo, ProviderModelSpec, CloudIdentity } from '../services/api';
 import type { ConnectorHealth } from '../types';
 
@@ -266,9 +266,13 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             // test here", not "the test failed". Passing t.ok straight through
             // is what put a red "Not working" on an HTTP SMS gateway whose own
             // message said it could not be checked.
-            onStatus(cap, t.recorded === false
-                ? { verifiable: false, verified: null }
-                : { verifiable: true, verified: t.ok });
+            // `configured: false` beats everything: the test looked for the
+            // credentials and they are not there, whatever the catalog said.
+            onStatus(cap, t.configured === false
+                ? { configured: false, verifiable: undefined, verified: null }
+                : t.recorded === false
+                    ? { verifiable: false, verified: null }
+                    : { verifiable: true, verified: t.ok });
         } catch (e: any) {
             setResult({ ok: false, detail: e?.message || 'Test failed' });
             onStatus(cap, { verified: false });
@@ -433,9 +437,11 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             // Immediately verify
             const t = await api.testProvider(cap);
             setResult(t);
-            onStatus(cap, t.recorded === false
-                ? { verifiable: false, verified: null }
-                : { verifiable: true, verified: t.ok });
+            onStatus(cap, t.configured === false
+                ? { configured: false, verifiable: undefined, verified: null }
+                : t.recorded === false
+                    ? { verifiable: false, verified: null }
+                    : { verifiable: true, verified: t.ok });
         } catch (e: any) {
             setError(e?.message || 'Save failed');
         } finally {
@@ -506,9 +512,22 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                             credentials: the tile already says "Not set up", and
                             "Not checked yet" underneath reads as a second,
                             different problem. */}
-                        {configured && (
+                        {configured ? (
                             <span className="block text-[11px] text-white/45 mt-2.5">
-                                {shown === 'unverifiable' ? 'Set up. There is no way to test this one from here.' : checkedLine}
+                                {shown === 'unverifiable'
+                                    ? 'Set up. There is no way to test this one from here.'
+                                    : checkedLine}
+                            </span>
+                        ) : (
+                            /* Somewhere to go.
+                             *
+                             * A card that says "Not set up" and stops is a dead
+                             * end: the questionnaire and the steps are back up
+                             * the page, and nothing here said so. This is a
+                             * town that asked for the feature, so the useful
+                             * thing is the next action, not the diagnosis. */
+                            <span className="block text-[11px] text-amber-200/85 mt-2.5">
+                                Add its credentials in Setup Instructions, above.
                             </span>
                         )}
                     </button>
@@ -549,7 +568,12 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                 {/* Only where there is an alert to silence. A
                                     capability nobody is being emailed about
                                     does not need an off switch. */}
-                                {(shown === 'failing' || shown === 'unchecked') && (
+                                {/* Only where something is actually alerting.
+                                    Derived from the health status rather than
+                                    from the pill, because "not checked yet"
+                                    covers both `unknown`, which never alerts,
+                                    and `stale`, which does. */}
+                                {(hasAlert(health?.status) || !!effectiveMute) && (
                                     <Action onClick={toggleMute} busy={muting} disabled={muting}
                                         title={effectiveMute
                                             ? 'Start emailing administrators about this again'
@@ -975,6 +999,16 @@ export default function ServiceProviders({ show, extras, refreshToken = 0, onCha
                     <span>{configuredCount === loaded.length
                         ? `All ${loaded.length} have credentials`
                         : `${loaded.length - configuredCount} of ${loaded.length} still need credentials`}</span>
+                    {/* Named, and pointed somewhere.
+                        A count on its own makes a clerk hunt for which ones,
+                        and the answer to "so what do I do" is up the page in a
+                        panel this section never mentioned. */}
+                    {configuredCount < loaded.length && (
+                        <span className="text-amber-200/85">
+                            {loaded.filter(c => !statuses[c.key]?.configured).map(c => c.title).join(', ')}
+                            {' — set these up in Setup Instructions, above'}
+                        </span>
+                    )}
                     {verifiedCount > 0 && <span className="text-emerald-300/80 inline-flex items-center gap-1"><CheckCircle className="w-3 h-3" />{verifiedCount} verified</span>}
                     {failedCount > 0 && <span className="text-amber-300/90 inline-flex items-center gap-1"><AlertCircle className="w-3 h-3" />{failedCount} not working</span>}
                     {unverifiableCount > 0 && (

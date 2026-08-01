@@ -180,7 +180,16 @@ async def _configured_map(providers: List[Dict[str, Any]]) -> Dict[str, bool]:
         present = True
         for key in required:
             try:
-                if not await get_secret(key):
+                # `.strip()`, so that a value of " " is absent here as well as
+                # everywhere else.
+                #
+                # Two definitions of empty had drifted apart. This one counted
+                # any truthy string, and the live test stripped before checking
+                # -- so a whitespace credential made a provider "configured"
+                # and simultaneously untestable, and the card said "Set up.
+                # There is no way to test this one from here" about a service
+                # nobody had entered anything for.
+                if not (await get_secret(key) or "").strip():
                     present = False
                     break
             except Exception:
@@ -848,7 +857,19 @@ async def _test_delivery(capability: str) -> dict:
         missing = [k for k in required_keys(entry) if not (await get_secret(k) or "").strip()]
         if not missing:
             return None
-        return {"ok": False, "detail": describe_missing(entry, missing), "recorded": False}
+        # `configured: False` rather than only `recorded: False`.
+        #
+        # These are different facts and the frontend was collapsing them: it
+        # read "not recorded" as "this provider cannot be tested", which is
+        # true of an HTTP gateway in general and wrong about a town that has
+        # entered nothing. Saying which it is lets the card correct itself even
+        # when the catalog disagrees.
+        return {
+            "ok": False,
+            "detail": describe_missing(entry, missing),
+            "recorded": False,
+            "configured": False,
+        }
 
     if capability == "email":
         provider = (await get_secret("EMAIL_PROVIDER")) or "smtp"

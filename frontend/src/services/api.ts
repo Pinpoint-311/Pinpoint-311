@@ -631,7 +631,7 @@ class ApiClient {
      *  text. That is not a failure, and the backend deliberately does not write
      *  it to connector health. Dropping the flag here is what made those show
      *  up as "Not working". */
-    async testProvider(capability: string): Promise<{ ok: boolean; detail: string; recorded?: boolean }> {
+    async testProvider(capability: string): Promise<{ ok: boolean; detail: string; recorded?: boolean; configured?: boolean }> {
         return this.request(`/system/providers/${capability}/test`, { method: 'POST' });
     }
 
