@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Sparkles, Languages, KeyRound, CheckCircle, AlertCircle,
-    Check, CircleDashed, HelpCircle, ShieldCheck, RefreshCw,
+    Check, CircleDashed, HelpCircle, ShieldCheck, RefreshCw, Search,
     Lock, Map as MapIcon,
     Mail, MessageSquare, Image as ImageIcon,
 } from 'lucide-react';
@@ -209,6 +209,13 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const [liveModels, setLiveModels] = useState<ProviderModelSpec[] | null>(null);
     const [modelsMeta, setModelsMeta] = useState<{ source?: string; fetched_at?: number | null } | null>(null);
     const [staleOverride, setStaleOverride] = useState<boolean | null>(null);
+    /* Filters the model tiles.
+     *
+     * Declared, which the version in #433 was not -- it used the setter and the
+     * value five times with no useState, so opening any AI card threw a
+     * ReferenceError. `vite build` passed anyway, because esbuild strips types
+     * without resolving identifiers, and nothing in CI runs tsc. */
+    const [modelSearch, setModelSearch] = useState('');
     const [warnings, setWarnings] = useState<{ key: string; severity: string; message: string }[]>([]);
     /* Collapsed by default, expanded when something needs attention.
      *
@@ -730,16 +737,49 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                     {refreshingModels ? 'Checking…' : 'Refresh from provider'}
                                 </button>
                             }>Model</Step>
-                            {/* Tiles, not a <select>. The model list is short, the
-                                choice is consequential, and a dropdown hides every
-                                option but one -- including the "new" markers that
-                                live discovery just added. Same control as the
-                                provider picker above, so the page has one idiom. */}
+                            {/* Tiles, not a <select>. The choice is consequential and
+                                a dropdown hides every option but one -- including the
+                                "new" markers live discovery just added. Same control as
+                                the provider picker above, so the page has one idiom.
+
+                                Searchable once the list is long enough to scroll:
+                                Vertex Model Garden legitimately returns a couple of
+                                hundred entries, and scanning those as tiles is worse
+                                than the dropdown this replaced. */}
+                            {models.length > 8 && (
+                                <div className="relative mb-2">
+                                    <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-white/50 pointer-events-none" aria-hidden="true" />
+                                    <input
+                                        type="search"
+                                        id={`model-search-${cap}`}
+                                        value={modelSearch}
+                                        onChange={e => setModelSearch(e.target.value)}
+                                        /* A real label, not just a placeholder: the
+                                           placeholder disappears the moment somebody
+                                           types, and this console is audited for AA. */
+                                        aria-label={`Search the ${models.length} models ${active.name} offers`}
+                                        placeholder={`Search ${models.length} models — try "flash", "claude", "mini"`}
+                                        className="w-full bg-white/[0.04] border border-white/10 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white placeholder-white/50 focus:outline-none focus:border-primary-400/60 transition-colors"
+                                    />
+                                </div>
+                            )}
                             {(() => {
                                 const chosen = model || active.default_model || models[0].id;
+                                const q = modelSearch.trim().toLowerCase();
+                                const filtered = q
+                                    ? models.filter(m => m.id.toLowerCase().includes(q)
+                                        || m.label.toLowerCase().includes(q))
+                                    : models;
+                                if (filtered.length === 0) {
+                                    return (
+                                        <p className="py-4 text-center text-xs text-white/60 bg-white/[0.02] border border-white/10 rounded-xl">
+                                            No model matches “{modelSearch}”.
+                                        </p>
+                                    );
+                                }
                                 return (
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2" role="radiogroup" aria-label="AI model">
-                                        {models.map(m => {
+                                    <div className="max-h-80 overflow-y-auto pr-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2" role="radiogroup" aria-label="AI model">
+                                        {filtered.map(m => {
                                             const isSel = m.id === chosen;
                                             return (
                                                 <button
