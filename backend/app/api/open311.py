@@ -31,6 +31,7 @@ def generate_request_id() -> str:
 
 
 from app.services import road_blocking
+from app.services.enqueue import enqueue
 from app.core.config import get_settings
 import redis.asyncio as redis
 import json
@@ -280,12 +281,39 @@ async def add_public_comment(
         visibility="external"
     )
     db.add(comment)
+
+    # Put it on the timeline. `comment_added` is a documented action on
+    # RequestAuditLog and is rendered in both the resident tracker and the
+    # staff dashboard, and until now nothing anywhere wrote one -- so a
+    # timeline that showed a report being filed, routed and closed silently
+    # omitted every word the resident said about it in between.
+    #
+    # The text itself is deliberately not copied here. It already lives in
+    # request_comments, which is what the retention policy scrubs; duplicating
+    # it into the audit trail would put a copy somewhere the scrub does not
+    # reach, and the audit chain is append-only by design.
+    db.add(RequestAuditLog(
+        service_request_id=sr.id,
+        action="comment_added",
+        new_value="external",
+        actor_type="resident",
+        actor_name="Resident",
+    ))
     await db.commit()
     await db.refresh(comment)
 
-    # Mirror the comment to linked govtech platforms
+    # Mirror the comment to linked govtech platforms. Enqueued rather than
+    # called: the comment is already saved, and a broker that is down must not
+    # turn a saved comment into an error the resident reads as "try again".
     from app.tasks.integrations import push_comment_to_integrations
-    push_comment_to_integrations.delay(comment.id)
+    enqueue(push_comment_to_integrations, comment.id)
+
+    # Tell whoever is working the request that a resident has said something.
+    # Without this a reply sits unread until somebody happens to open the
+    # request, which from the resident's side is indistinguishable from being
+    # ignored. `actor` matches no staff username, so nobody is skipped.
+    from app.tasks.service_requests import notify_staff_of_activity
+    enqueue(notify_staff_of_activity, sr.id, "comments", actor="Resident")
 
     return comment
 
@@ -384,10 +412,22 @@ async def get_public_audit_log(request_id: str, db: AsyncSession = Depends(get_d
         raise HTTPException(status_code=404, detail="Request not found")
     
     # Only return submitted and status_change events (not assignments which may be internal)
+    #
+    # `comment_added` joins them, but only for comments the resident can
+    # already read. An internal staff note is written to the same timeline with
+    # new_value="internal", and surfacing even its existence here would tell
+    # the public that staff had discussed a report privately -- which is the
+    # thing the internal/external split exists to keep separate. The comment
+    # text is never in the audit row either way; this is a marker, and the
+    # words come from the comments endpoint.
     audit_result = await db.execute(
         select(RequestAuditLog)
         .where(RequestAuditLog.service_request_id == request.id)
-        .where(RequestAuditLog.action.in_(["submitted", "status_change"]))
+        .where(or_(
+            RequestAuditLog.action.in_(["submitted", "status_change"]),
+            (RequestAuditLog.action == "comment_added")
+            & (RequestAuditLog.new_value == "external"),
+        ))
         .order_by(RequestAuditLog.created_at.asc())
     )
     entries = audit_result.scalars().all()
@@ -826,17 +866,21 @@ async def _finalize_new_request(
     db.add(audit_entry)
     await db.commit()
 
+    # Everything from here is follow-up work on a report that is already saved.
+    # It is enqueued rather than called, so an unreachable broker costs a
+    # notification and a line in the log instead of answering "we could not
+    # take your report" for a report that is in the database.
     from app.tasks.service_requests import analyze_request, send_branded_notification, send_department_notification
     # AI triage / priority — same as a resident submission
-    analyze_request.delay(service_request.id)
+    enqueue(analyze_request, service_request.id)
 
     # Push to any connected govtech platforms (Accela, Tyler, CivicPlus, etc.)
     from app.tasks.integrations import push_request_to_integrations
-    push_request_to_integrations.delay(service_request.id)
+    enqueue(push_request_to_integrations, service_request.id)
 
     # Send branded confirmation only when we have a real resident email
     if notify_resident:
-        send_branded_notification.delay(service_request.id, "confirmation")
+        enqueue(send_branded_notification, service_request.id, "confirmation")
 
     # Notify department staff based on their notification preferences
     if assigned_department_id:
@@ -845,7 +889,7 @@ async def _finalize_new_request(
         )
         dept = dept_result.scalar_one_or_none()
         if dept and dept.routing_email:
-            send_department_notification.delay(service_request.id, dept.routing_email)
+            enqueue(send_department_notification, service_request.id, dept.routing_email)
 
 
 @router.get("/requests.json", response_model=List[ServiceRequestResponse])
@@ -1034,8 +1078,14 @@ async def update_request_status(
     
     # Send notification if status changed
     if "status" in update_dict and update_dict["status"] and update_dict["status"].value != old_status:
+        # Enqueued, not called: the status change and its audit entry are
+        # committed above. A broker outage must not roll a completed update
+        # back into an error, because the staffer's next move is to set the
+        # status again and the resident gets two "your report is closed"
+        # emails when the queue recovers.
         from app.tasks.service_requests import send_branded_notification, notify_staff_of_activity
-        send_branded_notification.delay(
+        enqueue(
+            send_branded_notification,
             request.id,
             "status_update",
             old_status=old_status,
@@ -1043,11 +1093,11 @@ async def update_request_status(
         )
 
         # Notify assigned staff / department (respects each user's preferences).
-        notify_staff_of_activity.delay(request.id, "status_changes", actor=current_user.username)
+        enqueue(notify_staff_of_activity, request.id, "status_changes", actor=current_user.username)
 
         # Mirror the status change to linked govtech platforms
         from app.tasks.integrations import push_status_to_integrations
-        push_status_to_integrations.delay(request.id, notes=update_dict.get("completion_message"))
+        enqueue(push_status_to_integrations, request.id, notes=update_dict.get("completion_message"))
     
     # Reload with relationship for response
     await db.refresh(request)
