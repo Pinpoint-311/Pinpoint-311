@@ -7,7 +7,9 @@ import {
     MapRenderer,
     MarkerHandle,
     PopupHandle,
+    assetIcon,
     createMap,
+    locationPinIcon,
     el,
     legacyMapProviderConfig,
     popupRoot,
@@ -31,15 +33,6 @@ interface RequestDetailMapProps {
     /** Overrides the configured provider; defaults to the town's setting. */
     provider?: MapProviderId;
 }
-
-// The asset pin. Google drew this as a scaled SymbolPath; as an SVG data URI it
-// looks the same whichever provider rasterises it. Diamond is 7x10 at scale 1.2
-// with a 2px stroke, so the box carries 1px of slack on every side.
-const ASSET_ICON_URL = 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-    <svg xmlns="http://www.w3.org/2000/svg" width="19" height="26" viewBox="-9.5 -13 19 26">
-        <path d="M 0,-12 L 8.4,0 L 0,12 L -8.4,0 Z" fill="#22c55e" stroke="#ffffff" stroke-width="2"/>
-    </svg>
-`);
 
 export default function RequestDetailMap({
     lat,
@@ -127,14 +120,9 @@ export default function RequestDetailMap({
         markerRef.current?.remove();
         markerRef.current = map.addMarker({
             position: { lat, lng },
-            icon: {
-                type: 'circle',
-                radius: 12,
-                fillColor: '#ef4444',
-                fillOpacity: 1,
-                strokeColor: '#ffffff',
-                strokeWidth: 3,
-            },
+            // A pin, not a puck: this map is about one exact spot, which is what
+            // the pin shape means everywhere else in the app.
+            icon: locationPinIcon('#ef4444'),
             title: 'Request Location',
             zIndex: 1000,
             onClick: (_e, marker) => {
@@ -206,13 +194,10 @@ export default function RequestDetailMap({
                 const coords = targetFeature.geometry.coordinates;
                 assetMarkerRef.current = map.addMarker({
                     position: { lat: coords[1], lng: coords[0] },
-                    icon: {
-                        type: 'image',
-                        url: ASSET_ICON_URL,
-                        width: 19,
-                        height: 26,
-                        anchor: { x: 9.5, y: 13 },
-                    },
+                    // The same asset glyph the other maps use. This had its own
+                    // hardcoded green diamond, so the matched asset here looked
+                    // nothing like the identical asset on the staff dashboard.
+                    icon: assetIcon('#22c55e'),
                     title: `${matchedAsset.layer_name}${matchedAsset.asset_id ? ` - ${matchedAsset.asset_id}` : ''}`,
                     zIndex: 999,
                     onClick: (_e, marker) => {

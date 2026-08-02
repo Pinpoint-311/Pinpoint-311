@@ -13,6 +13,7 @@ import {
     el,
     legacyMapProviderConfig,
     popupRoot,
+    puckIcon,
 } from '../maps';
 
 interface SpatialBiasHeatmapProps {
@@ -365,14 +366,16 @@ export default function SpatialBiasHeatmap({
             const level = ratio > 4 ? 'high' : ratio > 2 ? 'moderate' : 'low';
             return {
                 position: { lat: hs.lat, lng: hs.lng },
-                icon: {
-                    type: 'circle' as const,
-                    radius: Math.min(8 + hs.count, 20),
-                    fillColor: BIAS_FILL[level],
-                    fillOpacity: 0.9,
-                    strokeColor: BIAS_STROKE[level],
+                // Through the shared puck routine, so a hotspot on this page has
+                // the same ring, shadow and lighting as a pin anywhere else --
+                // and renders identically whichever provider the town is on.
+                // The bias palette stays, because that is what it encodes.
+                icon: puckIcon({
+                    fill: BIAS_FILL[level],
+                    stroke: BIAS_STROKE[level],
+                    size: Math.min(8 + hs.count, 20) * 2,
                     strokeWidth: 2,
-                },
+                }),
                 title: `${hs.count} reports / ${reporters} reporters`,
                 zIndex: 100,
                 onClick: (_event, marker) => {
