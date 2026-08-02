@@ -1933,87 +1933,148 @@ async def get_legal_hold_requests(
     }
 
 
+@router.get("/retention/export/fields")
+async def public_records_export_fields(
+    _: User = Depends(get_current_admin),
+):
+    """What a records custodian can choose to include, and what is sensitive.
+
+    Served rather than hardcoded in the UI so the picker, the export and the
+    audit entry are all describing the same catalog.
+    """
+    from app.services.opra_export import describe_fields
+
+    return {"fields": describe_fields()}
+
+
 @router.get("/retention/export")
 async def export_for_public_records(
-    start_date: str = None,
-    end_date: str = None,
+    start_date: Optional[str] = Query(None, description="ISO date or datetime"),
+    end_date: Optional[str] = Query(None, description="ISO date or datetime; a bare date means end of that day"),
+    statuses: Optional[List[str]] = Query(None, description="open / in_progress / closed"),
+    service_codes: Optional[List[str]] = Query(None, description="Limit to these categories"),
+    request_ids: Optional[List[str]] = Query(None, description="Specific request ids"),
+    fields: Optional[List[str]] = Query(None, description="Field ids; omit for the usual set"),
+    include_archived: bool = Query(True, description="Include records whose contents retention has cleared"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin)
+    current_user: User = Depends(get_current_admin),
 ):
+    """Export records for an OPRA/FOIA/public-records request.
+
+    A custodian is answering a specific request: releasing the records asked
+    for, and not the ones that were not. This used to offer a date range and a
+    fixed set of ten columns, so "pothole complaints on Main Street in 2024"
+    was answered with every report the town has ever taken, and a request that
+    should have excluded internal notes could not exclude them.
+
+    Over-disclosure is the failure that matters. A resident's phone number
+    released in answer to a request that did not ask for it cannot be taken
+    back, and they never knew it was in scope -- so the reporter fields are
+    opt-in by name, and choosing one is recorded.
     """
-    Export records for OPRA/FOIA/public records requests.
-    Uses state-specific format based on configured retention policy.
-    """
-    from app.services.retention_service import get_retention_policy
-    from app.models import ServiceRequest
     from datetime import datetime, timezone
     import csv
     import io
+
     from fastapi.responses import StreamingResponse
-    
-    # Get current state policy
-    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
-    settings = result.scalar_one_or_none()
-    state_code = settings.retention_state_code if settings else "NJ"
+
+    from sqlalchemy.orm import selectinload
+
+    from app.models import ServiceRequest
+    from app.services.admin_audit import record_admin_action
+    from app.services.opra_export import (
+        UnknownField, build_row, headers, normalise_fields, parse_boundary,
+        preamble, sensitive_selected,
+    )
+    from app.services.retention_service import get_retention_policy
+
+    try:
+        chosen = normalise_fields(fields)
+        start = parse_boundary(start_date)
+        end = parse_boundary(end_date, end=True)
+    except (UnknownField, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if not chosen:
+        raise HTTPException(status_code=400, detail="Choose at least one field to export.")
+
+    # Releasing the reporter's identity is a decision, not a default. The
+    # export endpoint elsewhere already gates bulk PII on admin; this one is
+    # admin-only throughout, so the gate here is that it is recorded and that
+    # the file says which fields were left out.
+    sensitive = sensitive_selected(chosen)
+
+    settings = await read_settings_row(db)
+    state_code = (getattr(settings, "retention_state_code", None) or "NJ") if settings else "NJ"
     policy = get_retention_policy(state_code)
-    
-    # Build query
-    query = select(ServiceRequest).where(
-        ServiceRequest.deleted_at.is_(None)
-    ).order_by(ServiceRequest.requested_datetime.desc())
-    
-    if start_date:
-        query = query.where(ServiceRequest.requested_datetime >= datetime.fromisoformat(start_date))
-    if end_date:
-        query = query.where(ServiceRequest.requested_datetime <= datetime.fromisoformat(end_date))
-    
-    result = await db.execute(query)
-    records = result.scalars().all()
-    
-    # Generate CSV with state-specific header
+
+    query = select(ServiceRequest).options(
+        selectinload(ServiceRequest.assigned_department)
+    ).where(ServiceRequest.deleted_at.is_(None))
+
+    if start:
+        query = query.where(ServiceRequest.requested_datetime >= start)
+    if end:
+        query = query.where(ServiceRequest.requested_datetime <= end)
+    if statuses:
+        query = query.where(ServiceRequest.status.in_(statuses))
+    if service_codes:
+        query = query.where(ServiceRequest.service_code.in_(service_codes))
+    if request_ids:
+        query = query.where(ServiceRequest.service_request_id.in_(request_ids))
+    if not include_archived:
+        query = query.where(ServiceRequest.archived_at.is_(None))
+
+    query = query.order_by(ServiceRequest.requested_datetime.desc())
+    records = (await db.execute(query)).scalars().all()
+
+    generated = datetime.now(timezone.utc)
     output = io.StringIO()
-    
-    # Write header with public records law info
-    output.write(f"# {policy['public_records_law']} EXPORT\n")
-    output.write(f"# State: {policy['name']} ({state_code})\n")
-    output.write(f"# Generated: {datetime.now(timezone.utc).isoformat()}Z\n")
-    output.write(f"# Total Records: {len(records)}\n")
-    output.write(f"# Exported by: {current_user.username}\n")
-    output.write("#\n")
-    
+    for line in preamble(
+        law=policy["public_records_law"], state_name=policy["name"], state_code=state_code,
+        total=len(records), exported_by=current_user.username, fields=chosen,
+        filters={
+            "start_date": start_date, "end_date": end_date, "statuses": statuses,
+            "service_codes": service_codes, "request_ids": request_ids,
+        },
+        generated=generated,
+    ):
+        output.write(line + "\n")
+
     writer = csv.writer(output)
-    writer.writerow([
-        "Request ID", "Service Type", "Status", "Submitted Date", 
-        "Address", "Lat", "Long", "Description",
-        "Resolution Date", "Resolution Notes"
-    ])
-    
-    for r in records:
-        # Handle archived records - show [Archived] for description
-        desc = "[Content archived per retention policy]" if r.archived_at else (r.description or "")
-        writer.writerow([
-            r.service_request_id,
-            r.service_name,
-            r.status,
-            r.requested_datetime.isoformat() if r.requested_datetime else "",
-            r.address or "",
-            r.lat or "",
-            r.long or "",
-            desc,
-            r.closed_datetime.isoformat() if r.closed_datetime else "",
-            r.completion_message or ""
-        ])
-    
+    writer.writerow(headers(chosen))
+    for record in records:
+        row = build_row(record, chosen)
+        # A record retention has cleared still exists and still counts; saying
+        # so beats a row of blanks that reads like a broken export.
+        if getattr(record, "archived_at", None) and "description" in chosen:
+            row[chosen.index("description")] = "[Content cleared per retention policy]"
+        writer.writerow(row)
+
+    # Every export, not only the ones carrying PII. "Which records left this
+    # building, when, and who took them" is the question an audit of a records
+    # process asks first.
+    await record_admin_action(
+        db, event_type="public_records_export", actor=current_user,
+        details={
+            "records": len(records),
+            "fields": chosen,
+            "sensitive_fields": sensitive,
+            "start_date": start_date, "end_date": end_date,
+            "statuses": statuses, "service_codes": service_codes,
+            "request_ids_count": len(request_ids) if request_ids else 0,
+            "state_code": state_code,
+        },
+    )
+
     output.seek(0)
-    
-    # Create filename with law name
-    law_abbrev = policy['public_records_law'].split('(')[0].strip().replace(' ', '_')
-    filename = f"{law_abbrev}_export_{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
-    
+    law_abbrev = policy["public_records_law"].split("(")[0].strip().replace(" ", "_")
+    filename = f"{law_abbrev}_export_{generated.strftime('%Y%m%d')}.csv"
+
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
 

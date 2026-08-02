@@ -913,6 +913,17 @@ export default function AdminConsole() {
        query and most visits to this page are not about to press the button. */
     const [retentionPreview, setRetentionPreview] = useState<import('../services/api').RetentionPreview | null>(null);
     const [previewLoading, setPreviewLoading] = useState(false);
+
+    /* What a records custodian is releasing. Loaded from the server so the
+       picker, the export and the audit entry all describe one catalog. */
+    const [opraOpen, setOpraOpen] = useState(false);
+    const [opraFields, setOpraFields] = useState<import('../services/api').PublicRecordsField[]>([]);
+    const [opraChosen, setOpraChosen] = useState<Set<string>>(new Set());
+    const [opraStart, setOpraStart] = useState('');
+    const [opraEnd, setOpraEnd] = useState('');
+    const [opraStatuses, setOpraStatuses] = useState<Set<string>>(new Set());
+    const [opraIds, setOpraIds] = useState('');
+    const [opraBusy, setOpraBusy] = useState(false);
     const [previewError, setPreviewError] = useState<string | null>(null);
 
     /* Which fields a retention run clears. Null until the server answers --
@@ -3442,12 +3453,15 @@ export default function AdminConsole() {
                                         <Button
                                             variant="secondary"
                                             onClick={async () => {
-                                                try {
-                                                    await api.exportForPublicRecords();
-                                                    setSaveMessage('Export downloaded successfully');
-                                                    setTimeout(() => setSaveMessage(null), 3000);
-                                                } catch (err) {
-                                                    console.error('Export failed:', err);
+                                                setOpraOpen(o => !o);
+                                                if (!opraFields.length) {
+                                                    try {
+                                                        const { fields } = await api.getPublicRecordsFields();
+                                                        setOpraFields(fields);
+                                                        setOpraChosen(new Set(fields.filter(f => f.selected).map(f => f.id)));
+                                                    } catch (err) {
+                                                        reportError('Could not load the export options', err);
+                                                    }
                                                 }
                                             }}
                                         >
@@ -3458,6 +3472,123 @@ export default function AdminConsole() {
                                             ).split("(")[0].trim()}
                                         </Button>
                                     </div>
+
+                                    {/* Pick what is being released.
+                                        A custodian is answering a specific
+                                        request. Over-disclosure is the failure
+                                        that matters: a phone number released in
+                                        answer to a request that did not cover it
+                                        cannot be recalled, and the person whose
+                                        number it was never knew it was in scope. */}
+                                    {opraOpen && (
+                                        <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
+                                            <div className="grid gap-3 sm:grid-cols-2">
+                                                <label className="text-sm">
+                                                    <span className="block text-white/60 mb-1">Submitted from</span>
+                                                    <input type="date" value={opraStart} onChange={e => setOpraStart(e.target.value)}
+                                                        className="glass-input w-full" />
+                                                </label>
+                                                <label className="text-sm">
+                                                    <span className="block text-white/60 mb-1">Submitted to</span>
+                                                    <input type="date" value={opraEnd} onChange={e => setOpraEnd(e.target.value)}
+                                                        className="glass-input w-full" />
+                                                    <span className="block text-white/40 text-xs mt-1">Includes the whole of that day.</span>
+                                                </label>
+                                            </div>
+
+                                            <div>
+                                                <span className="block text-white/60 text-sm mb-2">Status</span>
+                                                <div className="flex flex-wrap gap-3">
+                                                    {['open', 'in_progress', 'closed'].map(v => (
+                                                        <label key={v} className="flex items-center gap-2 text-sm text-white/80">
+                                                            <input type="checkbox" checked={opraStatuses.has(v)}
+                                                                onChange={e => setOpraStatuses(prev => {
+                                                                    const next = new Set(prev);
+                                                                    e.target.checked ? next.add(v) : next.delete(v);
+                                                                    return next;
+                                                                })}
+                                                                className="w-4 h-4 rounded border-white/20 bg-transparent" />
+                                                            {v === 'in_progress' ? 'In progress' : v.charAt(0).toUpperCase() + v.slice(1)}
+                                                        </label>
+                                                    ))}
+                                                    <span className="text-white/40 text-xs self-center">None ticked means all.</span>
+                                                </div>
+                                            </div>
+
+                                            <label className="block text-sm">
+                                                <span className="block text-white/60 mb-1">Specific request IDs (optional)</span>
+                                                <input type="text" value={opraIds} onChange={e => setOpraIds(e.target.value)}
+                                                    placeholder="REQ-20260101-AB12CD34, REQ-…"
+                                                    className="glass-input w-full" />
+                                            </label>
+
+                                            <div>
+                                                <span className="block text-white/60 text-sm mb-2">Fields to include</span>
+                                                <div className="grid gap-2 sm:grid-cols-2">
+                                                    {opraFields.map(f => (
+                                                        <label key={f.id} className="flex items-start gap-2 text-sm">
+                                                            <input type="checkbox" checked={opraChosen.has(f.id)}
+                                                                onChange={e => setOpraChosen(prev => {
+                                                                    const next = new Set(prev);
+                                                                    e.target.checked ? next.add(f.id) : next.delete(f.id);
+                                                                    return next;
+                                                                })}
+                                                                className="w-4 h-4 mt-0.5 rounded border-white/20 bg-transparent" />
+                                                            <span>
+                                                                <span className={f.sensitive ? 'text-amber-200' : 'text-white/80'}>
+                                                                    {f.label}
+                                                                </span>
+                                                                {f.sensitive && (
+                                                                    <span className="ml-1 text-[10px] uppercase tracking-wider text-amber-300/80">
+                                                                        identifies the reporter
+                                                                    </span>
+                                                                )}
+                                                                {f.note && <span className="block text-white/45 text-xs">{f.note}</span>}
+                                                            </span>
+                                                        </label>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Said before the download, not after. */}
+                                            {opraFields.some(f => f.sensitive && opraChosen.has(f.id)) && (
+                                                <p role="alert" className="text-sm text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                                                    This export will identify the people who filed these reports. Release
+                                                    it only if the request covers their details. It is recorded in the
+                                                    audit log either way.
+                                                </p>
+                                            )}
+
+                                            <div className="flex items-center gap-3">
+                                                <Button
+                                                    disabled={opraBusy || opraChosen.size === 0}
+                                                    onClick={async () => {
+                                                        setOpraBusy(true);
+                                                        try {
+                                                            await api.exportForPublicRecords({
+                                                                startDate: opraStart || undefined,
+                                                                endDate: opraEnd || undefined,
+                                                                statuses: opraStatuses.size ? [...opraStatuses] : undefined,
+                                                                requestIds: opraIds.split(',').map(v => v.trim()).filter(Boolean) || undefined,
+                                                                fields: [...opraChosen],
+                                                            });
+                                                            setSaveMessage('Export downloaded');
+                                                            setTimeout(() => setSaveMessage(null), 3000);
+                                                        } catch (err) {
+                                                            reportError('The export failed', err);
+                                                        } finally {
+                                                            setOpraBusy(false);
+                                                        }
+                                                    }}
+                                                >
+                                                    {opraBusy ? 'Preparing…' : 'Download export'}
+                                                </Button>
+                                                {opraChosen.size === 0 && (
+                                                    <span className="text-white/50 text-sm">Choose at least one field.</span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
 
                                     {previewError && (
                                         <div role="alert" className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">

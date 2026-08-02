@@ -232,6 +232,25 @@ export interface RetentionPreview {
     timezone?: string;
 }
 
+export interface PublicRecordsField {
+    id: string;
+    label: string;
+    /** Identifies the person who reported it. Off unless deliberately chosen. */
+    sensitive: boolean;
+    selected: boolean;
+    note?: string;
+}
+
+export interface PublicRecordsExportOptions {
+    startDate?: string;
+    endDate?: string;
+    statuses?: string[];
+    serviceCodes?: string[];
+    requestIds?: string[];
+    fields?: string[];
+    includeArchived?: boolean;
+}
+
 class ApiClient {
     private token: string | null = null;
     private onUnauthorized: (() => void) | null = null;
@@ -1208,10 +1227,21 @@ class ApiClient {
         return this.request('/system/retention/legal-hold');
     }
 
-    async exportForPublicRecords(startDate?: string, endDate?: string): Promise<void> {
+    /** The catalog a records custodian picks from, and which fields are sensitive. */
+    async getPublicRecordsFields(): Promise<{ fields: PublicRecordsField[] }> {
+        return this.request<{ fields: PublicRecordsField[] }>('/system/retention/export/fields');
+    }
+
+    async exportForPublicRecords(options: PublicRecordsExportOptions = {}): Promise<void> {
         const params = new URLSearchParams();
-        if (startDate) params.append('start_date', startDate);
-        if (endDate) params.append('end_date', endDate);
+        if (options.startDate) params.append('start_date', options.startDate);
+        if (options.endDate) params.append('end_date', options.endDate);
+        // Repeated keys, which is how FastAPI reads a List[str] query param.
+        options.statuses?.forEach(v => params.append('statuses', v));
+        options.serviceCodes?.forEach(v => params.append('service_codes', v));
+        options.requestIds?.forEach(v => params.append('request_ids', v));
+        options.fields?.forEach(v => params.append('fields', v));
+        if (options.includeArchived === false) params.append('include_archived', 'false');
         const queryString = params.toString() ? `?${params.toString()}` : '';
 
         const response = await fetch(`/api/system/retention/export${queryString}`, {
