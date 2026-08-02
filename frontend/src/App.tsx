@@ -10,17 +10,44 @@ import ErrorBoundary from './components/ErrorBoundary';
 import ResidentPortal from './pages/ResidentPortal';
 import Login from './pages/Login';
 
+// Helper to automatically recover when a deployment updates build chunk hashes
+function lazyWithRetry<T extends React.ComponentType<any>>(
+    componentImport: () => Promise<{ default: T }>
+) {
+    return lazy(async () => {
+        const pageHasBeenReloaded = sessionStorage.getItem('page_reloaded_for_chunk_error');
+        try {
+            const component = await componentImport();
+            sessionStorage.removeItem('page_reloaded_for_chunk_error');
+            return component;
+        } catch (error: any) {
+            const isChunkError =
+                error?.message?.includes('Failed to fetch dynamically imported module') ||
+                error?.message?.includes('Loading chunk') ||
+                error?.name === 'TypeError';
+
+            if (isChunkError && !pageHasBeenReloaded) {
+                sessionStorage.setItem('page_reloaded_for_chunk_error', 'true');
+                window.location.reload();
+                return new Promise(() => {});
+            }
+            sessionStorage.removeItem('page_reloaded_for_chunk_error');
+            throw error;
+        }
+    });
+}
+
 // Staff/admin/research surfaces (and legal pages) are code-split so a
 // resident's first paint doesn't download the entire admin console,
 // integration wizard, and analytics lab. Each becomes its own chunk,
 // fetched on demand behind the auth wall.
-const StaffDashboard = lazy(() => import('./pages/StaffDashboard'));
-const AdminConsole = lazy(() => import('./pages/AdminConsole'));
-const ResearchLab = lazy(() => import('./pages/ResearchLab').then(m => ({ default: m.ResearchLab })));
-const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
-const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
-const TermsOfService = lazy(() => import('./pages/TermsOfService'));
-const AccessibilityPage = lazy(() => import('./pages/AccessibilityPage'));
+const StaffDashboard = lazyWithRetry(() => import('./pages/StaffDashboard'));
+const AdminConsole = lazyWithRetry(() => import('./pages/AdminConsole'));
+const ResearchLab = lazyWithRetry(() => import('./pages/ResearchLab').then(m => ({ default: m.ResearchLab })));
+const NotFoundPage = lazyWithRetry(() => import('./pages/NotFoundPage'));
+const PrivacyPolicy = lazyWithRetry(() => import('./pages/PrivacyPolicy'));
+const TermsOfService = lazyWithRetry(() => import('./pages/TermsOfService'));
+const AccessibilityPage = lazyWithRetry(() => import('./pages/AccessibilityPage'));
 
 // Global error handlers — report unhandled errors to backend
 function reportError(payload: Record<string, unknown>) {
