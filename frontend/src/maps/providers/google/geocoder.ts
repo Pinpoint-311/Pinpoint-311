@@ -126,12 +126,17 @@ export function createGoogleGeocoder(): GeocodingProvider {
     const getGeocoder = () => (geocoder ??= new window.google.maps.Geocoder());
 
     let autocompleteService: google.maps.places.AutocompleteService | null = null;
-    const getAutocompleteService = () =>
-        (autocompleteService ??= new window.google.maps.places.AutocompleteService());
+    const getAutocompleteService = () => {
+        const places = (window.google?.maps as unknown as Record<string, unknown> | undefined)?.places as unknown as Record<string, unknown> | undefined;
+        if (!places?.AutocompleteService) return null;
+        return (autocompleteService ??= new window.google.maps.places.AutocompleteService());
+    };
 
     const run = (request: google.maps.GeocoderRequest): Promise<GeocodeResult[]> =>
         new Promise(resolve => {
-            getGeocoder().geocode(request, (results, status) => {
+            const g = getGeocoder();
+            if (!g) return resolve([]);
+            g.geocode(request, (results, status) => {
                 if (status !== 'OK' || !results) return resolve([]);
                 resolve(results.map(r => ({
                     formattedAddress: r.formatted_address,
@@ -154,9 +159,11 @@ export function createGoogleGeocoder(): GeocodingProvider {
         },
 
         async suggest(query: string, options?: SuggestOptions): Promise<AddressSuggestion[]> {
-            if (!query.trim()) return [];
+            if (!query.trim() || !window.google?.maps) return [];
             if (hasNewPlaces()) return suggestViaNewPlaces(query, options);
-            return suggestViaLegacyPlaces(getAutocompleteService(), query, options, fromBounds);
+            const svc = getAutocompleteService();
+            if (!svc) return [];
+            return suggestViaLegacyPlaces(svc, query, options, fromBounds);
         },
 
         async resolveSuggestion(suggestion: AddressSuggestion): Promise<GeocodeResult | null> {
