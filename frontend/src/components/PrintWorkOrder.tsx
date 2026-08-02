@@ -221,8 +221,34 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
             </div>
         ` : '';
 
-        // Build comments HTML (internal only - for field staff use)
+        // Everything said about this report, in two clearly separated blocks.
+        //
+        // Only internal notes used to print. That reads as a privacy decision
+        // and is the opposite of one: the resident's own words are the field
+        // notes -- "it's the second driveway, not the first", "the smell comes
+        // back after rain" -- and a crew standing in the street with a sheet of
+        // paper had every staff comment and none of them. The resident wrote
+        // them to be read by whoever turns up.
         const internalComments = comments?.filter(c => c.visibility === 'internal') || [];
+        const residentComments = comments?.filter(c => c.visibility === 'external') || [];
+
+        const residentCommentsHtml = residentComments.length ? `
+            <div class="section comments-section">
+                <h3>${icons.comment} From the resident and staff replies (${residentComments.length})</h3>
+                <div class="comments-list">
+                    ${residentComments.map(c => `
+                        <div class="comment-item">
+                            <div class="comment-header">
+                                <strong>${c.username}</strong>
+                                <span class="comment-date">${formatDate(c.created_at)}</span>
+                            </div>
+                            <div class="comment-body">${c.content.replace(/\n/g, '<br/>')}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        ` : '';
+
         const commentsHtml = internalComments.length ? `
             <div class="section comments-section">
                 <h3>${icons.comment} Internal Comments (${internalComments.length})</h3>
@@ -240,10 +266,13 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
             </div>
         ` : '';
 
-        // Legal hold banner
+        // Legal hold banner. The reason travels with it: "under legal hold"
+        // without saying why leaves whoever picks this up unable to tell
+        // whether it still applies.
         const legalHoldHtml = request.flagged ? `
             <div class="legal-hold-banner">
                 ${icons.flag} <strong>LEGAL HOLD</strong> — This record is under legal hold and exempt from retention policy.
+                ${request.flag_reason ? `<div class="legal-hold-reason">Reason: ${request.flag_reason}</div>` : ''}
             </div>
         ` : '';
 
@@ -536,6 +565,11 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
                         border-radius: 4px;
                         white-space: pre-wrap;
                     }
+                    .legal-hold-reason {
+                        margin-top: 6px;
+                        font-weight: 400;
+                        font-size: 11px;
+                    }
                     .comments-section {
                         background: #f0fdf4;
                         padding: 12px;
@@ -677,6 +711,10 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
                         <label>Last Updated</label>
                         <span>${formatDate(request.updated_datetime)}</span>
                     </div>
+                    <div class="field">
+                        <label>Closed</label>
+                        <span>${request.closed_datetime ? formatDate(request.closed_datetime) : '—'}</span>
+                    </div>
                 </div>
 
                 <div class="section">
@@ -726,6 +764,7 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
                 ${aiHtml}
                 ${staffNotesHtml}
                 ${commentsHtml}
+                ${residentCommentsHtml}
                 ${completionHtml}
 
                 <div class="section reporter">
