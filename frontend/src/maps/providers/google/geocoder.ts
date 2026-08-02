@@ -174,49 +174,43 @@ export function createGoogleGeocoder(): GeocodingProvider {
         },
 
         attachAutocomplete(input: HTMLInputElement, options: AutocompleteOptions): AutocompleteHandle | null {
-            // The legacy widget decorates an existing <input>. Its replacement,
-            // PlaceAutocompleteElement, is a custom element that *replaces* the
-            // input, so it cannot be swapped in behind this interface without
-            // the caller knowing.
-            //
-            // Rather than pretend, this returns null on a key that only has the
-            // new API -- which the interface already defines as "this provider
-            // has no widget, use suggest() and render your own list". The
-            // caller does exactly that. Constructing the legacy class here on a
-            // new-generation key is what produced ApiTargetBlockedMapError and
-            // a dead address box.
-            const places = window.google.maps.places as unknown as Record<string, unknown>;
-            if (!places?.Autocomplete) return null;
+            const places = window.google?.maps?.places as unknown as Record<string, unknown> | undefined;
+            if (!places?.Autocomplete || hasNewPlaces()) return null;
 
-            const autocomplete = new window.google.maps.places.Autocomplete(input, {
-                types: options.addressesOnly ? ['address'] : undefined,
-                componentRestrictions: options.countries?.length
-                    ? { country: options.countries }
-                    : undefined,
-                fields: ['formatted_address', 'geometry', 'name'],
-            });
+            try {
+                const autocomplete = new window.google.maps.places.Autocomplete(input, {
+                    types: options.addressesOnly ? ['address'] : undefined,
+                    componentRestrictions: options.countries?.length
+                        ? { country: options.countries }
+                        : undefined,
+                    fields: ['formatted_address', 'geometry', 'name'],
+                });
 
-            const listener = autocomplete.addListener('place_changed', () => {
-                const result = toResult(autocomplete.getPlace());
-                if (result) options.onSelect(result);
-            });
+                const listener = autocomplete.addListener('place_changed', () => {
+                    const result = toResult(autocomplete.getPlace());
+                    if (result) options.onSelect(result);
+                });
 
-            if (options.biasBounds) autocomplete.setBounds(fromBounds(options.biasBounds));
+                if (options.biasBounds) autocomplete.setBounds(fromBounds(options.biasBounds));
 
-            return {
-                setBiasBounds(bounds: LatLngBounds | null): void {
-                    if (bounds) autocomplete.setBounds(fromBounds(bounds));
-                },
-                destroy(): void {
-                    window.google.maps.event.removeListener(listener);
-                    window.google.maps.event.clearInstanceListeners(autocomplete);
-                    // Google leaves its .pac-container attached to <body> after the
-                    // input goes away; strays would otherwise float over the page.
-                    document.querySelectorAll('.pac-container').forEach(node => {
-                        if (!document.body.contains(input)) node.remove();
-                    });
-                },
-            };
+                return {
+                    setBiasBounds(bounds: LatLngBounds | null): void {
+                        if (bounds) autocomplete.setBounds(fromBounds(bounds));
+                    },
+                    destroy(): void {
+                        window.google.maps.event.removeListener(listener);
+                        window.google.maps.event.clearInstanceListeners(autocomplete);
+                        // Google leaves its .pac-container attached to <body> after the
+                        // input goes away; strays would otherwise float over the page.
+                        document.querySelectorAll('.pac-container').forEach(node => {
+                            if (!document.body.contains(input)) node.remove();
+                        });
+                    },
+                };
+            } catch (e) {
+                console.warn('Google Places legacy Autocomplete unavailable, falling back to suggest():', e);
+                return null;
+            }
         },
     };
 }
