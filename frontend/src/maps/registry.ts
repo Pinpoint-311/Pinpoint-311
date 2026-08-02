@@ -100,7 +100,7 @@ export function chainGeocoders(...providers: (GeocodingProvider | null | undefin
     };
 
     const widgetProvider = chain.find(p => p.attachAutocomplete);
-    const suggestProvider = chain.find(p => p.suggest);
+    const suggesters = chain.filter(p => p.suggest);
 
     return {
         id: chain.map(p => p.id).join('+') || 'none',
@@ -109,14 +109,63 @@ export function chainGeocoders(...providers: (GeocodingProvider | null | undefin
             const results = await p.geocode(query);
             return results.length ? results : null;
         }, []),
-        suggest: suggestProvider
-            ? (query, options) => suggestProvider.suggest!(query, options)
+
+        // Suggestions fall back the same way geocoding always has.
+        //
+        // This used to pick the first provider with a `suggest` and call it
+        // directly -- no chain, no catch. So the address box was the only part
+        // of the geocoding layer that could not degrade: `geocode` and
+        // `reverseGeocode` were served by the backend and kept working, while
+        // one blocked browser API left the autocomplete dead and threw into a
+        // render. "Everything else resolves addresses fine" and "the address
+        // box does nothing" were both true at once, which is a confusing thing
+        // to be told.
+        suggest: suggesters.length
+            ? async (query, options) => {
+                for (const provider of suggesters) {
+                    try {
+                        const results = await provider.suggest!(query, options);
+                        if (results.length) return results;
+                    } catch (error) {
+                        console.warn(`Suggest provider "${provider.id}" failed, falling back:`, error);
+                    }
+                }
+                return [];
+            }
             : undefined,
-        resolveSuggestion: suggestProvider?.resolveSuggestion
-            ? suggestion => suggestProvider.resolveSuggestion!(suggestion)
+
+        // Resolution has to ask the provider that issued the suggestion; ids
+        // are provider-opaque and one provider cannot read another's.
+        resolveSuggestion: suggesters.some(p => p.resolveSuggestion)
+            ? async suggestion => {
+                for (const provider of suggesters) {
+                    if (!provider.resolveSuggestion) continue;
+                    try {
+                        const result = await provider.resolveSuggestion(suggestion);
+                        if (result) return result;
+                    } catch {
+                        // Wrong provider for this id, or it is unavailable.
+                    }
+                }
+                return null;
+            }
             : undefined,
+
+        // A widget that cannot attach returns null rather than throwing, which
+        // is what the interface already promises callers -- they fall back to
+        // suggest() and their own list. Before this, a provider whose SDK was
+        // present but whose API was not enabled threw out of the attach call.
         attachAutocomplete: widgetProvider
-            ? (input, options) => widgetProvider.attachAutocomplete!(input, options)
+            ? (input, options) => {
+                try {
+                    return widgetProvider.attachAutocomplete!(input, options);
+                } catch (error) {
+                    console.warn(
+                        `Autocomplete widget "${widgetProvider.id}" could not attach; ` +
+                        `falling back to suggestions:`, error);
+                    return null;
+                }
+            }
             : undefined,
     };
 }
