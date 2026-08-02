@@ -3,6 +3,7 @@ import { MapPin, Layers, Search, X, ChevronDown, ChevronRight, Users } from 'luc
 import { ServiceRequest, ServiceDefinition, User, Department } from '../types';
 import { MapLayer } from '../services/api';
 import { useTranslation } from '../context/TranslationContext';
+import { BANDS, bandFor, bandLabel } from './priority';
 import {
     GeoJsonLayerHandle,
     MapProviderId,
@@ -11,9 +12,11 @@ import {
     MarkerOptions,
     PopupHandle,
     boundsOfGeoJson,
+    assetIcon,
     createMap,
     extractFeatures,
     legacyMapProviderConfig,
+    requestIcon,
     el,
     popupRoot,
 } from '../maps';
@@ -28,6 +31,23 @@ interface StaffDashboardMapProps {
     departments: Department[];
     users: User[];
     mapLayers: MapLayer[];
+    /**
+     * Show the filters that expose how the town works internally: which
+     * department owns a report, who it is assigned to, its priority score, and
+     * the toggles for the operational map layers.
+     *
+     * Off by default, so a new caller has to opt in rather than opt out. The
+     * resident portal renders this same map and must not get them.
+     *
+     * This flag is a *layout* decision and nothing more. It is compiled into a
+     * public JS bundle, so anyone can flip it in a debugger -- the reason that
+     * is not a hole is that the data behind these filters is not served to an
+     * unauthenticated caller at all. `assigned_to` and `assigned_department_id`
+     * are absent from the public requests payload, and the departments list is
+     * staff-only. Flipping the flag on the resident portal renders empty
+     * checkboxes over data that is not there.
+     */
+    operationalFilters?: boolean;
     townshipBoundary?: object | null;
     defaultCenter?: { lat: number; lng: number };
     defaultZoom?: number;
@@ -50,6 +70,7 @@ export default function StaffDashboardMap({
     departments,
     users,
     mapLayers,
+    operationalFilters = false,
     townshipBoundary,
     defaultCenter = { lat: 40.3573, lng: -74.6672 },
     defaultZoom = 14,
@@ -259,7 +280,7 @@ export default function StaffDashboardMap({
     useEffect(() => {
         if (!mapInstanceRef.current) return;
         updateMarkers();
-    }, [requests, statusFilters, categoryFilters, departmentFilters, staffFilters, assignmentFilter, priorityFilters, mapReady]);
+    }, [requests, statusFilters, categoryFilters, departmentFilters, staffFilters, assignmentFilter, priorityFilters, operationalFilters, mapReady]);
 
     // Update GeoJSON layers when layer filters change
     useEffect(() => {
@@ -280,9 +301,11 @@ export default function StaffDashboardMap({
             // Category filter
             if (categoryFilters[r.service_code] === false) return false;
 
-            // Department filter - only filter if departments are loaded
+            // Department filter - only filter if departments are loaded.
+            // Skipped entirely when the panel is hidden: a checkbox nobody can
+            // see must never be able to remove a pin from the map.
             const requestDeptId = (r as any).assigned_department_id ?? 0;
-            if (Object.keys(departmentFilters).length > 0) {
+            if (operationalFilters && Object.keys(departmentFilters).length > 0) {
                 // Convert to number for comparison (filter keys are numbers)
                 const deptKey = Number(requestDeptId) || 0;
                 if (departmentFilters[deptKey] === false) {
@@ -292,7 +315,7 @@ export default function StaffDashboardMap({
 
             // Staff filter - only filter if users are loaded
             const requestStaff = (r as any).assigned_to ?? '';
-            if (Object.keys(staffFilters).length > 0) {
+            if (operationalFilters && Object.keys(staffFilters).length > 0) {
                 if (staffFilters[requestStaff] === false) {
                     return false;
                 }
@@ -320,8 +343,8 @@ export default function StaffDashboardMap({
             // Priority filter
             const ai = (r as any).ai_analysis;
             const priority = (r as any).manual_priority_score ?? ai?.priority_score ?? 5;
-            const priorityLevel = priority >= 8 ? 'high' : priority >= 5 ? 'medium' : 'low';
-            if (!priorityFilters[priorityLevel]) return false;
+            const priorityLevel = bandFor(priority);
+            if (operationalFilters && !priorityFilters[priorityLevel]) return false;
 
             return true;
         });
@@ -329,14 +352,7 @@ export default function StaffDashboardMap({
         // Create markers
         const markers: MarkerOptions[] = filteredRequests.map(request => ({
             position: { lat: request.lat!, lng: request.long! },
-            icon: {
-                type: 'circle',
-                radius: 10,
-                fillColor: STATUS_COLORS[request.status as keyof typeof STATUS_COLORS] || '#6366f1',
-                fillOpacity: 1,
-                strokeColor: '#ffffff',
-                strokeWidth: 2,
-            },
+            icon: requestIcon(STATUS_COLORS[request.status as keyof typeof STATUS_COLORS]),
             title: request.service_name,
             onClick: async (_e, marker) => {
                 const popup = popupRef.current;
@@ -457,14 +473,7 @@ export default function StaffDashboardMap({
 
                     pointMarkers.push({
                         position: feature.position,
-                        icon: {
-                            type: 'circle',
-                            radius: 10,
-                            fillColor: layer.fill_color,
-                            fillOpacity: 0.95,
-                            strokeColor: '#ffffff',
-                            strokeWidth: 2.5,
-                        },
+                        icon: assetIcon(layer.fill_color, layer.stroke_color),
                         title: props.name || layer.name,
                         onClick: (_e, marker) => {
                             const popup = popupRef.current;
@@ -684,6 +693,7 @@ export default function StaffDashboardMap({
                     </div>
 
                     {/* Department Filters */}
+                    {operationalFilters && (
                     <div className="border-b border-white/5">
                         <button
                             onClick={() => toggleSection('departments')}
@@ -740,8 +750,10 @@ export default function StaffDashboardMap({
                             </div>
                         )}
                     </div>
+                    )}
 
                     {/* Staff Filters */}
+                    {operationalFilters && (
                     <div className="border-b border-white/5">
                         <button
                             onClick={() => toggleSection('staff')}
@@ -798,8 +810,10 @@ export default function StaffDashboardMap({
                             </div>
                         )}
                     </div>
+                    )}
 
                     {/* Priority Level Filter */}
+                    {operationalFilters && (
                     <div className="border-b border-white/5">
                         <button
                             onClick={() => toggleSection('priority')}
@@ -815,10 +829,10 @@ export default function StaffDashboardMap({
                         {expandedSections.priority && (
                             <div className="px-4 pb-4 space-y-2">
                                 {[
-                                    { value: 'high', label: "High (8-10)", color: '#ef4444' },
-                                    { value: 'medium', label: "Medium (5-7)", color: '#f59e0b' },
-                                    { value: 'low', label: "Low (1-4)", color: '#22c55e' },
-                                ].map(option => (
+                                    BANDS.map(b => ({
+                                        value: b.level, label: bandLabel(b.level), color: b.hex,
+                                    }))
+                                ].flat().map(option => (
                                     <label key={option.value} className="flex items-center gap-3 cursor-pointer group">
                                         <input
                                             type="checkbox"
@@ -838,9 +852,10 @@ export default function StaffDashboardMap({
                             </div>
                         )}
                     </div>
+                    )}
 
                     {/* GeoJSON Layers */}
-                    {mapLayers.length > 0 && (
+                    {operationalFilters && mapLayers.length > 0 && (
                         <div className="border-b border-white/5">
                             <button
                                 onClick={() => toggleSection('layers')}
@@ -961,6 +976,20 @@ export default function StaffDashboardMap({
                             <span className="text-white/70 font-medium capitalize">{status.replace('_', ' ')}</span>
                         </div>
                     ))}
+                    {/* The shape, not the colour. An asset layer's colour is
+                        chosen by whoever uploaded it and can be any of the
+                        three above, so a colour swatch here would explain
+                        nothing. */}
+                    {mapLayers.length > 0 && (
+                        <div className="flex items-center gap-2 pl-4 border-l border-white/15">
+                            <span
+                                className="w-3 h-3 bg-white/70 shadow-lg"
+                                style={{ transform: 'rotate(45deg)' }}
+                                aria-hidden="true"
+                            />
+                            <span className="text-white/70 font-medium">Town asset</span>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

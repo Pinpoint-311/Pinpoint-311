@@ -60,6 +60,8 @@ import { usePageNavigation } from '../hooks/usePageNavigation';
 import NotificationSettings from '../components/NotificationSettings';
 import ManualIntake from '../components/ManualIntake';
 import ActivityFeed from '../components/ActivityFeed';
+import { bellAppearance, readIdsFromStorage, unreadCount } from '../components/activityBell';
+import { bandFor, bandLabel, countByBand } from '../components/priority';
 import PrintWorkOrder from '../components/PrintWorkOrder';
 
 type View = 'dashboard' | 'active' | 'in_progress' | 'resolved' | 'statistics';
@@ -123,6 +125,9 @@ export default function StaffDashboard() {
     const [requests, setRequests] = useState<ServiceRequest[]>([]);
     const [allRequests, setAllRequests] = useState<ServiceRequest[]>([]); // For dashboard map
     const [selectedRequest, setSelectedRequest] = useState<ServiceRequestDetail | null>(null);
+    // Which statistics sections failed to load, in words, for the banner.
+    const [statsErrors, setStatsErrors] = useState<string[]>([]);
+    const [statsLoading, setStatsLoading] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
     const [showIntakeModal, setShowIntakeModal] = useState(false);
@@ -216,6 +221,7 @@ export default function StaffDashboard() {
 
     // Activity feed state
     const [showActivityFeed, setShowActivityFeed] = useState(false);
+    const [activityTick, setActivityTick] = useState(0);
 
     // Export dropdown open state (keyboard-operable)
     const [exportOpen, setExportOpen] = useState(false);
@@ -257,6 +263,17 @@ export default function StaffDashboard() {
     const userDepartmentIds = useMemo(() => {
         return user?.departments?.map(d => d.id) || [];
     }, [user]);
+
+    // Recomputed when the polled request list changes, which is the only thing
+    // that can make it go up. `activityTick` lets the feed tell us it has
+    // marked things read, without this reaching into localStorage on every
+    // render the way the inline version did.
+    const unreadActivity = useMemo(() => unreadCount({
+        requests: allRequests,
+        readIds: readIdsFromStorage(localStorage.getItem('activityFeedRead')),
+        departmentIds: userDepartmentIds,
+        now: Date.now(),
+    }), [allRequests, userDepartmentIds, activityTick, showActivityFeed]);
 
     // Filtered and sorted requests based on current view and filters
     const filteredSortedRequests = useMemo(() => {
@@ -362,8 +379,8 @@ export default function StaffDashboard() {
         if (mapPriorityFilter === 'all') return allRequests;
         return allRequests.filter(r => {
             const priority = getEffectivePriority(r);
-            if (mapPriorityFilter === 'high') return priority >= 8;
-            if (mapPriorityFilter === 'medium') return priority >= 5 && priority < 8;
+            if (mapPriorityFilter === 'high') return bandFor(priority) === 'high';
+            if (mapPriorityFilter === 'medium') return bandFor(priority) === 'medium';
             if (mapPriorityFilter === 'low') return priority < 5;
             return true;
         });
@@ -421,6 +438,50 @@ export default function StaffDashboard() {
             loadStatistics();
         }
     }, [currentView]);
+
+    // Refresh the open request, not just the list.
+    //
+    // The 30s poll above replaces `allRequests`, which is why the list and
+    // everything derived from it stays current. `selectedRequest` is fetched
+    // once, on click, and never again -- so a report opened the moment it
+    // arrives keeps whatever its AI analysis was at that instant. The worker
+    // finishes the triage a few seconds later, writes it to the row, and the
+    // open panel goes on showing the state it was born with until the page is
+    // reloaded by hand.
+    //
+    // Two rates. The slow one keeps a long-open panel honest. The fast one
+    // runs only while the analysis is genuinely still coming and stops as soon
+    // as it lands, fails, or the minute is up -- the point is that the panel
+    // fills in by itself, not that it polls forever.
+    const selectedId = selectedRequest?.service_request_id;
+    const analysisPending = !!selectedRequest && (() => {
+        const ai = selectedRequest.ai_analysis as Record<string, unknown> | null;
+        if (ai && (ai._error || ai.priority_score != null || ai.qualitative_analysis)) return false;
+        if (selectedRequest.ai_summary) return false;
+        // Only for a report new enough that triage could still be running.
+        const submitted = selectedRequest.requested_datetime
+            ? Date.parse(selectedRequest.requested_datetime as unknown as string)
+            : NaN;
+        return Number.isFinite(submitted) && Date.now() - submitted < 10 * 60 * 1000;
+    })();
+
+    useEffect(() => {
+        if (!selectedId) return;
+        const period = analysisPending ? 5000 : 30000;
+        const tick = setInterval(async () => {
+            try {
+                const fresh = await api.getRequestDetail(selectedId);
+                // Guard against a slow response landing after the user has
+                // moved on, which would reopen the previous request's data.
+                setSelectedRequest(prev =>
+                    prev && prev.service_request_id === fresh.service_request_id ? fresh : prev);
+            } catch {
+                // A failed refresh leaves what is on screen alone. The next
+                // tick tries again.
+            }
+        }, period);
+        return () => clearInterval(tick);
+    }, [selectedId, analysisPending]);
 
     // Auto-load request if URL contains requestId
     useEffect(() => {
@@ -520,23 +581,47 @@ export default function StaffDashboard() {
         }
     };
 
+    /**
+     * Five independent calls, five independent failures.
+     *
+     * These used to share one Promise.all in which the first two had no
+     * .catch(). Promise.all rejects on the first rejection, so a single failing
+     * endpoint meant none of the five setState calls ran and the entire
+     * statistics page rendered blank -- including the four sections whose data
+     * had arrived perfectly. The only trace was a console.error nobody has open.
+     *
+     * Now each one settles on its own and a failure is reported on screen,
+     * naming the section, so a page that is 80% working looks 80% working and
+     * says what the missing fifth was.
+     */
     const loadStatistics = async () => {
-        try {
-            const [statsData, advancedData, heatmap, sla, redirected] = await Promise.all([
-                api.getStatistics(),
-                api.getAdvancedStatistics(),
-                api.getHeatmapData().catch(() => null),
-                api.getSlaPerformance(90).catch(() => null),
-                api.getRedirectedStatistics(30).catch(() => null)
-            ]);
-            setStatistics(statsData);
-            setAdvancedStats(advancedData);
-            if (heatmap) setHeatmapData(heatmap);
-            setSlaPerf(sla);
-            setRedirects(redirected);
-        } catch (err) {
-            console.error('Failed to load statistics:', err);
-        }
+        setStatsLoading(true);
+        const failures: string[] = [];
+
+        const load = async <T,>(label: string, call: () => Promise<T>): Promise<T | null> => {
+            try {
+                return await call();
+            } catch (err) {
+                failures.push(`${label}: ${err instanceof Error ? err.message : 'request failed'}`);
+                return null;
+            }
+        };
+
+        const [statsData, advancedData, heatmap, sla, redirected] = await Promise.all([
+            load('Summary counts', () => api.getStatistics()),
+            load('Trends and hotspots', () => api.getAdvancedStatistics()),
+            load('Heatmap', () => api.getHeatmapData()),
+            load('SLA performance', () => api.getSlaPerformance(90)),
+            load('Redirected reports', () => api.getRedirectedStatistics(30)),
+        ]);
+
+        if (statsData) setStatistics(statsData);
+        if (advancedData) setAdvancedStats(advancedData);
+        if (heatmap) setHeatmapData(heatmap);
+        setSlaPerf(sla);
+        setRedirects(redirected);
+        setStatsErrors(failures);
+        setStatsLoading(false);
     };
 
     const loadRequestDetail = async (requestId: string) => {
@@ -821,32 +906,29 @@ export default function StaffDashboard() {
                             </button>
                             <div className="flex items-center gap-2">
                                 {/* Activity Feed Bell */}
-                                <button
-                                    onClick={() => setShowActivityFeed(true)}
-                                    className="relative p-2 hover:bg-white/10 rounded-lg transition-colors"
-                                    aria-label="Open activity feed"
-                                >
-                                    <Bell className="w-5 h-5 text-white/60" aria-hidden="true" />
-                                    {/* Calculate and show unread count */}
-                                    {(() => {
-                                        const now = Date.now();
-                                        const twentyFourHours = 24 * 60 * 60 * 1000;
-                                        const readItems = JSON.parse(localStorage.getItem('activityFeedRead') || '[]');
-                                        const readSet = new Set(readItems);
-                                        let count = 0;
-                                        allRequests.forEach(req => {
-                                            const age = now - new Date(req.requested_datetime).getTime();
-                                            if (age < twentyFourHours && req.assigned_department_id && userDepartmentIds.includes(req.assigned_department_id)) {
-                                                if (!readSet.has(`new-${req.service_request_id}`)) count++;
-                                            }
-                                        });
-                                        return count > 0 ? (
-                                            <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-[10px] font-bold text-white flex items-center justify-center animate-pulse">
-                                                {count > 9 ? '9+' : count}
-                                            </span>
-                                        ) : null;
-                                    })()}
-                                </button>
+                                {(() => {
+                                    // The bell itself changes, not just the dot
+                                    // beside it. A grey bell with a small badge,
+                                    // on a dark sidebar, next to four other grey
+                                    // icons, is the thing you are meant to notice
+                                    // drawn like the things you are meant to
+                                    // ignore.
+                                    const look = bellAppearance(unreadActivity);
+                                    return (
+                                        <button
+                                            onClick={() => setShowActivityFeed(true)}
+                                            className={`relative p-2 rounded-lg transition-colors ${unreadActivity > 0 ? 'bg-amber-500/15 hover:bg-amber-500/25 ring-1 ring-amber-400/30' : 'hover:bg-white/10'}`}
+                                            aria-label={look.label}
+                                        >
+                                            <Bell className={`w-5 h-5 transition-colors ${look.icon}`} aria-hidden="true" />
+                                            {unreadActivity > 0 && (
+                                                <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 bg-red-500 rounded-full text-[10px] font-bold text-white flex items-center justify-center">
+                                                    {unreadActivity > 9 ? '9+' : unreadActivity}
+                                                </span>
+                                            )}
+                                        </button>
+                                    );
+                                })()}
                                 <button
                                     onClick={() => setSidebarOpen(false)}
                                     className="lg:hidden p-2 hover:bg-white/10 rounded-lg"
@@ -1001,6 +1083,7 @@ export default function StaffDashboard() {
                                     departments={departments}
                                     users={users}
                                     mapLayers={mapLayers}
+                                    operationalFilters
                                     townshipBoundary={mapsConfig.township_boundary}
                                     defaultCenter={mapsConfig.default_center}
                                     onRequestSelect={handleMapRequestSelect}
@@ -1015,6 +1098,44 @@ export default function StaffDashboard() {
                                 </div>
                             )}
                         </div>
+
+                        {/* What did not load, and why.
+                            A statistics page that is missing a section should
+                            say so. This one used to go blank whenever any one
+                            of its five sources failed, with the reason in a
+                            console nobody has open. */}
+                        {statsErrors.length > 0 && (
+                            <div
+                                role="alert"
+                                className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4"
+                            >
+                                <div className="flex items-start gap-3">
+                                    <AlertTriangle className="w-5 h-5 text-amber-300 mt-0.5 shrink-0" />
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-semibold text-amber-100">
+                                            {statsErrors.length === 1
+                                                ? 'One section could not be loaded'
+                                                : `${statsErrors.length} sections could not be loaded`}
+                                        </p>
+                                        <p className="text-xs text-amber-200/80 mt-1">
+                                            Everything else on this page is up to date.
+                                        </p>
+                                        <ul className="mt-2 space-y-1">
+                                            {statsErrors.map((e, i) => (
+                                                <li key={i} className="text-xs text-amber-200/90 break-words">• {e}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                    <button
+                                        onClick={() => loadStatistics()}
+                                        disabled={statsLoading}
+                                        className="shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-100 border border-amber-500/30 transition-colors disabled:opacity-50"
+                                    >
+                                        {statsLoading ? 'Retrying…' : 'Try again'}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
 
                         {/* Stats Cards - Clickable */}
                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1170,18 +1291,11 @@ export default function StaffDashboard() {
                             <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
                                 <h2 className="text-lg font-semibold text-white mb-4">Priority Distribution</h2>
                                 {(() => {
-                                    const highPriority = allRequests.filter(r => {
-                                        const p = (r as any).manual_priority_score ?? ((r as any).ai_analysis?.priority_score) ?? 5;
-                                        return p >= 8;
-                                    }).length;
-                                    const mediumPriority = allRequests.filter(r => {
-                                        const p = (r as any).manual_priority_score ?? ((r as any).ai_analysis?.priority_score) ?? 5;
-                                        return p >= 5 && p < 8;
-                                    }).length;
-                                    const lowPriority = allRequests.filter(r => {
-                                        const p = (r as any).manual_priority_score ?? ((r as any).ai_analysis?.priority_score) ?? 5;
-                                        return p < 5;
-                                    }).length;
+                                    // One pass over one definition, so the three
+                                    // numbers always sum to the total and always
+                                    // agree with the labels underneath them.
+                                    const { high: highPriority, medium: mediumPriority, low: lowPriority } =
+                                        countByBand(allRequests);
                                     const total = allRequests.length || 1;
                                     return (
                                         <div className="space-y-3">
@@ -1197,9 +1311,9 @@ export default function StaffDashboard() {
                                                 </div>
                                             </div>
                                             <div className="flex flex-col sm:flex-row justify-between text-xs sm:text-sm gap-1">
-                                                <span className="text-red-300">● High (8-10): <strong>{highPriority}</strong></span>
-                                                <span className="text-amber-300">● Medium (5-7): <strong>{mediumPriority}</strong></span>
-                                                <span className="text-emerald-300">● Low (1-4): <strong>{lowPriority}</strong></span>
+                                                <span className="text-red-300">● {bandLabel('high')}: <strong>{highPriority}</strong></span>
+                                                <span className="text-amber-300">● {bandLabel('medium')}: <strong>{mediumPriority}</strong></span>
+                                                <span className="text-emerald-300">● {bandLabel('low')}: <strong>{lowPriority}</strong></span>
                                             </div>
                                         </div>
                                     );
@@ -1870,9 +1984,9 @@ export default function StaffDashboard() {
                                                 aria-label="Filter by priority level"
                                             >
                                                 <option value="all">All Priorities</option>
-                                                <option value="high">🔴 High (8-10)</option>
-                                                <option value="medium">🟡 Medium (5-7)</option>
-                                                <option value="low">🟢 Low (1-4)</option>
+                                                <option value="high">🔴 {bandLabel('high')}</option>
+                                                <option value="medium">🟡 {bandLabel('medium')}</option>
+                                                <option value="low">🟢 {bandLabel('low')}</option>
                                             </select>
                                         </div>
 
@@ -2033,15 +2147,22 @@ export default function StaffDashboard() {
                                                 <h1 className="text-base sm:text-lg font-semibold text-white truncate">{selectedRequest.service_name}</h1>
                                             </div>
                                             <div className="flex items-center gap-1.5 shrink-0">
+                                                {/* Only when there is a work order to refresh. Without a
+                                                    link this button's own endpoint answers "This request
+                                                    isn't linked to any external platform" -- so on a town
+                                                    with no integrations it was a control that existed
+                                                    solely to report that it does nothing. */}
+                                                {(selectedRequest.external_links?.length ?? 0) > 0 && (
                                                 <button
                                                     onClick={handleRefreshWorkOrder}
                                                     disabled={woRefresh.busy}
-                                                    title="Pull the latest work-order status (assignment, schedule, resolution) from any connected system"
+                                                    title={`Pull the latest work-order status (assignment, schedule, resolution) from ${selectedRequest.external_links!.join(', ')}`}
                                                     className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-white/70 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-colors disabled:opacity-50"
                                                 >
                                                     <RefreshCw className={`w-3.5 h-3.5 ${woRefresh.busy ? 'animate-spin' : ''}`} aria-hidden="true" />
                                                     <span className="hidden sm:inline">{woRefresh.busy ? 'Refreshing…' : 'Refresh work order'}</span>
                                                 </button>
+                                                )}
                                                 <PrintWorkOrder
                                                     request={selectedRequest}
                                                     auditLog={auditLog}
@@ -3358,7 +3479,7 @@ export default function StaffDashboard() {
             {/* Activity Feed Panel */}
             <ActivityFeed
                 isOpen={showActivityFeed}
-                onClose={() => setShowActivityFeed(false)}
+                onClose={() => { setShowActivityFeed(false); setActivityTick(t => t + 1); }}
                 requests={allRequests}
                 userId={user?.username || ''}
                 userDepartmentIds={userDepartmentIds}

@@ -194,6 +194,63 @@ export type Capability =
     | 'ai' | 'translation' | 'identity' | 'maps'
     | 'email' | 'sms' | 'kms' | 'redaction';
 
+export interface RetentionPreviewRecord {
+    service_request_id: string | null;
+    service_name: string | null;
+    address: string | null;
+    closed_datetime: string | null;
+    age_days: number | null;
+    /** How long past eligibility it already is. */
+    days_past_retention: number | null;
+}
+
+export interface RetentionPreview {
+    eligible: number;
+    on_legal_hold: number;
+    will_act_on?: number;
+    mode: 'redact' | 'purge';
+    state_code?: string;
+    policy_name?: string;
+    retention_days?: number;
+    cutoff_date?: string | null;
+    confirmation_required?: string | null;
+    /** Set to 'legal_hold' when an instance-wide hold freezes everything. */
+    blocked?: string;
+    /** What a run will actually empty, in the words the settings screen uses. */
+    scrub_fields?: string[];
+    /** The records themselves, oldest first. Empty under a legal hold. */
+    records: RetentionPreviewRecord[];
+    summary: {
+        total: number;
+        showing: number;
+        truncated: boolean;
+        retention_days: number;
+        cutoff: string | null;
+        oldest_age_days: number | null;
+        newest_age_days: number | null;
+    } | null;
+    timezone?: string;
+}
+
+export interface PublicRecordsField {
+    id: string;
+    label: string;
+    /** Identifies the person who reported it. Off unless deliberately chosen. */
+    sensitive: boolean;
+    selected: boolean;
+    note?: string;
+}
+
+export interface PublicRecordsExportOptions {
+    startDate?: string;
+    endDate?: string;
+    statuses?: string[];
+    serviceCodes?: string[];
+    requestIds?: string[];
+    fields?: string[];
+    includeArchived?: boolean;
+}
+
 class ApiClient {
     private token: string | null = null;
     private onUnauthorized: (() => void) | null = null;
@@ -501,10 +558,6 @@ class ApiClient {
         return this.request<User[]>('/users/staff');
     }
 
-    // Public staff list (no auth required, for resident portal filters)
-    async getPublicStaffList(): Promise<User[]> {
-        return this.request<User[]>('/users/staff/public');
-    }
 
     async createUser(data: UserCreate): Promise<User> {
         return this.request<User>('/users/', {
@@ -1146,15 +1199,9 @@ class ApiClient {
     }
 
     /** What "Run now" would actually do, before it does it. */
-    async previewRetentionRun(): Promise<{
-        eligible: number; on_legal_hold: number; will_act_on?: number;
-        mode: 'redact' | 'purge'; state_code?: string; policy_name?: string;
-        retention_days?: number; cutoff_date?: string | null;
-        confirmation_required?: string | null; blocked?: string;
-        /** What a run will actually empty, in the words the settings screen uses. */
-        scrub_fields?: string[];
-    }> {
-        return this.request('/system/retention/preview');
+    /** What "Run now" would do, and the records it would do it to. */
+    async previewRetentionRun(limit = 50): Promise<RetentionPreview> {
+        return this.request<RetentionPreview>(`/system/retention/preview?limit=${limit}`);
     }
 
     async runRetentionNow(confirm?: string): Promise<{ status: string; task_id: string; message: string }> {
@@ -1180,10 +1227,21 @@ class ApiClient {
         return this.request('/system/retention/legal-hold');
     }
 
-    async exportForPublicRecords(startDate?: string, endDate?: string): Promise<void> {
+    /** The catalog a records custodian picks from, and which fields are sensitive. */
+    async getPublicRecordsFields(): Promise<{ fields: PublicRecordsField[] }> {
+        return this.request<{ fields: PublicRecordsField[] }>('/system/retention/export/fields');
+    }
+
+    async exportForPublicRecords(options: PublicRecordsExportOptions = {}): Promise<void> {
         const params = new URLSearchParams();
-        if (startDate) params.append('start_date', startDate);
-        if (endDate) params.append('end_date', endDate);
+        if (options.startDate) params.append('start_date', options.startDate);
+        if (options.endDate) params.append('end_date', options.endDate);
+        // Repeated keys, which is how FastAPI reads a List[str] query param.
+        options.statuses?.forEach(v => params.append('statuses', v));
+        options.serviceCodes?.forEach(v => params.append('service_codes', v));
+        options.requestIds?.forEach(v => params.append('request_ids', v));
+        options.fields?.forEach(v => params.append('fields', v));
+        if (options.includeArchived === false) params.append('include_archived', 'false');
         const queryString = params.toString() ? `?${params.toString()}` : '';
 
         const response = await fetch(`/api/system/retention/export${queryString}`, {

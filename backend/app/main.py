@@ -98,6 +98,125 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class AdminActionAuditMiddleware(BaseHTTPMiddleware):
+    """Record every authenticated change, so nothing has to remember to.
+
+    The admin audit log held sign-ins and almost nothing else. Not because it
+    filtered anything out -- because fifty-two authenticated mutating endpoints
+    never called it. Creating a user, deleting a department, saving a
+    credential, replacing the town boundary: none of them left a record.
+
+    Adding a call to each is the obvious fix and it is the fix that decays. The
+    fifty-third endpoint will not have one either, and nothing will say so.
+
+    So this is the backstop: any authenticated request that changes something
+    and succeeds is recorded, with who, what, and when. Handlers that have
+    something more specific to say -- "role changed to admin", "department
+    deleted, name Public Works" -- say it and suppress this, so the trail has
+    one entry per action rather than two.
+
+    Three things it deliberately does not do:
+
+      * never fail a request. An audit write that 500s a user's edit is worse
+        than a missing line, and the edit has already been committed by the
+        time this runs.
+      * never record a read. GET is the overwhelming majority of traffic and a
+        log nobody can scroll is a log nobody reads.
+      * never record a failed or unauthenticated attempt here. Those are real
+        and worth having, but they belong with the auth events that already
+        capture them, and a 401 flood would bury the successful changes.
+    """
+
+    MUTATIONS = {"POST", "PUT", "PATCH", "DELETE"}
+
+    # Paths where a per-request entry is noise rather than signal. Each of
+    # these either writes its own record elsewhere or changes nothing.
+    SKIP_PREFIXES = (
+        "/api/auth/",              # login/logout already write their own events
+        "/api/system/translate/",  # a rendering call, made per page view
+        "/api/system/upload/",     # the request it belongs to records the upload
+        "/api/open311/",           # per-request actions live on the request's own timeline
+        "/api/research/",          # read-only analysis with its own access log
+        "/api/telemetry",          # machine polling
+    )
+
+    async def dispatch(self, request: Request, call_next):
+        from app.services.admin_audit import begin_request, was_recorded
+
+        token = begin_request()
+        try:
+            response = await call_next(request)
+        finally:
+            pass
+
+        try:
+            if request.method.upper() not in self.MUTATIONS:
+                return response
+            if response.status_code >= 400:
+                return response
+            path = request.url.path
+            if any(path.startswith(p) for p in self.SKIP_PREFIXES):
+                return response
+            if was_recorded():
+                # The handler said something more specific.
+                return response
+
+            actor = _actor_from_request(request)
+            if not actor:
+                return response
+
+            from app.db.session import SessionLocal
+            from app.services.audit_service import AuditService
+
+            async with SessionLocal() as db:
+                await AuditService.log_event(
+                    db,
+                    event_type="admin_change",
+                    success=True,
+                    username=actor,
+                    details={
+                        "method": request.method.upper(),
+                        # The path only. Query strings and bodies carry the
+                        # values being set, and this table is exported.
+                        "path": path,
+                        "status": response.status_code,
+                    },
+                )
+        except Exception as exc:  # noqa: BLE001 -- see the docstring
+            logging.getLogger(__name__).warning(
+                "[Audit] could not record %s %s: %s",
+                request.method, request.url.path, exc,
+            )
+        finally:
+            try:
+                from app.services.admin_audit import _recorded
+                _recorded.reset(token)
+            except Exception:
+                pass
+
+        return response
+
+
+def _actor_from_request(request: Request) -> "str | None":
+    """The username on the bearer token, or None.
+
+    Decoded rather than taken from `request.state`: BaseHTTPMiddleware hands
+    the downstream app its own Request, so anything a dependency stashed is not
+    reliably visible here. Signature and expiry are checked, so an actor name
+    cannot be forged by sending an arbitrary token.
+    """
+    header = request.headers.get("authorization") or ""
+    if not header.lower().startswith("bearer "):
+        return None
+    try:
+        from app.core.auth import decode_token
+
+        payload = decode_token(header.split(" ", 1)[1].strip())
+        return payload.get("sub")
+    except Exception:
+        return None
+
+
 class DemoModeMiddleware(BaseHTTPMiddleware):
     """In DEMO_MODE, block mutating requests to admin/system routes.
     
@@ -368,6 +487,10 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Security headers middleware (added first, runs last)
 app.add_middleware(SecurityHeadersMiddleware)
+
+# Every authenticated change gets a line, whether or not its handler
+# remembered to write one.
+app.add_middleware(AdminActionAuditMiddleware)
 
 # Demo mode middleware — block admin mutations
 app.add_middleware(DemoModeMiddleware)

@@ -22,6 +22,7 @@ from app.schemas import (
 )
 from app.core.auth import get_current_admin, get_current_staff
 from app.services.system_settings import get_settings as read_settings_row
+from app.services.backlog_age import bucket_ages
 from app.services.enqueue import QUEUE_UNAVAILABLE
 from app.core.sanitize import sanitize_for_log
 from slowapi import Limiter
@@ -1757,6 +1758,7 @@ async def set_town_timezone(
 
 @router.get("/retention/preview")
 async def preview_retention_run(
+    limit: int = Query(50, ge=1, le=500, description="How many records to list"),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin),
 ):
@@ -1779,6 +1781,11 @@ async def preview_retention_run(
             "on_legal_hold": 0,
             "mode": getattr(settings, "retention_mode", None) or "anonymize",
             "blocked": "legal_hold",
+            # Listing records that "will be archived next run" while a hold
+            # means nothing can be archived is the sort of contradiction that
+            # gets a screen distrusted.
+            "records": [],
+            "summary": None,
         }
 
     state_code = (settings.retention_state_code if settings else None) or "NJ"
@@ -1798,6 +1805,16 @@ async def preview_retention_run(
     )).scalar() or 0
 
     eligible = stats.get("eligible_for_archival", 0) if isinstance(stats, dict) else 0
+
+    from app.services.retention_service import get_records_for_archival
+    from app.services.retention_window import describe_record, retention_cutoff, summarise
+    from app.services.town_time import normalise_timezone
+
+    cutoff = retention_cutoff(policy.get("retention_days", 0), override_days)
+    rows = await get_records_for_archival(db, state_code, override_days, limit=limit)
+    records = [describe_record(r, cutoff=cutoff) for r in rows]
+    records.sort(key=lambda r: r["age_days"] if r["age_days"] is not None else -1, reverse=True)
+
     return {
         "eligible": eligible,
         "on_legal_hold": held,
@@ -1817,6 +1834,22 @@ async def preview_retention_run(
                 getattr(settings, "retention_scrub_fields", None) if settings else None
             ) if f["selected"]
         ],
+        # The records themselves, oldest first.
+        #
+        # A count is not reviewable. It cannot show that the oldest eligible
+        # record is four years past its date because the policy has never
+        # actually run, and it cannot show that a report somebody assumed was
+        # exempt is in the list because nobody set the hold on it.
+        #
+        # Drawn from get_records_for_archival -- the function the sweep itself
+        # calls -- rather than a second query that resembles it. A preview
+        # computed differently from the run invites somebody to confirm against
+        # a list that is not the list.
+        "records": records,
+        "summary": summarise(records, total=eligible,
+                             retention_days=policy.get("retention_days", 0),
+                             cutoff=cutoff),
+        "timezone": normalise_timezone(getattr(settings, "timezone", None) if settings else None),
     }
 
 
@@ -1900,87 +1933,148 @@ async def get_legal_hold_requests(
     }
 
 
+@router.get("/retention/export/fields")
+async def public_records_export_fields(
+    _: User = Depends(get_current_admin),
+):
+    """What a records custodian can choose to include, and what is sensitive.
+
+    Served rather than hardcoded in the UI so the picker, the export and the
+    audit entry are all describing the same catalog.
+    """
+    from app.services.opra_export import describe_fields
+
+    return {"fields": describe_fields()}
+
+
 @router.get("/retention/export")
 async def export_for_public_records(
-    start_date: str = None,
-    end_date: str = None,
+    start_date: Optional[str] = Query(None, description="ISO date or datetime"),
+    end_date: Optional[str] = Query(None, description="ISO date or datetime; a bare date means end of that day"),
+    statuses: Optional[List[str]] = Query(None, description="open / in_progress / closed"),
+    service_codes: Optional[List[str]] = Query(None, description="Limit to these categories"),
+    request_ids: Optional[List[str]] = Query(None, description="Specific request ids"),
+    fields: Optional[List[str]] = Query(None, description="Field ids; omit for the usual set"),
+    include_archived: bool = Query(True, description="Include records whose contents retention has cleared"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin)
+    current_user: User = Depends(get_current_admin),
 ):
+    """Export records for an OPRA/FOIA/public-records request.
+
+    A custodian is answering a specific request: releasing the records asked
+    for, and not the ones that were not. This used to offer a date range and a
+    fixed set of ten columns, so "pothole complaints on Main Street in 2024"
+    was answered with every report the town has ever taken, and a request that
+    should have excluded internal notes could not exclude them.
+
+    Over-disclosure is the failure that matters. A resident's phone number
+    released in answer to a request that did not ask for it cannot be taken
+    back, and they never knew it was in scope -- so the reporter fields are
+    opt-in by name, and choosing one is recorded.
     """
-    Export records for OPRA/FOIA/public records requests.
-    Uses state-specific format based on configured retention policy.
-    """
-    from app.services.retention_service import get_retention_policy
-    from app.models import ServiceRequest
     from datetime import datetime, timezone
     import csv
     import io
+
     from fastapi.responses import StreamingResponse
-    
-    # Get current state policy
-    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
-    settings = result.scalar_one_or_none()
-    state_code = settings.retention_state_code if settings else "NJ"
+
+    from sqlalchemy.orm import selectinload
+
+    from app.models import ServiceRequest
+    from app.services.admin_audit import record_admin_action
+    from app.services.opra_export import (
+        UnknownField, build_row, headers, normalise_fields, parse_boundary,
+        preamble, sensitive_selected,
+    )
+    from app.services.retention_service import get_retention_policy
+
+    try:
+        chosen = normalise_fields(fields)
+        start = parse_boundary(start_date)
+        end = parse_boundary(end_date, end=True)
+    except (UnknownField, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if not chosen:
+        raise HTTPException(status_code=400, detail="Choose at least one field to export.")
+
+    # Releasing the reporter's identity is a decision, not a default. The
+    # export endpoint elsewhere already gates bulk PII on admin; this one is
+    # admin-only throughout, so the gate here is that it is recorded and that
+    # the file says which fields were left out.
+    sensitive = sensitive_selected(chosen)
+
+    settings = await read_settings_row(db)
+    state_code = (getattr(settings, "retention_state_code", None) or "NJ") if settings else "NJ"
     policy = get_retention_policy(state_code)
-    
-    # Build query
-    query = select(ServiceRequest).where(
-        ServiceRequest.deleted_at.is_(None)
-    ).order_by(ServiceRequest.requested_datetime.desc())
-    
-    if start_date:
-        query = query.where(ServiceRequest.requested_datetime >= datetime.fromisoformat(start_date))
-    if end_date:
-        query = query.where(ServiceRequest.requested_datetime <= datetime.fromisoformat(end_date))
-    
-    result = await db.execute(query)
-    records = result.scalars().all()
-    
-    # Generate CSV with state-specific header
+
+    query = select(ServiceRequest).options(
+        selectinload(ServiceRequest.assigned_department)
+    ).where(ServiceRequest.deleted_at.is_(None))
+
+    if start:
+        query = query.where(ServiceRequest.requested_datetime >= start)
+    if end:
+        query = query.where(ServiceRequest.requested_datetime <= end)
+    if statuses:
+        query = query.where(ServiceRequest.status.in_(statuses))
+    if service_codes:
+        query = query.where(ServiceRequest.service_code.in_(service_codes))
+    if request_ids:
+        query = query.where(ServiceRequest.service_request_id.in_(request_ids))
+    if not include_archived:
+        query = query.where(ServiceRequest.archived_at.is_(None))
+
+    query = query.order_by(ServiceRequest.requested_datetime.desc())
+    records = (await db.execute(query)).scalars().all()
+
+    generated = datetime.now(timezone.utc)
     output = io.StringIO()
-    
-    # Write header with public records law info
-    output.write(f"# {policy['public_records_law']} EXPORT\n")
-    output.write(f"# State: {policy['name']} ({state_code})\n")
-    output.write(f"# Generated: {datetime.now(timezone.utc).isoformat()}Z\n")
-    output.write(f"# Total Records: {len(records)}\n")
-    output.write(f"# Exported by: {current_user.username}\n")
-    output.write("#\n")
-    
+    for line in preamble(
+        law=policy["public_records_law"], state_name=policy["name"], state_code=state_code,
+        total=len(records), exported_by=current_user.username, fields=chosen,
+        filters={
+            "start_date": start_date, "end_date": end_date, "statuses": statuses,
+            "service_codes": service_codes, "request_ids": request_ids,
+        },
+        generated=generated,
+    ):
+        output.write(line + "\n")
+
     writer = csv.writer(output)
-    writer.writerow([
-        "Request ID", "Service Type", "Status", "Submitted Date", 
-        "Address", "Lat", "Long", "Description",
-        "Resolution Date", "Resolution Notes"
-    ])
-    
-    for r in records:
-        # Handle archived records - show [Archived] for description
-        desc = "[Content archived per retention policy]" if r.archived_at else (r.description or "")
-        writer.writerow([
-            r.service_request_id,
-            r.service_name,
-            r.status,
-            r.requested_datetime.isoformat() if r.requested_datetime else "",
-            r.address or "",
-            r.lat or "",
-            r.long or "",
-            desc,
-            r.closed_datetime.isoformat() if r.closed_datetime else "",
-            r.completion_message or ""
-        ])
-    
+    writer.writerow(headers(chosen))
+    for record in records:
+        row = build_row(record, chosen)
+        # A record retention has cleared still exists and still counts; saying
+        # so beats a row of blanks that reads like a broken export.
+        if getattr(record, "archived_at", None) and "description" in chosen:
+            row[chosen.index("description")] = "[Content cleared per retention policy]"
+        writer.writerow(row)
+
+    # Every export, not only the ones carrying PII. "Which records left this
+    # building, when, and who took them" is the question an audit of a records
+    # process asks first.
+    await record_admin_action(
+        db, event_type="public_records_export", actor=current_user,
+        details={
+            "records": len(records),
+            "fields": chosen,
+            "sensitive_fields": sensitive,
+            "start_date": start_date, "end_date": end_date,
+            "statuses": statuses, "service_codes": service_codes,
+            "request_ids_count": len(request_ids) if request_ids else 0,
+            "state_code": state_code,
+        },
+    )
+
     output.seek(0)
-    
-    # Create filename with law name
-    law_abbrev = policy['public_records_law'].split('(')[0].strip().replace(' ', '_')
-    filename = f"{law_abbrev}_export_{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
-    
+    law_abbrev = policy["public_records_law"].split("(")[0].strip().replace(" ", "_")
+    filename = f"{law_abbrev}_export_{generated.strftime('%Y%m%d')}.csv"
+
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
 
@@ -2064,8 +2158,39 @@ STATS_CACHE_TTL = 300  # 5 minutes
 @router.get("/advanced-statistics", response_model=AdvancedStatisticsResponse)
 async def get_advanced_statistics(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_staff)
+    current_user: User = Depends(get_current_staff)
 ):
+    """Advanced statistics, with the reason written down when it cannot build them.
+
+    This endpoint is six hundred lines of aggregation and a single unguarded
+    exception anywhere in it returns a bare 500. That is what happened: an
+    aware/naive datetime subtraction raised TypeError, FastAPI turned it into
+    "Internal Server Error", and the browser console said `Request failed`.
+    Nothing named the line, the file, or the exception -- diagnosing it needed
+    the source rather than the logs.
+
+    So the failure is now logged with a traceback and the response says which
+    exception type it was. Not the message: an aggregation error can quote a
+    row, and this is rendered in a browser. The type plus the server log is
+    enough to find it and carries nothing a resident wrote.
+    """
+    try:
+        return await _advanced_statistics(db)
+    except Exception as exc:
+        logger.exception(
+            "[Statistics] advanced-statistics failed for %s",
+            sanitize_for_log(getattr(current_user, "username", "?")),
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"The advanced statistics could not be built ({type(exc).__name__}). "
+                f"The full error and its traceback are in the server log."
+            ),
+        )
+
+
+async def _advanced_statistics(db: AsyncSession):
     """Get advanced PostGIS-powered statistics (staff only, cached for 5 minutes)"""
     
     # Check cache first
@@ -2345,25 +2470,12 @@ async def get_advanced_statistics(
         avg_resolution_hours = round(float(avg_resolution_hours), 2)
     
     # Backlog by age
-    backlog_by_age = {"<1 day": 0, "1-3 days": 0, "3-7 days": 0, "1-2 weeks": 0, ">2 weeks": 0}
     open_requests_query = select(ServiceRequest.requested_datetime).where(
         ServiceRequest.deleted_at.is_(None),
         ServiceRequest.status.in_(["open", "in_progress"])
     )
     open_requests_result = await db.execute(open_requests_query)
-    for row in open_requests_result.all():
-        if row[0]:
-            age = now - row[0].replace(tzinfo=None)
-            if age < timedelta(days=1):
-                backlog_by_age["<1 day"] += 1
-            elif age < timedelta(days=3):
-                backlog_by_age["1-3 days"] += 1
-            elif age < timedelta(days=7):
-                backlog_by_age["3-7 days"] += 1
-            elif age < timedelta(days=14):
-                backlog_by_age["1-2 weeks"] += 1
-            else:
-                backlog_by_age[">2 weeks"] += 1
+    backlog_by_age = bucket_ages((row[0] for row in open_requests_result.all()), now)
     
     # Resolution rate (fixed: proper completion rate)
     # This is the percentage of all requests that have been successfully closed
@@ -2417,25 +2529,12 @@ async def get_advanced_statistics(
     workload_by_staff = {row[0]: row[1] for row in workload_result.all() if row[0]}
     
     # SLA tracking (open requests only, by age)
-    open_by_age_sla = {"<1 day": 0, "1-3 days": 0, "3-7 days": 0, "1-2 weeks": 0, ">2 weeks": 0}
     open_only_query = select(ServiceRequest.requested_datetime).where(
         ServiceRequest.deleted_at.is_(None),
         ServiceRequest.status == "open"  # Only "open" status, not in_progress
     )
     open_only_result = await db.execute(open_only_query)
-    for row in open_only_result.all():
-        if row[0]:
-            age = now - row[0].replace(tzinfo=None)
-            if age < timedelta(days=1):
-                open_by_age_sla["<1 day"] += 1
-            elif age < timedelta(days=3):
-                open_by_age_sla["1-3 days"] += 1
-            elif age < timedelta(days=7):
-                open_by_age_sla["3-7 days"] += 1
-            elif age < timedelta(days=14):
-                open_by_age_sla["1-2 weeks"] += 1
-            else:
-                open_by_age_sla[">2 weeks"] += 1
+    open_by_age_sla = bucket_ages((row[0] for row in open_only_result.all()), now)
     
     # ========== Predictive & Government Analytics ==========
     
@@ -3556,115 +3655,82 @@ async def switch_version(
 
 # ============ Custom Domain ============
 
+# Caddy's admin API, inside the compose network. Port 2019 is not published,
+# so this is reachable from sibling containers and not from the internet.
+CADDY_ADMIN = os.environ.get("CADDY_ADMIN_URL", "http://caddy:2019")
+
+
 @router.post("/domain/configure")
 async def configure_domain(
     domain: str,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
-    """Configure custom domain with automatic HTTPS via Caddy"""
+    """Point the town's own domain at this deployment, and make Caddy serve it."""
     from app.core.managed import ensure_not_managed
     ensure_not_managed("Domain/DNS configuration")  # platform-managed in hosted mode (A1)
-    import re
     import httpx
 
-    # Validate domain format
-    domain = domain.strip().lower()
-    domain_regex = r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'
-    if not re.match(domain_regex, domain):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid domain format"
-        )
-    
-    # Save domain to settings
-    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
-    settings = result.scalar_one_or_none()
-    if settings:
-        settings.custom_domain = domain
-        await db.commit()
-    
-    # Generate Caddyfile with custom domain (Caddy auto-handles HTTPS)
-    caddyfile_content = f"""# Global options - enable admin API for auto-reload
-{{
-    admin 0.0.0.0:2019
-}}
+    settings = await read_settings_row(db, create=True)
 
-# Caddy configuration for Township 311
-# Auto-generated - Custom domain: {domain}
+    # One snippet, in the directory the base Caddyfile already imports.
+    #
+    # This used to regenerate the whole Caddyfile from a template here, which
+    # dropped the security headers, dropped `import /etc/caddy/tenants/*.caddy`
+    # (every provisioned tenancy), dropped the orchestrator panel block, and
+    # pointed the frontend at `frontend:5173` -- the Vite dev server -- so a
+    # reload that worked would have returned 502 for every page.
+    from app.services.caddy_config import (
+        InvalidDomain, SNIPPET_NAME, describe_reload, normalise_domain, render_snippet,
+    )
 
-# Custom domain with automatic HTTPS
-{domain} {{
-    # API routes
-    handle /api/* {{
-        reverse_proxy backend:8000
-    }}
-
-    # Frontend - SPA routing
-    handle {{
-        reverse_proxy frontend:5173
-    }}
-
-    encode gzip
-
-    header {{
-        X-Content-Type-Options nosniff
-        X-Frame-Options DENY
-        Referrer-Policy strict-origin-when-cross-origin
-    }}
-}}
-
-# Also keep IP access on HTTP for fallback
-:80 {{
-    handle /api/* {{
-        reverse_proxy backend:8000
-    }}
-    handle {{
-        reverse_proxy frontend:5173
-    }}
-    encode gzip
-}}
-"""
-    
-    # Write Caddyfile to shared volume
-    caddyfile_path = os.environ.get("PROJECT_ROOT", "/project") + "/Caddyfile"
-    
     try:
-        with open(caddyfile_path, 'w') as f:
-            f.write(caddyfile_content)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to write Caddyfile"
-        )
-    
-    # Try to reload Caddy via its admin API
-    reload_success = False
-    reload_message = ""
-    
+        domain = normalise_domain(domain)
+    except InvalidDomain as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    settings.custom_domain = domain
+    await db.commit()
+
+    snippet_dir = os.environ.get("CADDY_TENANT_PATH", "/etc/caddy/tenants")
+    snippet_path = os.path.join(snippet_dir, SNIPPET_NAME)
+    try:
+        os.makedirs(snippet_dir, exist_ok=True)
+        with open(snippet_path, "w") as handle:
+            handle.write(render_snippet(domain))
+    except OSError as exc:
+        # The domain is saved either way -- it is what the emails and the
+        # portal links use. Say which half worked rather than rolling back a
+        # setting the administrator did successfully change.
+        logger.warning("[Domain] could not write %s: %s",
+                       sanitize_for_log(snippet_path), sanitize_for_log(str(exc)))
+        return {
+            "status": "partial",
+            "domain": domain,
+            "url": f"https://{domain}",
+            **describe_reload(False, "the reverse proxy config could not be written"),
+        }
+
+    # Ask Caddy to pick it up. The admin endpoint has to be reachable for this
+    # to work at all, which is why the shipped Caddyfile now sets
+    # `admin 0.0.0.0:2019` -- it defaults to localhost inside Caddy's own
+    # container, so this call was refused every time it has ever been made.
+    reload_ok, detail = False, ""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            # Try to load the new Caddyfile config
-            response = await client.post(
-                "http://caddy:2019/load",
-                content=caddyfile_content,
-                headers={"Content-Type": "text/caddyfile"}
-            )
-            if response.status_code == 200:
-                reload_success = True
-                reload_message = "Caddy reloaded - HTTPS will be active shortly!"
-            else:
-                reload_message = f"Caddy API returned {response.status_code}. Container restart may be needed."
-    except Exception as e:
-        reload_message = f"Caddyfile saved but could not reload Caddy automatically. Please run: docker-compose restart caddy"
-    
+            response = await client.post(f"{CADDY_ADMIN}/load", json=None,
+                                         headers={"Cache-Control": "must-revalidate"})
+            reload_ok = response.status_code in (200, 204)
+            if not reload_ok:
+                detail = f"the proxy answered {response.status_code}"
+    except Exception as exc:
+        detail = f"the proxy could not be reached ({type(exc).__name__})"
+
     return {
-        "status": "success" if reload_success else "partial",
-        "message": f"Domain {domain} configured! {reload_message}",
+        "status": "success" if reload_ok else "partial",
         "domain": domain,
         "url": f"https://{domain}",
-        "reload_success": reload_success,
-        "next_step": None if reload_success else "Run: docker-compose restart caddy"
+        **describe_reload(reload_ok, detail),
     }
 
 
@@ -3679,7 +3745,11 @@ async def get_domain_status(
     
     return {
         "custom_domain": settings.custom_domain if settings else None,
-        "server_ip": "132.226.32.116"
+        # Was a hardcoded IP of one particular machine, which is wrong for
+        # every self-hosted town and is the address they are told to point DNS
+        # at. Read from the environment, and absent rather than confidently
+        # wrong when nothing has set it.
+        "server_ip": os.environ.get("PUBLIC_IP") or os.environ.get("SERVER_IP") or None
     }
 
 

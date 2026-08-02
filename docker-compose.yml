@@ -74,6 +74,12 @@ services:
       # Pre-migration pg_dumps land here. Local-only and pruned to the newest
       # three: each is an unencrypted copy of the whole resident database.
       - migration_backups:/backups
+      # Where the custom-domain site snippet is written when an administrator
+      # sets the town's domain. Caddy imports this same directory, so writing a
+      # file here plus a reload is the whole mechanism -- the API no longer
+      # regenerates the Caddyfile, which used to drop the security headers and
+      # every provisioned tenancy along with it.
+      - ${TENANT_CADDY_PATH:-/home/ubuntu/centralizedhosting/tenants/_caddy}:/etc/caddy/tenants
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       DATABASE_URL: postgresql+asyncpg://${DB_USER:-township}:${DB_PASSWORD:?Set DB_PASSWORD}@db/${DB_NAME:-township_db}

@@ -183,6 +183,18 @@ def get_retention_policy(state_code: str) -> Dict[str, Any]:
     }
 
 
+# One definition of the cutoff, shared by the eligibility query, the stats
+# panel, and the preview an administrator confirms against.
+#
+# Both call sites below used to compute it as `override_days if override_days
+# else policy_days`, which takes the override whatever it is -- while
+# calculate_retention_date() honoured it only when it was *longer* than the
+# state minimum. So an override shorter than the floor selected records the
+# state requires the town to keep, and nothing said so: the run reports how
+# many it archived, and that number is equally plausible either way.
+from app.services.retention_window import effective_retention_days, retention_cutoff
+
+
 def calculate_retention_date(
     closed_date: datetime,
     state_code: str,
@@ -230,8 +242,8 @@ async def get_records_for_archival(
     from app.models import ServiceRequest
     
     policy = get_retention_policy(state_code)
-    retention_days = override_days if override_days else policy["retention_days"]
-    cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    retention_days = effective_retention_days(policy["retention_days"], override_days)
+    cutoff_date = retention_cutoff(policy["retention_days"], override_days)
     
     # Query closed records older than retention period, not already archived,
     # not deleted, and not under legal hold
@@ -383,8 +395,8 @@ async def get_retention_stats(
     from sqlalchemy import func
     
     policy = get_retention_policy(state_code)
-    retention_days = override_days if override_days else policy["retention_days"]
-    cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    retention_days = effective_retention_days(policy["retention_days"], override_days)
+    cutoff_date = retention_cutoff(policy["retention_days"], override_days)
     
     # Count records eligible for archival
     eligible_query = select(func.count(ServiceRequest.id)).where(

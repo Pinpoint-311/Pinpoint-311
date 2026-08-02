@@ -6,7 +6,7 @@ Provides querying, filtering, and export capabilities for authentication audit l
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, desc
+from sqlalchemy import Text, and_, cast, desc, func, or_, select
 from typing import Optional
 from datetime import datetime, timedelta, timezone
 import io
@@ -24,6 +24,8 @@ async def get_audit_logs(
     event_type: Optional[str] = Query(None),
     success: Optional[bool] = Query(None),
     username: Optional[str] = Query(None),
+    q: Optional[str] = Query(None, min_length=1, max_length=200,
+                             description="Free text across the actor, the event and what it recorded"),
     days: Optional[int] = Query(None, ge=1, le=365),
     start_date: Optional[str] = Query(None, description="Start date in YYYY-MM-DD format"),
     end_date: Optional[str] = Query(None, description="End date in YYYY-MM-DD format"),
@@ -71,6 +73,27 @@ async def get_audit_logs(
     # Username filter
     if username:
         conditions.append(AuditLog.username.ilike(f"%{username}%"))
+
+    # Free text.
+    #
+    # An audit trail nobody can search is one nobody reads, and the question
+    # somebody actually arrives with is never "show me event_type=user_deleted".
+    # It is "what happened to jsmith's account", or "who touched the boundary",
+    # or they have a request id off a complaint and nothing else.
+    #
+    # `details` is JSON, so it is cast to text and matched whole. That finds a
+    # username inside a payload, a request id, a department name, a path.
+    # Slower than an indexed column, and correct -- the right trade for a page
+    # an administrator opens rarely and reads carefully.
+    if q:
+        needle = f"%{q.strip()}%"
+        conditions.append(or_(
+            AuditLog.username.ilike(needle),
+            AuditLog.event_type.ilike(needle),
+            AuditLog.failure_reason.ilike(needle),
+            AuditLog.ip_address.ilike(needle),
+            cast(AuditLog.details, Text).ilike(needle),
+        ))
     
     # Get total count for pagination
     count_query = select(func.count(AuditLog.id)).where(and_(*conditions))
@@ -119,6 +142,7 @@ async def get_audit_logs(
             "event_type": event_type,
             "success": success,
             "username": username,
+            "q": q,
             "start_date": start_date,
             "end_date": end_date,
             "days": days

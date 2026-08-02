@@ -7,6 +7,7 @@ from app.db.session import get_db
 from app.models import Department, User
 from app.schemas import DepartmentCreate, DepartmentResponse
 from app.core.auth import get_current_admin, get_current_staff
+from app.services.admin_audit import record_admin_action
 
 router = APIRouter()
 
@@ -39,6 +40,10 @@ async def create_department(
     db.add(dept)
     await db.commit()
     await db.refresh(dept)
+    await record_admin_action(
+        db, event_type="department_created", actor=_,
+        details={"department_id": dept.id, "name": dept.name},
+    )
     return dept
 
 
@@ -68,5 +73,8 @@ async def delete_department(
     if not dept:
         raise HTTPException(status_code=404, detail="Department not found")
     
+    removed = {"department_id": dept.id, "name": dept.name}
     await db.delete(dept)
     await db.commit()
+    # Read before the delete: afterwards there is nothing left to name it by.
+    await record_admin_action(db, event_type="department_deleted", actor=_, details=removed)
