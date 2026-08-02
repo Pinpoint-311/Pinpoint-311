@@ -125,20 +125,14 @@ class AdminActionAuditMiddleware(BaseHTTPMiddleware):
       * never record a failed or unauthenticated attempt here. Those are real
         and worth having, but they belong with the auth events that already
         capture them, and a 401 flood would bury the successful changes.
+
+    Two things it does with care, because the first version of this got both
+    wrong and buried the log it was meant to fill: it names the action in a
+    sentence rather than filing everything under "Admin Change", and it does
+    not record the many POSTs that change nothing -- testing a connection,
+    re-running a check, generating a preview. Both decisions live in
+    `audit_labels`, where they can be argued with in a test.
     """
-
-    MUTATIONS = {"POST", "PUT", "PATCH", "DELETE"}
-
-    # Paths where a per-request entry is noise rather than signal. Each of
-    # these either writes its own record elsewhere or changes nothing.
-    SKIP_PREFIXES = (
-        "/api/auth/",              # login/logout already write their own events
-        "/api/system/translate/",  # a rendering call, made per page view
-        "/api/system/upload/",     # the request it belongs to records the upload
-        "/api/open311/",           # per-request actions live on the request's own timeline
-        "/api/research/",          # read-only analysis with its own access log
-        "/api/telemetry",          # machine polling
-    )
 
     async def dispatch(self, request: Request, call_next):
         from app.services.admin_audit import begin_request, was_recorded
@@ -150,12 +144,14 @@ class AdminActionAuditMiddleware(BaseHTTPMiddleware):
             pass
 
         try:
-            if request.method.upper() not in self.MUTATIONS:
-                return response
             if response.status_code >= 400:
                 return response
+
+            from app.services.audit_labels import describe_action
+
             path = request.url.path
-            if any(path.startswith(p) for p in self.SKIP_PREFIXES):
+            action = describe_action(request.method, path)
+            if action is None:
                 return response
             if was_recorded():
                 # The handler said something more specific.
@@ -174,7 +170,13 @@ class AdminActionAuditMiddleware(BaseHTTPMiddleware):
                     event_type="admin_change",
                     success=True,
                     username=actor,
+                    # Who did it from where. It was left out, so every one of
+                    # these rows showed "-" in the IP column while the sign-in
+                    # rows above them showed an address.
+                    ip_address=_client_ip(request),
+                    user_agent=(request.headers.get("User-Agent") or "")[:500] or None,
                     details={
+                        "action": action,
                         "method": request.method.upper(),
                         # The path only. Query strings and bodies carry the
                         # values being set, and this table is exported.
@@ -215,6 +217,21 @@ def _actor_from_request(request: Request) -> "str | None":
         return payload.get("sub")
     except Exception:
         return None
+
+
+def _client_ip(request: Request) -> "str | None":
+    """The address the change came from, through the reverse proxy.
+
+    Caddy sits in front of everything, so `request.client.host` is Caddy's
+    address on the compose network -- 172.19.0.x, the same for every user.
+    The first entry in X-Forwarded-For is the caller.
+    """
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        first = forwarded.split(",")[0].strip()
+        if first:
+            return first[:64]
+    return request.client.host if request.client else None
 
 
 class DemoModeMiddleware(BaseHTTPMiddleware):

@@ -177,6 +177,29 @@ export default function AuditLogViewer() {
         return labels[eventType] || eventType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     };
 
+    /** What actually happened, in the row where "-" used to be.
+     *
+     * Every recorded change carried a description and the column showed none
+     * of it: the cell rendered `failure_reason` and, for anything that
+     * succeeded, a dash. So a page of successful admin changes read as a page
+     * of blanks -- the log looked broken, and the one entry somebody needed
+     * was indistinguishable from the twenty around it.
+     *
+     * Only known keys are read. This is server-supplied JSON rendered into the
+     * console, and dumping the whole object would put whatever a handler
+     * happened to stash -- a filename, a setting's old value -- on screen and
+     * into the CSV export. */
+    const describeDetails = (details: unknown): string => {
+        if (!details || typeof details !== 'object') return '';
+        const d = details as Record<string, unknown>;
+        if (typeof d.action === 'string' && d.action) return d.action;
+        if (typeof d.reason === 'string' && d.reason) return d.reason;
+        if (typeof d.method === 'string' && typeof d.path === 'string') {
+            return `${d.method} ${d.path}`;
+        }
+        return '';
+    };
+
     const formatTimestamp = (timestamp: string) => {
         return new Date(timestamp).toLocaleString('en-US', {
             month: 'short',
@@ -356,6 +379,8 @@ export default function AuditLogViewer() {
                                                 <td className="px-6 py-4 text-sm">
                                                     {log.failure_reason ? (
                                                         <span className="text-red-400">{log.failure_reason}</span>
+                                                    ) : describeDetails(log.details) ? (
+                                                        <span className="text-white/70">{describeDetails(log.details)}</span>
                                                     ) : (
                                                         <span className="text-white/30">-</span>
                                                     )}
