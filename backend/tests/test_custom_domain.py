@@ -148,11 +148,25 @@ def test_the_backend_can_write_where_caddy_reads():
 
 
 def test_the_handler_no_longer_rewrites_the_whole_config():
+    """The invariant is what the handler *writes*, not what it reads.
+
+    An earlier version of this test asserted the name `caddyfile_content` was
+    absent, which was a proxy for "builds a Caddyfile from a template". The
+    handler now legitimately reads the base file into that same variable to
+    POST it to Caddy's admin API -- so the assertion failed on a correct
+    change. Reading the config is fine. Overwriting it is not.
+    """
     source = (ROOT / "backend/app/api/system.py").read_text()
     handler = source[source.index('@router.post("/domain/configure")'):]
     handler = handler[:handler.index("\n@router.")]
-    assert "caddyfile_content" not in handler, "the whole Caddyfile is being regenerated again"
+
+    # The only thing written is the snippet, into the tenants directory.
     assert "render_snippet(" in handler
+    assert 'open(snippet_path, "w")' in handler
+
+    # And nothing opens the base Caddyfile for writing.
+    assert 'caddyfile_path, "w"' not in handler, "the base Caddyfile is being overwritten again"
+    assert "reverse_proxy" not in handler, "a site block is being built in the handler again"
 
 
 def test_no_machines_ip_is_baked_into_the_product():

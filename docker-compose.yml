@@ -39,7 +39,32 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --maxmemory 200mb --maxmemory-policy allkeys-lru
+    # Redis holds two very different things here, and the old configuration
+    # treated them the same.
+    #
+    # The caches (public request lists, advanced statistics) are disposable --
+    # losing one costs a slow page. The Celery queue is not: it holds every
+    # confirmation email, AI triage and govtech push that has been accepted but
+    # not yet run.
+    #
+    # `allkeys-lru` lets Redis evict *any* key under memory pressure, queue
+    # entries included, with nothing raised and nothing logged. A busy morning
+    # could drop a resident's confirmation email and no part of the system
+    # would know. `noeviction` makes a full Redis refuse writes instead, which
+    # the application already handles: cache writes are wrapped, and enqueue()
+    # logs the failure and lets the record stand. Loud beats silent.
+    #
+    # And with no volume, everything vanished on restart -- including the
+    # restart the domain setup now asks an administrator to perform. AOF with a
+    # one-second fsync bounds that to the last second of accepted work.
+    command: >
+      redis-server
+      --maxmemory 200mb
+      --maxmemory-policy noeviction
+      --appendonly yes
+      --appendfsync everysec
+    volumes:
+      - redis_data:/data
     ports:
       # Bind to loopback only — Redis has no auth and must not be internet-reachable.
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
@@ -230,6 +255,9 @@ services:
 
 volumes:
   postgres_data:
+  # The Celery queue. Without this, a restart drops every accepted-but-not-yet-run
+  # email, AI analysis and integration push.
+  redis_data:
   migration_backups:
   caddy_data:
   caddy_config:

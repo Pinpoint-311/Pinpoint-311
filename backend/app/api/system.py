@@ -660,8 +660,43 @@ async def save_provider(
         # response so a slow store cannot make Save feel broken.
         from app.services.storage_maintenance import vault_secrets as _vault
         background.add_task(_vault)
+    # Whether this provider can actually be used, and what is missing if not.
+    #
+    # `settings: {}` means "keep what is stored", which is right when a town is
+    # changing a model on a provider whose credentials already live in the
+    # vault. It also means selecting Twilio with nothing entered saves
+    # successfully and answers ok:true -- and the card then said "Set up" about
+    # a service with no account SID.
+    #
+    # Not a 400. Choosing a provider before the credentials arrive is a real
+    # state -- "we have decided on Twilio, the account is still being approved"
+    # -- and the setup guide is deliberately stepwise. Refusing the save would
+    # make the decision unrecordable and would 400 every later save whose
+    # credentials are already in an external store.
+    #
+    # So the save stands and the answer stops overstating it. The caller gets
+    # the same reading of "configured" the badge uses, from the same function,
+    # rather than inferring it from a 200.
+    configured_now = (await _configured_map([catalog[provider_id]])).get(provider_id, False)
+    missing: List[str] = []
+    if not configured_now:
+        from app.services.secret_manager import get_secret
+
+        for field in catalog[provider_id].get("credential_fields", []):
+            if not _field_required(field):
+                continue
+            try:
+                present = bool((await get_secret(field["key"]) or "").strip())
+            except Exception:
+                present = False
+            if not present:
+                missing.append(field.get("label") or field["key"])
+
     return {
         "ok": True,
+        # Saved is not the same as ready. The toast reads one of these.
+        "configured": configured_now,
+        "missing": missing,
         "provider": provider_id,
         "warnings": warnings,
     }
@@ -1028,6 +1063,17 @@ async def test_provider(
 
     async def _remember(outcome: dict) -> dict:
         try:
+            # A check that failed part-way may have left the session in a
+            # failed transaction -- several of them run queries and swallow
+            # their own errors. Any statement after that raises
+            # PendingRollbackError, so the write below was caught by its own
+            # except and lost, and the card went on saying "not checked yet"
+            # immediately after somebody watched the test run.
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
             if outcome.get("ok"):
                 # The message too, not just the timestamp. "Checked 6 hours
                 # ago" cannot say what it found.

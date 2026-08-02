@@ -701,6 +701,11 @@ class ApiClient {
     async saveProvider(capability: string, data: ProviderSave): Promise<{
         ok: boolean;
         provider: string;
+        /** Whether the provider can actually be used. Saving a *selection*
+         *  succeeds with no credentials, so ok:true is not readiness. */
+        configured?: boolean;
+        /** The required fields still empty, by label, when configured is false. */
+        missing?: string[];
         /** Shape problems spotted in the pasted values. Advisory: the save has
          *  already happened by the time these arrive. */
         warnings?: { key: string; severity: 'error' | 'warn' | 'info'; message: string }[];

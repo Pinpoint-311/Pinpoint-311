@@ -194,24 +194,26 @@ async def probe_system(db, *, readings=None, health=None, alerts=None):
 async def _collect_readings(db) -> Dict[str, Dict[str, Any]]:
     """The real measurements. Every one is guarded: a probe that raises must
     not take the other three with it."""
-    import shutil
-
     from sqlalchemy import text
 
     from app.services import system_probes as probes
 
     out: Dict[str, Dict[str, Any]] = {}
 
-    # Disk. The path that matters is wherever PostgreSQL and uploads live; with
-    # no better answer available from inside the container, the root volume is
-    # the one that fills.
+    # Disk. Not just `/`: photos and pre-migration database dumps sit on their
+    # own volumes, and if either of those is mounted on a second disk it is the
+    # one that fills while the root filesystem stays comfortable. The fullest of
+    # them is reported, by name.
     try:
-        usage = shutil.disk_usage("/")
-        percent = (usage.used / usage.total) * 100 if usage.total else None
-        free_gb = usage.free / (1024 ** 3)
-        out["system:disk"] = probes.classify_disk(percent, free_label=f"{free_gb:.1f} GB")
+        out["system:disk"] = probes.describe_disk(probes.worst_disk(probes.read_disks()))
     except Exception:
         out["system:disk"] = probes.classify_disk(None)
+
+    # Memory, measured against this container's cap rather than the host's RAM.
+    try:
+        out["system:memory"] = probes.classify_memory(probes.read_memory())
+    except Exception:
+        out["system:memory"] = probes.classify_memory({"percent": None})
 
     try:
         await db.execute(text("SELECT 1"))

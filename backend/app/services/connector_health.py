@@ -160,6 +160,43 @@ def clean_error(exc: Any) -> str:
     return text[:ERROR_MAX_CHARS] if text else "Unknown error"
 
 
+# Columns added by migration b4c5d6e7f8a9. Everything above them predates it.
+#
+# A deployment that has not run migrations yet still has to record health. If
+# it cannot -- and it could not, because setting an attribute puts the column
+# in the UPDATE and the whole statement fails -- then `record_success` catches
+# its own error, writes nothing at all, and the card says "not checked yet"
+# immediately after somebody watched the test pass.
+#
+# That is the worst version: the feature looks broken rather than partly
+# unavailable, and the reason (a pending migration) is invisible.
+LATER_COLUMNS = ("last_result", "verifiable")
+
+
+async def _commit_or_retry_without(db, row, columns) -> bool:
+    """Commit; if a newer column is missing, drop it and commit the rest.
+
+    Returns whether the detail columns survived. The counters and timestamps
+    matter more than the message, and losing all of them because one column
+    is not there yet is not a trade anybody would choose.
+    """
+    try:
+        await db.commit()
+        return True
+    except Exception as exc:
+        text = str(exc).lower()
+        if not any(c in text for c in columns) and "column" not in text:
+            raise
+        await db.rollback()
+        logger.warning(
+            "[Health] %s unavailable -- run the pending migrations to record "
+            "what a check found, not only when it ran.", ", ".join(columns)
+        )
+        # Re-apply without them. The row is expired after a rollback, so this
+        # re-reads and re-sets rather than reusing the stale instance.
+        return False
+
+
 async def _row(db, connector: str):
     from sqlalchemy import select
 
@@ -194,7 +231,16 @@ async def record_success(db, connector: str, provider: Optional[str] = None,
         row.consecutive_failures = 0
         row.last_error = None
         row.total_successes = (row.total_successes or 0) + 1
-        await db.commit()
+        if not await _commit_or_retry_without(db, row, LATER_COLUMNS):
+            # Second pass with only the columns every deployment has.
+            row = await _row(db, connector)
+            row.provider = provider or row.provider
+            row.last_attempt_at = now
+            row.last_success_at = now
+            row.consecutive_failures = 0
+            row.last_error = None
+            row.total_successes = (row.total_successes or 0) + 1
+            await db.commit()
     except Exception as exc:
         logger.warning("[Health] could not record success for %s: %s",
                        sanitize_for_log(connector), sanitize_for_log(str(exc)))
@@ -220,7 +266,14 @@ async def record_unverifiable(db, connector: str, detail: str,
         row.last_attempt_at = datetime.now(timezone.utc)
         row.last_result = (detail or "")[:500] or None
         row.verifiable = False
-        await db.commit()
+        if not await _commit_or_retry_without(db, row, LATER_COLUMNS):
+            # Nothing left to record: "we tried and cannot tell" lives entirely
+            # in the columns this deployment does not have yet. The attempt
+            # timestamp is still worth keeping.
+            row = await _row(db, connector)
+            row.provider = provider or row.provider
+            row.last_attempt_at = datetime.now(timezone.utc)
+            await db.commit()
     except Exception as exc:
         logger.warning("[Health] could not record unverifiable for %s: %s",
                        sanitize_for_log(connector), sanitize_for_log(str(exc)))
@@ -240,7 +293,15 @@ async def record_failure(db, connector: str, error: Any,
         row.verifiable = True
         row.consecutive_failures = (row.consecutive_failures or 0) + 1
         row.total_failures = (row.total_failures or 0) + 1
-        await db.commit()
+        if not await _commit_or_retry_without(db, row, LATER_COLUMNS):
+            row = await _row(db, connector)
+            row.provider = provider or row.provider
+            row.last_attempt_at = now
+            row.last_error_at = now
+            row.last_error = clean_error(error)
+            row.consecutive_failures = (row.consecutive_failures or 0) + 1
+            row.total_failures = (row.total_failures or 0) + 1
+            await db.commit()
     except Exception as exc:
         logger.warning("[Health] could not record failure for %s: %s",
                        sanitize_for_log(connector), sanitize_for_log(str(exc)))

@@ -116,6 +116,26 @@ def render_snippet(domain: str, *, backend: str = "backend:8000",
     )
 
 
+# The thing that breaks next, and it breaks silently.
+#
+# An identity provider only redirects back to a URL on its own allow-list. Move
+# the site to a new domain and the sign-in button starts sending staff to
+# Auth0 or Entra, which then refuses to come back -- with an error page from
+# the identity provider, on the identity provider's domain, saying nothing
+# about Pinpoint. Nobody connects that to the domain change they made an hour
+# ago, and it locks staff out of the tool they administer it with.
+#
+# Said at the moment the domain changes, because that is the only moment
+# somebody is in a position to act on it.
+SSO_CALLBACK_REMINDER = (
+    "Update your sign-in provider before staff try to log in. Auth0 or "
+    "Microsoft Entra will only return to a URL on its allow-list, so add "
+    "the new domain's callback, logout and web-origin URLs there. Until you "
+    "do, signing in will fail on the provider's own error page rather than "
+    "on this one."
+)
+
+
 def describe_reload(ok: bool, detail: str = "") -> dict:
     """What to tell an administrator, in terms they can act on.
 
@@ -129,6 +149,7 @@ def describe_reload(ok: bool, detail: str = "") -> dict:
             "message": "Caddy picked up the new domain. The certificate is "
                        "issued on the first request, which can take a few seconds.",
             "next_step": None,
+            "also_update": SSO_CALLBACK_REMINDER,
         }
     return {
         "reloaded": False,
@@ -139,4 +160,5 @@ def describe_reload(ok: bool, detail: str = "") -> dict:
         # Named exactly, because "restart caddy" is not a thing a clerk can be
         # expected to translate into a command on the right machine.
         "next_step": "docker compose restart caddy",
+        "also_update": SSO_CALLBACK_REMINDER,
     }

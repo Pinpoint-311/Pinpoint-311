@@ -20,7 +20,6 @@ I/O and are each defensive (a failing probe degrades to "unknown", never raises)
 
 import logging
 import os
-import shutil
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -101,14 +100,28 @@ def _check(key: str, label: str, status: str, value, message: str, action: str =
 
 
 def _disk_check() -> Dict[str, Any]:
+    """Every filesystem this deployment writes to, not just the root one.
+
+    `shutil.disk_usage("/")` reads whatever is behind the container's root. On a
+    default Docker install that is the host disk, so it was usually right by
+    accident. Photos (`uploads_data`) and pre-migration database dumps
+    (`migration_backups`) are named volumes, and a town that puts either on a
+    second disk was having the wrong one watched -- the root filesystem stays
+    comfortable while the volume taking a photo per report fills.
+    """
     try:
-        usage = shutil.disk_usage("/")
-        pct = round(usage.used / usage.total * 100, 1)
+        from app.services.system_probes import read_disks, worst_disk
+
+        worst = worst_disk(read_disks())
+        if not worst:
+            return _check("disk", "Disk space", "unknown", None, "Could not read disk usage.")
+        pct = worst["percent"]
         status = classify_metric(pct, warn=80, crit=92)
-        free_gb = round(usage.free / (1024 ** 3), 1)
+        free_gb = round(worst["free"] / (1024 ** 3), 1)
+        where = worst.get("label") or worst.get("path")
         return _check(
             "disk", "Disk space", status, pct,
-            f"Disk is {pct}% full ({free_gb} GB free).",
+            f"{where} is {pct}% full ({free_gb} GB free).",
             "Delete old backups/logs or expand the volume before it fills." if status != "ok" else "",
         )
     except Exception as e:
@@ -117,24 +130,31 @@ def _disk_check() -> Dict[str, Any]:
 
 
 def _memory_check() -> Dict[str, Any]:
+    """The limit that kills this container, not the RAM in the machine.
+
+    `/proc/meminfo` is the host's -- it is not namespaced, so a container reads
+    the whole server's memory no matter how small its own cap. compose caps the
+    backend at 1G; on a 32GB server, a backend at 990MB and one allocation away
+    from being OOM-killed mid-report reported 3% used and a green tick. The
+    cgroup limit is read first and the host is only the fallback, for a
+    deployment that genuinely runs uncapped.
+    """
     try:
-        total = avail = None
-        with open("/proc/meminfo") as f:
-            for line in f:
-                if line.startswith("MemTotal:"):
-                    total = int(line.split()[1])  # kB
-                elif line.startswith("MemAvailable:"):
-                    avail = int(line.split()[1])
-                if total is not None and avail is not None:
-                    break
-        if not total or avail is None:
+        from app.services.system_probes import read_memory
+
+        reading = read_memory()
+        pct = reading["percent"]
+        if pct is None:
             return _check("memory", "Memory", "unknown", None, "Could not read memory usage.")
-        pct = round((1 - avail / total) * 100, 1)
         status = classify_metric(pct, warn=85, crit=95)
+        limit_gb = round((reading["limit_bytes"] or 0) / (1024 ** 3), 2)
+        scope = ("this container's limit" if reading["scope"] == "container"
+                 else "the server's RAM")
         return _check(
             "memory", "Memory", status, pct,
-            f"Memory is {pct}% used.",
-            "Restart heavy services or add RAM; sustained high memory can crash containers." if status != "ok" else "",
+            f"Memory is {pct}% of {scope} ({limit_gb} GB).",
+            "Raise the container's memory limit or reduce what is running; at 100% it is "
+            "killed and restarted." if status != "ok" else "",
         )
     except Exception as e:
         logger.warning(f"[proactive] memory check failed: {e}")
@@ -327,11 +347,45 @@ async def _redaction_check() -> Dict[str, Any]:
                       "Could not determine which detector is redacting photos.")
 
 
+async def _cpu_check(window: float = 0.4) -> Dict[str, Any]:
+    """CPU, as a share of what this container is allowed rather than the host's.
+
+    Reported, not alerted on: one short sample cannot tell a PDF being rendered
+    from a server in trouble, and an email a day about a spike is an email
+    nobody reads. It is here because "the site feels slow" is a real report and
+    this is the number that answers it.
+    """
+    try:
+        import asyncio
+
+        from app.services.system_probes import (
+            cpu_percent, read_cpu_allowance, read_cpu_seconds,
+        )
+
+        cores = read_cpu_allowance()
+        before = read_cpu_seconds()
+        if before is None:
+            return _check("cpu", "CPU", "unknown", None, "Could not read CPU usage.")
+        await asyncio.sleep(window)
+        after = read_cpu_seconds()
+        pct = cpu_percent(
+            None if after is None else after - before, window, cores)
+        if pct is None:
+            return _check("cpu", "CPU", "unknown", None, "Could not read CPU usage.")
+        allowance = f"{cores:g} core{'s' if cores and cores != 1 else ''}" if cores else "the server's cores"
+        return _check("cpu", "CPU", "ok", pct,
+                      f"CPU was {pct}% of {allowance} over the last {window:g}s.")
+    except Exception as e:
+        logger.warning(f"[proactive] cpu check failed: {e}")
+        return _check("cpu", "CPU", "unknown", None, "Could not read CPU usage.")
+
+
 async def collect_checks(db) -> List[Dict[str, Any]]:
     """Run all proactive checks. Never raises; failed probes return 'unknown'."""
     checks = [
         _disk_check(),
         _memory_check(),
+        await _cpu_check(),
         await _db_connection_check(db),
         await _backup_age_check(),
         await _redis_check(),

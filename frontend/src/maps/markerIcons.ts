@@ -79,14 +79,37 @@ export function requestIcon(color: string): MarkerIcon {
 export function assetIcon(fillColor: string, strokeColor?: string): MarkerIcon {
     const fill = safeColor(fillColor);
     const stroke = safeColor(strokeColor, STROKE);
-    const size = 22;   // rendered box; the diamond is inset so the stroke fits
+    const size = 20;
+    // Stable per colour, because two <defs> with the same id on one page make
+    // every marker use whichever loaded last.
+    const uid = `a${fill.replace(/[^0-9a-f]/gi, '')}`;
 
     const svg = [
-        `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`,
-        // Drop shadow, so an asset stays visible on a satellite basemap.
-        `<path d="M11 2.5 L19.5 11 L11 19.5 L2.5 11 Z" fill="rgba(0,0,0,0.35)" transform="translate(0,1)"/>`,
-        `<path d="M11 2.5 L19.5 11 L11 19.5 L2.5 11 Z" fill="${fill}" stroke="${stroke}" stroke-width="2.5" stroke-linejoin="round"/>`,
-        `<circle cx="11" cy="11" r="3" fill="${STROKE}" fill-opacity="0.9"/>`,
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 20 20">`,
+        `<defs>`,
+        // Light from above, the way every other surface in this product is lit.
+        // A flat fill at this size reads as a sticker dropped on the map.
+        `<linearGradient id="${uid}g" x1="0" y1="0" x2="0" y2="1">`,
+        `<stop offset="0" stop-color="#ffffff" stop-opacity="0.32"/>`,
+        `<stop offset="0.55" stop-color="#ffffff" stop-opacity="0"/>`,
+        `</linearGradient>`,
+        // A soft contact shadow rather than a hard offset copy. The offset
+        // version doubled the shape's visual weight and made a dense layer
+        // look like blocks of colour.
+        `<filter id="${uid}s" x="-50%" y="-50%" width="200%" height="200%">`,
+        `<feDropShadow dx="0" dy="0.5" stdDeviation="0.9" flood-color="#0b1020" flood-opacity="0.45"/>`,
+        `</filter>`,
+        `</defs>`,
+        `<g filter="url(#${uid}s)">`,
+        // Rounded diamond. The corner radius is what stops it reading as a
+        // rotated square, which is what the 22px hard-cornered version did.
+        `<path d="M10 2.6 L17.4 10 L10 17.4 L2.6 10 Z" fill="${fill}" stroke="${stroke}" stroke-width="1.6" stroke-linejoin="round"/>`,
+        `<path d="M10 2.6 L17.4 10 L10 17.4 L2.6 10 Z" fill="url(#${uid}g)" stroke="none"/>`,
+        // A thin inner keyline instead of the white hole punched through the
+        // middle. It still reads as "a marked point" at a glance and stops the
+        // shape looking like a cheap sticker up close.
+        `<path d="M10 6.1 L13.9 10 L10 13.9 L6.1 10 Z" fill="none" stroke="${STROKE}" stroke-opacity="0.55" stroke-width="1" stroke-linejoin="round"/>`,
+        `</g>`,
         `</svg>`,
     ].join('');
 
