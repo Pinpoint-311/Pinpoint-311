@@ -3236,24 +3236,34 @@ export default function AdminConsole() {
                                                 The record stays and still counts in your statistics. Only the
                                                 fields ticked here are emptied.
                                             </p>
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                            {/* auto-rows-fr plus h-full: every card in a row is
+                                                the height of the tallest, so a two-line
+                                                description does not leave the card beside it
+                                                floating in a short box. */}
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 auto-rows-fr">
                                                 {scrubFields.map(field => (
                                                     <label
                                                         key={field.id}
-                                                        className={`flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition-colors ${field.selected
+                                                        className={`group flex h-full items-start gap-3 rounded-xl border p-3.5 cursor-pointer transition-colors ${field.selected
                                                             ? 'bg-amber-500/10 border-amber-400/30'
                                                             : 'bg-white/[0.02] border-white/10 hover:border-white/20'}`}
                                                     >
+                                                        {/* Pinned to the title's cap height rather
+                                                            than centred on the text block. Centring
+                                                            put the box beside the title on a
+                                                            one-line card and beside the description
+                                                            on a two-line one, so no two rows lined
+                                                            up and the grid read as ragged. */}
                                                         <input
                                                             type="checkbox"
                                                             checked={field.selected}
                                                             onChange={(e) => setScrubFields(prev => (prev || []).map(f =>
                                                                 f.id === field.id ? { ...f, selected: e.target.checked } : f))}
-                                                            className="mt-0.5 accent-amber-400"
+                                                            className="mt-[3px] w-4 h-4 shrink-0 self-start accent-amber-400"
                                                         />
-                                                        <span className="min-w-0">
-                                                            <span className="block text-sm font-medium text-white/90">{field.label}</span>
-                                                            <span className="block text-xs text-white/55 mt-0.5 leading-relaxed">{field.detail}</span>
+                                                        <span className="min-w-0 flex-1">
+                                                            <span className="block text-sm font-medium text-white/90 leading-5">{field.label}</span>
+                                                            <span className="block text-xs text-white/60 mt-1 leading-relaxed">{field.detail}</span>
                                                         </span>
                                                     </label>
                                                 ))}

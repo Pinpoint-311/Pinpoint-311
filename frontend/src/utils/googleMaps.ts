@@ -37,7 +37,36 @@ export function loadGoogleMaps(apiKey: string): Promise<void> {
         }
 
         const callbackName = '__pinpointInitGoogleMaps__';
-        (window as unknown as Record<string, unknown>)[callbackName] = () => {
+        (window as unknown as Record<string, unknown>)[callbackName] = async () => {
+            // Wait for the libraries, not just the bootstrap.
+            //
+            // With `loading=async` the callback fires once the core is ready.
+            // The libraries named in `libraries=` are fetched alongside it and
+            // are not guaranteed to be on `window.google.maps` at that moment,
+            // so a component mounting immediately can find `maps.places`
+            // undefined -- and `attachAutocomplete` correctly answers "this
+            // provider has no widget", which is the right answer to the wrong
+            // question. The input then falls back to a plain text box for the
+            // rest of the page's life, because nothing retries.
+            //
+            // `importLibrary` is idempotent and resolves from cache once
+            // loaded, so awaiting it here costs nothing after the first call.
+            try {
+                const maps = window.google?.maps as unknown as {
+                    importLibrary?: (name: string) => Promise<unknown>;
+                };
+                if (typeof maps?.importLibrary === 'function') {
+                    await Promise.all([
+                        maps.importLibrary('places'),
+                        maps.importLibrary('geocoding'),
+                    ]);
+                }
+            } catch {
+                // A library that will not load is a real failure, but it is the
+                // geocoder's to report -- it already degrades to the backend
+                // provider. Resolving here keeps the *map* working, which is
+                // the larger half of what this script is for.
+            }
             resolve();
             try { delete (window as unknown as Record<string, unknown>)[callbackName]; } catch { /* ignore */ }
         };
