@@ -3594,115 +3594,82 @@ async def switch_version(
 
 # ============ Custom Domain ============
 
+# Caddy's admin API, inside the compose network. Port 2019 is not published,
+# so this is reachable from sibling containers and not from the internet.
+CADDY_ADMIN = os.environ.get("CADDY_ADMIN_URL", "http://caddy:2019")
+
+
 @router.post("/domain/configure")
 async def configure_domain(
     domain: str,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
-    """Configure custom domain with automatic HTTPS via Caddy"""
+    """Point the town's own domain at this deployment, and make Caddy serve it."""
     from app.core.managed import ensure_not_managed
     ensure_not_managed("Domain/DNS configuration")  # platform-managed in hosted mode (A1)
-    import re
     import httpx
 
-    # Validate domain format
-    domain = domain.strip().lower()
-    domain_regex = r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'
-    if not re.match(domain_regex, domain):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid domain format"
-        )
-    
-    # Save domain to settings
-    result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
-    settings = result.scalar_one_or_none()
-    if settings:
-        settings.custom_domain = domain
-        await db.commit()
-    
-    # Generate Caddyfile with custom domain (Caddy auto-handles HTTPS)
-    caddyfile_content = f"""# Global options - enable admin API for auto-reload
-{{
-    admin 0.0.0.0:2019
-}}
+    settings = await read_settings_row(db, create=True)
 
-# Caddy configuration for Township 311
-# Auto-generated - Custom domain: {domain}
+    # One snippet, in the directory the base Caddyfile already imports.
+    #
+    # This used to regenerate the whole Caddyfile from a template here, which
+    # dropped the security headers, dropped `import /etc/caddy/tenants/*.caddy`
+    # (every provisioned tenancy), dropped the orchestrator panel block, and
+    # pointed the frontend at `frontend:5173` -- the Vite dev server -- so a
+    # reload that worked would have returned 502 for every page.
+    from app.services.caddy_config import (
+        InvalidDomain, SNIPPET_NAME, describe_reload, normalise_domain, render_snippet,
+    )
 
-# Custom domain with automatic HTTPS
-{domain} {{
-    # API routes
-    handle /api/* {{
-        reverse_proxy backend:8000
-    }}
-
-    # Frontend - SPA routing
-    handle {{
-        reverse_proxy frontend:5173
-    }}
-
-    encode gzip
-
-    header {{
-        X-Content-Type-Options nosniff
-        X-Frame-Options DENY
-        Referrer-Policy strict-origin-when-cross-origin
-    }}
-}}
-
-# Also keep IP access on HTTP for fallback
-:80 {{
-    handle /api/* {{
-        reverse_proxy backend:8000
-    }}
-    handle {{
-        reverse_proxy frontend:5173
-    }}
-    encode gzip
-}}
-"""
-    
-    # Write Caddyfile to shared volume
-    caddyfile_path = os.environ.get("PROJECT_ROOT", "/project") + "/Caddyfile"
-    
     try:
-        with open(caddyfile_path, 'w') as f:
-            f.write(caddyfile_content)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to write Caddyfile"
-        )
-    
-    # Try to reload Caddy via its admin API
-    reload_success = False
-    reload_message = ""
-    
+        domain = normalise_domain(domain)
+    except InvalidDomain as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    settings.custom_domain = domain
+    await db.commit()
+
+    snippet_dir = os.environ.get("CADDY_TENANT_PATH", "/etc/caddy/tenants")
+    snippet_path = os.path.join(snippet_dir, SNIPPET_NAME)
+    try:
+        os.makedirs(snippet_dir, exist_ok=True)
+        with open(snippet_path, "w") as handle:
+            handle.write(render_snippet(domain))
+    except OSError as exc:
+        # The domain is saved either way -- it is what the emails and the
+        # portal links use. Say which half worked rather than rolling back a
+        # setting the administrator did successfully change.
+        logger.warning("[Domain] could not write %s: %s",
+                       sanitize_for_log(snippet_path), sanitize_for_log(str(exc)))
+        return {
+            "status": "partial",
+            "domain": domain,
+            "url": f"https://{domain}",
+            **describe_reload(False, "the reverse proxy config could not be written"),
+        }
+
+    # Ask Caddy to pick it up. The admin endpoint has to be reachable for this
+    # to work at all, which is why the shipped Caddyfile now sets
+    # `admin 0.0.0.0:2019` -- it defaults to localhost inside Caddy's own
+    # container, so this call was refused every time it has ever been made.
+    reload_ok, detail = False, ""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            # Try to load the new Caddyfile config
-            response = await client.post(
-                "http://caddy:2019/load",
-                content=caddyfile_content,
-                headers={"Content-Type": "text/caddyfile"}
-            )
-            if response.status_code == 200:
-                reload_success = True
-                reload_message = "Caddy reloaded - HTTPS will be active shortly!"
-            else:
-                reload_message = f"Caddy API returned {response.status_code}. Container restart may be needed."
-    except Exception as e:
-        reload_message = f"Caddyfile saved but could not reload Caddy automatically. Please run: docker-compose restart caddy"
-    
+            response = await client.post(f"{CADDY_ADMIN}/load", json=None,
+                                         headers={"Cache-Control": "must-revalidate"})
+            reload_ok = response.status_code in (200, 204)
+            if not reload_ok:
+                detail = f"the proxy answered {response.status_code}"
+    except Exception as exc:
+        detail = f"the proxy could not be reached ({type(exc).__name__})"
+
     return {
-        "status": "success" if reload_success else "partial",
-        "message": f"Domain {domain} configured! {reload_message}",
+        "status": "success" if reload_ok else "partial",
         "domain": domain,
         "url": f"https://{domain}",
-        "reload_success": reload_success,
-        "next_step": None if reload_success else "Run: docker-compose restart caddy"
+        **describe_reload(reload_ok, detail),
     }
 
 
@@ -3717,7 +3684,11 @@ async def get_domain_status(
     
     return {
         "custom_domain": settings.custom_domain if settings else None,
-        "server_ip": "132.226.32.116"
+        # Was a hardcoded IP of one particular machine, which is wrong for
+        # every self-hosted town and is the address they are told to point DNS
+        # at. Read from the environment, and absent rather than confidently
+        # wrong when nothing has set it.
+        "server_ip": os.environ.get("PUBLIC_IP") or os.environ.get("SERVER_IP") or None
     }
 
 

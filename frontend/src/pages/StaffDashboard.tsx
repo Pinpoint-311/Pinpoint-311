@@ -61,6 +61,7 @@ import NotificationSettings from '../components/NotificationSettings';
 import ManualIntake from '../components/ManualIntake';
 import ActivityFeed from '../components/ActivityFeed';
 import { bellAppearance, readIdsFromStorage, unreadCount } from '../components/activityBell';
+import { bandFor, bandLabel, countByBand } from '../components/priority';
 import PrintWorkOrder from '../components/PrintWorkOrder';
 
 type View = 'dashboard' | 'active' | 'in_progress' | 'resolved' | 'statistics';
@@ -378,8 +379,8 @@ export default function StaffDashboard() {
         if (mapPriorityFilter === 'all') return allRequests;
         return allRequests.filter(r => {
             const priority = getEffectivePriority(r);
-            if (mapPriorityFilter === 'high') return priority >= 8;
-            if (mapPriorityFilter === 'medium') return priority >= 5 && priority < 8;
+            if (mapPriorityFilter === 'high') return bandFor(priority) === 'high';
+            if (mapPriorityFilter === 'medium') return bandFor(priority) === 'medium';
             if (mapPriorityFilter === 'low') return priority < 5;
             return true;
         });
@@ -1290,18 +1291,11 @@ export default function StaffDashboard() {
                             <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
                                 <h2 className="text-lg font-semibold text-white mb-4">Priority Distribution</h2>
                                 {(() => {
-                                    const highPriority = allRequests.filter(r => {
-                                        const p = (r as any).manual_priority_score ?? ((r as any).ai_analysis?.priority_score) ?? 5;
-                                        return p >= 8;
-                                    }).length;
-                                    const mediumPriority = allRequests.filter(r => {
-                                        const p = (r as any).manual_priority_score ?? ((r as any).ai_analysis?.priority_score) ?? 5;
-                                        return p >= 5 && p < 8;
-                                    }).length;
-                                    const lowPriority = allRequests.filter(r => {
-                                        const p = (r as any).manual_priority_score ?? ((r as any).ai_analysis?.priority_score) ?? 5;
-                                        return p < 5;
-                                    }).length;
+                                    // One pass over one definition, so the three
+                                    // numbers always sum to the total and always
+                                    // agree with the labels underneath them.
+                                    const { high: highPriority, medium: mediumPriority, low: lowPriority } =
+                                        countByBand(allRequests);
                                     const total = allRequests.length || 1;
                                     return (
                                         <div className="space-y-3">
@@ -1317,9 +1311,9 @@ export default function StaffDashboard() {
                                                 </div>
                                             </div>
                                             <div className="flex flex-col sm:flex-row justify-between text-xs sm:text-sm gap-1">
-                                                <span className="text-red-300">● High (8-10): <strong>{highPriority}</strong></span>
-                                                <span className="text-amber-300">● Medium (5-7): <strong>{mediumPriority}</strong></span>
-                                                <span className="text-emerald-300">● Low (1-4): <strong>{lowPriority}</strong></span>
+                                                <span className="text-red-300">● {bandLabel('high')}: <strong>{highPriority}</strong></span>
+                                                <span className="text-amber-300">● {bandLabel('medium')}: <strong>{mediumPriority}</strong></span>
+                                                <span className="text-emerald-300">● {bandLabel('low')}: <strong>{lowPriority}</strong></span>
                                             </div>
                                         </div>
                                     );
@@ -1990,9 +1984,9 @@ export default function StaffDashboard() {
                                                 aria-label="Filter by priority level"
                                             >
                                                 <option value="all">All Priorities</option>
-                                                <option value="high">🔴 High (8-10)</option>
-                                                <option value="medium">🟡 Medium (5-7)</option>
-                                                <option value="low">🟢 Low (1-4)</option>
+                                                <option value="high">🔴 {bandLabel('high')}</option>
+                                                <option value="medium">🟡 {bandLabel('medium')}</option>
+                                                <option value="low">🟢 {bandLabel('low')}</option>
                                             </select>
                                         </div>
 

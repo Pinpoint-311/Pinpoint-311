@@ -3,6 +3,7 @@ import { MapPin, Layers, Search, X, ChevronDown, ChevronRight, Users } from 'luc
 import { ServiceRequest, ServiceDefinition, User, Department } from '../types';
 import { MapLayer } from '../services/api';
 import { useTranslation } from '../context/TranslationContext';
+import { BANDS, bandFor, bandLabel } from './priority';
 import {
     GeoJsonLayerHandle,
     MapProviderId,
@@ -342,7 +343,7 @@ export default function StaffDashboardMap({
             // Priority filter
             const ai = (r as any).ai_analysis;
             const priority = (r as any).manual_priority_score ?? ai?.priority_score ?? 5;
-            const priorityLevel = priority >= 8 ? 'high' : priority >= 5 ? 'medium' : 'low';
+            const priorityLevel = bandFor(priority);
             if (operationalFilters && !priorityFilters[priorityLevel]) return false;
 
             return true;
@@ -828,10 +829,10 @@ export default function StaffDashboardMap({
                         {expandedSections.priority && (
                             <div className="px-4 pb-4 space-y-2">
                                 {[
-                                    { value: 'high', label: "High (8-10)", color: '#ef4444' },
-                                    { value: 'medium', label: "Medium (5-7)", color: '#f59e0b' },
-                                    { value: 'low', label: "Low (1-4)", color: '#22c55e' },
-                                ].map(option => (
+                                    BANDS.map(b => ({
+                                        value: b.level, label: bandLabel(b.level), color: b.hex,
+                                    }))
+                                ].flat().map(option => (
                                     <label key={option.value} className="flex items-center gap-3 cursor-pointer group">
                                         <input
                                             type="checkbox"
