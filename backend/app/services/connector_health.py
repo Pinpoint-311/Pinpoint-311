@@ -85,6 +85,16 @@ class Health:
     # What the last check said, either way, and whether one is even possible.
     last_result: Optional[str] = None
     verifiable: Optional[bool] = None
+    # Until when alerts for this connector are silenced.
+    #
+    # The column and the mute endpoint were added together; this field was not,
+    # and `/connectors/health` reads `h.alert_muted_until` on every row. A
+    # dataclass has no such attribute, so the endpoint raised AttributeError and
+    # returned 500 -- every time, for everyone. On screen that is the banner
+    # saying the status of these services could not be read, which reads as an
+    # outage somewhere else entirely, and it takes every provider card down with
+    # it because they hydrate from the same response.
+    alert_muted_until: Optional[datetime] = None
 
     @property
     def ok(self) -> bool:
@@ -145,6 +155,10 @@ def to_health(row: Any, *, now: Optional[datetime] = None) -> Health:
         alerted_at=getattr(row, "alerted_at", None),
         last_result=getattr(row, "last_result", None),
         verifiable=getattr(row, "verifiable", None),
+        # getattr, like every other column here, so a deployment that has not
+        # run the mute migration yet degrades to "not muted" instead of 500ing
+        # the whole health page.
+        alert_muted_until=getattr(row, "alert_muted_until", None),
     )
 
 
