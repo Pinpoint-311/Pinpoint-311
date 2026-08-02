@@ -180,10 +180,29 @@ def _get_secret_from_gcp(secret_name: str, force_refresh: bool = False) -> Optio
         name = f"projects/{project}/secrets/{secret_name}/versions/latest"
         response = client.access_secret_version(request={"name": name})
         
-        # Track Secret Manager usage
+        # Track Secret Manager usage -- but never at the cost of the caller.
+        #
+        # This used to fall back to `asyncio.run(_track())` when no event loop
+        # was running, and that fallback is reached on precisely the path that
+        # matters most: a secret *write*. set_secret -> run_in_executor ->
+        # set_secret_sync -> _get_secret_from_gcp(force_refresh=True) runs in a
+        # worker thread with no loop of its own, so `asyncio.run` started a
+        # second event loop and opened asyncpg connections through a pool whose
+        # connections belong to the main one. asyncpg failed with "got Future
+        # attached to a different loop" and left the pool wedged -- "got result
+        # for unknown protocol state 3" -- which surfaced as a 500 on the save
+        # request and on unrelated queries after it.
+        #
+        # The consequence was worse than a failed metric: the crash happened
+        # before add_secret_version, so the new credential was never written and
+        # the previous value stayed in the store. An administrator pasted a key,
+        # saw a failure or a success, and the system went on using the old one.
+        #
+        # Metering a single secret read is not worth any of that. With no loop of
+        # our own to schedule on, skip it.
         try:
             import asyncio
-            
+
             async def _track():
                 from app.db.session import SessionLocal
                 from app.services.api_usage import track_api_usage
@@ -194,12 +213,19 @@ def _get_secret_from_gcp(secret_name: str, force_refresh: bool = False) -> Optio
                         operation="access_secret",
                         api_calls=1
                     )
-            
+
             try:
-                asyncio.get_running_loop()  # Check if loop is running
-                asyncio.create_task(_track())
+                loop = asyncio.get_running_loop()
             except RuntimeError:
-                asyncio.run(_track())
+                loop = None
+
+            if loop is not None:
+                loop.create_task(_track())
+            else:
+                logger.debug(
+                    "Secret Manager read not metered: no event loop in this thread. "
+                    "This is the secret-write path; metering it would cross event loops."
+                )
         except Exception as track_err:
             logger.debug(f"Failed to track Secret Manager usage: {track_err}")
         

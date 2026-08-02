@@ -855,12 +855,53 @@ def _referrer_restricted(text: str) -> bool:
     return "referer" in lowered or "referrer" in lowered
 
 
-async def _test_maps() -> dict:
+async def _test_maps(db=None) -> dict:
     """Geocode a known address. Reads only, costs a fraction of a cent."""
     import httpx
 
     from app.services.map_provider import MAP_PROVIDER_KEY, normalize_provider
     from app.services.secret_manager import get_secret
+
+    async def _browser_reachability(key: str) -> dict:
+        """What a passing server-side check does and does not prove.
+
+        Everything above this point ran from the server with no Referer header.
+        A key correctly restricted to Websites *rejects* that, and the branches
+        above report it as untestable-and-correct. So arriving here means the
+        opposite: the key accepted a call from an origin it has never heard of,
+        and is therefore not restricted to this site.
+
+        That distinction is not academic, and it is why this page needs to say
+        something rather than show a green tick. A key whose Application
+        restriction is "IP addresses" passes every check this function can make
+        -- the server's own address is usually on the allow-list -- and still
+        fails in every resident's browser with RefererNotAllowedMapError,
+        because a browser's address is not on it and never can be. The map is
+        grey, the address box is dead, and the only place that says so is the
+        browser console.
+
+        Reported unverifiable rather than failed: an unrestricted key does work
+        for residents, so this is not proof of breakage. It is proof that the
+        thing which would break it cannot be ruled out from here.
+        """
+        tail = key[-6:]
+        origin = None
+        if db is not None:
+            try:
+                origin = await public_origin(db)
+            except Exception:
+                origin = None
+        target = f"{origin}/*" if origin else "https://your.site/*"
+        return _unverifiable(
+            f"Both APIs are enabled and billing is attached — a test address geocoded and "
+            f"address autocomplete answered. But this server used the key with no website "
+            f"attached and was allowed to, so the key ending …{tail} is not restricted "
+            f"to your site. If the map is grey in a browser, that is the cause: a key set to "
+            f"\"IP addresses\" instead of \"Websites\" passes this check from the server and "
+            f"fails in every resident's browser with RefererNotAllowedMapError. In Google "
+            f"Cloud open the key whose value ends …{tail} — check it is the same key you "
+            f"edited — and set Application restrictions to Websites with {target}."
+        )
 
     # MAP_PROVIDER, not MAPS_PROVIDER. Nothing writes the plural, so this read
     # always missed and every town was tested as though it were on Google --
@@ -908,9 +949,7 @@ async def _test_maps() -> dict:
                       "includedPrimaryTypes": ["geocode"]},
             )
             if pr.status_code == 200:
-                return {"ok": True, "detail": (
-                    "Key accepted. A test address geocoded and address autocomplete "
-                    "answered, so both APIs the map needs are enabled.")}
+                return await _browser_reachability(key)
 
             places_error = ""
             try:
@@ -1114,7 +1153,7 @@ _CAPABILITY_TESTS = {
     "ai": _test_ai,
     "translation": _test_translation,
     "identity": _test_identity,
-    "maps": lambda db=None: _test_maps(),
+    "maps": lambda db=None: _test_maps(db),
     "email": _test_email,
     "sms": _test_sms,
     "kms": _test_kms,
