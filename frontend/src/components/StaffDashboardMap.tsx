@@ -13,6 +13,7 @@ import {
     PopupHandle,
     boundsOfGeoJson,
     assetIcon,
+    clusterStyle,
     createMap,
     extractFeatures,
     legacyMapProviderConfig,
@@ -206,25 +207,8 @@ export default function StaffDashboardMap({
                 mapInstanceRef.current = map;
                 popupRef.current = map.createPopup();
                 requestLayerRef.current = map.createMarkerLayer({
-                    cluster: {
-                        style: (count) => ({
-                            icon: {
-                                type: 'circle',
-                                radius: 18 + Math.min(count, 50) / 4,
-                                fillColor: '#4f46e5',  // Was #6366f1, darker for WCAG AA contrast
-                                fillOpacity: 0.95,
-                                strokeColor: '#ffffff',
-                                strokeWidth: 3,
-                            },
-                            label: {
-                                text: String(count),
-                                color: '#ffffff',
-                                fontSize: '12px',
-                                fontWeight: '700',
-                            },
-                            zIndex: 1000 + count,
-                        }),
-                    },
+                    // Shared with the resident map and the location picker.
+                    cluster: { style: clusterStyle },
                 });
                 layerMarkerLayerRef.current = map.createMarkerLayer();
 

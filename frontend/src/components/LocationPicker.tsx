@@ -10,10 +10,11 @@ import {
     MapRenderer,
     MarkerHandle,
     MarkerOptions,
-    TOP_MARKER_Z_INDEX,
     assetIcon,
     backendGeocodingProvider,
     boundsOfGeoJson,
+    clusterStyle,
+    locationPinIcon,
     chainGeocoders,
     createGeocoder,
     createMap,
@@ -41,29 +42,11 @@ interface LocationPickerProps {
     className?: string;
 }
 
-// The dropped pin. Kept as an SVG data URI so it looks identical whichever
-// provider renders it — no vendor symbol vocabulary involved.
-const PIN_ICON_URL = 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="40" viewBox="0 0 28 40">
-        <defs>
-            <filter id="shadow" x="-50%" y="-20%" width="200%" height="150%">
-                <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000" flood-opacity="0.3"/>
-            </filter>
-        </defs>
-        <path d="M14 0 C6.268 0 0 6.268 0 14 C0 24.5 14 40 14 40 C14 40 28 24.5 28 14 C28 6.268 21.732 0 14 0 Z"
-              fill="#6366f1" filter="url(#shadow)"/>
-        <circle cx="14" cy="14" r="5" fill="white"/>
-    </svg>
-`);
-
-const clusterIconUrl = (count: number, size: number) =>
-    `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
-        <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-            <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 2}" fill="#2563eb" stroke="white" stroke-width="2"/>
-            <text x="50%" y="50%" text-anchor="middle" dy=".3em" fill="white" font-family="Arial" font-weight="bold" font-size="${size > 40 ? 14 : 12}">${count}</text>
-        </svg>
-    `)}`;
-
+// The dropped pin and the cluster bubbles both come from src/maps/markerIcons,
+// which is the only place any map glyph is described. They used to be defined
+// here, and separately again in RequestDetailMap, ResidentMapView and
+// StaffDashboardMap -- four components, three cluster styles, three asset
+// markers, no two maps looking alike.
 export default function LocationPicker({
     apiKey,
     provider,
@@ -191,13 +174,7 @@ export default function LocationPicker({
                 position,
                 draggable: true,
                 dropAnimation: true,
-                icon: {
-                    type: 'image',
-                    url: PIN_ICON_URL,
-                    width: 28,
-                    height: 40,
-                    anchor: { x: 14, y: 40 },
-                },
+                icon: locationPinIcon(),
                 onDragEnd: async (dropped) => {
                     const stillInBounds = isPointInGeoJson(dropped.lat, dropped.lng, townshipBoundary);
                     setIsOutOfBounds(!stillInBounds);
@@ -423,15 +400,7 @@ export default function LocationPicker({
 
                     if (assetMarkers.length > 0) {
                         const assetLayer = map.createMarkerLayer({
-                            cluster: {
-                                style: (count) => {
-                                    const size = count > 50 ? 50 : count > 20 ? 44 : count > 10 ? 38 : 32;
-                                    return {
-                                        icon: { type: 'image', url: clusterIconUrl(count, size), width: size, height: size },
-                                        zIndex: TOP_MARKER_Z_INDEX + count,
-                                    };
-                                },
-                            },
+                            cluster: { style: clusterStyle },
                         });
                         assetLayer.setMarkers(assetMarkers);
                     }

@@ -10,4 +10,12 @@ export * from './popup';
 export { createMap, createGeocoder, chainGeocoders, loadMapProvider, availableMapProviders, isMapProviderId } from './registry';
 export { resolveMapProviderConfig, legacyMapProviderConfig, DEFAULT_MAP_PROVIDER } from './config';
 export { backendGeocodingProvider } from './providers/backend';
-export { assetIcon, requestIcon, safeColor } from './markerIcons';
+export {
+    assetIcon,
+    requestIcon,
+    clusterIcon,
+    clusterStyle,
+    puckIcon,
+    locationPinIcon,
+    safeColor,
+} from './markerIcons';

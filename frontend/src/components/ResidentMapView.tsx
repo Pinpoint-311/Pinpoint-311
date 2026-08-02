@@ -7,7 +7,9 @@ import {
     MarkerOptions,
     PopupHandle,
     boundsOfGeoJson,
+    clusterStyle,
     createMap,
+    requestIcon,
     el,
     legacyMapProviderConfig,
     popupRoot,
@@ -162,25 +164,11 @@ export default function ResidentMapView({
                 mapInstanceRef.current = map;
                 popupRef.current = map.createPopup();
                 requestLayerRef.current = map.createMarkerLayer({
-                    cluster: {
-                        style: (count) => ({
-                            icon: {
-                                type: 'circle',
-                                radius: 16 + Math.min(count, 50) / 5,
-                                fillColor: '#4f46e5',  // Was #6366f1, darker for WCAG AA contrast
-                                fillOpacity: 0.95,
-                                strokeColor: '#ffffff',
-                                strokeWidth: 2,
-                            },
-                            label: {
-                                text: String(count),
-                                color: '#ffffff',
-                                fontSize: '11px',
-                                fontWeight: '700',
-                            },
-                            zIndex: 1000 + count,
-                        }),
-                    },
+                    // Shared with the staff dashboard and the location picker.
+                    // These two had drifted to different radii, stroke weights
+                    // and label sizes, so the same forty reports drew a
+                    // different bubble depending on which page you opened.
+                    cluster: { style: clusterStyle },
                 });
 
                 // Render township boundary and fit to it
@@ -248,14 +236,10 @@ export default function ResidentMapView({
         // Create markers
         const markers: MarkerOptions[] = filteredRequests.map(request => ({
             position: { lat: request.lat!, lng: request.long! },
-            icon: {
-                type: 'circle',
-                radius: 9,
-                fillColor: STATUS_COLORS[request.status as keyof typeof STATUS_COLORS] || '#6366f1',
-                fillOpacity: 1,
-                strokeColor: '#ffffff',
-                strokeWidth: 2,
-            },
+            // The same glyph the staff dashboard uses for the same report. This
+            // was a provider-drawn `radius: 9` circle while the dashboard asked
+            // for `radius: 10`, so one report was two different dots.
+            icon: requestIcon(STATUS_COLORS[request.status as keyof typeof STATUS_COLORS] || '#6366f1'),
             title: request.service_name,
             onClick: (_e, marker) => {
                 const popup = popupRef.current;
