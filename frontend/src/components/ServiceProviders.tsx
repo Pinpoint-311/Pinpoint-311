@@ -266,6 +266,13 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             setCatalog(cat);
             setSelected(cat.current_provider);
             setModel(cat.current_model || '');
+            if (cat.last_result) {
+                setResult({
+                    ok: cat.last_result.ok,
+                    detail: cat.last_result.detail,
+                    configured: cat.configured?.[cat.current_provider] === true,
+                });
+            }
             onStatus(cap, {
                 providerName: cat.providers.find(p => p.provider === cat.current_provider)?.name || cat.current_provider,
                 onDefault: !cat.default_provider || cat.current_provider === cat.default_provider,
