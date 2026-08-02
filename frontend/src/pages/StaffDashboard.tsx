@@ -123,6 +123,9 @@ export default function StaffDashboard() {
     const [requests, setRequests] = useState<ServiceRequest[]>([]);
     const [allRequests, setAllRequests] = useState<ServiceRequest[]>([]); // For dashboard map
     const [selectedRequest, setSelectedRequest] = useState<ServiceRequestDetail | null>(null);
+    // Which statistics sections failed to load, in words, for the banner.
+    const [statsErrors, setStatsErrors] = useState<string[]>([]);
+    const [statsLoading, setStatsLoading] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
     const [showIntakeModal, setShowIntakeModal] = useState(false);
@@ -422,6 +425,50 @@ export default function StaffDashboard() {
         }
     }, [currentView]);
 
+    // Refresh the open request, not just the list.
+    //
+    // The 30s poll above replaces `allRequests`, which is why the list and
+    // everything derived from it stays current. `selectedRequest` is fetched
+    // once, on click, and never again -- so a report opened the moment it
+    // arrives keeps whatever its AI analysis was at that instant. The worker
+    // finishes the triage a few seconds later, writes it to the row, and the
+    // open panel goes on showing the state it was born with until the page is
+    // reloaded by hand.
+    //
+    // Two rates. The slow one keeps a long-open panel honest. The fast one
+    // runs only while the analysis is genuinely still coming and stops as soon
+    // as it lands, fails, or the minute is up -- the point is that the panel
+    // fills in by itself, not that it polls forever.
+    const selectedId = selectedRequest?.service_request_id;
+    const analysisPending = !!selectedRequest && (() => {
+        const ai = selectedRequest.ai_analysis as Record<string, unknown> | null;
+        if (ai && (ai._error || ai.priority_score != null || ai.qualitative_analysis)) return false;
+        if (selectedRequest.ai_summary) return false;
+        // Only for a report new enough that triage could still be running.
+        const submitted = selectedRequest.requested_datetime
+            ? Date.parse(selectedRequest.requested_datetime as unknown as string)
+            : NaN;
+        return Number.isFinite(submitted) && Date.now() - submitted < 10 * 60 * 1000;
+    })();
+
+    useEffect(() => {
+        if (!selectedId) return;
+        const period = analysisPending ? 5000 : 30000;
+        const tick = setInterval(async () => {
+            try {
+                const fresh = await api.getRequestDetail(selectedId);
+                // Guard against a slow response landing after the user has
+                // moved on, which would reopen the previous request's data.
+                setSelectedRequest(prev =>
+                    prev && prev.service_request_id === fresh.service_request_id ? fresh : prev);
+            } catch {
+                // A failed refresh leaves what is on screen alone. The next
+                // tick tries again.
+            }
+        }, period);
+        return () => clearInterval(tick);
+    }, [selectedId, analysisPending]);
+
     // Auto-load request if URL contains requestId
     useEffect(() => {
         if (urlRequestId) {
@@ -520,23 +567,47 @@ export default function StaffDashboard() {
         }
     };
 
+    /**
+     * Five independent calls, five independent failures.
+     *
+     * These used to share one Promise.all in which the first two had no
+     * .catch(). Promise.all rejects on the first rejection, so a single failing
+     * endpoint meant none of the five setState calls ran and the entire
+     * statistics page rendered blank -- including the four sections whose data
+     * had arrived perfectly. The only trace was a console.error nobody has open.
+     *
+     * Now each one settles on its own and a failure is reported on screen,
+     * naming the section, so a page that is 80% working looks 80% working and
+     * says what the missing fifth was.
+     */
     const loadStatistics = async () => {
-        try {
-            const [statsData, advancedData, heatmap, sla, redirected] = await Promise.all([
-                api.getStatistics(),
-                api.getAdvancedStatistics(),
-                api.getHeatmapData().catch(() => null),
-                api.getSlaPerformance(90).catch(() => null),
-                api.getRedirectedStatistics(30).catch(() => null)
-            ]);
-            setStatistics(statsData);
-            setAdvancedStats(advancedData);
-            if (heatmap) setHeatmapData(heatmap);
-            setSlaPerf(sla);
-            setRedirects(redirected);
-        } catch (err) {
-            console.error('Failed to load statistics:', err);
-        }
+        setStatsLoading(true);
+        const failures: string[] = [];
+
+        const load = async <T,>(label: string, call: () => Promise<T>): Promise<T | null> => {
+            try {
+                return await call();
+            } catch (err) {
+                failures.push(`${label}: ${err instanceof Error ? err.message : 'request failed'}`);
+                return null;
+            }
+        };
+
+        const [statsData, advancedData, heatmap, sla, redirected] = await Promise.all([
+            load('Summary counts', () => api.getStatistics()),
+            load('Trends and hotspots', () => api.getAdvancedStatistics()),
+            load('Heatmap', () => api.getHeatmapData()),
+            load('SLA performance', () => api.getSlaPerformance(90)),
+            load('Redirected reports', () => api.getRedirectedStatistics(30)),
+        ]);
+
+        if (statsData) setStatistics(statsData);
+        if (advancedData) setAdvancedStats(advancedData);
+        if (heatmap) setHeatmapData(heatmap);
+        setSlaPerf(sla);
+        setRedirects(redirected);
+        setStatsErrors(failures);
+        setStatsLoading(false);
     };
 
     const loadRequestDetail = async (requestId: string) => {
@@ -1016,6 +1087,44 @@ export default function StaffDashboard() {
                                 </div>
                             )}
                         </div>
+
+                        {/* What did not load, and why.
+                            A statistics page that is missing a section should
+                            say so. This one used to go blank whenever any one
+                            of its five sources failed, with the reason in a
+                            console nobody has open. */}
+                        {statsErrors.length > 0 && (
+                            <div
+                                role="alert"
+                                className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4"
+                            >
+                                <div className="flex items-start gap-3">
+                                    <AlertTriangle className="w-5 h-5 text-amber-300 mt-0.5 shrink-0" />
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-semibold text-amber-100">
+                                            {statsErrors.length === 1
+                                                ? 'One section could not be loaded'
+                                                : `${statsErrors.length} sections could not be loaded`}
+                                        </p>
+                                        <p className="text-xs text-amber-200/80 mt-1">
+                                            Everything else on this page is up to date.
+                                        </p>
+                                        <ul className="mt-2 space-y-1">
+                                            {statsErrors.map((e, i) => (
+                                                <li key={i} className="text-xs text-amber-200/90 break-words">• {e}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                    <button
+                                        onClick={() => loadStatistics()}
+                                        disabled={statsLoading}
+                                        className="shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-100 border border-amber-500/30 transition-colors disabled:opacity-50"
+                                    >
+                                        {statsLoading ? 'Retrying…' : 'Try again'}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
 
                         {/* Stats Cards - Clickable */}
                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -2034,15 +2143,22 @@ export default function StaffDashboard() {
                                                 <h1 className="text-base sm:text-lg font-semibold text-white truncate">{selectedRequest.service_name}</h1>
                                             </div>
                                             <div className="flex items-center gap-1.5 shrink-0">
+                                                {/* Only when there is a work order to refresh. Without a
+                                                    link this button's own endpoint answers "This request
+                                                    isn't linked to any external platform" -- so on a town
+                                                    with no integrations it was a control that existed
+                                                    solely to report that it does nothing. */}
+                                                {(selectedRequest.external_links?.length ?? 0) > 0 && (
                                                 <button
                                                     onClick={handleRefreshWorkOrder}
                                                     disabled={woRefresh.busy}
-                                                    title="Pull the latest work-order status (assignment, schedule, resolution) from any connected system"
+                                                    title={`Pull the latest work-order status (assignment, schedule, resolution) from ${selectedRequest.external_links!.join(', ')}`}
                                                     className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-white/70 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-colors disabled:opacity-50"
                                                 >
                                                     <RefreshCw className={`w-3.5 h-3.5 ${woRefresh.busy ? 'animate-spin' : ''}`} aria-hidden="true" />
                                                     <span className="hidden sm:inline">{woRefresh.busy ? 'Refreshing…' : 'Refresh work order'}</span>
                                                 </button>
+                                                )}
                                                 <PrintWorkOrder
                                                     request={selectedRequest}
                                                     auditLog={auditLog}

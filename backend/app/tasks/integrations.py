@@ -80,6 +80,27 @@ def _build_payload(sr: ServiceRequest, config: dict, dept_name: Optional[str] = 
         "assigned_to": sr.assigned_to,
         "assigned_department": dept_name,
         "due_date": sr.due_datetime.isoformat() if getattr(sr, "due_datetime", None) else None,
+        # How and when it was resolved. A work order that syncs the request but
+        # not its outcome leaves the external system showing an open job the
+        # town closed weeks ago -- and `completion_message` is the sentence the
+        # resident was actually given, which is what a county reviewing the
+        # record wants to read. It was already being pushed on a status change
+        # and was missing from the record itself.
+        "closed_datetime": sr.closed_datetime.isoformat() if sr.closed_datetime else None,
+        "closed_substatus": sr.closed_substatus,
+        "completion_message": sr.completion_message,
+        # Same rule as media_urls: a link, never an inline blob.
+        "completion_photo_url": (
+            sr.completion_photo_url
+            if isinstance(sr.completion_photo_url, str) and sr.completion_photo_url.startswith("http")
+            else None
+        ),
+        "updated_datetime": sr.updated_datetime.isoformat() if sr.updated_datetime else None,
+        # Where it came from, so a platform that also feeds us can recognise
+        # its own records, and what language the resident used, so whoever
+        # turns up can be someone who speaks it.
+        "source": sr.source,
+        "preferred_language": sr.preferred_language,
     }
     if _flag(config, "share_pii"):
         payload.update({

@@ -959,7 +959,36 @@ async def get_request(
     request = result.scalar_one_or_none()
     if not request:
         raise HTTPException(status_code=404, detail="Request not found")
+
+    # Which external systems this record actually exists in. Drives whether the
+    # "Refresh work order" button is offered at all: with no link there is
+    # nothing to pull, and the refresh endpoint's own answer is "This request
+    # isn't linked to any external platform."
+    #
+    # Set on the ORM instance rather than built into a dict, so the response
+    # model keeps reading every other field straight off the row.
+    request.external_links = await _linked_platforms(db, request.id)
     return request
+
+
+async def _linked_platforms(db: AsyncSession, service_request_id: int) -> List[str]:
+    """Display names of the platforms this request is linked to. Never raises.
+
+    A failure here must not take down the request detail view -- the links are
+    a nicety and the report is the point.
+    """
+    try:
+        from app.models import IntegrationConfig, IntegrationLink
+
+        result = await db.execute(
+            select(IntegrationConfig.platform, IntegrationConfig.display_name)
+            .join(IntegrationLink, IntegrationLink.integration_id == IntegrationConfig.id)
+            .where(IntegrationLink.service_request_id == service_request_id)
+        )
+        return sorted({(row[1] or row[0]) for row in result.all()})
+    except Exception as exc:
+        logger.warning("Could not read integration links: %s", exc)
+        return []
 
 
 @router.put("/requests/{request_id}/status", response_model=ServiceRequestDetailResponse)
