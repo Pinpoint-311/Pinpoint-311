@@ -2065,8 +2065,39 @@ STATS_CACHE_TTL = 300  # 5 minutes
 @router.get("/advanced-statistics", response_model=AdvancedStatisticsResponse)
 async def get_advanced_statistics(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_staff)
+    current_user: User = Depends(get_current_staff)
 ):
+    """Advanced statistics, with the reason written down when it cannot build them.
+
+    This endpoint is six hundred lines of aggregation and a single unguarded
+    exception anywhere in it returns a bare 500. That is what happened: an
+    aware/naive datetime subtraction raised TypeError, FastAPI turned it into
+    "Internal Server Error", and the browser console said `Request failed`.
+    Nothing named the line, the file, or the exception -- diagnosing it needed
+    the source rather than the logs.
+
+    So the failure is now logged with a traceback and the response says which
+    exception type it was. Not the message: an aggregation error can quote a
+    row, and this is rendered in a browser. The type plus the server log is
+    enough to find it and carries nothing a resident wrote.
+    """
+    try:
+        return await _advanced_statistics(db)
+    except Exception as exc:
+        logger.exception(
+            "[Statistics] advanced-statistics failed for %s",
+            sanitize_for_log(getattr(current_user, "username", "?")),
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"The advanced statistics could not be built ({type(exc).__name__}). "
+                f"The full error and its traceback are in the server log."
+            ),
+        )
+
+
+async def _advanced_statistics(db: AsyncSession):
     """Get advanced PostGIS-powered statistics (staff only, cached for 5 minutes)"""
     
     # Check cache first

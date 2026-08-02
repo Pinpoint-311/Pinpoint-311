@@ -138,3 +138,36 @@ def test_the_endpoint_uses_the_shared_bucketing():
 
     source = (Path(__file__).resolve().parents[1] / "app/api/system.py").read_text()
     assert source.count("bucket_ages(") >= 2
+
+
+# ---- and the next failure, whatever it is, should name itself ----
+
+def test_advanced_statistics_reports_why_it_failed():
+    """The 500 that started this said `Request failed` and nothing else.
+
+    Six hundred lines of aggregation behind one route, and any unguarded
+    exception in it returns a bare Internal Server Error. Diagnosing the
+    timezone bug needed the source, not the logs, which is the wrong way round.
+    """
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "app/api/system.py").read_text()
+    route = source[source.index('@router.get("/advanced-statistics"'):]
+    route = route[:route.index("async def _advanced_statistics")]
+
+    assert "logger.exception" in route, "the traceback has to reach the server log"
+    assert "type(exc).__name__" in route, "the response has to name the exception type"
+
+
+def test_the_failure_message_does_not_quote_the_data():
+    """An aggregation error can carry a row in its message, and this string is
+    rendered in a browser. The type plus the server log is enough to find it."""
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "app/api/system.py").read_text()
+    route = source[source.index('@router.get("/advanced-statistics"'):]
+    route = route[:route.index("async def _advanced_statistics")]
+
+    assert "{exc}" not in route and "str(exc)" not in route, (
+        "the exception message is being returned to the browser"
+    )
