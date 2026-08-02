@@ -29,11 +29,36 @@ different retention story.
 from __future__ import annotations
 
 import logging
+from contextvars import ContextVar
 from typing import Any, Dict, Optional
 
 from app.core.sanitize import sanitize_for_log
 
 logger = logging.getLogger(__name__)
+
+# Set when a handler has already written a meaningful entry for this request.
+#
+# The middleware records every authenticated mutation as a backstop, because
+# fifty-two endpoints had no audit call and the fifty-third would not have had
+# one either. But a coarse "PUT /api/users/3" beside a specific "user_updated,
+# role -> admin" is duplication, and duplication in an audit trail is noise
+# that makes people stop reading it. So a handler that has said something
+# specific suppresses the generic entry.
+#
+# A ContextVar rather than request.state: this is set deep in a service
+# function that has no Request, and it has to be visible to middleware wrapping
+# the whole call. Context is per-task, so concurrent requests cannot see each
+# other's flag.
+_recorded: ContextVar[bool] = ContextVar("admin_action_recorded", default=False)
+
+
+def begin_request() -> Any:
+    """Reset the flag at the start of a request. Returns the token to restore."""
+    return _recorded.set(False)
+
+
+def was_recorded() -> bool:
+    return _recorded.get()
 
 # Values that must never be copied into an audit detail payload, whatever a
 # caller passes. Belt and braces: call sites pass field *names*, but a future
@@ -89,6 +114,7 @@ async def record_admin_action(
             failure_reason=failure_reason,
             details=safe_details(details),
         )
+        _recorded.set(True)
         return True
     except Exception as exc:
         logger.warning(
