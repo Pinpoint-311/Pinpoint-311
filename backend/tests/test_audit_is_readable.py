@@ -74,6 +74,47 @@ def test_destroying_a_resident_record_is_recorded_in_the_admin_log():
     )
 
 
+@pytest.mark.parametrize("method,path,why", [
+    ("POST", "/api/gis/boundaries",
+     "the town boundary is the map every report is placed on, and this route "
+     "was writable without authentication until three commits ago"),
+    ("POST", "/api/gis/township-boundary", "same boundary, second route"),
+    ("POST", "/api/system/connectors/sms/mute",
+     "silencing alerts is what 'why did nobody get emailed' is about"),
+])
+def test_the_quiet_ones_are_not_quiet_because_the_skip_list_grew(method, path, why):
+    """Trimming the log is done by naming what changes nothing, not by
+    silencing a whole prefix.
+
+    `/api/gis/` and `/api/system/connectors` are both tempting prefixes -- most
+    of the traffic under them is lookups and status polling. But a lookup is a
+    GET and was never recorded, while the handful of mutations underneath are
+    among the most consequential in the product. Skipping the prefix would buy
+    nothing and lose those.
+    """
+    assert should_record(method, path) is True, why
+    assert describe_action(method, path)
+
+
+def test_a_provider_save_says_which_provider():
+    """Four rows of "Added or updated a service provider's settings" is what
+    working through the setup guide looks like, and not one of them says
+    whether what changed was who sends the town's text messages."""
+    assert describe_action("POST", "/api/system/providers/sms/save") == (
+        "Updated the SMS provider settings"
+    )
+    assert describe_action("POST", "/api/system/providers/email/save") == (
+        "Updated the email provider settings"
+    )
+
+
+def test_an_unknown_capability_keeps_its_own_name():
+    """A capability added next year should read as itself on day one rather
+    than be flattened into "a provider"."""
+    said = describe_action("POST", "/api/system/providers/notarisation/save")
+    assert "notarisation" in said
+
+
 def test_ordinary_work_on_a_request_stays_off_the_admin_log():
     """A status change and a comment are the day job. They are on the request,
     where somebody looking at that request will see them, and putting them here

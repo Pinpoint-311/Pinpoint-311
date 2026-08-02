@@ -267,11 +267,10 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             setSelected(cat.current_provider);
             setModel(cat.current_model || '');
             if (cat.last_result) {
-                setResult({
-                    ok: cat.last_result.ok,
-                    detail: cat.last_result.detail,
-                    configured: cat.configured?.[cat.current_provider] === true,
-                });
+                // `configured` was being passed here too. It is not part of
+                // this state -- the badge reads it from the catalog -- so it
+                // was dropped on the floor while breaking the type.
+                setResult({ ok: cat.last_result.ok, detail: cat.last_result.detail });
             }
             onStatus(cap, {
                 providerName: cat.providers.find(p => p.provider === cat.current_provider)?.name || cat.current_provider,
