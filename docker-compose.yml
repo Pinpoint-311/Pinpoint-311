@@ -80,6 +80,7 @@ services:
       # regenerates the Caddyfile, which used to drop the security headers and
       # every provisioned tenancy along with it.
       - ${TENANT_CADDY_PATH:-/home/ubuntu/centralizedhosting/tenants/_caddy}:/etc/caddy/tenants
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       DATABASE_URL: postgresql+asyncpg://${DB_USER:-township}:${DB_PASSWORD:?Set DB_PASSWORD}@db/${DB_NAME:-township_db}
