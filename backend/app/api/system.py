@@ -3717,9 +3717,24 @@ async def configure_domain(
     # container, so this call was refused every time it has ever been made.
     reload_ok, detail = False, ""
     try:
+        caddyfile_path = os.environ.get("CADDYFILE_PATH", "/etc/caddy/Caddyfile")
+        caddyfile_content = None
+        if os.path.exists(caddyfile_path):
+            with open(caddyfile_path, "r", encoding="utf-8") as f:
+                caddyfile_content = f.read()
+
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(f"{CADDY_ADMIN}/load", json=None,
-                                         headers={"Cache-Control": "must-revalidate"})
+            if caddyfile_content:
+                response = await client.post(
+                    f"{CADDY_ADMIN}/load",
+                    content=caddyfile_content.encode("utf-8"),
+                    headers={"Content-Type": "text/caddyfile", "Cache-Control": "must-revalidate"},
+                )
+            else:
+                response = await client.post(
+                    f"{CADDY_ADMIN}/load",
+                    headers={"Cache-Control": "must-revalidate"},
+                )
             reload_ok = response.status_code in (200, 204)
             if not reload_ok:
                 detail = f"the proxy answered {response.status_code}"
