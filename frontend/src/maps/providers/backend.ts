@@ -50,6 +50,14 @@ export const backendGeocodingProvider: GeocodingProvider = {
      * the intake form with it, and not finding an address is a normal answer to
      * half of an address.
      */
+    // Keeps this provider behind any real autocomplete in the chain. Backend
+    // first is right for geocode/reverseGeocode -- that is what meters usage for
+    // the cost report -- but for suggestions it meant one unbiased single match
+    // hid the provider's whole list: typing "Main St" in a New Jersey township
+    // returned exactly one option, "Main St, Vancouver, BC, Canada", because
+    // this answered first and the chain stopped there.
+    suggestFallbackOnly: true,
+
     async suggest(query: string): Promise<AddressSuggestion[]> {
         const trimmed = query.trim();
         // Below this it is a fragment, and geocoding a fragment returns a

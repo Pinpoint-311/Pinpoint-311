@@ -36,7 +36,20 @@ async function suggestViaNewPlaces(
 
     const request: Record<string, unknown> = { input: query };
     if (options?.countries?.length) request.includedRegionCodes = options.countries;
-    if (options?.addressesOnly) request.includedPrimaryTypes = ['street_address', 'premise'];
+    // `geocode`, not ['street_address', 'premise'].
+    //
+    // Those two types only match a *specific building*, so Places (New)
+    // returned nothing at all until a house number had been typed: "Springfield
+    // Av" gave zero suggestions, which reads as a dead address box for the
+    // whole time a resident is actually typing. They also exclude
+    // `subpremise`, so flats and unit addresses were dropped even once the
+    // number was there -- "42 Prospect Street, Jersey City NJ" is a
+    // `subpremise` and never appeared.
+    //
+    // `geocode` is the collection that covers route, street_address, premise
+    // and subpremise together while still excluding businesses, which is what
+    // `addressesOnly` has always meant here.
+    if (options?.addressesOnly) request.includedPrimaryTypes = ['geocode'];
     if (options?.biasBounds) {
         const b = options.biasBounds;
         request.locationBias = { south: b.south, west: b.west, north: b.north, east: b.east };

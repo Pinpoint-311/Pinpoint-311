@@ -377,6 +377,16 @@ export interface GeocodingProvider {
     geocode(query: string): Promise<GeocodeResult[]>;
     /** Data-in/data-out suggestions for callers rendering their own dropdown. */
     suggest?(query: string, options?: SuggestOptions): Promise<AddressSuggestion[]>;
+    /**
+     * True when `suggest` is a last-resort single-match lookup rather than real
+     * autocomplete — it can only answer once the text already resolves to a
+     * whole address, and it answers with exactly one result.
+     *
+     * chainGeocoders takes the first provider that returns anything, so without
+     * this flag a fallback sitting earlier in the chain silently wins every
+     * time and the real autocomplete behind it is never reached.
+     */
+    readonly suggestFallbackOnly?: boolean;
     resolveSuggestion?(suggestion: AddressSuggestion): Promise<GeocodeResult | null>;
     /**
      * Attach the provider's native autocomplete widget to an input. Returns null
