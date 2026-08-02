@@ -440,7 +440,13 @@ export default function LocationPicker({
                 // Provider-native address autocomplete on the search input. The
                 // map feeds it viewport bias; the geocoder never sees the map.
                 const autocomplete = geocoderRef.current.attachAutocomplete?.(inputRef.current, {
-                    addressesOnly: true,
+                    // Deliberately NOT addressesOnly. Residents do not report a
+                    // pothole at a street address, they report it at Memorial
+                    // Park, or by the library, or at an intersection -- and an
+                    // addresses-only filter excludes every one of those. With
+                    // the town's viewport as bias, "memorial" returned nothing
+                    // at all while the unfiltered search returned Memorial Park
+                    // two towns over, which is the answer somebody wanted.
                     countries: ['us'],
                     biasBounds: map.getBounds(),
                     onSelect: (place) => {
@@ -569,7 +575,8 @@ export default function LocationPicker({
         }
         const seq = ++suggestSeq.current;
         geocoder.suggest(query, {
-            addressesOnly: true,
+            // See the note on attachAutocomplete above: a 311 location is as
+            // often a park or a landmark as it is a street address.
             countries: ['us'],
             biasBounds: mapRef.current?.getBounds() ?? null,
         }).then(results => {
