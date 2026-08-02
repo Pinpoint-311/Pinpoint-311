@@ -180,6 +180,9 @@ async def _configured_map(providers: List[Dict[str, Any]]) -> Dict[str, bool]:
 
     out: Dict[str, bool] = {}
     for provider in providers:
+        pkey = provider.get("provider") or provider.get("id") or ""
+        if not pkey:
+            continue
         required = [f["key"] for f in provider.get("credential_fields", []) if _field_required(f)]
         present = True
         for key in required:
@@ -201,7 +204,7 @@ async def _configured_map(providers: List[Dict[str, Any]]) -> Dict[str, bool]:
                 # provider. Say nothing rather than say something false.
                 present = False
                 break
-        out[provider["provider"]] = present
+        out[pkey] = present
     return out
 
 
@@ -700,7 +703,8 @@ async def save_provider(
     # So the save stands and the answer stops overstating it. The caller gets
     # the same reading of "configured" the badge uses, from the same function,
     # rather than inferring it from a 200.
-    configured_now = (await _configured_map([catalog[provider_id]])).get(provider_id, False)
+    spec = dict(catalog[provider_id], provider=provider_id)
+    configured_now = (await _configured_map([spec])).get(provider_id, False)
     missing: List[str] = []
     if not configured_now:
         from app.services.secret_manager import get_secret
