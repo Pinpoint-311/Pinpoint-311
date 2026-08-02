@@ -121,8 +121,6 @@ async def get_boundary(
     }
 
 
-@router.post("/boundaries")
-
 async def persist_boundary(db, geojson_data: dict, name: str = None,
                            center_lat: float = None, center_lng: float = None) -> dict:
     """Store a boundary and fetch the roads inside it.
@@ -189,6 +187,18 @@ def normalize_boundary(geojson_data: dict, name: str = None) -> dict:
     return geojson_data
 
 
+# This decorator had come adrift. It was sitting two functions up, on
+# `persist_boundary` -- an internal helper that takes a raw session and has no
+# `Depends` on it at all -- which meant POST /api/gis/boundaries was served by
+# an unauthenticated function that writes `settings.township_boundary` and
+# commits. A town's boundary decides which roads are fetched, how reports are
+# matched to streets, and what the map draws, and anyone who could reach the
+# API could replace it.
+#
+# The consequence in the other direction was just as bad and much quieter: the
+# admin-guarded handler below had no route at all, so the boundary upload an
+# administrator is supposed to use had silently not existed.
+@router.post("/boundaries")
 async def upload_boundary(
     name: str,
     file: UploadFile = File(...),

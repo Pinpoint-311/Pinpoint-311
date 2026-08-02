@@ -8,6 +8,7 @@ from app.db.session import get_db
 from app.models import User, Department
 from app.schemas import UserCreate, UserResponse, UserUpdate
 from app.core.auth import get_password_hash, get_current_admin, get_current_staff
+from app.services.admin_audit import record_admin_action
 
 router = APIRouter()
 
@@ -49,24 +50,22 @@ async def list_staff_members(
     return result.scalars().all()
 
 
-class PublicStaffResponse(BaseModel):
-    username: str
-    full_name: str | None
-    role: str
-    
-    class Config:
-        from_attributes = True
-
-
-@router.get("/staff/public", response_model=List[PublicStaffResponse])
-async def list_staff_public(db: AsyncSession = Depends(get_db)):
-    """List staff usernames for public filters (no auth required)"""
-    result = await db.execute(
-        select(User)
-        .where(User.role.in_(['staff', 'admin']), User.is_active == True)
-        .order_by(User.full_name, User.username)
-    )
-    return result.scalars().all()
+# GET /users/staff/public is deliberately gone.
+#
+# It served the full roster of every active staff and admin account --
+# username, full name, and role -- to anyone who asked, with no auth. Its only
+# caller was the resident portal, which loaded it to populate the "Assigned
+# Staff" checkboxes on the public map, and its docstring said so: "for public
+# filters".
+#
+# That filter is now staff-only, so the endpoint has no remaining purpose and
+# is pure exposure. A username list is the first half of a credential-stuffing
+# attempt, and `role` labelled which of those usernames were administrators.
+#
+# The staff map reads the authenticated /users/staff instead. If something ever
+# genuinely needs to show residents who works for the town -- a "contact your
+# department" page -- that wants names and job titles chosen for publication,
+# not a dump of the login table.
 
 
 @router.get("/", response_model=List[UserResponse])
@@ -134,7 +133,15 @@ async def create_user(
     
     db.add(user)
     await db.commit()
-    
+
+    # Who was given an account, and at what level. The role is the part that
+    # matters: this is how somebody becomes an administrator.
+    await record_admin_action(
+        db, event_type="user_created", actor=_,
+        details={"target_username": user.username, "role": user.role,
+                 "department_ids": user_data.department_ids or []},
+    )
+
     # Reload with departments relationship for response
     result = await db.execute(
         select(User)
@@ -197,6 +204,20 @@ async def update_user(
     
     await db.commit()
     await db.refresh(user)
+
+    # Field names, not values. That an address changed is the audit record;
+    # the address itself lives on the row and has its own retention.
+    await record_admin_action(
+        db, event_type="user_updated", actor=_,
+        details={
+            "target_username": user.username,
+            "fields": sorted(update_data.keys()),
+            # Except this one. A privilege change is the event, so the value
+            # is the point of recording it.
+            **({"role": user.role} if "role" in update_data else {}),
+            **({"department_ids": department_ids} if department_ids is not None else {}),
+        },
+    )
     return user
 
 
@@ -218,27 +239,27 @@ async def delete_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
+    deleted_username, deleted_role = user.username, user.role
     await db.delete(user)
     await db.commit()
 
+    # Captured before the delete, because afterwards there is nothing to read
+    # it off -- and an account disappearing with no record of who removed it
+    # is the single worst gap this table had.
+    await record_admin_action(
+        db, event_type="user_deleted", actor=current_user,
+        details={"target_username": deleted_username, "role": deleted_role},
+    )
 
-@router.post("/{user_id}/reset-password", response_model=UserResponse)
-async def reset_password(
-    user_id: int,
-    new_password: str,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin)
-):
-    """Reset user password (admin only)"""
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    user.hashed_password = get_password_hash(new_password)
-    await db.commit()
-    await db.refresh(user)
-    return user
+
+# POST /users/{id}/reset-password is deliberately gone.
+#
+# It took the new password as a *query parameter*, so every reset wrote the
+# password in clear text into the access log, the reverse proxy log, any CDN
+# in front of it, the browser history, and the Referer header of the next
+# request. Nothing called it -- the admin console has always used the JSON
+# variant below -- so it was an unused endpoint whose only effect was to make
+# a password disclosure one curl command away.
 
 
 from pydantic import BaseModel
@@ -263,6 +284,13 @@ async def reset_password_json(
     user.hashed_password = get_password_hash(data.new_password)
     await db.commit()
     await db.refresh(user)
+
+    # That it happened and to whom. The password itself is not in `details`
+    # and `safe_details` would strip it if a future caller passed it.
+    await record_admin_action(
+        db, event_type="user_password_reset", actor=_,
+        details={"target_username": user.username},
+    )
     return user
 
 

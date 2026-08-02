@@ -1,37 +1,56 @@
+{
+	# Reachable from the backend container so a domain change can reload Caddy.
+	#
+	# Caddy's admin endpoint listens on localhost:2019 inside its own container
+	# by default. This file never said otherwise, so the reload the backend has
+	# always attempted -- POST http://caddy:2019/load -- was refused every
+	# time, and an administrator saving a domain got "could not reload Caddy
+	# automatically" with no way to tell why.
+	#
+	# Port 2019 is not published in docker-compose, so this is reachable from
+	# the compose network and not from outside it.
+	admin 0.0.0.0:2019
+}
+
+# Everything a Pinpoint site serves, in one place.
+#
+# The base domain below and any custom domain an administrator sets both import
+# this, so there is exactly one Content-Security-Policy and one set of routes in
+# the deployment. A custom domain used to be configured by regenerating this
+# whole file from a template in the API handler, which dropped the headers, the
+# tenant import and the panel block, and pointed the frontend at the Vite dev
+# server.
+(pinpoint_site) {
+	handle /api/* {
+		# The backend sets a per-response CSP (locked-down for JSON, inline-safe
+		# for its few HTML pages like demo/bootstrap login), so don't override it
+		# here — a blanket lock would break those inline-script HTML pages.
+		reverse_proxy {args[0]}
+	}
+
+	handle {
+		reverse_proxy {args[1]}
+	}
+
+	encode gzip
+
+	header {
+		# Don't advertise server software/version (information disclosure).
+		-Server
+		-X-Powered-By
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		X-XSS-Protection "1; mode=block"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://maps.googleapis.com https://*.gstatic.com https://translate.googleapis.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https: http:; connect-src 'self' https://maps.googleapis.com https://*.gstatic.com https://translate.googleapis.com https://api.open-meteo.com https://archive-api.open-meteo.com https://*.auth0.com https://fonts.googleapis.com wss:; frame-src 'self' https://www.google.com https://*.auth0.com; object-src 'none'; base-uri 'self'; form-action 'self'; worker-src 'self' blob:;"
+	}
+}
+
 # Dynamic domain from DOMAIN environment variable
 # Set DOMAIN=your.domain.com in .env or docker-compose
 {$DOMAIN:localhost} {
-    # API routes - must come first for proper matching
-    # Rate limiting is handled by SlowAPI in the backend (500 req/min per IP)
-    handle /api/* {
-        # The backend sets a per-response CSP (locked-down for JSON, inline-safe
-        # for its few HTML pages like demo/bootstrap login), so don't override it
-        # here — a blanket lock would break those inline-script HTML pages.
-        reverse_proxy backend:8000
-    }
-
-    # Frontend - SPA routing (nginx production server)
-    handle {
-        reverse_proxy frontend:80
-    }
-
-    # Enable compression
-    encode gzip
-
-    # Security headers
-    header {
-        # Don't advertise server software/version (information disclosure).
-        -Server
-        -X-Powered-By
-        X-Content-Type-Options nosniff
-        X-Frame-Options DENY
-        Referrer-Policy strict-origin-when-cross-origin
-        # Additional security headers
-        X-XSS-Protection "1; mode=block"
-        Strict-Transport-Security "max-age=31536000; includeSubDomains"
-        # Content Security Policy - protects against XSS attacks
-        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://maps.googleapis.com https://*.gstatic.com https://translate.googleapis.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https: http:; connect-src 'self' https://maps.googleapis.com https://*.gstatic.com https://translate.googleapis.com https://api.open-meteo.com https://archive-api.open-meteo.com https://*.auth0.com https://fonts.googleapis.com wss:; frame-src 'self' https://www.google.com https://*.auth0.com; object-src 'none'; base-uri 'self'; form-action 'self'; worker-src 'self' blob:;"
-    }
+	import pinpoint_site backend:8000 frontend:80
 }
 
 
@@ -42,4 +61,8 @@ centraldemo.pinpoint311.org {
 }
 
 # Provisioned Town Tenancies
+# Provisioned town tenancies, and the snippet the backend writes when an
+# administrator sets this town's own domain (custom-domain.caddy). One glob
+# covers both -- importing the custom-domain file separately as well would
+# define its site block twice, which Caddy refuses to start on.
 import /etc/caddy/tenants/*.caddy

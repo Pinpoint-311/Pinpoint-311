@@ -191,6 +191,9 @@ export interface ServiceRequestDetail extends ServiceRequest {
     email: string;
     phone: string | null;
     media_urls: string[];  // Array of photo URLs
+    /** Platforms this request exists in. Empty means the work-order
+     *  refresh has nothing to pull, so the button is not offered. */
+    external_links?: string[];
     ai_analysis: Record<string, unknown> | null;
     flag_reason: string | null;
     staff_notes: string | null;

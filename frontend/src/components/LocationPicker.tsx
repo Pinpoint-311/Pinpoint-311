@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { MapPin, Crosshair, Loader2 } from 'lucide-react';
 import { MapLayer } from '../services/api';
 import {
+    AddressSuggestion,
     AutocompleteHandle,
     GeocodingProvider,
     LatLng,
@@ -10,6 +11,7 @@ import {
     MarkerHandle,
     MarkerOptions,
     TOP_MARKER_Z_INDEX,
+    assetIcon,
     backendGeocodingProvider,
     boundsOfGeoJson,
     chainGeocoders,
@@ -83,6 +85,19 @@ export default function LocationPicker({
     const markerRef = useRef<MarkerHandle | null>(null);
     const geocoderRef = useRef<GeocodingProvider | null>(null);
     const autocompleteRef = useRef<AutocompleteHandle | null>(null);
+    // Our own suggestion list, used when the provider has no widget of its own.
+    //
+    // Google's legacy Autocomplete decorated this input directly. Its
+    // replacement is a custom element that replaces the input, and providers
+    // other than Google have no widget at all -- so `attachAutocomplete`
+    // returning null is a normal answer, and the interface has always said
+    // callers should fall back to suggest() plus their own list. Nothing
+    // implemented that half, so "no widget" meant "no autocomplete".
+    const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
+    const [suggestOpen, setSuggestOpen] = useState(false);
+    const [activeSuggestion, setActiveSuggestion] = useState(-1);
+    const [needsOwnList, setNeedsOwnList] = useState(false);
+    const suggestSeq = useRef(0);
 
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -323,14 +338,7 @@ export default function LocationPicker({
 
                                 assetMarkers.push({
                                     position,
-                                    icon: {
-                                        type: 'circle',
-                                        radius: 10,
-                                        fillColor: layer.fill_color,
-                                        fillOpacity: 0.95,
-                                        strokeColor: '#ffffff',
-                                        strokeWidth: 2,
-                                    },
+                                    icon: assetIcon(layer.fill_color, layer.stroke_color),
                                     title: props.name || props.asset_id || layer.name,
                                     onClick: (_e, marker) => {
                                         const assetName = props.name || layer.name;
@@ -450,6 +458,7 @@ export default function LocationPicker({
                     },
                 }) ?? null;
                 autocompleteRef.current = autocomplete;
+                setNeedsOwnList(!autocomplete);
 
                 if (autocomplete) {
                     map.on('idle', () => autocomplete.setBiasBounds(map.getBounds()));
@@ -534,12 +543,93 @@ export default function LocationPicker({
 
     // Handle manual input changes - only update local state, not parent
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setInputValue(e.target.value);
+        const next = e.target.value;
+        setInputValue(next);
         // Don't call onChange here - only update when:
         // 1. User selects from autocomplete dropdown
         // 2. User clicks on the map
         // 3. User drags the marker
         // 4. User uses "my location" button
+        if (needsOwnList) requestSuggestions(next);
+    };
+
+    /**
+     * Ask the geocoder chain what this might be.
+     *
+     * Sequence-numbered rather than debounced-and-hoped: two keystrokes can be
+     * in flight at once and the slower one must not overwrite the newer answer,
+     * which shows up as the list flicking back to what you typed a moment ago.
+     */
+    const requestSuggestions = useCallback((query: string) => {
+        const geocoder = geocoderRef.current;
+        if (!geocoder?.suggest || query.trim().length < 3) {
+            setSuggestions([]);
+            setSuggestOpen(false);
+            return;
+        }
+        const seq = ++suggestSeq.current;
+        geocoder.suggest(query, {
+            addressesOnly: true,
+            countries: ['us'],
+            biasBounds: mapRef.current?.getBounds() ?? null,
+        }).then(results => {
+            if (seq !== suggestSeq.current) return;
+            setSuggestions(results);
+            setSuggestOpen(results.length > 0);
+            setActiveSuggestion(-1);
+        }).catch(() => {
+            if (seq !== suggestSeq.current) return;
+            setSuggestions([]);
+            setSuggestOpen(false);
+        });
+    }, []);
+
+    const chooseSuggestion = useCallback(async (suggestion: AddressSuggestion) => {
+        const geocoder = geocoderRef.current;
+        setSuggestOpen(false);
+        setSuggestions([]);
+        if (!geocoder) return;
+
+        // Resolve through the chain, then fall back to geocoding the label --
+        // a provider without resolveSuggestion still gives a usable label.
+        let place = geocoder.resolveSuggestion
+            ? await geocoder.resolveSuggestion(suggestion).catch(() => null)
+            : null;
+        if (!place) {
+            const results = await geocoder.geocode(suggestion.label).catch(() => []);
+            place = results[0] ?? null;
+        }
+        if (!place) return;
+
+        setInputValue(place.formattedAddress);
+        onChange({ address: place.formattedAddress, lat: place.position.lat, lng: place.position.lng });
+
+        const map = mapRef.current;
+        if (map) {
+            if (place.viewport) map.fitBounds(place.viewport, { maxZoom: 19 });
+            else { map.setCenter(place.position); map.setZoom(19); }
+        }
+        placeMarker(place.position);
+    }, [onChange, placeMarker]);
+
+    const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (!suggestOpen || !suggestions.length) return;
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setActiveSuggestion(i => (i + 1) % suggestions.length);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setActiveSuggestion(i => (i <= 0 ? suggestions.length - 1 : i - 1));
+        } else if (e.key === 'Enter') {
+            // Only when something is highlighted. Otherwise Enter belongs to
+            // the form the picker sits in.
+            if (activeSuggestion >= 0) {
+                e.preventDefault();
+                void chooseSuggestion(suggestions[activeSuggestion]);
+            }
+        } else if (e.key === 'Escape') {
+            setSuggestOpen(false);
+        }
     };
 
     if (error) {
@@ -562,7 +652,13 @@ export default function LocationPicker({
                     placeholder={placeholder}
                     value={inputValue}
                     onChange={handleInputChange}
+                    onKeyDown={handleInputKeyDown}
+                    onBlur={() => window.setTimeout(() => setSuggestOpen(false), 150)}
                     aria-label="Location or address"
+                    role={needsOwnList ? 'combobox' : undefined}
+                    aria-expanded={needsOwnList ? suggestOpen : undefined}
+                    aria-controls={needsOwnList ? 'location-suggestions' : undefined}
+                    aria-autocomplete={needsOwnList ? 'list' : undefined}
                     className="w-full h-12 pl-12 pr-14 rounded-xl bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/20 transition-all"
                     disabled={isLoading}
                     autoComplete="off"
@@ -582,6 +678,36 @@ export default function LocationPicker({
                         <Crosshair className="w-5 h-5 text-primary-400" />
                     )}
                 </button>
+
+                {/* Our own suggestion list. Only rendered when the provider
+                    declined to attach its own -- a key with Places (New), a
+                    town on Esri or Azure, or the backend/road-data fallback. */}
+                {needsOwnList && suggestOpen && suggestions.length > 0 && (
+                    <ul
+                        id="location-suggestions"
+                        role="listbox"
+                        className="absolute left-0 right-0 top-full mt-1 z-30 max-h-64 overflow-y-auto rounded-xl border border-white/15 bg-slate-900/95 backdrop-blur shadow-2xl py-1"
+                    >
+                        {suggestions.map((s, i) => (
+                            <li key={s.id} role="option" aria-selected={i === activeSuggestion}>
+                                <button
+                                    type="button"
+                                    // onMouseDown, not onClick: blur fires first
+                                    // and would close the list before the click
+                                    // ever lands.
+                                    onMouseDown={(e) => { e.preventDefault(); void chooseSuggestion(s); }}
+                                    onMouseEnter={() => setActiveSuggestion(i)}
+                                    className={`w-full text-left px-4 py-2.5 transition-colors ${i === activeSuggestion ? 'bg-primary-500/25' : 'hover:bg-white/10'}`}
+                                >
+                                    <span className="block text-sm text-white truncate">{s.label}</span>
+                                    {s.secondaryLabel && (
+                                        <span className="block text-xs text-white/55 truncate">{s.secondaryLabel}</span>
+                                    )}
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                )}
             </div>
 
             {/* Map Container */}

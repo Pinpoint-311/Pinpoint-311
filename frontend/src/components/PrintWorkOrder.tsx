@@ -221,29 +221,57 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
             </div>
         ` : '';
 
-        // Build comments HTML (internal only - for field staff use)
-        const internalComments = comments?.filter(c => c.visibility === 'internal') || [];
-        const commentsHtml = internalComments.length ? `
+        // Everything said about this report, in the order it was said.
+        //
+        // Two problems, one fix. Only internal notes printed, which reads as a
+        // privacy decision and is the opposite of one: the resident's own
+        // words are the field notes -- "it's the second driveway", "the smell
+        // comes back after rain" -- and a crew standing in the street had
+        // every staff comment and none of them.
+        //
+        // And splitting them into two blocks lost the thing that makes them
+        // readable. "Is this the one by the school?" in one list and "yes, the
+        // second driveway" in another is a conversation with the replies filed
+        // separately from the questions. Interleaved, it reads as what it is.
+        //
+        // Internal notes stay marked, because the difference matters when the
+        // sheet is read aloud to a resident at the door.
+        const conversation = [...(comments || [])].sort((a, b) => {
+            const at = a.created_at ? Date.parse(a.created_at) : 0;
+            const bt = b.created_at ? Date.parse(b.created_at) : 0;
+            return at - bt;
+        });
+
+        const commentsHtml = conversation.length ? `
             <div class="section comments-section">
-                <h3>${icons.comment} Internal Comments (${internalComments.length})</h3>
+                <h3>${icons.comment} Conversation (${conversation.length})</h3>
                 <div class="comments-list">
-                    ${internalComments.map(c => `
-                        <div class="comment-item">
+                    ${conversation.map(c => {
+                        const internal = c.visibility === 'internal';
+                        const resident = c.username === 'Resident';
+                        return `
+                        <div class="comment-item ${internal ? 'comment-internal' : ''}">
                             <div class="comment-header">
                                 <strong>${c.username}</strong>
+                                ${internal
+                                    ? '<span class="comment-tag">Internal — not shown to the resident</span>'
+                                    : (resident ? '<span class="comment-tag comment-tag-resident">Resident</span>' : '')}
                                 <span class="comment-date">${formatDate(c.created_at)}</span>
                             </div>
                             <div class="comment-body">${c.content.replace(/\n/g, '<br/>')}</div>
-                        </div>
-                    `).join('')}
+                        </div>`;
+                    }).join('')}
                 </div>
             </div>
         ` : '';
 
-        // Legal hold banner
+        // Legal hold banner. The reason travels with it: "under legal hold"
+        // without saying why leaves whoever picks this up unable to tell
+        // whether it still applies.
         const legalHoldHtml = request.flagged ? `
             <div class="legal-hold-banner">
                 ${icons.flag} <strong>LEGAL HOLD</strong> — This record is under legal hold and exempt from retention policy.
+                ${request.flag_reason ? `<div class="legal-hold-reason">Reason: ${request.flag_reason}</div>` : ''}
             </div>
         ` : '';
 
@@ -536,6 +564,29 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
                         border-radius: 4px;
                         white-space: pre-wrap;
                     }
+                    .comment-internal {
+                        border-left: 3px solid #94a3b8;
+                        background: #f8fafc;
+                    }
+                    .comment-tag {
+                        font-size: 9px;
+                        text-transform: uppercase;
+                        letter-spacing: 0.04em;
+                        color: #475569;
+                        border: 1px solid #cbd5e1;
+                        border-radius: 3px;
+                        padding: 1px 5px;
+                        margin-left: 6px;
+                    }
+                    .comment-tag-resident {
+                        color: #1d4ed8;
+                        border-color: #bfdbfe;
+                    }
+                    .legal-hold-reason {
+                        margin-top: 6px;
+                        font-weight: 400;
+                        font-size: 11px;
+                    }
                     .comments-section {
                         background: #f0fdf4;
                         padding: 12px;
@@ -676,6 +727,10 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
                     <div class="meta-item">
                         <label>Last Updated</label>
                         <span>${formatDate(request.updated_datetime)}</span>
+                    </div>
+                    <div class="field">
+                        <label>Closed</label>
+                        <span>${request.closed_datetime ? formatDate(request.closed_datetime) : '—'}</span>
                     </div>
                 </div>
 

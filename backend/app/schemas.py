@@ -255,6 +255,13 @@ class ServiceRequestResponse(BaseModel):
         return v if v is not None else False
     
     matched_asset: Optional[Dict[str, Any]] = None
+    # Platforms this request is actually linked to, if any.
+    #
+    # "Refresh work order" pulls the latest assignment and schedule from a
+    # connected system. With no link there is nothing to pull, and the endpoint
+    # answers "This request isn't linked to any external platform" -- so the
+    # button existed to tell you it does nothing. Empty list means hide it.
+    external_links: List[str] = []
     # Assignment
     assigned_department_id: Optional[int] = None
     assigned_to: Optional[str] = None

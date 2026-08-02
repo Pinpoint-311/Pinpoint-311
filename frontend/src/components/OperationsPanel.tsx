@@ -40,14 +40,11 @@ export default function OperationsPanel() {
     const [connectorRollup, setConnectorRollup] = useState<
         { working: number; failing: number; unchecked: number; names: string[] } | null
     >(null);
-    const [uptimeStats, setUptimeStats] = useState<import('../services/api').UptimeStats | null>(null);
-    const [uptimeHistory, setUptimeHistory] = useState<import('../services/api').UptimeHistory | null>(null);
     const [proactive, setProactive] = useState<ProactiveHealth | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [runbookLoading, setRunbookLoading] = useState<string | null>(null);
     const [lastAction, setLastAction] = useState<RunbookResult | null>(null);
-    const [uptimeCheckLoading, setUptimeCheckLoading] = useState(false);
     const dialog = useDialog();
 
     const fetchAll = async () => {
@@ -57,11 +54,9 @@ export default function OperationsPanel() {
             // Every source is fetched independently and tolerant of failure, so a
             // single failing probe (e.g. infra introspection in a managed env)
             // degrades that section instead of blanking the whole panel.
-            const [healthData, connectorData, statsData, historyData, proactiveData] = await Promise.all([
+            const [healthData, connectorData, proactiveData] = await Promise.all([
                 api.getHealthDashboard().catch(() => null),
                 api.getConnectorHealth().catch(() => null),
-                api.getUptimeStats().catch(() => null),
-                api.getUptimeHistory(48).catch(() => null),
                 api.getProactiveHealth().catch(() => null),
             ]);
             setHealth(healthData);
@@ -79,35 +74,15 @@ export default function OperationsPanel() {
                         .map(c => c.connector),
                 });
             }
-            setUptimeStats(statsData);
-            setUptimeHistory(historyData);
             setProactive(proactiveData);
             // Only show the hard error state if literally nothing loaded.
-            if (!healthData && !connectorData && !statsData && !historyData && !proactiveData) {
+            if (!healthData && !connectorData && !proactiveData) {
                 setError('Failed to fetch system status');
             }
         } catch (err: any) {
             setError(err.message || 'Failed to fetch system status');
         } finally {
             setIsLoading(false);
-        }
-    };
-
-    const triggerUptimeCheck = async () => {
-        setUptimeCheckLoading(true);
-        try {
-            await api.triggerUptimeCheck();
-            // Refresh data after check
-            const [statsData, historyData] = await Promise.all([
-                api.getUptimeStats().catch(() => null),
-                api.getUptimeHistory(48).catch(() => null)
-            ]);
-            setUptimeStats(statsData);
-            setUptimeHistory(historyData);
-        } catch (err) {
-            console.error('Uptime check failed:', err);
-        } finally {
-            setUptimeCheckLoading(false);
         }
     };
 
@@ -348,112 +323,32 @@ export default function OperationsPanel() {
                 </Card>
             )}
 
-            {/* Uptime Monitoring */}
-            <Card>
-                <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-semibold text-white flex items-center gap-2">
-                        <Clock className="w-5 h-5 text-green-400" />
-                        Uptime Monitoring
-                    </h3>
-                    <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={triggerUptimeCheck}
-                        disabled={uptimeCheckLoading}
-                    >
-                        {uptimeCheckLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-                        Check Now
-                    </Button>
-                </div>
+            {/* The "Uptime Monitoring" block that was here has gone, for the
+                same reason as the Cloud Integrations one below it.
 
-                {/* Uptime Stats Cards */}
-                {uptimeStats && Object.keys(uptimeStats.services).length > 0 ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
-                        {Object.entries(uptimeStats.services).map(([serviceName, periods]) => (
-                            <div key={serviceName} className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
-                                <h4 className="text-white font-medium capitalize mb-2">{serviceName.replace(/_/g, ' ')}</h4>
-                                <div className="grid grid-cols-3 gap-2">
-                                    {(['24h', '7d', '30d'] as const).map(period => {
-                                        const stats = periods[period];
-                                        const pct = stats?.uptime_percent ?? 0;
-                                        /* A figure we did not watch enough of
-                                           the period to stand behind is shown
-                                           greyed with a dash, not in green.
-                                           100% across 12 of an expected 288
-                                           checks means the server spent the day
-                                           down -- printing that in green is the
-                                           worst thing this panel could do. */
-                                        const trustworthy = stats?.reliable !== false && (stats?.checks ?? 0) > 0;
-                                        const color = !trustworthy ? 'text-white/45'
-                                            : pct >= 99 ? 'text-green-400' : pct >= 95 ? 'text-yellow-400' : 'text-red-400';
-                                        return (
-                                            <div key={period} className="text-center" title={stats?.summary}>
-                                                <p className={`text-lg font-bold ${color}`}>
-                                                    {trustworthy ? `${pct.toFixed(1)}%` : '—'}
-                                                </p>
-                                                <p className="text-gray-500 text-xs">{period}</p>
-                                                {!trustworthy && (stats?.checks ?? 0) > 0 && (
-                                                    <p className="text-amber-300/80 text-[10px] leading-tight mt-0.5">
-                                                        only {stats?.checks} of {stats?.expected_checks} checks
-                                                    </p>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                ) : (
-                    <div className="text-gray-400 text-sm mb-4 p-4 bg-slate-800/30 rounded-lg text-center">
-                        No uptime data yet. Click "Check Now" to start monitoring.
-                    </div>
-                )}
+                It listed whatever service names happened to be in the uptime
+                table, and that table still holds rows for translation_api,
+                vertex_ai, kms, secret_store and auth0 -- services the sampler
+                stopped checking when it was cut back to the database alone.
+                So a town saw seven dependencies, five of which nothing had
+                probed since the change, reported as "only 11 of 288 checks"
+                or as a bare dash.
 
-                {/* Uptime Timeline (last 48 hours) */}
-                {uptimeHistory && Object.keys(uptimeHistory.services).length > 0 && (() => {
-                const maxChecks = Math.max(
-                    0, ...Object.values(uptimeHistory.services).map(c => c.length),
-                );
-                return (
-                    <div className="space-y-3">
-                        {/* It said "Last 48 hours" and rendered the last 48
-                            *records*. At one sample every five minutes that is
-                            four hours of history under a label promising two
-                            days -- and after an outage the bars either side of
-                            the gap sit adjacent, so a hole in the record looks
-                            like continuous service. */}
-                        <p className="text-gray-400 text-xs">
-                            Most recent {Math.min(48, maxChecks)} checks (newest → oldest)
-                        </p>
-                        {/* Not the backend's own uptime, and it cannot be:
-                            the sampler runs inside the backend. Saying which
-                            it is beats a number a council report will read as
-                            the other one. */}
-                        <p className="text-white/45 text-[11px] -mt-2">
-                            Whether each dependency answered, sampled every five minutes while this
-                            server was running. Gaps are periods nothing was recorded.
-                        </p>
-                        {Object.entries(uptimeHistory.services).map(([serviceName, checks]) => (
-                            <div key={serviceName} className="flex items-center gap-2">
-                                <span className="text-white text-sm w-28 truncate capitalize">{serviceName.replace(/_/g, ' ')}</span>
-                                <div className="flex-1 flex gap-0.5">
-                                    {checks.slice(0, 48).map((check, idx) => (
-                                        <div
-                                            key={idx}
-                                            className={`w-2 h-6 rounded-sm ${check.status === 'healthy' ? 'bg-green-500' :
-                                                    check.status === 'degraded' ? 'bg-yellow-500' : 'bg-red-500'
-                                                }`}
-                                            title={`${check.status} - ${new Date(check.checked_at).toLocaleString()}`}
-                                        />
-                                    ))}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                );
-                })()}
-            </Card>
+                Worse, the honest ones were indistinguishable from the dead
+                ones: "100.0%" next to "only 11 of 288 checks" is a number
+                computed from almost no data, and it sat in the same column as
+                a real one.
+
+                Whether a connector is working now lives on its own card in
+                Setup & Integrations, per connector, with what the last check
+                actually found and when. That answers the question this panel
+                was trying to answer, for the services the town actually uses.
+
+                The sampler still records the database every five minutes and
+                the health uptime endpoints still serve it -- the state panel
+                reads them through telemetry. Nothing in the admin console
+                does. */}
+
 
             {/* The "Cloud Integrations" block that was here has gone.
                 It was a hardcoded struct -- auth0, gcp_auth, vertex_ai,

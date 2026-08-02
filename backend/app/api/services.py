@@ -8,6 +8,7 @@ from app.db.session import get_db
 from app.models import ServiceDefinition, Department, User
 from app.schemas import ServiceCreate, ServiceResponse, ServiceUpdate, ServiceReorderRequest
 from app.core.auth import get_current_admin, get_current_staff
+from app.services.admin_audit import record_admin_action
 
 router = APIRouter()
 
@@ -132,7 +133,11 @@ async def create_service(
     db.add(service)
     await db.commit()
     await db.refresh(service)
-    
+    await record_admin_action(
+        db, event_type="service_created", actor=_,
+        details={"service_code": service.service_code, "service_name": service.service_name},
+    )
+
     result = await db.execute(
         select(ServiceDefinition)
         .where(ServiceDefinition.id == service.id)
@@ -290,8 +295,10 @@ async def delete_service(
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
     
+    removed = {"service_code": service.service_code, "service_name": service.service_name}
     await db.delete(service)
     await db.commit()
+    await record_admin_action(db, event_type="service_deleted", actor=_, details=removed)
 
 
 @router.patch("/{service_id}/toggle", response_model=ServiceResponse)
@@ -313,4 +320,10 @@ async def toggle_service(
     service.is_active = not service.is_active
     await db.commit()
     await db.refresh(service)
+    # Turning a category off removes it from the resident portal, so this is a
+    # change to what the public can report, not a cosmetic toggle.
+    await record_admin_action(
+        db, event_type="service_toggled", actor=_,
+        details={"service_code": service.service_code, "is_active": service.is_active},
+    )
     return service
