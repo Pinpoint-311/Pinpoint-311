@@ -882,8 +882,12 @@ class ApiClient {
         lng: number;
         formatted_address: string;
         place_id?: string;
-    }> {
-        return this.request(`/gis/geocode?address=${encodeURIComponent(address)}`);
+    } | null> {
+        try {
+            return await this.request(`/gis/geocode?address=${encodeURIComponent(address)}`);
+        } catch {
+            return null;
+        }
     }
 
     /**
