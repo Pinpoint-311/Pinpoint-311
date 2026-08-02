@@ -80,6 +80,68 @@ describe('the address box degrades like everything else', () => {
         expect(backend.suggest).not.toHaveBeenCalled();
     });
 
+    it('does not let a fallback-only suggester hide the real one behind it', async () => {
+        // This is the order the intake form actually builds:
+        // chainGeocoders(backend, google). Backend first is deliberate for
+        // geocode/reverseGeocode, because that is what meters usage for the cost
+        // report -- but `suggest` takes the first provider that returns
+        // anything, so the backend's single already-resolved match won every
+        // keystroke and Google's list was never requested.
+        //
+        // It is not a subtle degradation either: the backend geocode is not
+        // region-biased, so typing "Main St" in a New Jersey township returned
+        // exactly one suggestion -- "Main St, Vancouver, BC, Canada" -- and
+        // nothing else, for as long as you kept typing.
+        const backend = provider('backend', {
+            suggestFallbackOnly: true,
+            suggest: vi.fn(async () => [{ id: 'b:1', label: 'Main St, Vancouver, BC, Canada' }]),
+        });
+        const google = provider('google', {
+            suggest: async () => [
+                { id: 'g:1', label: 'Main Street', secondaryLabel: 'Cranbury, NJ' },
+            ],
+        });
+
+        const chain = chainGeocoders(backend, google);
+        const results = await chain.suggest!('Main St');
+        expect(results.map(r => r.id)).toEqual(['g:1']);
+        expect(backend.suggest).not.toHaveBeenCalled();
+    });
+
+    it('still uses the fallback when the real suggester has nothing', async () => {
+        // Reordering must not cost the fallback its reason for existing: a town
+        // whose key has no Places access at all still gets a working box.
+        const backend = provider('backend', {
+            suggestFallbackOnly: true,
+            suggest: async () => [{ id: 'b:1', label: '1 Main St' }],
+        });
+        const google = provider('google', { suggest: async () => [] });
+
+        const chain = chainGeocoders(backend, google);
+        expect((await chain.suggest!('1 Main St')).map(r => r.id)).toEqual(['b:1']);
+    });
+
+    it('leaves geocode and reverseGeocode backend-first, so usage stays metered', async () => {
+        // The suggest reordering is scoped to suggestions. If it leaked into the
+        // other two lookups it would quietly route them straight to the vendor
+        // SDK and the cost-monitoring page would stop counting them.
+        const backendGeocode = vi.fn(async () => [HALL]);
+        const backend = provider('backend', {
+            suggestFallbackOnly: true,
+            suggest: async () => [],
+            geocode: backendGeocode,
+        });
+        const google = provider('google', {
+            suggest: async () => [],
+            geocode: vi.fn(async () => [HALL]),
+        });
+
+        const chain = chainGeocoders(backend, google);
+        await chain.geocode('1 Main St');
+        expect(backendGeocode).toHaveBeenCalled();
+        expect(google.geocode).not.toHaveBeenCalled();
+    });
+
     it('returns an empty list rather than throwing when every provider fails', async () => {
         // This runs inside a keystroke handler on the intake form. An
         // unhandled rejection there is a clerk losing what they typed.

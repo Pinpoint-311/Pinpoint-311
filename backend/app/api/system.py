@@ -843,13 +843,29 @@ def _unverifiable(detail: str) -> dict:
     return {"ok": False, "detail": detail, "recorded": False}
 
 
+def _referrer_restricted(text: str) -> bool:
+    """Google's way of saying "this key only works from a browser".
+
+    A key restricted to Websites — which the setup guide tells administrators to
+    do, and which is the right thing to do — cannot be exercised from a server at
+    all. That is a correctly configured key, not a broken one, so it must not be
+    reported as a failure.
+    """
+    lowered = (text or "").lower()
+    return "referer" in lowered or "referrer" in lowered
+
+
 async def _test_maps() -> dict:
     """Geocode a known address. Reads only, costs a fraction of a cent."""
     import httpx
 
+    from app.services.map_provider import MAP_PROVIDER_KEY, normalize_provider
     from app.services.secret_manager import get_secret
 
-    provider = (await get_secret("MAPS_PROVIDER")) or "google"
+    # MAP_PROVIDER, not MAPS_PROVIDER. Nothing writes the plural, so this read
+    # always missed and every town was tested as though it were on Google --
+    # an Esri town pressing Test got a verdict on a Google key it does not have.
+    provider = normalize_provider(await get_secret(MAP_PROVIDER_KEY))
     sample = "1600 Pennsylvania Ave NW, Washington DC"
 
     async with httpx.AsyncClient(timeout=12.0) as client:
@@ -857,16 +873,64 @@ async def _test_maps() -> dict:
             key = await get_secret("GOOGLE_MAPS_API_KEY")
             if not key:
                 return {"ok": False, "detail": "No Google Maps API key is saved."}
+
             r = await client.get("https://maps.googleapis.com/maps/api/geocode/json",
                                  params={"address": sample, "key": key})
             body = r.json()
             status = body.get("status")
-            if status == "OK":
-                return {"ok": True, "detail": "Key accepted; a test address geocoded successfully."}
-            # Google's own words matter here: REQUEST_DENIED with "billing" is
-            # the single most common failure on this page and its remedy is
-            # nothing to do with the key.
-            return {"ok": False, "detail": f"Google returned {status}. {body.get('error_message', '')}".strip()}
+            geocode_error = body.get("error_message", "")
+
+            if status != "OK":
+                if _referrer_restricted(geocode_error):
+                    return _unverifiable(
+                        "This key is restricted to your website, so it cannot be tested from "
+                        "the server — which is the correct way to restrict it. Open the "
+                        "resident report form and confirm the map draws and the address box "
+                        "offers suggestions.")
+                # Google's own words matter here: REQUEST_DENIED with "billing" is
+                # the single most common failure on this page and its remedy is
+                # nothing to do with the key.
+                return {"ok": False, "detail": f"Google returned {status}. {geocode_error}".strip()}
+
+            # Geocoding alone is not enough to call this working.
+            #
+            # The address box on the report form runs on Places API (New)
+            # (places.googleapis.com), which is a *separate* product from both
+            # the Geocoding API and the older "Places API" — enabling one does
+            # not enable the others. Testing only Geocoding meant this page
+            # showed a green tick while residents got an address box that
+            # returned nothing, and there was no way to tell from here which of
+            # the two APIs was missing.
+            pr = await client.post(
+                "https://places.googleapis.com/v1/places:autocomplete",
+                headers={"Content-Type": "application/json", "X-Goog-Api-Key": key},
+                json={"input": sample, "includedRegionCodes": ["us"],
+                      "includedPrimaryTypes": ["geocode"]},
+            )
+            if pr.status_code == 200:
+                return {"ok": True, "detail": (
+                    "Key accepted. A test address geocoded and address autocomplete "
+                    "answered, so both APIs the map needs are enabled.")}
+
+            places_error = ""
+            try:
+                places_error = pr.json().get("error", {}).get("message", "")
+            except Exception:
+                places_error = pr.text[:200]
+
+            if _referrer_restricted(places_error):
+                return _unverifiable(
+                    "Geocoding works. Address autocomplete could not be tested because the "
+                    "key is restricted to your website, which is the correct way to restrict "
+                    "it. Open the resident report form and confirm the address box offers "
+                    "suggestions as you type.")
+
+            return {"ok": False, "detail": (
+                "Geocoding works, but Places API (New) rejected the key, so the address "
+                "box on the report form will offer no suggestions. In Google Cloud enable "
+                "\"Places API (New)\" — it is a separate API from both \"Geocoding API\" "
+                "and the older \"Places API\", and if the key is restricted to a list of "
+                f"APIs it must be ticked there too. Google said: {places_error}").strip()}
 
         if provider == "azure":
             key = await get_secret("AZURE_MAPS_KEY")

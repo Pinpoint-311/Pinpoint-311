@@ -100,7 +100,16 @@ export function chainGeocoders(...providers: (GeocodingProvider | null | undefin
     };
 
     const widgetProvider = chain.find(p => p.attachAutocomplete);
-    const suggesters = chain.filter(p => p.suggest);
+
+    // Real autocomplete first, single-match fallbacks last, order otherwise
+    // preserved. Callers chain backend-first so geocoding stays metered, but a
+    // fallback that answers with one already-resolved address is not a
+    // substitute for a provider that completes a half-typed street -- and since
+    // the loop below stops at the first non-empty answer, whichever suggester
+    // comes first is the only one that ever runs.
+    const suggesters = chain
+        .filter(p => p.suggest)
+        .sort((a, b) => Number(a.suggestFallbackOnly ?? false) - Number(b.suggestFallbackOnly ?? false));
 
     return {
         id: chain.map(p => p.id).join('+') || 'none',
