@@ -177,12 +177,22 @@ def test_every_authenticated_mutation_is_covered_by_something():
 
 
 def test_the_backstop_only_records_changes_that_worked():
+    """The method test used to be a literal set in this class. It moved to
+    `audit_labels.should_record`, alongside the decision about which POSTs
+    change nothing -- so this asks the function rather than grepping for a line
+    that no longer exists."""
+    from app.services.audit_labels import should_record
+
     main = (ROOT / "app/main.py").read_text()
     block = main[main.index("class AdminActionAuditMiddleware"):]
     block = block[:block.index("\nclass ")]
-    assert 'MUTATIONS = {"POST", "PUT", "PATCH", "DELETE"}' in block, (
-        "reads would be recorded, and a log nobody can scroll is a log nobody reads"
+    assert "describe_action(" in block, (
+        "the backstop is no longer consulting the rules about what to record"
     )
+    for read_only in ("GET", "HEAD", "OPTIONS"):
+        assert should_record(read_only, "/api/users") is False, (
+            "reads would be recorded, and a log nobody can scroll is a log nobody reads"
+        )
     assert "response.status_code >= 400" in block, (
         "failed attempts would be recorded here rather than with the auth events"
     )

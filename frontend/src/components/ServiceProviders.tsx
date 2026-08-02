@@ -192,6 +192,29 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const [values, setValues] = useState<Record<string, string>>({});
     const [busy, setBusy] = useState<'save' | 'test' | null>(null);
     const [result, setResult] = useState<{ ok: boolean; detail: string } | null>(null);
+
+    /* What to show in the result box: this session's test, or the last one
+     * recorded, whichever is fresher.
+     *
+     * `record_success` has stored the message since #436, and nothing read it
+     * back -- so pressing Test showed "Twilio credentials accepted. Nothing was
+     * sent." and a reload showed an empty card, which reads as the test having
+     * been forgotten rather than as the box not being rehydrated.
+     *
+     * Taken from the health row this card already receives rather than added
+     * to the catalog endpoint as well. The same fact served by two endpoints is
+     * two things that can disagree, and the badge beside this box already reads
+     * the health row -- a second copy could put a green message under a red
+     * badge.
+     */
+    const shownResult = result ?? (health?.last_result
+        ? {
+            // `verifiable === false` is "we tried and cannot check this from
+            // here", which is not a pass and must not render as one.
+            ok: health.verifiable !== false && health.status === 'working',
+            detail: health.last_result,
+        }
+        : null);
     const [error, setError] = useState<string | null>(null);
     // Live model discovery (AI only)
     // Copy targets inside steps: a callback URL retyped by hand is the single
@@ -452,6 +475,27 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             setWarnings(saved.warnings || []);
             setValues({});
             await load();
+
+            // Selecting a provider saves; it does not configure one. With no
+            // credentials entered the settings payload is empty, which the
+            // backend reads as "keep what is stored" -- so the save succeeds,
+            // answers ok:true, and the card used to say "Set up" about a
+            // service with no account SID in it.
+            //
+            // Said here rather than left to the test below, because the test's
+            // own message ("Account SID or auth token is missing") reads as a
+            // connection failure rather than as "you have not finished".
+            if (saved.configured === false) {
+                setResult({
+                    ok: false,
+                    detail: saved.missing?.length
+                        ? `Saved your choice of provider. Still needed before this can work: ${saved.missing.join(', ')}.`
+                        : 'Saved your choice of provider. Its credentials still need to be entered.',
+                });
+                onStatus(cap, { configured: false, verifiable: undefined, verified: null });
+                return;
+            }
+
             // Immediately verify
             const t = await api.testProvider(cap);
             setResult(t);
@@ -678,15 +722,15 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                     ))}
                 </div>
             )}
-            {!compact && result && (
+            {!compact && shownResult && (
                 <motion.div
                     initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
-                    className={`mt-3 rounded-xl px-3 py-2.5 text-xs border flex items-start gap-2 ${result.ok
+                    className={`mt-3 rounded-xl px-3 py-2.5 text-xs border flex items-start gap-2 ${shownResult.ok
                         ? 'bg-emerald-500/10 border-emerald-400/30 text-emerald-200'
                         : 'bg-amber-500/10 border-amber-400/30 text-amber-200'}`}
                 >
-                    {result.ok ? <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
-                    <span>{result.detail}</span>
+                    {shownResult.ok ? <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
+                    <span>{shownResult.detail}</span>
                 </motion.div>
             )}
 
@@ -1073,15 +1117,30 @@ export default function ServiceProviders({ show, extras, footer, extraOff = [], 
      * "not used yet", which is honest: if we cannot read the health table, we
      * do not know. */
     const [health, setHealth] = useState<Record<string, ConnectorHealth>>({});
+    /* Whether the health table could be read at all.
+     *
+     * The catch used to set an empty map, which renders as "not checked yet"
+     * on every card -- indistinguishable from a town that genuinely has not
+     * run a check, and silent about the fact that the request failed. */
+    const [healthUnavailable, setHealthUnavailable] = useState(false);
     const loadHealth = useCallback(async () => {
         try {
             const report = await api.getConnectorHealth();
             setHealth(Object.fromEntries(report.connectors.map(c => [c.connector, c])));
+            setHealthUnavailable(false);
         } catch {
             setHealth({});
+            setHealthUnavailable(true);
         }
     }, []);
     useEffect(() => { loadHealth(); }, [loadHealth, recheckToken, refreshToken]);
+
+    /* Testing one card records a result the other cards' badges read from, so
+     * the stored view is stale the moment any test finishes. Previously only
+     * "Recheck all" refetched, which is why a single test looked like it had
+     * not persisted: the badge was still rendering the health row from page
+     * load. */
+    const refreshAfterTest = useCallback(() => { loadHealth(); onChanged?.(); }, [loadHealth, onChanged]);
 
     const [reloadToken, setReloadToken] = useState(0);
     /* A save in the guide above changes exactly what these cards read, so pull
@@ -1149,6 +1208,16 @@ export default function ServiceProviders({ show, extras, footer, extraOff = [], 
      * cards be open at once. */
     const [openCap, setOpenCap] = useState<string | null>(null);
     const capState = (cap: Capability) => capabilityState(statuses[cap], health[cap]);
+
+    /* Rendered above the cards. A town whose health table cannot be read
+     * should be told that, rather than shown ten badges that all say "not
+     * checked yet" and mean "we could not ask". */
+    const healthNotice = healthUnavailable ? (
+        <div role="alert" className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+            The status of these services could not be read, so the badges below
+            show what was last known rather than what is true now.
+        </div>
+    ) : null;
     /* Only what is wrong gets the whole width.
      *
      * "Not set up" is deliberately not in this list, though the first version
@@ -1185,6 +1254,7 @@ export default function ServiceProviders({ show, extras, footer, extraOff = [], 
                 </button>
             }
         >
+            {healthNotice}
             {loaded.length > 0 && (
                 <div className="text-[11px] text-white/55 flex flex-wrap items-center gap-x-3 gap-y-0.5 mb-4">
                     <span>{configuredCount === loaded.length
@@ -1229,7 +1299,7 @@ export default function ServiceProviders({ show, extras, footer, extraOff = [], 
                         <div key={c.key} className={wide ? 'sm:col-span-2 lg:col-span-3' : ''}>
                             <CapabilityCard cap={c.key} title={c.title} blurb={c.blurb} icon={c.icon} delay={0}
                                 recheckToken={recheckToken} reloadToken={reloadToken} onStatus={onStatus}
-                                health={health[c.key]} identity={identity} onChanged={onChanged}
+                                health={health[c.key]} identity={identity} onChanged={refreshAfterTest}
                                 publicOrigin={publicOrigin}
                                 variant={spotlit.includes(c) ? 'spotlight' : 'bubble'}
                                 state={capState(c.key)}

@@ -950,6 +950,28 @@ export default function AdminConsole() {
     }>>([]);
     const [isLoadingLegalHold, setIsLoadingLegalHold] = useState(false);
 
+    // "Eligible for Archival" is a number nobody can check. A count of records
+    // about to be redacted or purged is only trustworthy if you can see which
+    // records, the same way the legal-hold count opens the list it counts.
+    const [showEligibleModal, setShowEligibleModal] = useState(false);
+    const [eligiblePreview, setEligiblePreview] = useState<import('../services/api').RetentionPreview | null>(null);
+    const [eligibleError, setEligibleError] = useState<string | null>(null);
+    const [isLoadingEligible, setIsLoadingEligible] = useState(false);
+
+    const openEligibleRecords = async () => {
+        setIsLoadingEligible(true);
+        setEligibleError(null);
+        setShowEligibleModal(true);
+        try {
+            setEligiblePreview(await api.previewRetentionRun(200));
+        } catch (err) {
+            setEligiblePreview(null);
+            setEligibleError(err instanceof Error ? err.message : 'Could not load the eligible records.');
+        } finally {
+            setIsLoadingEligible(false);
+        }
+    };
+
     // Backup management state
     const [backupStatus, setBackupStatus] = useState<{
         configured: boolean;
@@ -2906,10 +2928,14 @@ export default function AdminConsole() {
 
                                         {/* Archival Stats */}
                                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                            <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
+                                            <button
+                                                onClick={openEligibleRecords}
+                                                className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4 text-left hover:bg-blue-500/20 hover:border-blue-500/50 transition-all cursor-pointer"
+                                            >
                                                 <div className="text-blue-300 text-sm">Eligible for Archival</div>
                                                 <div className="text-2xl font-bold text-blue-300">{retentionPolicy.stats.eligible_for_archival}</div>
-                                            </div>
+                                                <div className="text-blue-200 text-xs mt-1">Click to view →</div>
+                                            </button>
                                             <button
                                                 onClick={async () => {
                                                     setIsLoadingLegalHold(true);
@@ -2940,163 +2966,6 @@ export default function AdminConsole() {
                                     </AccordionSection>
                                 )}
 
-                                {/* Database Backups */}
-                                <AccordionSection
-                                    title="Database Backups"
-                                    subtitle="Encrypted S3-compatible backup management"
-                                    icon={Upload}
-                                    iconClassName="text-blue-400"
-                                >
-                                    {backupStatus === null ? (
-                                        <div className="text-center py-4">
-                                            <Button
-                                                variant="ghost"
-                                                onClick={async () => {
-                                                    setIsLoadingBackups(true);
-                                                    try {
-                                                        const [status, list] = await Promise.all([
-                                                            api.getBackupStatus(),
-                                                            api.listBackups()
-                                                        ]);
-                                                        setBackupStatus(status);
-                                                        setBackups(list.backups || []);
-                                                    } catch (err) {
-                                                        console.error('Failed to load backups:', err);
-                                                    } finally {
-                                                        setIsLoadingBackups(false);
-                                                    }
-                                                }}
-                                                disabled={isLoadingBackups}
-                                            >
-                                                <RefreshCw className={`w-4 h-4 mr-2 ${isLoadingBackups ? 'animate-spin' : ''}`} />
-                                                {isLoadingBackups ? 'Loading...' : 'Load Backup Status'}
-                                            </Button>
-                                        </div>
-                                    ) : !backupStatus.configured ? (
-                                        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4">
-                                            <p className="text-amber-400 mb-3">
-                                                {backupStatus.message || 'Backup not configured'}
-                                            </p>
-                                            {backupStatus.required_secrets && (
-                                                <div className="text-white/60 text-sm">
-                                                    <p className="mb-2">Add these secrets in the Secrets tab:</p>
-                                                    <ul className="list-disc list-inside space-y-1">
-                                                        {backupStatus.required_secrets.map(s => (
-                                                            <li key={s} className="font-mono text-xs">{s}</li>
-                                                        ))}
-                                                    </ul>
-                                                </div>
-                                            )}
-                                        </div>
-                                    ) : (
-                                        <div className="space-y-4">
-                                            {/* Status Summary */}
-                                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                                <div className="bg-white/5 rounded-lg p-3">
-                                                    <div className="text-white/50 text-xs">Storage</div>
-                                                    <div className="text-white font-medium truncate">{backupStatus.bucket}</div>
-                                                </div>
-                                                <div className="bg-white/5 rounded-lg p-3">
-                                                    <div className="text-white/50 text-xs">Total Backups</div>
-                                                    <div className="text-white font-bold text-lg">{backupStatus.total_backups || 0}</div>
-                                                </div>
-                                                <div className="bg-white/5 rounded-lg p-3">
-                                                    <div className="text-white/50 text-xs">Last Backup</div>
-                                                    <div className="text-white font-medium">
-                                                        {backupStatus.last_backup
-                                                            ? `${backupStatus.last_backup.age_days}d ago`
-                                                            : 'Never'}
-                                                    </div>
-                                                </div>
-                                                <div className="bg-white/5 rounded-lg p-3">
-                                                    <div className="text-white/50 text-xs">Schedule</div>
-                                                    <div className="text-white font-medium text-sm">{backupStatus.next_scheduled || 'Daily'}</div>
-                                                </div>
-                                            </div>
-
-                                            {/* Actions */}
-                                            <div className="flex gap-3">
-                                                <Button
-                                                    onClick={async () => {
-                                                        if (!confirm('Create a new database backup now?')) return;
-                                                        setIsCreatingBackup(true);
-                                                        try {
-                                                            const result = await api.createBackup();
-                                                            if (result.status === 'success') {
-                                                                alert(`Backup created: ${result.backup_name}`);
-                                                                // Refresh list
-                                                                const list = await api.listBackups();
-                                                                setBackups(list.backups || []);
-                                                                const status = await api.getBackupStatus();
-                                                                setBackupStatus(status);
-                                                            }
-                                                        } catch (err) {
-                                                            alert('Backup failed: ' + (err as Error).message);
-                                                        } finally {
-                                                            setIsCreatingBackup(false);
-                                                        }
-                                                    }}
-                                                    disabled={isCreatingBackup}
-                                                    className="bg-blue-600 hover:bg-blue-700"
-                                                >
-                                                    {isCreatingBackup ? (
-                                                        <>
-                                                            <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                                                            Creating...
-                                                        </>
-                                                    ) : (
-                                                        <>
-                                                            <Upload className="w-4 h-4 mr-2" />
-                                                            Create Backup Now
-                                                        </>
-                                                    )}
-                                                </Button>
-                                                <Button
-                                                    variant="ghost"
-                                                    onClick={async () => {
-                                                        setIsLoadingBackups(true);
-                                                        try {
-                                                            const list = await api.listBackups();
-                                                            setBackups(list.backups || []);
-                                                        } catch (err) {
-                                                            console.error(err);
-                                                        } finally {
-                                                            setIsLoadingBackups(false);
-                                                        }
-                                                    }}
-                                                >
-                                                    <RefreshCw className={`w-4 h-4 mr-2 ${isLoadingBackups ? 'animate-spin' : ''}`} />
-                                                    Refresh
-                                                </Button>
-                                            </div>
-
-                                            {/* Backup List */}
-                                            {backups.length > 0 && (
-                                                <div className="mt-4">
-                                                    <h4 className="text-white/70 text-sm font-medium mb-2">Recent Backups</h4>
-                                                    <div className="space-y-2 max-h-48 overflow-y-auto">
-                                                        {backups.slice(0, 10).map((backup) => (
-                                                            <div key={backup.name} className="flex items-center justify-between bg-white/5 rounded-lg p-3">
-                                                                <div>
-                                                                    <div className="text-white font-mono text-sm">{backup.name}</div>
-                                                                    <div className="text-white/50 text-xs">
-                                                                        {new Date(backup.created_at).toLocaleString()} · {(backup.size_bytes / 1024 / 1024).toFixed(2)} MB
-                                                                    </div>
-                                                                </div>
-                                                                <span className={`text-xs px-2 py-1 rounded ${backup.age_days === 0 ? 'bg-green-500/20 text-green-400' :
-                                                                    backup.age_days < 7 ? 'bg-blue-500/20 text-blue-400' :
-                                                                        'bg-white/10 text-white/60'
-                                                                    }`}>
-                                                                    {backup.age_days === 0 ? 'Today' : `${backup.age_days}d ago`}
-                                                                </span>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
-                                </AccordionSection>
 
                                 {/* Soft-Deleted Requests */}
                                 {deletedRequests.length > 0 && (
@@ -3236,24 +3105,34 @@ export default function AdminConsole() {
                                                 The record stays and still counts in your statistics. Only the
                                                 fields ticked here are emptied.
                                             </p>
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                            {/* auto-rows-fr plus h-full: every card in a row is
+                                                the height of the tallest, so a two-line
+                                                description does not leave the card beside it
+                                                floating in a short box. */}
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 auto-rows-fr">
                                                 {scrubFields.map(field => (
                                                     <label
                                                         key={field.id}
-                                                        className={`flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition-colors ${field.selected
+                                                        className={`group flex h-full items-start gap-3 rounded-xl border p-3.5 cursor-pointer transition-colors ${field.selected
                                                             ? 'bg-amber-500/10 border-amber-400/30'
                                                             : 'bg-white/[0.02] border-white/10 hover:border-white/20'}`}
                                                     >
+                                                        {/* Pinned to the title's cap height rather
+                                                            than centred on the text block. Centring
+                                                            put the box beside the title on a
+                                                            one-line card and beside the description
+                                                            on a two-line one, so no two rows lined
+                                                            up and the grid read as ragged. */}
                                                         <input
                                                             type="checkbox"
                                                             checked={field.selected}
                                                             onChange={(e) => setScrubFields(prev => (prev || []).map(f =>
                                                                 f.id === field.id ? { ...f, selected: e.target.checked } : f))}
-                                                            className="mt-0.5 accent-amber-400"
+                                                            className="mt-[3px] w-4 h-4 shrink-0 self-start accent-amber-400"
                                                         />
-                                                        <span className="min-w-0">
-                                                            <span className="block text-sm font-medium text-white/90">{field.label}</span>
-                                                            <span className="block text-xs text-white/55 mt-0.5 leading-relaxed">{field.detail}</span>
+                                                        <span className="min-w-0 flex-1">
+                                                            <span className="block text-sm font-medium text-white/90 leading-5">{field.label}</span>
+                                                            <span className="block text-xs text-white/60 mt-1 leading-relaxed">{field.detail}</span>
                                                         </span>
                                                     </label>
                                                 ))}
@@ -3709,6 +3588,164 @@ export default function AdminConsole() {
                                         </table>
                                     </div>
                                 </AccordionSection>
+
+                                {/* Database Backups */}
+                                <AccordionSection
+                                    title="Database Backups"
+                                    subtitle="Encrypted S3-compatible backup management"
+                                    icon={Upload}
+                                    iconClassName="text-blue-400"
+                                >
+                                    {backupStatus === null ? (
+                                        <div className="text-center py-4">
+                                            <Button
+                                                variant="ghost"
+                                                onClick={async () => {
+                                                    setIsLoadingBackups(true);
+                                                    try {
+                                                        const [status, list] = await Promise.all([
+                                                            api.getBackupStatus(),
+                                                            api.listBackups()
+                                                        ]);
+                                                        setBackupStatus(status);
+                                                        setBackups(list.backups || []);
+                                                    } catch (err) {
+                                                        console.error('Failed to load backups:', err);
+                                                    } finally {
+                                                        setIsLoadingBackups(false);
+                                                    }
+                                                }}
+                                                disabled={isLoadingBackups}
+                                            >
+                                                <RefreshCw className={`w-4 h-4 mr-2 ${isLoadingBackups ? 'animate-spin' : ''}`} />
+                                                {isLoadingBackups ? 'Loading...' : 'Load Backup Status'}
+                                            </Button>
+                                        </div>
+                                    ) : !backupStatus.configured ? (
+                                        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4">
+                                            <p className="text-amber-400 mb-3">
+                                                {backupStatus.message || 'Backup not configured'}
+                                            </p>
+                                            {backupStatus.required_secrets && (
+                                                <div className="text-white/60 text-sm">
+                                                    <p className="mb-2">Add these secrets in the Secrets tab:</p>
+                                                    <ul className="list-disc list-inside space-y-1">
+                                                        {backupStatus.required_secrets.map(s => (
+                                                            <li key={s} className="font-mono text-xs">{s}</li>
+                                                        ))}
+                                                    </ul>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-4">
+                                            {/* Status Summary */}
+                                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                                <div className="bg-white/5 rounded-lg p-3">
+                                                    <div className="text-white/50 text-xs">Storage</div>
+                                                    <div className="text-white font-medium truncate">{backupStatus.bucket}</div>
+                                                </div>
+                                                <div className="bg-white/5 rounded-lg p-3">
+                                                    <div className="text-white/50 text-xs">Total Backups</div>
+                                                    <div className="text-white font-bold text-lg">{backupStatus.total_backups || 0}</div>
+                                                </div>
+                                                <div className="bg-white/5 rounded-lg p-3">
+                                                    <div className="text-white/50 text-xs">Last Backup</div>
+                                                    <div className="text-white font-medium">
+                                                        {backupStatus.last_backup
+                                                            ? `${backupStatus.last_backup.age_days}d ago`
+                                                            : 'Never'}
+                                                    </div>
+                                                </div>
+                                                <div className="bg-white/5 rounded-lg p-3">
+                                                    <div className="text-white/50 text-xs">Schedule</div>
+                                                    <div className="text-white font-medium text-sm">{backupStatus.next_scheduled || 'Daily'}</div>
+                                                </div>
+                                            </div>
+
+                                            {/* Actions */}
+                                            <div className="flex gap-3">
+                                                <Button
+                                                    onClick={async () => {
+                                                        if (!confirm('Create a new database backup now?')) return;
+                                                        setIsCreatingBackup(true);
+                                                        try {
+                                                            const result = await api.createBackup();
+                                                            if (result.status === 'success') {
+                                                                alert(`Backup created: ${result.backup_name}`);
+                                                                // Refresh list
+                                                                const list = await api.listBackups();
+                                                                setBackups(list.backups || []);
+                                                                const status = await api.getBackupStatus();
+                                                                setBackupStatus(status);
+                                                            }
+                                                        } catch (err) {
+                                                            alert('Backup failed: ' + (err as Error).message);
+                                                        } finally {
+                                                            setIsCreatingBackup(false);
+                                                        }
+                                                    }}
+                                                    disabled={isCreatingBackup}
+                                                    className="bg-blue-600 hover:bg-blue-700"
+                                                >
+                                                    {isCreatingBackup ? (
+                                                        <>
+                                                            <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                                                            Creating...
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <Upload className="w-4 h-4 mr-2" />
+                                                            Create Backup Now
+                                                        </>
+                                                    )}
+                                                </Button>
+                                                <Button
+                                                    variant="ghost"
+                                                    onClick={async () => {
+                                                        setIsLoadingBackups(true);
+                                                        try {
+                                                            const list = await api.listBackups();
+                                                            setBackups(list.backups || []);
+                                                        } catch (err) {
+                                                            console.error(err);
+                                                        } finally {
+                                                            setIsLoadingBackups(false);
+                                                        }
+                                                    }}
+                                                >
+                                                    <RefreshCw className={`w-4 h-4 mr-2 ${isLoadingBackups ? 'animate-spin' : ''}`} />
+                                                    Refresh
+                                                </Button>
+                                            </div>
+
+                                            {/* Backup List */}
+                                            {backups.length > 0 && (
+                                                <div className="mt-4">
+                                                    <h4 className="text-white/70 text-sm font-medium mb-2">Recent Backups</h4>
+                                                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                                                        {backups.slice(0, 10).map((backup) => (
+                                                            <div key={backup.name} className="flex items-center justify-between bg-white/5 rounded-lg p-3">
+                                                                <div>
+                                                                    <div className="text-white font-mono text-sm">{backup.name}</div>
+                                                                    <div className="text-white/50 text-xs">
+                                                                        {new Date(backup.created_at).toLocaleString()} · {(backup.size_bytes / 1024 / 1024).toFixed(2)} MB
+                                                                    </div>
+                                                                </div>
+                                                                <span className={`text-xs px-2 py-1 rounded ${backup.age_days === 0 ? 'bg-green-500/20 text-green-400' :
+                                                                    backup.age_days < 7 ? 'bg-blue-500/20 text-blue-400' :
+                                                                        'bg-white/10 text-white/60'
+                                                                    }`}>
+                                                                    {backup.age_days === 0 ? 'Today' : `${backup.age_days}d ago`}
+                                                                </span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </AccordionSection>
                             </div>
                         )}
 
@@ -3936,6 +3973,88 @@ export default function AdminConsole() {
                         <Button type="submit">Create User</Button>
                     </div>
                 </form>
+            </Modal>
+
+            {/* Records eligible for archival */}
+            <Modal
+                isOpen={showEligibleModal}
+                onClose={() => setShowEligibleModal(false)}
+                title="Records Eligible for Archival"
+            >
+                <div className="space-y-4">
+                    {isLoadingEligible ? (
+                        <div className="text-center py-8 text-white/60">Loading...</div>
+                    ) : eligibleError ? (
+                        <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
+                            {eligibleError}
+                        </div>
+                    ) : eligiblePreview?.blocked === 'legal_hold' ? (
+                        <p className="text-sm text-amber-200">
+                            The instance-wide legal hold is on, so nothing can be archived until it is lifted.
+                        </p>
+                    ) : !eligiblePreview?.summary || eligiblePreview.summary.total === 0 ? (
+                        <div className="text-center py-8 text-white/60">
+                            Nothing has passed the retention period yet.
+                        </div>
+                    ) : (
+                        <>
+                            <p className="text-white/60 text-sm">
+                                These closed records have passed the{' '}
+                                {eligiblePreview.summary.retention_days.toLocaleString()}-day retention period.
+                                A retention run would {eligiblePreview.mode === 'purge' ? 'clear every field on' : 'redact'} them.
+                            </p>
+                            {/* Fifty of four thousand, presented as the whole
+                                answer, is the undercount this list exists to
+                                prevent. */}
+                            {eligiblePreview.summary.truncated && (
+                                <p className="text-xs text-amber-200/90">
+                                    Showing the {eligiblePreview.summary.showing} oldest of{' '}
+                                    {eligiblePreview.summary.total.toLocaleString()}. A run works through all of them.
+                                </p>
+                            )}
+                            <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+                                {eligiblePreview.records.map((r) => (
+                                    <button
+                                        key={r.service_request_id}
+                                        onClick={() => {
+                                            setShowEligibleModal(false);
+                                            navigate(`/staff#resolved/request/${r.service_request_id}`);
+                                        }}
+                                        className="w-full text-left bg-blue-500/10 border border-blue-500/30 rounded-lg p-4 hover:bg-blue-500/20 transition-colors"
+                                    >
+                                        <div className="flex justify-between items-start mb-2">
+                                            <span className="font-mono text-blue-300 font-semibold">
+                                                {r.service_request_id}
+                                            </span>
+                                            {r.days_past_retention != null && (
+                                                <span className="text-xs px-2 py-1 rounded bg-amber-500/20 text-amber-300">
+                                                    {r.days_past_retention.toLocaleString()} days past due
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="text-white font-medium">{r.service_name}</div>
+                                        {r.address && (
+                                            <div className="text-white/50 text-xs mt-2 flex items-center gap-1">
+                                                <MapPin className="w-3 h-3" />
+                                                {r.address}
+                                            </div>
+                                        )}
+                                        <div className="text-white/40 text-xs mt-2">
+                                            Closed:{' '}
+                                            {r.closed_datetime
+                                                ? new Date(r.closed_datetime).toLocaleDateString(undefined, {
+                                                    year: 'numeric', month: 'short', day: 'numeric',
+                                                    timeZone: eligiblePreview.timezone || undefined,
+                                                })
+                                                : '—'}
+                                            {r.age_days != null && <> · {(r.age_days / 365).toFixed(1)} yrs old</>}
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        </>
+                    )}
+                </div>
             </Modal>
 
             {/* Legal Hold Requests Modal */}

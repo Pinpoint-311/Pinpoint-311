@@ -144,19 +144,6 @@ export default function OperationsPanel() {
             .map(([name]) => name)
         : [];
 
-    /* Counted from what this deployment actually runs.
-     *
-     * The old version counted a fixed six -- Auth0, GCP auth, Vertex, KMS,
-     * secret store, database -- so an Azure town read "2/6 Configured" while
-     * being fully set up on services this tile had never heard of. The
-     * denominator was a guess about somebody else's architecture. */
-    const integrationCounts = connectorRollup
-        ? {
-            healthy: connectorRollup.working,
-            total: connectorRollup.working + connectorRollup.failing + connectorRollup.unchecked,
-        }
-        : { healthy: 0, total: 0 };
-
     if (error) {
         return (
             <Card className="bg-red-500/10 border-red-500/20">
@@ -210,18 +197,17 @@ export default function OperationsPanel() {
                         </div>
                     </Card>
 
-                    {/* Integrations Status */}
-                    <Card className={`${integrationCounts.healthy === integrationCounts.total ? 'bg-green-500/10 border-green-500/30' : 'bg-yellow-500/10 border-yellow-500/30'}`}>
-                        <div className="flex items-center gap-3">
-                            <Cloud className="w-8 h-8 text-purple-400" />
-                            <div>
-                                <p className="text-gray-300 text-xs uppercase tracking-wide">Integrations</p>
-                                <p className="text-white font-semibold">
-                                    {integrationCounts.healthy}/{integrationCounts.total} Configured
-                                </p>
-                            </div>
-                        </div>
-                    </Card>
+                    {/* The "Integrations — 0/0 Configured" tile that was here has
+                        gone. On a town with nothing connected it read "0/0
+                        Configured" in a green card, which is simultaneously
+                        alarming and meaningless: zero of zero is not a state
+                        anybody needs a tile for, and green said everything was
+                        fine about something that did not exist.
+
+                        The roll-up further down this page already lists the
+                        service providers a town actually uses, by name, with
+                        what the last check found. That answers the question
+                        this tile was gesturing at. */}
 
                     {/* Database Status */}
                     <Card className={`${health.database.status === 'healthy' ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>

@@ -105,8 +105,17 @@ describe('the drawn asset icon', () => {
         const icon = assetIcon('#3b82f6');
         if (icon.type !== 'image') throw new Error('expected an image icon');
         const svg = decodeURIComponent(icon.url.split(',')[1]);
-        // Four points, closed: the rotated square.
-        expect(svg).toMatch(/<path d="M11 2\.5 L19\.5 11 L11 19\.5 L2\.5 11 Z"/);
+        // Four points, closed. Matched on the shape rather than exact
+        // coordinates so the icon can be refined without rewriting the test --
+        // what matters is that it is a diamond and not a circle.
+        const diamond = svg.match(/d="M([\d.]+) ([\d.]+) L([\d.]+) ([\d.]+) L([\d.]+) ([\d.]+) L([\d.]+) ([\d.]+) Z"/);
+        expect(diamond).toBeTruthy();
+        const [x1, y1, , y2, x3, y3, , y4] = diamond!.slice(1).map(Number);
+        // Top and bottom share an x; left and right share a y. That is a
+        // diamond, at any size.
+        expect(x1).toBeCloseTo(x3, 1);
+        expect(y2).toBeCloseTo(y4, 1);
+        expect(y1).toBeLessThan(y3);
         expect(svg).toContain('#3b82f6');
     });
 
