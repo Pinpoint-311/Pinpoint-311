@@ -22,6 +22,7 @@ from app.schemas import (
 )
 from app.core.auth import get_current_admin, get_current_staff
 from app.services.system_settings import get_settings as read_settings_row
+from app.services.backlog_age import bucket_ages
 from app.services.enqueue import QUEUE_UNAVAILABLE
 from app.core.sanitize import sanitize_for_log
 from slowapi import Limiter
@@ -2345,25 +2346,12 @@ async def get_advanced_statistics(
         avg_resolution_hours = round(float(avg_resolution_hours), 2)
     
     # Backlog by age
-    backlog_by_age = {"<1 day": 0, "1-3 days": 0, "3-7 days": 0, "1-2 weeks": 0, ">2 weeks": 0}
     open_requests_query = select(ServiceRequest.requested_datetime).where(
         ServiceRequest.deleted_at.is_(None),
         ServiceRequest.status.in_(["open", "in_progress"])
     )
     open_requests_result = await db.execute(open_requests_query)
-    for row in open_requests_result.all():
-        if row[0]:
-            age = now - row[0].replace(tzinfo=None)
-            if age < timedelta(days=1):
-                backlog_by_age["<1 day"] += 1
-            elif age < timedelta(days=3):
-                backlog_by_age["1-3 days"] += 1
-            elif age < timedelta(days=7):
-                backlog_by_age["3-7 days"] += 1
-            elif age < timedelta(days=14):
-                backlog_by_age["1-2 weeks"] += 1
-            else:
-                backlog_by_age[">2 weeks"] += 1
+    backlog_by_age = bucket_ages((row[0] for row in open_requests_result.all()), now)
     
     # Resolution rate (fixed: proper completion rate)
     # This is the percentage of all requests that have been successfully closed
@@ -2417,25 +2405,12 @@ async def get_advanced_statistics(
     workload_by_staff = {row[0]: row[1] for row in workload_result.all() if row[0]}
     
     # SLA tracking (open requests only, by age)
-    open_by_age_sla = {"<1 day": 0, "1-3 days": 0, "3-7 days": 0, "1-2 weeks": 0, ">2 weeks": 0}
     open_only_query = select(ServiceRequest.requested_datetime).where(
         ServiceRequest.deleted_at.is_(None),
         ServiceRequest.status == "open"  # Only "open" status, not in_progress
     )
     open_only_result = await db.execute(open_only_query)
-    for row in open_only_result.all():
-        if row[0]:
-            age = now - row[0].replace(tzinfo=None)
-            if age < timedelta(days=1):
-                open_by_age_sla["<1 day"] += 1
-            elif age < timedelta(days=3):
-                open_by_age_sla["1-3 days"] += 1
-            elif age < timedelta(days=7):
-                open_by_age_sla["3-7 days"] += 1
-            elif age < timedelta(days=14):
-                open_by_age_sla["1-2 weeks"] += 1
-            else:
-                open_by_age_sla[">2 weeks"] += 1
+    open_by_age_sla = bucket_ages((row[0] for row in open_only_result.all()), now)
     
     # ========== Predictive & Government Analytics ==========
     

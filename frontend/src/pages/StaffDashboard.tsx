@@ -60,6 +60,7 @@ import { usePageNavigation } from '../hooks/usePageNavigation';
 import NotificationSettings from '../components/NotificationSettings';
 import ManualIntake from '../components/ManualIntake';
 import ActivityFeed from '../components/ActivityFeed';
+import { bellAppearance, readIdsFromStorage, unreadCount } from '../components/activityBell';
 import PrintWorkOrder from '../components/PrintWorkOrder';
 
 type View = 'dashboard' | 'active' | 'in_progress' | 'resolved' | 'statistics';
@@ -219,6 +220,7 @@ export default function StaffDashboard() {
 
     // Activity feed state
     const [showActivityFeed, setShowActivityFeed] = useState(false);
+    const [activityTick, setActivityTick] = useState(0);
 
     // Export dropdown open state (keyboard-operable)
     const [exportOpen, setExportOpen] = useState(false);
@@ -260,6 +262,17 @@ export default function StaffDashboard() {
     const userDepartmentIds = useMemo(() => {
         return user?.departments?.map(d => d.id) || [];
     }, [user]);
+
+    // Recomputed when the polled request list changes, which is the only thing
+    // that can make it go up. `activityTick` lets the feed tell us it has
+    // marked things read, without this reaching into localStorage on every
+    // render the way the inline version did.
+    const unreadActivity = useMemo(() => unreadCount({
+        requests: allRequests,
+        readIds: readIdsFromStorage(localStorage.getItem('activityFeedRead')),
+        departmentIds: userDepartmentIds,
+        now: Date.now(),
+    }), [allRequests, userDepartmentIds, activityTick, showActivityFeed]);
 
     // Filtered and sorted requests based on current view and filters
     const filteredSortedRequests = useMemo(() => {
@@ -892,32 +905,29 @@ export default function StaffDashboard() {
                             </button>
                             <div className="flex items-center gap-2">
                                 {/* Activity Feed Bell */}
-                                <button
-                                    onClick={() => setShowActivityFeed(true)}
-                                    className="relative p-2 hover:bg-white/10 rounded-lg transition-colors"
-                                    aria-label="Open activity feed"
-                                >
-                                    <Bell className="w-5 h-5 text-white/60" aria-hidden="true" />
-                                    {/* Calculate and show unread count */}
-                                    {(() => {
-                                        const now = Date.now();
-                                        const twentyFourHours = 24 * 60 * 60 * 1000;
-                                        const readItems = JSON.parse(localStorage.getItem('activityFeedRead') || '[]');
-                                        const readSet = new Set(readItems);
-                                        let count = 0;
-                                        allRequests.forEach(req => {
-                                            const age = now - new Date(req.requested_datetime).getTime();
-                                            if (age < twentyFourHours && req.assigned_department_id && userDepartmentIds.includes(req.assigned_department_id)) {
-                                                if (!readSet.has(`new-${req.service_request_id}`)) count++;
-                                            }
-                                        });
-                                        return count > 0 ? (
-                                            <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-[10px] font-bold text-white flex items-center justify-center animate-pulse">
-                                                {count > 9 ? '9+' : count}
-                                            </span>
-                                        ) : null;
-                                    })()}
-                                </button>
+                                {(() => {
+                                    // The bell itself changes, not just the dot
+                                    // beside it. A grey bell with a small badge,
+                                    // on a dark sidebar, next to four other grey
+                                    // icons, is the thing you are meant to notice
+                                    // drawn like the things you are meant to
+                                    // ignore.
+                                    const look = bellAppearance(unreadActivity);
+                                    return (
+                                        <button
+                                            onClick={() => setShowActivityFeed(true)}
+                                            className={`relative p-2 rounded-lg transition-colors ${unreadActivity > 0 ? 'bg-amber-500/15 hover:bg-amber-500/25 ring-1 ring-amber-400/30' : 'hover:bg-white/10'}`}
+                                            aria-label={look.label}
+                                        >
+                                            <Bell className={`w-5 h-5 transition-colors ${look.icon}`} aria-hidden="true" />
+                                            {unreadActivity > 0 && (
+                                                <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 bg-red-500 rounded-full text-[10px] font-bold text-white flex items-center justify-center">
+                                                    {unreadActivity > 9 ? '9+' : unreadActivity}
+                                                </span>
+                                            )}
+                                        </button>
+                                    );
+                                })()}
                                 <button
                                     onClick={() => setSidebarOpen(false)}
                                     className="lg:hidden p-2 hover:bg-white/10 rounded-lg"
@@ -3475,7 +3485,7 @@ export default function StaffDashboard() {
             {/* Activity Feed Panel */}
             <ActivityFeed
                 isOpen={showActivityFeed}
-                onClose={() => setShowActivityFeed(false)}
+                onClose={() => { setShowActivityFeed(false); setActivityTick(t => t + 1); }}
                 requests={allRequests}
                 userId={user?.username || ''}
                 userDepartmentIds={userDepartmentIds}
