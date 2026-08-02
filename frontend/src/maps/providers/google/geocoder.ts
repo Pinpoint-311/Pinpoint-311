@@ -175,7 +175,10 @@ export function createGoogleGeocoder(): GeocodingProvider {
 
         attachAutocomplete(input: HTMLInputElement, options: AutocompleteOptions): AutocompleteHandle | null {
             const places = window.google?.maps?.places as unknown as Record<string, unknown> | undefined;
-            if (!places?.Autocomplete) return null;
+            // Legacy google.maps.places.Autocomplete is blocked for API keys created after
+            // March 1st, 2025 with ApiTargetBlockedMapError. When Places API (New) is
+            // available, return null so LocationPicker uses suggest() -> suggestViaNewPlaces().
+            if (!places?.Autocomplete || hasNewPlaces()) return null;
 
             try {
                 const autocomplete = new window.google.maps.places.Autocomplete(input, {
