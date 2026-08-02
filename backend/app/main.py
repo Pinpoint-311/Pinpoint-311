@@ -235,52 +235,7 @@ def _client_ip(request: Request) -> "str | None":
     return request.client.host if request.client else None
 
 
-class DemoModeMiddleware(BaseHTTPMiddleware):
-    """In DEMO_MODE, block mutating requests to admin/system routes.
-    
-    Resident portal submissions are allowed.
-    Staff dashboard reads are allowed.
-    Admin config changes are blocked.
-    """
-    
-    # Routes where mutations ARE allowed in demo mode
-    ALLOWED_MUTATION_PREFIXES = [
-        "/api/open311/",        # Public request submissions
-        "/api/auth/",           # Auth flows (demo-login, bootstrap)
-        "/api/gis/",            # Geocoding lookups
-        "/api/system/upload/",  # Image uploads for requests
-        "/api/system/translate/",  # Translation requests
-        "/api/research/",       # Research suite
-        "/api/system/analytics-chat", # AI Analytics Advisor
-        "/api/services/reorder",  # Service category reordering
-        "/api/system/update",          # Admin code update (admin-auth protected)
-    ]
-    
-    async def dispatch(self, request: Request, call_next):
-        from app.core.config import get_settings
-        settings = get_settings()
-        
-        if not settings.demo_mode:
-            return await call_next(request)
-        
-        method = request.method.upper()
-        path = request.url.path
-        
-        # Allow all GET/HEAD/OPTIONS requests
-        if method in ("GET", "HEAD", "OPTIONS"):
-            return await call_next(request)
-        
-        # Allow mutations on whitelisted routes
-        for prefix in self.ALLOWED_MUTATION_PREFIXES:
-            if path.startswith(prefix):
-                return await call_next(request)
-        
-        # Block all other mutations
-        from fastapi.responses import JSONResponse
-        return JSONResponse(
-            status_code=403,
-            content={"detail": "Demo mode — this action is disabled. Deploy your own instance to configure settings."},
-        )
+
 
 
 class ManagedModeMiddleware(BaseHTTPMiddleware):
@@ -510,8 +465,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 # remembered to write one.
 app.add_middleware(AdminActionAuditMiddleware)
 
-# Demo mode middleware — block admin mutations
-app.add_middleware(DemoModeMiddleware)
+
 
 # Managed hosting: suspend gate + telemetry request counters
 app.add_middleware(ManagedModeMiddleware)
