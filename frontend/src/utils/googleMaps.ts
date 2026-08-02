@@ -30,8 +30,26 @@ export function loadGoogleMaps(apiKey: string): Promise<void> {
         // second component mounting before the first script has finished).
         const existing = document.querySelector('script[data-google-maps]') as HTMLScriptElement | null;
         if (existing) {
-            if (window.google?.maps) return resolve();
-            existing.addEventListener('load', () => resolve());
+            const ensureLibs = async () => {
+                try {
+                    const maps = window.google?.maps as unknown as {
+                        importLibrary?: (name: string) => Promise<unknown>;
+                    };
+                    if (typeof maps?.importLibrary === 'function') {
+                        await Promise.all([
+                            maps.importLibrary('places'),
+                            maps.importLibrary('geocoding'),
+                        ]);
+                    }
+                } catch {}
+                resolve();
+            };
+            if (window.google?.maps?.places) return resolve();
+            if (window.google?.maps) {
+                ensureLibs();
+                return;
+            }
+            existing.addEventListener('load', () => { ensureLibs(); });
             existing.addEventListener('error', () => { loadPromise = null; reject(new Error('Failed to load Google Maps')); });
             return;
         }

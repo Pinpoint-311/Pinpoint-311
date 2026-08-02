@@ -478,7 +478,11 @@ async def refresh_ai_models(
 
 
 @router.get("/{capability}/catalog", include_in_schema=False)
-async def get_capability_catalog(capability: str, _: User = Depends(get_current_admin)):
+async def get_capability_catalog(
+    capability: str,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
     """Catalog for the capabilities added after the first four, which each had
     their own near-identical route. Declared before /ai/catalog would shadow it
     Registered after every hand-written catalog route, because FastAPI takes the
@@ -488,10 +492,29 @@ async def get_capability_catalog(capability: str, _: User = Depends(get_current_
         raise HTTPException(status_code=404, detail="Unknown capability")
     from app.services.secret_manager import get_secret
     from app.services.delivery_providers import _DEFAULTS
+    from app.services import connector_health
+
     current = normalize_provider(capability, await get_secret(_PROVIDER_SELECT_KEY[capability]))
     providers = catalog_for_api(capability)
-    return {"current_provider": current, "default_provider": _DEFAULTS[capability],
-            "providers": providers, "configured": await _configured_map(providers)}
+    health_map = await connector_health.snapshot(db)
+    h = health_map.get(capability)
+
+    last_result = None
+    if h and (h.last_result or h.last_error):
+        last_result = {
+            "ok": h.ok,
+            "detail": h.last_result or h.last_error,
+            "status": h.status,
+            "verifiable": h.verifiable,
+        }
+
+    return {
+        "current_provider": current,
+        "default_provider": _DEFAULTS[capability],
+        "providers": providers,
+        "configured": await _configured_map(providers),
+        "last_result": last_result,
+    }
 
 
 # ---- Unified provider save + test (AI / translation / identity) ----
