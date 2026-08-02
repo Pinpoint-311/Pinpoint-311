@@ -192,6 +192,29 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const [values, setValues] = useState<Record<string, string>>({});
     const [busy, setBusy] = useState<'save' | 'test' | null>(null);
     const [result, setResult] = useState<{ ok: boolean; detail: string } | null>(null);
+
+    /* What to show in the result box: this session's test, or the last one
+     * recorded, whichever is fresher.
+     *
+     * `record_success` has stored the message since #436, and nothing read it
+     * back -- so pressing Test showed "Twilio credentials accepted. Nothing was
+     * sent." and a reload showed an empty card, which reads as the test having
+     * been forgotten rather than as the box not being rehydrated.
+     *
+     * Taken from the health row this card already receives rather than added
+     * to the catalog endpoint as well. The same fact served by two endpoints is
+     * two things that can disagree, and the badge beside this box already reads
+     * the health row -- a second copy could put a green message under a red
+     * badge.
+     */
+    const shownResult = result ?? (health?.last_result
+        ? {
+            // `verifiable === false` is "we tried and cannot check this from
+            // here", which is not a pass and must not render as one.
+            ok: health.verifiable !== false && health.status === 'working',
+            detail: health.last_result,
+        }
+        : null);
     const [error, setError] = useState<string | null>(null);
     // Live model discovery (AI only)
     // Copy targets inside steps: a callback URL retyped by hand is the single
@@ -699,15 +722,15 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                     ))}
                 </div>
             )}
-            {!compact && result && (
+            {!compact && shownResult && (
                 <motion.div
                     initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
-                    className={`mt-3 rounded-xl px-3 py-2.5 text-xs border flex items-start gap-2 ${result.ok
+                    className={`mt-3 rounded-xl px-3 py-2.5 text-xs border flex items-start gap-2 ${shownResult.ok
                         ? 'bg-emerald-500/10 border-emerald-400/30 text-emerald-200'
                         : 'bg-amber-500/10 border-amber-400/30 text-amber-200'}`}
                 >
-                    {result.ok ? <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
-                    <span>{result.detail}</span>
+                    {shownResult.ok ? <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
+                    <span>{shownResult.detail}</span>
                 </motion.div>
             )}
 
