@@ -221,47 +221,46 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
             </div>
         ` : '';
 
-        // Everything said about this report, in two clearly separated blocks.
+        // Everything said about this report, in the order it was said.
         //
-        // Only internal notes used to print. That reads as a privacy decision
-        // and is the opposite of one: the resident's own words are the field
-        // notes -- "it's the second driveway, not the first", "the smell comes
-        // back after rain" -- and a crew standing in the street with a sheet of
-        // paper had every staff comment and none of them. The resident wrote
-        // them to be read by whoever turns up.
-        const internalComments = comments?.filter(c => c.visibility === 'internal') || [];
-        const residentComments = comments?.filter(c => c.visibility === 'external') || [];
+        // Two problems, one fix. Only internal notes printed, which reads as a
+        // privacy decision and is the opposite of one: the resident's own
+        // words are the field notes -- "it's the second driveway", "the smell
+        // comes back after rain" -- and a crew standing in the street had
+        // every staff comment and none of them.
+        //
+        // And splitting them into two blocks lost the thing that makes them
+        // readable. "Is this the one by the school?" in one list and "yes, the
+        // second driveway" in another is a conversation with the replies filed
+        // separately from the questions. Interleaved, it reads as what it is.
+        //
+        // Internal notes stay marked, because the difference matters when the
+        // sheet is read aloud to a resident at the door.
+        const conversation = [...(comments || [])].sort((a, b) => {
+            const at = a.created_at ? Date.parse(a.created_at) : 0;
+            const bt = b.created_at ? Date.parse(b.created_at) : 0;
+            return at - bt;
+        });
 
-        const residentCommentsHtml = residentComments.length ? `
+        const commentsHtml = conversation.length ? `
             <div class="section comments-section">
-                <h3>${icons.comment} From the resident and staff replies (${residentComments.length})</h3>
+                <h3>${icons.comment} Conversation (${conversation.length})</h3>
                 <div class="comments-list">
-                    ${residentComments.map(c => `
-                        <div class="comment-item">
+                    ${conversation.map(c => {
+                        const internal = c.visibility === 'internal';
+                        const resident = c.username === 'Resident';
+                        return `
+                        <div class="comment-item ${internal ? 'comment-internal' : ''}">
                             <div class="comment-header">
                                 <strong>${c.username}</strong>
+                                ${internal
+                                    ? '<span class="comment-tag">Internal — not shown to the resident</span>'
+                                    : (resident ? '<span class="comment-tag comment-tag-resident">Resident</span>' : '')}
                                 <span class="comment-date">${formatDate(c.created_at)}</span>
                             </div>
                             <div class="comment-body">${c.content.replace(/\n/g, '<br/>')}</div>
-                        </div>
-                    `).join('')}
-                </div>
-            </div>
-        ` : '';
-
-        const commentsHtml = internalComments.length ? `
-            <div class="section comments-section">
-                <h3>${icons.comment} Internal Comments (${internalComments.length})</h3>
-                <div class="comments-list">
-                    ${internalComments.map(c => `
-                        <div class="comment-item">
-                            <div class="comment-header">
-                                <strong>${c.username}</strong>
-                                <span class="comment-date">${formatDate(c.created_at)}</span>
-                            </div>
-                            <div class="comment-body">${c.content.replace(/\n/g, '<br/>')}</div>
-                        </div>
-                    `).join('')}
+                        </div>`;
+                    }).join('')}
                 </div>
             </div>
         ` : '';
@@ -565,6 +564,24 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
                         border-radius: 4px;
                         white-space: pre-wrap;
                     }
+                    .comment-internal {
+                        border-left: 3px solid #94a3b8;
+                        background: #f8fafc;
+                    }
+                    .comment-tag {
+                        font-size: 9px;
+                        text-transform: uppercase;
+                        letter-spacing: 0.04em;
+                        color: #475569;
+                        border: 1px solid #cbd5e1;
+                        border-radius: 3px;
+                        padding: 1px 5px;
+                        margin-left: 6px;
+                    }
+                    .comment-tag-resident {
+                        color: #1d4ed8;
+                        border-color: #bfdbfe;
+                    }
                     .legal-hold-reason {
                         margin-top: 6px;
                         font-weight: 400;
@@ -764,7 +781,6 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
                 ${aiHtml}
                 ${staffNotesHtml}
                 ${commentsHtml}
-                ${residentCommentsHtml}
                 ${completionHtml}
 
                 <div class="section reporter">

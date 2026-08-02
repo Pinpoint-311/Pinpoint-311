@@ -909,6 +909,12 @@ export default function AdminConsole() {
     } | null>(null);
     const [selectedStateCode, setSelectedStateCode] = useState<string>('');
     const [selectedMode, setSelectedMode] = useState<'redact' | 'purge'>('redact');
+    /* The records the next run would touch. Loaded on demand: it is a real
+       query and most visits to this page are not about to press the button. */
+    const [retentionPreview, setRetentionPreview] = useState<import('../services/api').RetentionPreview | null>(null);
+    const [previewLoading, setPreviewLoading] = useState(false);
+    const [previewError, setPreviewError] = useState<string | null>(null);
+
     /* Which fields a retention run clears. Null until the server answers --
      * rendering the catalog from a hardcoded copy here is how the screen and
      * the thing it configures drift apart. */
@@ -3408,6 +3414,31 @@ export default function AdminConsole() {
                                             {isRunningRetention ? 'Running...' : 'Run Retention Now'}
                                         </Button>
 
+                                        {/* Read before you press. A count cannot
+                                            show that the oldest eligible record is
+                                            four years past its date because the
+                                            policy has never actually run, nor that
+                                            something assumed exempt is in the list
+                                            because nobody set the hold. */}
+                                        <Button
+                                            variant="secondary"
+                                            disabled={previewLoading}
+                                            onClick={async () => {
+                                                setPreviewLoading(true);
+                                                setPreviewError(null);
+                                                try {
+                                                    setRetentionPreview(await api.previewRetentionRun(50));
+                                                } catch (err) {
+                                                    setRetentionPreview(null);
+                                                    setPreviewError(err instanceof Error ? err.message : 'Could not load the preview');
+                                                } finally {
+                                                    setPreviewLoading(false);
+                                                }
+                                            }}
+                                        >
+                                            {previewLoading ? 'Checking…' : 'Review what would be archived'}
+                                        </Button>
+
                                         <Button
                                             variant="secondary"
                                             onClick={async () => {
@@ -3427,6 +3458,92 @@ export default function AdminConsole() {
                                             ).split("(")[0].trim()}
                                         </Button>
                                     </div>
+
+                                    {previewError && (
+                                        <div role="alert" className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
+                                            {previewError}
+                                        </div>
+                                    )}
+
+                                    {retentionPreview && (
+                                        <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] overflow-hidden">
+                                            {retentionPreview.blocked === 'legal_hold' ? (
+                                                <p className="p-4 text-sm text-amber-200">
+                                                    The instance-wide legal hold is on, so nothing is eligible. Lift it
+                                                    first if this run is meant to happen.
+                                                </p>
+                                            ) : !retentionPreview.summary || retentionPreview.summary.total === 0 ? (
+                                                <p className="p-4 text-sm text-white/70">
+                                                    Nothing has passed the {(retentionPreview.retention_days ?? 0).toLocaleString()}-day
+                                                    retention period yet. This run would do nothing.
+                                                </p>
+                                            ) : (
+                                                <>
+                                                    <div className="p-4 border-b border-white/10">
+                                                        <p className="text-sm text-white">
+                                                            <strong>{retentionPreview.summary.total.toLocaleString()}</strong>{' '}
+                                                            {retentionPreview.summary.total === 1 ? 'record is' : 'records are'} eligible.
+                                                            {retentionPreview.summary.oldest_age_days != null && (
+                                                                <> Closed between{' '}
+                                                                    {Math.floor((retentionPreview.summary.newest_age_days ?? 0) / 365)} and{' '}
+                                                                    {Math.floor(retentionPreview.summary.oldest_age_days / 365)} years ago.</>
+                                                            )}
+                                                        </p>
+                                                        {/* Said plainly. A list of fifty presented as
+                                                            the whole answer, when it is fifty of four
+                                                            thousand, is the undercount this panel is
+                                                            here to prevent. */}
+                                                        {retentionPreview.summary.truncated && (
+                                                            <p className="text-xs text-amber-200/90 mt-1">
+                                                                Showing the {retentionPreview.summary.showing} oldest. The run
+                                                                works through all {retentionPreview.summary.total.toLocaleString()}.
+                                                            </p>
+                                                        )}
+                                                        {!!retentionPreview.scrub_fields?.length && (
+                                                            <p className="text-xs text-white/60 mt-2">
+                                                                Cleared on each: {retentionPreview.scrub_fields!.join(', ')}.
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                    <div className="max-h-80 overflow-y-auto">
+                                                        <table className="w-full text-sm">
+                                                            <thead className="sticky top-0 bg-slate-900/95 backdrop-blur">
+                                                                <tr className="text-left text-white/55 text-xs uppercase tracking-wider">
+                                                                    <th className="px-4 py-2 font-medium">Request</th>
+                                                                    <th className="px-4 py-2 font-medium">Category</th>
+                                                                    <th className="px-4 py-2 font-medium">Closed</th>
+                                                                    <th className="px-4 py-2 font-medium text-right">Age</th>
+                                                                    <th className="px-4 py-2 font-medium text-right">Past due</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                {retentionPreview.records.map(r => (
+                                                                    <tr key={r.service_request_id} className="border-t border-white/5">
+                                                                        <td className="px-4 py-2 font-mono text-xs text-white/80">{r.service_request_id}</td>
+                                                                        <td className="px-4 py-2 text-white/70 truncate max-w-[16rem]">{r.service_name}</td>
+                                                                        <td className="px-4 py-2 text-white/70">
+                                                                            {r.closed_datetime
+                                                                                ? new Date(r.closed_datetime).toLocaleDateString(undefined, {
+                                                                                    year: 'numeric', month: 'short', day: 'numeric',
+                                                                                    timeZone: retentionPreview.timezone || undefined,
+                                                                                })
+                                                                                : '—'}
+                                                                        </td>
+                                                                        <td className="px-4 py-2 text-right text-white/70">
+                                                                            {r.age_days != null ? `${(r.age_days / 365).toFixed(1)} yrs` : '—'}
+                                                                        </td>
+                                                                        <td className="px-4 py-2 text-right text-amber-200/90">
+                                                                            {r.days_past_retention != null ? `${r.days_past_retention.toLocaleString()} d` : '—'}
+                                                                        </td>
+                                                                    </tr>
+                                                                ))}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                </>
+                                            )}
+                                        </div>
+                                    )}
                                 </AccordionSection>
 
                                 {/* All States Reference */}

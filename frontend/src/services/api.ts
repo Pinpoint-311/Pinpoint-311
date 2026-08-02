@@ -194,6 +194,44 @@ export type Capability =
     | 'ai' | 'translation' | 'identity' | 'maps'
     | 'email' | 'sms' | 'kms' | 'redaction';
 
+export interface RetentionPreviewRecord {
+    service_request_id: string | null;
+    service_name: string | null;
+    address: string | null;
+    closed_datetime: string | null;
+    age_days: number | null;
+    /** How long past eligibility it already is. */
+    days_past_retention: number | null;
+}
+
+export interface RetentionPreview {
+    eligible: number;
+    on_legal_hold: number;
+    will_act_on?: number;
+    mode: 'redact' | 'purge';
+    state_code?: string;
+    policy_name?: string;
+    retention_days?: number;
+    cutoff_date?: string | null;
+    confirmation_required?: string | null;
+    /** Set to 'legal_hold' when an instance-wide hold freezes everything. */
+    blocked?: string;
+    /** What a run will actually empty, in the words the settings screen uses. */
+    scrub_fields?: string[];
+    /** The records themselves, oldest first. Empty under a legal hold. */
+    records: RetentionPreviewRecord[];
+    summary: {
+        total: number;
+        showing: number;
+        truncated: boolean;
+        retention_days: number;
+        cutoff: string | null;
+        oldest_age_days: number | null;
+        newest_age_days: number | null;
+    } | null;
+    timezone?: string;
+}
+
 class ApiClient {
     private token: string | null = null;
     private onUnauthorized: (() => void) | null = null;
@@ -1142,15 +1180,9 @@ class ApiClient {
     }
 
     /** What "Run now" would actually do, before it does it. */
-    async previewRetentionRun(): Promise<{
-        eligible: number; on_legal_hold: number; will_act_on?: number;
-        mode: 'redact' | 'purge'; state_code?: string; policy_name?: string;
-        retention_days?: number; cutoff_date?: string | null;
-        confirmation_required?: string | null; blocked?: string;
-        /** What a run will actually empty, in the words the settings screen uses. */
-        scrub_fields?: string[];
-    }> {
-        return this.request('/system/retention/preview');
+    /** What "Run now" would do, and the records it would do it to. */
+    async previewRetentionRun(limit = 50): Promise<RetentionPreview> {
+        return this.request<RetentionPreview>(`/system/retention/preview?limit=${limit}`);
     }
 
     async runRetentionNow(confirm?: string): Promise<{ status: string; task_id: string; message: string }> {

@@ -1758,6 +1758,7 @@ async def set_town_timezone(
 
 @router.get("/retention/preview")
 async def preview_retention_run(
+    limit: int = Query(50, ge=1, le=500, description="How many records to list"),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin),
 ):
@@ -1780,6 +1781,11 @@ async def preview_retention_run(
             "on_legal_hold": 0,
             "mode": getattr(settings, "retention_mode", None) or "anonymize",
             "blocked": "legal_hold",
+            # Listing records that "will be archived next run" while a hold
+            # means nothing can be archived is the sort of contradiction that
+            # gets a screen distrusted.
+            "records": [],
+            "summary": None,
         }
 
     state_code = (settings.retention_state_code if settings else None) or "NJ"
@@ -1799,6 +1805,16 @@ async def preview_retention_run(
     )).scalar() or 0
 
     eligible = stats.get("eligible_for_archival", 0) if isinstance(stats, dict) else 0
+
+    from app.services.retention_service import get_records_for_archival
+    from app.services.retention_window import describe_record, retention_cutoff, summarise
+    from app.services.town_time import normalise_timezone
+
+    cutoff = retention_cutoff(policy.get("retention_days", 0), override_days)
+    rows = await get_records_for_archival(db, state_code, override_days, limit=limit)
+    records = [describe_record(r, cutoff=cutoff) for r in rows]
+    records.sort(key=lambda r: r["age_days"] if r["age_days"] is not None else -1, reverse=True)
+
     return {
         "eligible": eligible,
         "on_legal_hold": held,
@@ -1818,6 +1834,22 @@ async def preview_retention_run(
                 getattr(settings, "retention_scrub_fields", None) if settings else None
             ) if f["selected"]
         ],
+        # The records themselves, oldest first.
+        #
+        # A count is not reviewable. It cannot show that the oldest eligible
+        # record is four years past its date because the policy has never
+        # actually run, and it cannot show that a report somebody assumed was
+        # exempt is in the list because nobody set the hold on it.
+        #
+        # Drawn from get_records_for_archival -- the function the sweep itself
+        # calls -- rather than a second query that resembles it. A preview
+        # computed differently from the run invites somebody to confirm against
+        # a list that is not the list.
+        "records": records,
+        "summary": summarise(records, total=eligible,
+                             retention_days=policy.get("retention_days", 0),
+                             cutoff=cutoff),
+        "timezone": normalise_timezone(getattr(settings, "timezone", None) if settings else None),
     }
 
 
