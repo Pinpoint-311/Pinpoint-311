@@ -1073,15 +1073,30 @@ export default function ServiceProviders({ show, extras, footer, extraOff = [], 
      * "not used yet", which is honest: if we cannot read the health table, we
      * do not know. */
     const [health, setHealth] = useState<Record<string, ConnectorHealth>>({});
+    /* Whether the health table could be read at all.
+     *
+     * The catch used to set an empty map, which renders as "not checked yet"
+     * on every card -- indistinguishable from a town that genuinely has not
+     * run a check, and silent about the fact that the request failed. */
+    const [healthUnavailable, setHealthUnavailable] = useState(false);
     const loadHealth = useCallback(async () => {
         try {
             const report = await api.getConnectorHealth();
             setHealth(Object.fromEntries(report.connectors.map(c => [c.connector, c])));
+            setHealthUnavailable(false);
         } catch {
             setHealth({});
+            setHealthUnavailable(true);
         }
     }, []);
     useEffect(() => { loadHealth(); }, [loadHealth, recheckToken, refreshToken]);
+
+    /* Testing one card records a result the other cards' badges read from, so
+     * the stored view is stale the moment any test finishes. Previously only
+     * "Recheck all" refetched, which is why a single test looked like it had
+     * not persisted: the badge was still rendering the health row from page
+     * load. */
+    const refreshAfterTest = useCallback(() => { loadHealth(); onChanged?.(); }, [loadHealth, onChanged]);
 
     const [reloadToken, setReloadToken] = useState(0);
     /* A save in the guide above changes exactly what these cards read, so pull
@@ -1149,6 +1164,16 @@ export default function ServiceProviders({ show, extras, footer, extraOff = [], 
      * cards be open at once. */
     const [openCap, setOpenCap] = useState<string | null>(null);
     const capState = (cap: Capability) => capabilityState(statuses[cap], health[cap]);
+
+    /* Rendered above the cards. A town whose health table cannot be read
+     * should be told that, rather than shown ten badges that all say "not
+     * checked yet" and mean "we could not ask". */
+    const healthNotice = healthUnavailable ? (
+        <div role="alert" className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+            The status of these services could not be read, so the badges below
+            show what was last known rather than what is true now.
+        </div>
+    ) : null;
     /* Only what is wrong gets the whole width.
      *
      * "Not set up" is deliberately not in this list, though the first version
@@ -1185,6 +1210,7 @@ export default function ServiceProviders({ show, extras, footer, extraOff = [], 
                 </button>
             }
         >
+            {healthNotice}
             {loaded.length > 0 && (
                 <div className="text-[11px] text-white/55 flex flex-wrap items-center gap-x-3 gap-y-0.5 mb-4">
                     <span>{configuredCount === loaded.length
@@ -1229,7 +1255,7 @@ export default function ServiceProviders({ show, extras, footer, extraOff = [], 
                         <div key={c.key} className={wide ? 'sm:col-span-2 lg:col-span-3' : ''}>
                             <CapabilityCard cap={c.key} title={c.title} blurb={c.blurb} icon={c.icon} delay={0}
                                 recheckToken={recheckToken} reloadToken={reloadToken} onStatus={onStatus}
-                                health={health[c.key]} identity={identity} onChanged={onChanged}
+                                health={health[c.key]} identity={identity} onChanged={refreshAfterTest}
                                 publicOrigin={publicOrigin}
                                 variant={spotlit.includes(c) ? 'spotlight' : 'bubble'}
                                 state={capState(c.key)}

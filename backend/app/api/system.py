@@ -1028,6 +1028,17 @@ async def test_provider(
 
     async def _remember(outcome: dict) -> dict:
         try:
+            # A check that failed part-way may have left the session in a
+            # failed transaction -- several of them run queries and swallow
+            # their own errors. Any statement after that raises
+            # PendingRollbackError, so the write below was caught by its own
+            # except and lost, and the card went on saying "not checked yet"
+            # immediately after somebody watched the test run.
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
             if outcome.get("ok"):
                 # The message too, not just the timestamp. "Checked 6 hours
                 # ago" cannot say what it found.
