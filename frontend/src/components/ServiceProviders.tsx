@@ -452,6 +452,27 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             setWarnings(saved.warnings || []);
             setValues({});
             await load();
+
+            // Selecting a provider saves; it does not configure one. With no
+            // credentials entered the settings payload is empty, which the
+            // backend reads as "keep what is stored" -- so the save succeeds,
+            // answers ok:true, and the card used to say "Set up" about a
+            // service with no account SID in it.
+            //
+            // Said here rather than left to the test below, because the test's
+            // own message ("Account SID or auth token is missing") reads as a
+            // connection failure rather than as "you have not finished".
+            if (saved.configured === false) {
+                setResult({
+                    ok: false,
+                    detail: saved.missing?.length
+                        ? `Saved your choice of provider. Still needed before this can work: ${saved.missing.join(', ')}.`
+                        : 'Saved your choice of provider. Its credentials still need to be entered.',
+                });
+                onStatus(cap, { configured: false, verifiable: undefined, verified: null });
+                return;
+            }
+
             // Immediately verify
             const t = await api.testProvider(cap);
             setResult(t);
