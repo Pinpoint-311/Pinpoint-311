@@ -175,7 +175,7 @@ export function createGoogleGeocoder(): GeocodingProvider {
 
         attachAutocomplete(input: HTMLInputElement, options: AutocompleteOptions): AutocompleteHandle | null {
             const places = window.google?.maps?.places as unknown as Record<string, unknown> | undefined;
-            if (!places?.Autocomplete || hasNewPlaces()) return null;
+            if (!places?.Autocomplete) return null;
 
             try {
                 const autocomplete = new window.google.maps.places.Autocomplete(input, {
