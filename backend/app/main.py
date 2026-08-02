@@ -79,6 +79,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; script-src 'self' 'unsafe-inline'; "
                 "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                "connect-src 'self' https://maps.googleapis.com https://places.googleapis.com https://*.googleapis.com https://*.gstatic.com https://translate.googleapis.com https://api.open-meteo.com https://archive-api.open-meteo.com https://*.auth0.com https://fonts.googleapis.com wss:; "
                 "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
             )
 
