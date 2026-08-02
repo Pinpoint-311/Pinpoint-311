@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     Server, Database, RefreshCw, Play, Trash2, HardDrive, Clock,
     CheckCircle, XCircle, Loader2, RotateCcw, Wrench,
-    Cloud, Activity, AlertTriangle
+    Cloud, Activity, AlertTriangle, Cpu
 } from 'lucide-react';
 import { Card, Button } from './ui';
 import api, { HealthDashboard, RunbookResult, ProactiveHealth } from '../services/api';
@@ -232,6 +232,68 @@ export default function OperationsPanel() {
                         </div>
                     </Card>
                 </div>
+            )}
+
+            {/* What this container is using of what it is allowed.
+
+                These three readings existed but were only rendered once one of
+                them crossed a threshold -- until then the whole section
+                collapsed to a single line saying everything passed. So the
+                answer to "how much memory is left?" was unavailable at exactly
+                the times somebody thinks to ask it, which is usually before
+                anything is wrong.
+
+                Read from the same probes the hourly sweep and the alert email
+                use. A second measurement rendered here would be a second
+                opinion that drifts from the one that raises the alarm. */}
+            {proactive && (
+                <Card>
+                    <h3 className="text-lg font-semibold text-white mb-1 flex items-center gap-2">
+                        <Cpu className="w-5 h-5 text-cyan-400" />
+                        Container resources
+                    </h3>
+                    <p className="text-gray-400 text-xs mb-4">
+                        Measured against this container's own limits, not the server's total.
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {['memory', 'disk', 'cpu'].map(key => {
+                            const c = proactive.checks.find(x => x.key === key);
+                            if (!c) return null;
+                            const pct = typeof c.value === 'number' ? c.value : null;
+                            // A gauge with no reading is drawn as no reading.
+                            // An empty bar reads as 0% used, which is the most
+                            // reassuring possible rendering of "we could not
+                            // measure this".
+                            const bar = c.status === 'critical' ? 'bg-red-400'
+                                : c.status === 'warning' ? 'bg-amber-400'
+                                    : 'bg-emerald-400';
+                            return (
+                                <div key={key} className="bg-slate-800/50 rounded-lg p-4 border border-slate-700/50">
+                                    <div className="flex items-baseline justify-between mb-2">
+                                        <span className="text-gray-300 text-xs uppercase tracking-wide">{c.label}</span>
+                                        <span className={`text-lg font-semibold ${c.status === 'critical' ? 'text-red-300'
+                                            : c.status === 'warning' ? 'text-amber-300' : 'text-white'}`}>
+                                            {pct === null ? '—' : `${pct}%`}
+                                        </span>
+                                    </div>
+                                    <div
+                                        className="h-1.5 rounded-full bg-white/10 overflow-hidden"
+                                        role="meter"
+                                        aria-label={c.label}
+                                        aria-valuenow={pct ?? undefined}
+                                        aria-valuemin={0}
+                                        aria-valuemax={100}
+                                    >
+                                        {pct !== null && (
+                                            <div className={`h-full ${bar}`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
+                                        )}
+                                    </div>
+                                    <p className="text-gray-400 text-xs mt-2">{c.message}</p>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </Card>
             )}
 
             {/* Proactive (leading-indicator) health — warns before something fails */}

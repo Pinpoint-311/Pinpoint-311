@@ -78,6 +78,25 @@ _SUBJECTS = (
     ("/knowledge", "the knowledge base"),
 )
 
+# Which provider, not just "a provider". "Added or updated a service provider's
+# settings" is four rows in a row when somebody works through the setup guide,
+# and none of them says whether the thing that changed was who sends the town's
+# text messages or who translates its pages.
+_CAPABILITIES = {
+    "sms": "the SMS provider",
+    "email": "the email provider",
+    "ai": "the AI provider",
+    "translation": "the translation provider",
+    "identity": "the sign-in provider",
+    "maps": "the maps provider",
+    "storage": "the file storage provider",
+    "kms": "the encryption key provider",
+    "redaction": "the photo redaction provider",
+    "payments": "the payments provider",
+}
+
+_PROVIDER_SAVE = re.compile(r"^/api/system/providers/([a-z0-9_-]+)/save$")
+
 _VERBS = {
     "POST": "Added or updated",
     "PUT": "Updated",
@@ -100,6 +119,11 @@ RESTORED_A_RECORD = "Restored a deleted service request"
 _ALWAYS = (
     ("DELETE", re.compile(r"^/api/open311/v2/requests/[^/]+$"), DESTROYED_A_RECORD),
     ("POST", re.compile(r"^/api/open311/v2/requests/[^/]+/restore$"), RESTORED_A_RECORD),
+    # Silencing an integration's alerts is the action behind "why did nobody
+    # get emailed for three weeks". It is the last thing that should be
+    # filtered out of the log as routine.
+    ("POST", re.compile(r"^/api/system/connectors/[^/]+/mute$"),
+     "Changed alerting for an integration"),
 )
 
 
@@ -142,6 +166,14 @@ def describe_action(method: str, path: str) -> Optional[str]:
     named = _exception_for(method, path)
     if named:
         return named
+
+    capability = _PROVIDER_SAVE.match(path)
+    if capability:
+        which = _CAPABILITIES.get(capability.group(1))
+        # An unknown capability keeps its own name rather than being flattened
+        # into "a provider": a new one should read as itself on day one.
+        return f"Updated {which or capability.group(1) + ' provider'} settings"
+
     clean = _ID.sub("", path)
     subject = next((name for frag, name in
                     sorted(_SUBJECTS, key=lambda p: -len(p[0]))

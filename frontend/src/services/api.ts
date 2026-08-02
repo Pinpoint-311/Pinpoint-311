@@ -131,6 +131,14 @@ export interface ProviderCatalog {
     current_model_available?: boolean;
     configured?: Record<string, boolean>;
     providers: ProviderInfo[];
+    /** What the last recorded check found, so a hard refresh does not reset
+     *  every card to "not checked yet". Absent when none has been run. */
+    last_result?: {
+        ok: boolean;
+        detail: string;
+        status?: string;
+        verifiable?: boolean | null;
+    } | null;
 }
 
 export interface AIModelRefreshResult {
