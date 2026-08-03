@@ -1453,9 +1453,26 @@ async def _test_delivery(capability: str) -> dict:
                 return {"ok": False, "detail": "No SMTP host is saved."}
             port = int((await get_secret("SMTP_PORT")) or 587)
 
+            sender = ((await get_secret("SMTP_FROM_EMAIL")) or "").strip()
+
             def _connect():
-                # Connect and authenticate only. Nothing is sent, so this is
-                # safe to press repeatedly.
+                """Connect, authenticate, and offer the envelope. No DATA, so
+                no message is queued and this is safe to press repeatedly.
+
+                The envelope is the half that was missing. Signing in proves the
+                relay knows this account; it does not prove the relay will carry
+                mail *from this address*, and that is a separate permission on
+                every hosted relay -- a verified sender on Brevo, an authorised
+                domain on Mailgun, a verified identity on SES. A town that
+                switches relay keeps its From address and loses the
+                authorisation attached to it, which is precisely the moment this
+                button gets pressed.
+
+                Relays differ on when they enforce it: some refuse at MAIL FROM,
+                some at DATA. This catches the first kind and says so; the
+                second cannot be caught without sending, and the message does
+                not pretend otherwise.
+                """
                 if port == 465:
                     server = smtplib.SMTP_SSL(host, port, timeout=12)
                 else:
@@ -1464,16 +1481,44 @@ async def _test_delivery(capability: str) -> dict:
                 with server:
                     if user and password:
                         server.login(user, password)
-                return True
+                    if not sender:
+                        return None
+                    try:
+                        code, message = server.mail(sender)
+                        if code >= 400:
+                            return (code, message)
+                        code, message = server.rcpt(sender)
+                        if code >= 400:
+                            return (code, message)
+                    finally:
+                        # Abandon the envelope explicitly rather than relying on
+                        # the disconnect, so nothing is left half-stated on a
+                        # relay that counts attempts.
+                        try:
+                            server.rset()
+                        except Exception:
+                            pass
+                return None
 
-            await asyncio.get_event_loop().run_in_executor(None, _connect)
+            refusal = await asyncio.get_event_loop().run_in_executor(None, _connect)
+            if refusal:
+                code, message = refusal
+                said = message.decode("utf-8", "replace") if isinstance(message, bytes) else str(message)
+                return {"ok": False, "detail": (
+                    f"Signed in to {host}, and it will not carry mail from {sender}: "
+                    f"{code} {said.strip()[:200]}. That address has to be a verified sender on "
+                    f"this relay — the sign-in and the permission to send as an address are two "
+                    f"different things, and switching relay keeps the address and loses the "
+                    f"permission."
+                )}
             # Only claim the sign-in that actually happened. Without a username
             # and password this opens a socket and negotiates TLS, which proves
             # the host is reachable and nothing about whether it will accept
             # mail from us -- and the message said "signed in" either way.
             if user and password:
-                return {"ok": True,
-                        "detail": f"Connected to {host}:{port} and signed in. Nothing was sent."}
+                envelope = f" It accepts mail from {sender}." if sender else ""
+                return {"ok": True, "detail": (
+                    f"Connected to {host}:{port} and signed in.{envelope} Nothing was sent.")}
             return {"ok": True, "detail": (
                 f"Connected to {host}:{port}. No username and password are saved, so nothing "
                 f"was signed in to — the server is reachable, but whether it will relay for "
