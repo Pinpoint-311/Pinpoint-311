@@ -102,6 +102,19 @@ function LiveState({ health }: { health?: ConnectorHealth }) {
     );
 }
 
+/** The provider's own name where the catalog knows it, its id otherwise.
+ *
+ * Used to say which provider a stored result was about. The id is a fallback
+ * rather than the answer: "acs" is our word for it and "Azure Communication
+ * Services" is the town's. */
+export function providerLabel(
+    catalog: { providers?: { provider: string; name: string }[] } | null | undefined,
+    provider: string | null | undefined,
+): string {
+    if (!provider) return 'the previous provider';
+    return catalog?.providers?.find(p => p.provider === provider)?.name || provider;
+}
+
 /** "6 hours ago" from an ISO timestamp. */
 function relativeTime(iso: string): string {
     const then = Date.parse(iso);
@@ -116,6 +129,9 @@ function relativeTime(iso: string): string {
 
 export interface CapStatus {
     providerName?: string;
+    /** The provider id in use, so a stored health row can be checked against
+     *  it. A verdict is only true of the provider that produced it. */
+    provider?: string;
     onDefault?: boolean;
     verified?: boolean | null;
     /** False when the provider cannot be checked from here at all. Distinct
@@ -134,9 +150,33 @@ export interface CapStatus {
  * key being revoked; it is the reason this page could show eight green ticks on
  * a town whose AI had been failing for a fortnight.
  */
+/** Whether a stored health row is a verdict about the provider in use.
+ *
+ * A result belongs to the provider that produced it. The row carries the
+ * provider it was recorded against, and until now nothing compared them: the
+ * SMS card was showing "There is no way to check http without sending a real
+ * text" while SMS_PROVIDER read `acs` -- a true statement about a gateway the
+ * town had switched away from, presented as the state of the one it is on. In
+ * the other direction the same row would have shown green for a provider that
+ * had never been tested.
+ *
+ * A row with no provider recorded is accepted rather than discarded: every row
+ * written before this was stored that way, and throwing away a real verdict is
+ * the more expensive mistake of the two.
+ */
+export function healthIsAboutCurrentProvider(
+    s: CapStatus | undefined, health?: ConnectorHealth,
+): boolean {
+    if (!health) return false;
+    if (!health.provider || !s?.provider) return true;
+    return health.provider === s.provider;
+}
+
 export function capabilityState(s: CapStatus | undefined, health?: ConnectorHealth): CapabilityState | null {
     if (!s) return null;                      // catalog still loading
     if (!s.configured) return 'unset';
+    // Anything the current provider did not produce says nothing about it.
+    if (!healthIsAboutCurrentProvider(s, health)) health = undefined;
     /* The session's answer when there is one, the stored one otherwise.
      *
      * Not an `||` of the two: a town that swapped an HTTP gateway for Twilio
@@ -207,12 +247,25 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
      * the health row -- a second copy could put a green message under a red
      * badge.
      */
-    const shownResult = result ?? (health?.last_result
+    /* The stored row only counts if it is about the provider now selected.
+     *
+     * `connector_health` has always carried the provider a result was recorded
+     * against and nothing compared it. Live, the SMS card read "There is no way
+     * to check http without sending a real text" while SMS_PROVIDER was `acs`:
+     * a true sentence about the previous gateway, shown as the state of the
+     * current one. Had `http` passed instead, the card would have been green
+     * for a provider the town no longer uses -- the same bug, in the direction
+     * nobody notices. */
+    const staleHealth = !!health?.provider && !!catalog?.current_provider
+        && health.provider !== catalog.current_provider;
+    const currentHealth = staleHealth ? undefined : health;
+
+    const shownResult = result ?? (currentHealth?.last_result
         ? {
             // `verifiable === false` is "we tried and cannot check this from
             // here", which is not a pass and must not render as one.
-            ok: health.verifiable !== false && health.status === 'working',
-            detail: health.last_result,
+            ok: currentHealth.verifiable !== false && currentHealth.status === 'working',
+            detail: currentHealth.last_result,
         }
         : null);
     const [error, setError] = useState<string | null>(null);
@@ -273,7 +326,10 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 setResult({ ok: cat.last_result.ok, detail: cat.last_result.detail });
             }
             onStatus(cap, {
-                providerName: cat.providers.find(p => p.provider === cat.current_provider)?.name || cat.current_provider,
+                providerName: providerLabel(cat, cat.current_provider),
+                // So the badge can tell a verdict about this provider from one
+                // left behind by the last.
+                provider: cat.current_provider,
                 onDefault: !cat.default_provider || cat.current_provider === cat.default_provider,
                 // The summary above the cards needs this: "which provider is
                 // picked" is not what an admin is trying to find out, "which
@@ -452,12 +508,20 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
      * promotes it to the wide treatment, so the fields never appear inside a
      * third of a column. */
     const compact = variant === 'bubble' && !isOpen;
-    const lastChecked = health?.status === 'working' ? health.last_success_at : health?.last_error_at;
-    const checkedLine = lastChecked ? `Checked ${relativeTime(lastChecked)}` : 'Not checked yet';
+    const lastChecked = currentHealth?.status === 'working'
+        ? currentHealth.last_success_at : currentHealth?.last_error_at;
+    /* Named, when the only check on file was of something else. "Not checked
+     * yet" would be true and unhelpful -- it hides that there IS an answer and
+     * that it is about a provider this town has moved off. */
+    const checkedLine = lastChecked
+        ? `Checked ${relativeTime(lastChecked)}`
+        : staleHealth
+            ? `Not checked since switching from ${providerLabel(catalog, health?.provider)}`
+            : 'Not checked yet';
     /* The provider's own words when there are any. A clerk searching the web
      * for their error needs the actual string, not our paraphrase of it. */
     const spotlightDetail = bad
-        ? (health?.last_error || health?.last_result || health?.summary || 'The last check failed.')
+        ? (currentHealth?.last_error || currentHealth?.last_result || currentHealth?.summary || 'The last check failed.')
         : shown === 'unchecked'
             ? 'Nothing has used this yet, so we cannot say whether it works.'
             : blurb;
@@ -583,7 +647,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                         {configured ? (
                             <span className="block text-[11px] text-white/45 mt-2.5">
                                 {shown === 'unverifiable'
-                                    ? (health?.last_result || 'Set up. There is no way to test this one from here.')
+                                    ? (currentHealth?.last_result || 'Set up. There is no way to test this one from here.')
                                     : checkedLine}
                             </span>
                         ) : (
@@ -691,7 +755,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                     ? <>
                                         {currentName}
                                         {cap === 'ai' && catalog.current_model ? ` · ${catalog.current_model}` : ''}
-                                        {' · '}<LiveState health={health} />
+                                        {' · '}<LiveState health={currentHealth} />
                                       </>
                                     : 'Not set up yet'}
                             </p>

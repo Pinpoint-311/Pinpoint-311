@@ -35,12 +35,20 @@ class FakeHealth:
     def __init__(self):
         self.successes = []
         self.failures = []
+        # Which provider each result was attributed to. The column has existed
+        # since the table did and only the circuit breaker ever filled it, so
+        # every row the sweep wrote said NULL -- and a verdict with no provider
+        # against it is a verdict about whatever happened to be selected when
+        # it ran, which nothing recorded.
+        self.providers = []
 
     async def record_success(self, db, connector, provider=None):
         self.successes.append(connector)
+        self.providers.append((connector, provider))
 
     async def record_failure(self, db, connector, error, provider=None):
         self.failures.append((connector, str(error)))
+        self.providers.append((connector, provider))
 
     async def snapshot(self, db):
         return {}
@@ -62,12 +70,16 @@ def sweep():
     """Drive verify_all with a chosen set of checks and configured capabilities."""
     health = FakeHealth()
 
-    def run(checks, configured):
+    def run(checks, configured, providers=None):
         async def is_configured(capability):
             return capability in configured
+
+        async def provider_of(capability):
+            return (providers or {}).get(capability)
+
         summary = asyncio.run(verify_all(
             None, checks=checks, is_configured=is_configured,
-            health=health, alerts=FakeAlerts()))
+            provider_of=provider_of, health=health, alerts=FakeAlerts()))
         return summary, health
 
     return run
@@ -228,3 +240,60 @@ def test_alerting_that_explodes_cannot_take_the_sweep_with_it():
     assert result["checked"]["maps"] == "working"
     assert health.successes == ["maps"]
     assert result["alerted"]["sent"] is False
+
+
+# ---------------------------------------------------------------------------
+# Which provider a result is about
+# ---------------------------------------------------------------------------
+#
+# `connector_health` has a provider column and it was NULL on every row: only
+# the circuit breaker ever passed one. A verdict is only true of the provider
+# that produced it, so a row without one is a result about an unrecorded
+# vendor -- and the setup page was rendering those as the state of whatever is
+# selected now. Live, the text messages card read "There is no way to check
+# http without sending a real text" while SMS_PROVIDER was 'acs'.
+
+
+def test_a_result_is_recorded_against_the_provider_that_produced_it(sweep):
+    _, health = sweep({"sms": ok()}, configured={"sms"}, providers={"sms": "twilio"})
+    assert health.providers == [("sms", "twilio")]
+
+
+def test_a_failure_names_its_provider_too(sweep):
+    """The direction that matters most: a red card has to say whose red it is,
+    or switching provider looks like it did not help."""
+    _, health = sweep({"email": bad()}, configured={"email"}, providers={"email": "ses"})
+    assert health.providers == [("email", "ses")]
+
+
+def test_a_provider_lookup_that_fails_does_not_lose_the_result(sweep):
+    """Not knowing which vendor is not a reason to throw away a real verdict."""
+    health = FakeHealth()
+
+    async def is_configured(capability):
+        return True
+
+    async def explode(capability):
+        raise RuntimeError("cannot reach the secret store")
+
+    result = asyncio.run(verify_all(
+        None, checks={"maps": ok()}, is_configured=is_configured,
+        provider_of=explode, health=health, alerts=FakeAlerts()))
+
+    assert result["checked"]["maps"] == "working"
+    assert health.providers == [("maps", None)]
+
+
+def test_the_sweep_still_runs_without_the_api_package(sweep):
+    """`provider_of` is injected for the same reason the checks are: this module
+    imports neither FastAPI nor Celery so that it runs in CI. Falling back to
+    the real resolver must not make that untrue."""
+    health = FakeHealth()
+
+    async def is_configured(capability):
+        return True
+
+    result = asyncio.run(verify_all(
+        None, checks={"maps": ok()}, is_configured=is_configured,
+        health=health, alerts=FakeAlerts()))
+    assert result["checked"]["maps"] == "working"
