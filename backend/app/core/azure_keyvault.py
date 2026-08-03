@@ -226,3 +226,21 @@ def set_secret(name: str, value: str) -> bool:
     )
     resp.raise_for_status()
     return True
+
+
+def delete_secret(name: str) -> bool:
+    """Remove a secret from the vault. Returns whether it is gone.
+
+    Only the secret-store round-trip check uses this: a probe that cannot take
+    back what it wrote leaves litter in a town's vault forever. A 404 counts as
+    success -- the caller asked for it to be absent, and it is.
+    """
+    token = _get_token()
+    if not token:
+        return False
+    url = f"{_vault_url()}/secrets/{_secret_id(name)}?api-version={_api_version()}"
+    resp = httpx.delete(url, headers={"Authorization": f"Bearer {token}"}, timeout=15.0)
+    if resp.status_code == 404:
+        return True
+    resp.raise_for_status()
+    return True

@@ -637,12 +637,87 @@ def set_secret_sync(key_name: str, value: str) -> bool:
 async def set_secret(key_name: str, value: str) -> bool:
     """
     Write a secret to Google Secret Manager (async version).
-    
+
     Wraps the sync version for async compatibility.
     """
     import asyncio
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, set_secret_sync, key_name, value)
+
+
+def delete_secret_sync(key_name: str) -> bool:
+    """Remove a key from the configured store. Returns whether it is gone.
+
+    Written for the secret-store round-trip check, which has to be able to take
+    back what it wrote. Nothing else deletes: the setup page clears a credential
+    by storing an empty string, which is the right behaviour for a real key
+    (the row stays, the card still lists it) and the wrong one for a probe --
+    an empty `PINPOINT_SELFTEST_*` left in a bundle forever is exactly the litter
+    an earlier probe left behind in Google as `test-write-check`.
+
+    On Google the keys live inside a shared JSON bundle, so this rewrites the
+    bundle without that key rather than deleting anything; on Azure and AWS each
+    key is its own secret and is deleted outright.
+    """
+    provider = _secrets_provider()
+
+    if provider == "azure":
+        try:
+            from app.core import azure_keyvault
+            if not azure_keyvault.is_configured():
+                return False
+            return azure_keyvault.delete_secret(key_name)
+        except Exception as e:
+            logger.warning(f"Azure Key Vault delete failed for {key_name}: {e}")
+            return False
+
+    if provider == "aws":
+        try:
+            from app.core import aws_secretsmanager
+            if not aws_secretsmanager.is_configured():
+                return False
+            return aws_secretsmanager.delete_secret(key_name)
+        except Exception as e:
+            logger.warning(f"AWS Secrets Manager delete failed for {key_name}: {e}")
+            return False
+
+    if not _is_gcp_available():
+        return False
+
+    try:
+        project = os.getenv("GOOGLE_CLOUD_PROJECT") or _get_project_from_db()
+        client = _get_sm_client()
+        if not client or not project:
+            return False
+
+        bundle_name = _get_bundle_name(key_name)
+        # Same lock and same freshest-read as the write path: dropping one key
+        # rewrites the whole bundle, so a concurrent write would otherwise be
+        # lost.
+        with _bundle_lock(bundle_name):
+            bundle = dict(_get_secret_from_gcp(bundle_name, force_refresh=True) or {})
+            if key_name not in bundle:
+                _cache_put(bundle_name, bundle)
+                return True
+            bundle.pop(key_name)
+            secret_path = f"projects/{project}/secrets/{bundle_name}"
+            client.add_secret_version(request={
+                "parent": secret_path,
+                "payload": {"data": json.dumps(bundle).encode("UTF-8")},
+            })
+            _cache_put(bundle_name, bundle)
+            _prune_versions(client, secret_path)
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to delete secret {key_name} from Secret Manager: {e}")
+        return False
+
+
+async def delete_secret(key_name: str) -> bool:
+    """Async wrapper for `delete_secret_sync`."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, delete_secret_sync, key_name)
 
 
 async def migrate_to_secret_manager() -> Dict[str, Any]:

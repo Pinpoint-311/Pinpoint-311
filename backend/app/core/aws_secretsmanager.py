@@ -102,3 +102,27 @@ def set_secret(name: str, value: str) -> bool:
                 return False
         logger.error(f"AWS Secrets Manager write failed for {name}: {e}")
         return False
+
+
+def delete_secret(name: str) -> bool:
+    """Remove a secret. Returns whether it is gone.
+
+    `ForceDeleteWithoutRecovery`, deliberately: this exists for the secret-store
+    round-trip probe, and the default 30-day recovery window would leave the
+    probe key occupying its own name for a month -- so the next check would find
+    it scheduled for deletion and fail to recreate it.
+
+    An already-absent secret counts as success: the caller asked for it to be
+    gone, and it is.
+    """
+    client = _client()
+    if not client:
+        return False
+    try:
+        client.delete_secret(SecretId=_secret_id(name), ForceDeleteWithoutRecovery=True)
+        return True
+    except Exception as e:
+        if e.__class__.__name__ == "ResourceNotFoundException":
+            return True
+        logger.warning(f"AWS Secrets Manager delete failed for {name}: {e}")
+        return False

@@ -183,3 +183,59 @@ def test_nothing_here_can_block_a_save():
     for fn in (cc.inspect_value, cc.inspect_settings):
         src = py_inspect.getsource(fn)
         assert "raise" not in src, f"{fn.__name__} must not be able to reject a credential"
+
+
+# ---------------------------------------------------------------------------
+# Whitespace around a pasted credential
+# ---------------------------------------------------------------------------
+#
+# SMTP_USER on the live deployment was stored as " a475c9001@smtp-brevo.com".
+# The relay answered 535 Authentication failed and no resident email went out,
+# and every check on the page said email was fine:
+#
+#   * `inspect_value` strips before looking for spaces, so it only ever sees
+#     the ones in the middle of a value;
+#   * `_configured_map` strips before deciding a value is present, so the badge
+#     was green;
+#   * the value handed to the vendor was the only unstripped one in the chain.
+#
+# So the fix is at the write, not at each reader: a credential that differs
+# depending on who asks for it is what made this invisible.
+
+def test_a_saved_credential_is_stripped_before_it_is_stored():
+    import inspect
+
+    import pytest as _pytest
+    _pytest.importorskip("fastapi")
+    from app.api import system
+
+    src = inspect.getsource(system._persist_secret)
+    assert 'value = (value or "").strip()' in src
+
+
+def test_the_plain_secret_endpoint_strips_too():
+    """The setup page's plain fields post here, not through the provider save --
+    and this is the path SMTP_USER came in on."""
+    import inspect
+
+    import pytest as _pytest
+    _pytest.importorskip("fastapi")
+    from app.api import system
+
+    src = inspect.getsource(system.create_or_update_secret)
+    assert '.strip()' in src
+
+
+def test_a_credential_that_is_only_whitespace_is_not_configured():
+    """" " and "" have to mean the same thing. They did everywhere except at the
+    write, which is how a value could be simultaneously "present" for the badge
+    and rejected by the vendor."""
+    import inspect
+
+    import pytest as _pytest
+    _pytest.importorskip("fastapi")
+    from app.api import system
+
+    src = inspect.getsource(system._persist_secret)
+    # The strip happens before is_configured is derived from the value.
+    assert src.index('value = (value or "").strip()') < src.index("is_configured=bool(value)")

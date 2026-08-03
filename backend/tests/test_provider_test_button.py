@@ -241,3 +241,185 @@ def test_apple_maps_is_unverifiable_rather_than_failing(monkeypatch):
     from app.services import secret_manager
     monkeypatch.setattr(secret_manager, "get_secret", _secrets(MAP_PROVIDER="apple"))
     assert _run(system._test_maps())["recorded"] is False
+
+
+# ---------------------------------------------------------------------------
+# Each check has to exercise the feature's own API
+# ---------------------------------------------------------------------------
+#
+# The failure these guard against is a check that asks the credential store
+# instead of the service: it answers green for a key that was revoked last week,
+# because the key is still stored. Written in the shape of
+# `test_the_test_button_asks_the_detector_rather_than_the_credential_store` in
+# test_redaction_fallback.py, which caught the same thing for photo redaction.
+
+
+def _source(fn):
+    import inspect
+    return inspect.getsource(fn)
+
+
+def test_the_identity_check_uses_the_client_credentials_rather_than_only_discovering():
+    """`.well-known/openid-configuration` is public. Fetching it proves the
+    issuer exists and says nothing about this town's registration -- so the card
+    sat green on a client secret rotated in the vendor console a month earlier,
+    and the first sign of trouble was staff bounced *after* their password was
+    accepted, which reads as a forgotten password."""
+    src = _source(system._test_identity)
+    assert "token_endpoint" in src, "the check must reach the token endpoint"
+    assert "client_credentials" in src, "and present the stored client credentials to it"
+    assert "invalid_client" in src, "and react to the provider rejecting them"
+
+
+def test_a_refused_grant_is_not_reported_as_a_bad_secret():
+    """The token endpoint has to identify the client before it can decide
+    anything about the grant, so "we know you, and you may not do this" is proof
+    the secret is right. Most towns do not enable client_credentials on a login
+    app, so treating that refusal as a failure would put a permanent red badge
+    on a working sign-in."""
+    src = _source(system._test_identity)
+    assert "unauthorized_client" in src
+
+
+def test_the_email_check_signs_in_rather_than_only_opening_a_socket():
+    """A socket and a STARTTLS handshake prove the host is reachable. They prove
+    nothing about whether it will relay for this town, which is the thing that
+    stops residents getting mail."""
+    src = _source(system._test_delivery)
+    assert "server.login(" in src, "SMTP must authenticate"
+    assert "get_send_quota" in src, "SES must ask SES, not just build a client"
+
+
+def test_the_email_check_does_not_claim_a_sign_in_that_did_not_happen():
+    """Without a username and password there is nothing to sign in to, and the
+    message said "signed in" regardless."""
+    src = _source(system._test_delivery)
+    assert "if user and password:" in src
+
+
+def test_the_secret_store_check_writes_and_reads_rather_than_asking_if_it_is_configured():
+    """`store_reachable()` asks the store whether credentials for it exist --
+    `_is_gcp_available()` on Google. That answers yes for a service account
+    whose Secret Manager permission was revoked, because the service account is
+    still there. The round trip is the API the rest of the system uses."""
+    src = _source(system._test_secrets)
+    assert "set_secret(" in src, "it must write"
+    assert "get_secret(" in src, "and read back"
+    assert "expected" in src, "and compare what came back with what went in"
+
+
+def test_the_secret_store_check_reads_past_its_own_cache():
+    """Reading our own write out of process memory passes on a store that never
+    received it -- which is the exact failure being checked for."""
+    src = _source(system._test_secrets)
+    assert "clear_cache(" in src
+
+
+def test_the_secret_store_check_takes_its_probe_key_away_again():
+    """An earlier hand-run probe left a `test-write-check` secret behind in
+    Google. A self-test that litters is one nobody runs twice."""
+    src = _source(system._test_secrets)
+    assert "delete_secret" in src
+    assert "_cleanup()" in src
+
+
+def test_the_probe_key_says_what_it_is():
+    """Whoever finds it in a cloud console has to be able to tell that it is
+    ours and that it is safe to remove."""
+    src = _source(system._test_secrets)
+    assert "PINPOINT_SELFTEST_WRITE_CHECK" in src
+
+
+def test_no_secret_store_at_all_is_not_a_failure(monkeypatch):
+    """The encrypted database is a supported place for credentials to live, and
+    it is the normal state of a small self-hosted install. A red badge there is
+    a badge that can never go green."""
+    from app.services import secret_manager, storage_maintenance
+
+    async def refuse(key, value):
+        return False
+
+    monkeypatch.setattr(secret_manager, "set_secret", refuse)
+    monkeypatch.setattr(storage_maintenance, "store_reachable", lambda: False)
+
+    result = _run(system._test_secrets())
+    assert result["ok"] is False
+    assert result["recorded"] is False, "must not be written down as a fault"
+
+
+def test_a_configured_store_that_refuses_a_write_is_a_failure(monkeypatch):
+    """This is the outage: `set_secret` returns False, the credential quietly
+    stays in the database, and the card that saved it still shows a tick."""
+    from app.services import secret_manager, storage_maintenance
+
+    async def refuse(key, value):
+        return False
+
+    monkeypatch.setattr(secret_manager, "set_secret", refuse)
+    monkeypatch.setattr(storage_maintenance, "store_reachable", lambda: True)
+
+    result = _run(system._test_secrets())
+    assert result["ok"] is False
+    assert result.get("recorded") is not False, "a real fault must be recorded"
+
+
+def test_a_store_that_takes_the_write_and_returns_something_else_fails(monkeypatch):
+    """Serving a stale read is not the same as being down, and it is worse: the
+    write appears to have worked."""
+    from app.services import secret_manager
+
+    async def accept(key, value):
+        return True
+
+    async def stale(key):
+        return "whatever was there before"
+
+    deleted = []
+
+    async def delete(key):
+        deleted.append(key)
+        return True
+
+    monkeypatch.setattr(secret_manager, "set_secret", accept)
+    monkeypatch.setattr(secret_manager, "get_secret", stale)
+    monkeypatch.setattr(secret_manager, "delete_secret", delete)
+
+    result = _run(system._test_secrets())
+    assert result["ok"] is False
+    assert deleted == ["PINPOINT_SELFTEST_WRITE_CHECK"], "the probe key is removed either way"
+
+
+def test_a_successful_round_trip_removes_the_probe(monkeypatch):
+    from app.services import secret_manager
+
+    store = {}
+
+    async def write(key, value):
+        store[key] = value
+        return True
+
+    async def read(key):
+        return store.get(key)
+
+    async def delete(key):
+        return store.pop(key, None) is not None
+
+    monkeypatch.setattr(secret_manager, "set_secret", write)
+    monkeypatch.setattr(secret_manager, "get_secret", read)
+    monkeypatch.setattr(secret_manager, "delete_secret", delete)
+
+    result = _run(system._test_secrets())
+    assert result["ok"] is True
+    assert store == {}, f"the probe key was left behind: {sorted(store)}"
+
+
+# ---------------------------------------------------------------------------
+# The one selection this page must not make
+# ---------------------------------------------------------------------------
+
+def test_the_secret_store_cannot_be_switched_from_a_card():
+    """Every credential the town has is in the current store, and repointing the
+    setting does not move them. A picker here would be one click that makes
+    every other card's credentials unreadable."""
+    assert "secrets" in system._READ_ONLY_SELECTION
+    assert "secrets" in system._PROVIDER_SELECT_KEY, "it is still reported and tested"
