@@ -43,7 +43,18 @@ async def configure_notifications(db):
     # Configure SMS provider
     sms_provider = await get_secret(db, "SMS_PROVIDER")
     logger.info(f"[SMS Config] SMS_PROVIDER: {'set' if sms_provider else 'empty'}")
-    
+
+    # SMS_ENABLED used to be read nowhere at all. A town could set it to false
+    # and every text kept going out -- a switch that does nothing is worse than
+    # no switch, because somebody believes it. Honoured here, where email's
+    # equivalent already was, so the two capabilities behave the same way.
+    from app.services.delivery_providers import switched_off
+    if switched_off(await get_secret(db, "SMS_ENABLED")):
+        notification_service._sms_provider = None
+        notification_service._sms_provider_name = None
+        logger.info("[SMS Config] SMS_ENABLED is false — text messages are switched off")
+        sms_provider = "none"
+
     if sms_provider == "twilio":
         notification_service.configure_sms("twilio", {
             "account_sid": await get_secret(db, "TWILIO_ACCOUNT_SID"),

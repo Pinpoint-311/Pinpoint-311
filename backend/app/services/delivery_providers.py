@@ -141,9 +141,40 @@ SMS_CATALOG: Dict[str, Dict[str, Any]] = {
         "credential_fields": [
             {"key": "SMS_HTTP_API_URL", "label": "POST URL", "required": True},
             {"key": "SMS_HTTP_API_KEY", "label": "API key", "secret": True, "required": False},
+            # The only card on this page that cannot be checked without doing
+            # the thing it exists to do. Every other provider has some read-only
+            # call; "any gateway that accepts a POST" has, by definition, no
+            # agreed one -- so the town supplies it, if their gateway offers it.
+            # Without this the card could never go green, and a badge that can
+            # never go green is one people learn to ignore.
+            {"key": "SMS_HTTP_TEST_URL", "label": "Status URL to check the key (optional)", "required": False},
         ],
+        "field_help": {
+            "SMS_HTTP_TEST_URL": (
+                "A URL we can GET to confirm the key is live, if your gateway publishes one — "
+                "a balance or quota endpoint, for example. Leave blank and the card will say it "
+                "cannot be checked from here rather than guessing."
+            ),
+        },
     },
 }
+
+
+# `SMS_ENABLED` was read nowhere. Setting it did nothing, which is worse than
+# not offering it: somebody switched texting "off" and every text kept going.
+#
+# Wired as a kill switch rather than as an enable switch, unlike `EMAIL_ENABLED`
+# which a town must set to "true". SMS already has an off state -- provider
+# `none` -- so requiring an extra yes would silently stop texts for every town
+# that had configured Twilio and never heard of this key. This way an unset
+# value means what it has always meant, and the only thing that changes is that
+# setting it false now does what it says.
+_OFF_WORDS = ("false", "0", "no", "off", "disabled")
+
+
+def switched_off(value: Optional[str]) -> bool:
+    """Whether an ENABLED-style flag is explicitly saying no."""
+    return (value or "").strip().lower() in _OFF_WORDS
 
 
 # ---- PII encryption ----------------------------------------------------------

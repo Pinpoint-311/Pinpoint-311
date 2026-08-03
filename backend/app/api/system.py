@@ -260,7 +260,15 @@ async def effective_provider_for(capability: str) -> Optional[str]:
         return _secrets_provider() if store_reachable() else "database"
 
     if capability in ("email", "sms", "kms"):
-        from app.services.delivery_providers import normalize_provider
+        from app.services.delivery_providers import normalize_provider, switched_off
+
+        # The ENABLED flags are part of the answer to "which provider is this
+        # running on", because the answer is "none" when one of them says no.
+        # A card naming Twilio while SMS_ENABLED is false describes a send that
+        # will not happen.
+        enable_key = {"email": "EMAIL_ENABLED", "sms": "SMS_ENABLED"}.get(capability)
+        if enable_key and switched_off(await get_secret(enable_key)):
+            return None
 
         resolved = normalize_provider(capability, raw)
         return None if resolved in _OFF_VALUES else resolved
@@ -1497,7 +1505,17 @@ async def _test_delivery(capability: str) -> dict:
             "Azure Communication Services has no check that avoids sending a real "
             "message. Save, then send yourself a test from a request.")
 
+    from app.services.delivery_providers import switched_off
+
     provider = (await get_secret("SMS_PROVIDER")) or "none"
+    if switched_off(await get_secret("SMS_ENABLED")):
+        # Reported before the provider, because it overrides it. A card that
+        # tested Twilio and reported it working while SMS_ENABLED was false
+        # would be describing a send that cannot happen.
+        return {"ok": True, "detail": (
+            "Text messages are switched off (SMS_ENABLED is false), so nothing is sent "
+            "whatever provider is selected."
+        )}
     if provider == "none":
         return {"ok": True, "detail": "Text messages are switched off, as configured."}
 
@@ -1535,6 +1553,106 @@ async def _test_delivery(capability: str) -> dict:
 
         await asyncio.get_event_loop().run_in_executor(None, _attrs)
         return {"ok": True, "detail": "SNS reachable and authenticated. Nothing was sent."}
+
+    if provider == "acs":
+        # ACS has no read-only SMS call, but the phone-number list on the same
+        # resource takes the same HMAC key -- so this authenticates the access
+        # key AND answers the question that actually breaks sends: is the number
+        # in the From box one this resource owns? Nothing is sent.
+        from app.services.notifications import _acs_auth_headers
+
+        endpoint = ((await get_secret("ACS_ENDPOINT")) or "").rstrip("/")
+        access_key = await get_secret("ACS_ACCESS_KEY")
+        from_number = ((await get_secret("SMS_FROM_NUMBER")) or "").strip()
+        url = f"{endpoint}/phoneNumbers?api-version=2022-12-01"
+        try:
+            headers = _acs_auth_headers("GET", url, b"", access_key)
+        except Exception:
+            return {"ok": False, "detail": (
+                "The ACS access key is not valid base64, so it cannot sign a request. "
+                "Copy it again from the Keys page of the Communication Services resource."
+            )}
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            r = await client.get(url, headers=headers)
+
+        if r.status_code in (401, 403):
+            return {"ok": False, "detail": "Azure rejected the ACS endpoint or access key."}
+        if not r.is_success:
+            return {"ok": False, "detail": f"Azure Communication Services returned HTTP {r.status_code}."}
+
+        try:
+            owned = [n.get("phoneNumber") for n in (r.json() or {}).get("value", [])]
+        except Exception:
+            owned = []
+        if from_number and owned and from_number not in owned:
+            return {"ok": False, "detail": (
+                f"The access key works, but {from_number} is not one of the numbers this "
+                f"Communication Services resource owns. Sends will be rejected. Numbers on "
+                f"this resource: {', '.join(n for n in owned if n) or 'none'}."
+            )}
+        if not owned:
+            return {"ok": False, "detail": (
+                "The access key works, but this Communication Services resource owns no phone "
+                "numbers, so it cannot send. Buy a number in the Azure portal first."
+            )}
+        return {"ok": True, "detail": (
+            f"Azure Communication Services accepted the key and owns {from_number or owned[0]}. "
+            f"Nothing was sent."
+        )}
+
+    if provider == "http":
+        api_url = ((await get_secret("SMS_HTTP_API_URL")) or "").strip()
+        api_key = ((await get_secret("SMS_HTTP_API_KEY")) or "").strip()
+        test_url = ((await get_secret("SMS_HTTP_TEST_URL")) or "").strip()
+
+        # Textbelt is the one generic gateway this code already knows by name
+        # -- GenericHTTPSMSProvider branches on it -- and it publishes a quota
+        # endpoint. Knowing the vendor and then reporting it untestable would be
+        # a choice, not a limitation.
+        if not test_url and "textbelt" in api_url.lower() and api_key:
+            test_url = f"https://textbelt.com/quota/{api_key}"
+
+        if not test_url:
+            return _unverifiable(
+                "This gateway has not been given a status URL, and a generic HTTP gateway has no "
+                "standard one — so the only way to exercise it is to send a real text. Add a "
+                "status URL above if your gateway publishes one, or send yourself a message from "
+                "a request to confirm delivery.")
+
+        try:
+            from app.integrations.base import _assert_public_url
+            _assert_public_url(test_url)
+            async with httpx.AsyncClient(timeout=12.0) as client:
+                r = await client.get(test_url)
+        except Exception as exc:
+            return {"ok": False, "detail": f"The status URL could not be reached: {str(exc)[:200]}"}
+
+        if r.status_code in (401, 403):
+            return {"ok": False, "detail": "The gateway rejected the API key."}
+        if not r.is_success:
+            return {"ok": False, "detail": f"The status URL answered HTTP {r.status_code}."}
+
+        # Textbelt answers {"success": true, "quotaRemaining": n}. A remaining
+        # quota of zero is a key that authenticates and cannot send, which is
+        # the failure a plain 200 would have called healthy.
+        try:
+            body = r.json()
+        except Exception:
+            body = None
+        if isinstance(body, dict):
+            if body.get("success") is False:
+                return {"ok": False, "detail": (
+                    f"The gateway rejected the API key: {body.get('error') or 'no reason given'}.")}
+            quota = body.get("quotaRemaining")
+            if isinstance(quota, int):
+                if quota <= 0:
+                    return {"ok": False, "detail": (
+                        "The API key is valid and has no messages left on it, so nothing will "
+                        "be delivered. Top it up with your gateway.")}
+                return {"ok": True, "detail": (
+                    f"The gateway accepted the API key. {quota} messages remaining. "
+                    f"Nothing was sent.")}
+        return {"ok": True, "detail": "The gateway accepted the API key. Nothing was sent."}
 
     return _unverifiable(
         f"There is no way to check {provider} without sending a real text message. "

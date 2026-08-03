@@ -75,8 +75,26 @@ def test_every_declared_field_is_a_key_the_code_reads():
         # so the only symptom is a badge that never goes green.
         for entry in list(spec["credential_fields"]) + list(spec.get("requires", []))
     ]
-    orphans = [f"{cap}/{provider}: {key}" for cap, provider, key in declared if key not in read]
+    # Collected for the live check rather than for a send.
+    #
+    # The generic HTTP gateway is the one provider with no read-only call to
+    # make -- "any endpoint that accepts a POST" has no agreed status endpoint --
+    # so its card could never go green. This lets the town name one. It is not a
+    # dispatch key and never will be: nothing sends a message to it.
+    CHECK_ONLY = {"SMS_HTTP_TEST_URL"}
+
+    orphans = [f"{cap}/{provider}: {key}" for cap, provider, key in declared
+               if key not in read and key not in CHECK_ONLY]
     assert not orphans, "fields nothing reads: " + ", ".join(orphans)
+
+
+def test_a_check_only_field_is_still_read_by_the_check():
+    """The exemption above is from the *dispatch* sources, not from being read
+    at all. A field nothing anywhere reads is the bug this file exists for."""
+    import pathlib
+
+    src = pathlib.Path("app/api/system.py").read_text()
+    assert "SMS_HTTP_TEST_URL" in src
 
 
 def test_alternative_credential_sets_name_fields_the_card_collects():
