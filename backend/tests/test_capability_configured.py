@@ -326,6 +326,77 @@ async def test_a_cloud_key_service_needs_a_cloud_account(store):
     assert got["local"] is True
 
 
+# ---- which provider a capability is actually on -------------------------------
+#
+# The setup page had been answering this in the browser, from hard-coded secret
+# names ORed across providers. Two of its answers were false on the live
+# deployment and a third was waiting to be: photo redaction and PII encryption
+# both reported "not set up" while both were demonstrably running, and AI and
+# translation both ORed AWS_REGION, which SES, SNS, Bedrock, AWS KMS and AWS
+# Translate all share.
+
+@pytest.mark.asyncio
+async def test_an_unset_capability_reports_the_provider_dispatch_would_use(store):
+    """A blank selection is not "no provider". Every catalog endpoint knew its
+    own default and nothing else did."""
+    from app.api.system import effective_provider_for
+
+    assert await effective_provider_for("identity") == "auth0"
+    assert await effective_provider_for("translation") == "google"
+    assert await effective_provider_for("ai") == "vertex"
+    assert await effective_provider_for("maps") == "google"
+    assert await effective_provider_for("email") == "smtp"
+    assert await effective_provider_for("kms") == "google"
+
+
+@pytest.mark.asyncio
+async def test_redaction_reports_the_detector_it_infers_rather_than_the_empty_secret(store):
+    """`REDACTION_PROVIDER` is empty on a town that never opened the card, and
+    `resolve_provider()` falls through to the AI provider -- so a town on Vertex
+    is running Google Cloud Vision on every photo. Reading the raw secret said
+    "nothing", about a detector that was actively blurring faces."""
+    from app.api.system import effective_provider_for
+
+    store.update({"AI_PROVIDER": "vertex"})
+    assert await effective_provider_for("redaction") == "google"
+
+
+@pytest.mark.asyncio
+async def test_redaction_falls_to_on_server_detection_rather_than_to_nothing(store):
+    from app.api.system import effective_provider_for
+
+    assert await effective_provider_for("redaction") == "local"
+
+
+@pytest.mark.asyncio
+async def test_switched_off_is_reported_as_no_provider(store):
+    """Text messages default to off, and off is not a provider. It is also not
+    unfinished -- the caller decides which of those to say."""
+    from app.api.system import effective_provider_for
+
+    assert await effective_provider_for("sms") is None
+    store.update({"SMS_PROVIDER": "twilio"})
+    assert await effective_provider_for("sms") == "twilio"
+
+
+@pytest.mark.asyncio
+async def test_switched_off_is_not_configured(store):
+    """`ready` has to be false here, or a checklist ticks an item nobody set
+    up."""
+    from app.api.system import capability_is_configured
+
+    assert await capability_is_configured("sms") is False
+
+
+@pytest.mark.asyncio
+async def test_a_capability_on_its_default_provider_is_configured_when_that_provider_is(store):
+    from app.api.system import capability_is_configured
+
+    store.update({"AUTH0_DOMAIN": "t.auth0.com", "AUTH0_CLIENT_ID": "id",
+                  "AUTH0_CLIENT_SECRET": "sh", "AUTH0_AUDIENCE": "api"})
+    assert await capability_is_configured("identity") is True
+
+
 # ---- what Save tells you is still missing -------------------------------------
 
 class _NoBackground:
