@@ -555,3 +555,27 @@ def test_switched_off_is_reported_as_no_provider():
             secret_manager.get_secret = original
 
     assert _asyncio.run(run()) is None
+
+
+def test_the_email_check_offers_the_envelope_as_well_as_signing_in():
+    """Signing in proves the relay knows the account. It does not prove the
+    relay will carry mail *from this address*, which is a separate permission on
+    every hosted relay -- a verified sender on Brevo, an authorised domain on
+    Mailgun, a verified identity on SES.
+
+    That gap is not theoretical. This deployment moved from Mailgun to Brevo and
+    kept demo@pinpoint311.org as the From address; a check that stops at the
+    password would report the new relay working whether or not it had ever heard
+    of that sender.
+    """
+    src = _source(system._test_delivery)
+    assert "server.mail(" in src, "the check must offer the sender"
+    assert "server.rcpt(" in src, "and a recipient, or the relay never rules on it"
+
+
+def test_the_email_check_never_reaches_DATA():
+    """No DATA means nothing is queued, which is what makes this safe to press
+    repeatedly — and the reason it can be run against a live relay at all."""
+    src = _source(system._test_delivery)
+    assert "server.data(" not in src and ".sendmail(" not in src
+    assert "server.rset()" in src, "the envelope is abandoned explicitly"
