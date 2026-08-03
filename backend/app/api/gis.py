@@ -19,6 +19,16 @@ from app.services.geocoding import (
 
 router = APIRouter()
 
+# Where a map opens when the town has not drawn its boundary yet.
+#
+# The geographic centre of the contiguous states, at a zoom that shows all of
+# them. Deliberately not a town, a state or a region: the previous default was
+# central New Jersey labelled "a central location", which silently made every
+# other deployment's map wrong in a way that looked deliberate. A country-wide
+# view is obviously provisional, so nobody mistakes it for the town.
+CONTINENTAL_US_CENTER = (39.8283, -98.5795)
+CONTINENTAL_US_ZOOM = 4
+
 
 async def get_google_api_key(db: AsyncSession) -> Optional[str]:
     """Get Google Maps API key from Secret Manager (decrypted)"""
@@ -37,11 +47,15 @@ async def geocode_address(
     address: str,
     db: AsyncSession = Depends(get_db)
 ):
-    """Geocode an address to coordinates"""
-    api_key = await get_google_api_key(db)
-    service = get_geocoding_service(api_key)
-    
-    result = await service.geocode(address)
+    """Geocode an address to coordinates, using the town's own geocoder.
+
+    Was hardwired to Google-then-OpenStreetMap and biased to nowhere, so an Esri
+    town's county address locator went unused and a search for a common street
+    name answered from the other side of the continent.
+    """
+    from app.services import geocode_dispatch
+
+    result = await geocode_dispatch.geocode(db, address)
     if not result:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -62,11 +76,10 @@ async def reverse_geocode(
     lng: float,
     db: AsyncSession = Depends(get_db)
 ):
-    """Convert coordinates to address"""
-    api_key = await get_google_api_key(db)
-    service = get_geocoding_service(api_key)
-    
-    result = await service.reverse_geocode(lat, lng)
+    """Convert coordinates to address, using the town's own geocoder."""
+    from app.services import geocode_dispatch
+
+    result = await geocode_dispatch.reverse_geocode(db, lat, lng)
     if not result:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -85,8 +98,7 @@ async def list_boundaries(
     db: AsyncSession = Depends(get_db)
 ):
     """List all configured boundaries"""
-    api_key = await get_google_api_key(db)
-    service = get_boundary_service(api_key)
+    service = get_boundary_service()
     
     boundaries = service.get_all_boundaries()
     return [
@@ -104,8 +116,7 @@ async def get_boundary(
     db: AsyncSession = Depends(get_db)
 ):
     """Get a specific boundary with full geometry"""
-    api_key = await get_google_api_key(db)
-    service = get_boundary_service(api_key)
+    service = get_boundary_service()
     
     boundary = service.get_boundary(name)
     if not boundary:
@@ -210,8 +221,7 @@ async def upload_boundary(
         content = await file.read()
         geojson = json.loads(content.decode())
         
-        api_key = await get_google_api_key(db)
-        service = get_boundary_service(api_key)
+        service = get_boundary_service()
         service.load_boundary_from_geojson(name, geojson)
 
         outcome = await persist_boundary(db, geojson, name)
@@ -240,8 +250,7 @@ async def check_point_in_boundary(
     db: AsyncSession = Depends(get_db)
 ):
     """Check if a point is within a boundary"""
-    api_key = await get_google_api_key(db)
-    service = get_boundary_service(api_key)
+    service = get_boundary_service()
     
     is_inside = service.point_in_boundary(lat, lng, boundary_name)
     
@@ -298,6 +307,15 @@ async def get_maps_config(db: AsyncSession = Depends(get_db)):
         if not token:
             missing = sorted(set(missing) | {"token"})
 
+    from app.services.boundary_geo import boundary_centre
+
+    boundary = settings.township_boundary if settings else None
+    centre = boundary_centre(boundary)
+    center = (
+        {"lat": centre[1], "lng": centre[0]} if centre
+        else {"lat": CONTINENTAL_US_CENTER[0], "lng": CONTINENTAL_US_CENTER[1]}
+    )
+
     return {
         # Legacy fields. The frontend still reads these until every component
         # goes through resolveMapProviderConfig(); they stay accurate for
@@ -314,12 +332,18 @@ async def get_maps_config(db: AsyncSession = Depends(get_db)):
         # can see why their map is blank.
         "map_provider_missing": missing,
 
-        "township_boundary": settings.township_boundary if settings else None,
-        "default_center": {
-            "lat": 40.4168,  # Default to a central location
-            "lng": -74.5430
-        },
-        "default_zoom": 12
+        "township_boundary": boundary,
+        # The middle of the town, when the town has said where it is.
+        #
+        # This was 40.4168,-74.5430 — commented "a central location", which it
+        # is only if the town is in New Jersey. Every other deployment opened
+        # its map over Monmouth County and had to be dragged somewhere useful,
+        # and a resident dropping a pin started three states away from the
+        # pothole. Falling back to the whole country is not a better guess; it
+        # is an honest one, and at zoom 4 it reads as "we don't know yet"
+        # rather than as a wrong answer.
+        "default_center": center,
+        "default_zoom": 12 if centre else CONTINENTAL_US_ZOOM,
     }
 
 
@@ -422,8 +446,7 @@ async def save_census_boundary(
 ):
     """Save a Census boundary as the township boundary"""
     try:
-        api_key = await get_google_api_key(db)
-        service = get_boundary_service(api_key)
+        service = get_boundary_service()
         
         # Convert single geometry/feature to GeoJSON FeatureCollection if needed
         if "type" in geojson_data and geojson_data["type"] in ["Polygon", "MultiPolygon"]:

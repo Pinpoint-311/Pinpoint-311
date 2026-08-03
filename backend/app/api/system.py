@@ -563,7 +563,9 @@ async def _persist_secret(db: AsyncSession, key_name: str, value: str) -> bool:
         try:
             if await set_secret(key_name, value):
                 stored_externally = True
-                clear_cache()
+                # Only the bundle this key lives in. Dropping all of them made a
+                # single save refetch every other capability's credentials too.
+                clear_cache(key_name=key_name)
         except Exception as e:
             from app.core.sanitize import sanitize_for_log
             logger.warning(f"Provider secret store write failed for {sanitize_for_log(key_name)}: {sanitize_for_log(str(e))}")
@@ -657,8 +659,9 @@ async def save_provider(
         if value:  # blank = keep existing
             if not await _persist_secret(db, key, value):
                 db_only.append(key)
-    from app.services.secret_manager import clear_cache
-    clear_cache()
+    # No clear_cache() here: _persist_secret already dropped the bundle for each
+    # key it wrote, and the provider-selection key above. A blanket clear would
+    # undo that targeting and refetch every other capability's credentials.
     # Shape findings are advisory and never block: a rule is a heuristic about
     # someone else's format, and refusing a credential that would have worked is
     # a worse failure than accepting one that will not -- the second is
@@ -827,7 +830,56 @@ async def _test_redaction(db=None) -> dict:
         return {"ok": False, "detail": (
             f"{degraded_from} has no usable credentials, so blurring is falling back to "
             f"on-server detection. Photos are still redacted, less accurately.")}
-    return {"ok": True, "detail": f"{actual} is available and will blur faces and plates."}
+
+    # Everything above only asked whether credentials are *present*, and for AWS
+    # and Azure that is all `_usable` can tell -- only Google's check reaches the
+    # vendor. So a key that is present and rejected passed every test on this
+    # page while every resident photo went out unblurred. Send one tiny image
+    # through the real detector, which is the only question worth answering here:
+    # does this detector answer when we ask it to blur something?
+    from app.services.image_redaction import detect
+
+    probe = _one_pixel_probe_image()
+    try:
+        answered = await detect(actual, probe, 64, 64, True, True)
+    except Exception as exc:                     # detect() should not raise, but this page must not 500
+        return {"ok": False, "detail": f"{actual} raised while detecting: {str(exc)[:160]}"}
+
+    if answered is None:
+        return {"ok": False, "detail": (
+            f"{actual} has credentials saved but rejected them when asked to scan an image, "
+            f"so photos would be stored without blurring. Check the key has not expired or "
+            f"been rotated, and that the region and endpoint match. The server log line "
+            f"beginning \"[Redaction] {actual} could not detect\" has the vendor's own words.")}
+
+    return {"ok": True, "detail": (
+        f"{actual} answered a live detection request and will blur faces and plates. "
+        f"(No faces in the test image, which is the expected answer.)")}
+
+
+def _one_pixel_probe_image() -> bytes:
+    """A tiny valid PNG, for asking a detector whether it answers at all.
+
+    Deliberately not a photograph of anybody: the useful signal is whether the
+    call succeeds, not what it finds, and sending a real face to a vendor to test
+    a checkbox would be its own problem. 64x64 mid-grey, built here so the check
+    needs no fixture file on disk.
+    """
+    import struct
+    import zlib
+
+    width = height = 64
+    row = b"\x00" + b"\x80" * (width * 3)
+    raw = row * height
+
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return (struct.pack(">I", len(payload)) + kind + payload
+                + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF))
+
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw))
+            + chunk(b"IEND", b""))
 
 
 async def _test_email(db=None) -> dict:
@@ -843,13 +895,70 @@ def _unverifiable(detail: str) -> dict:
     return {"ok": False, "detail": detail, "recorded": False}
 
 
-async def _test_maps() -> dict:
+def _referrer_restricted(text: str) -> bool:
+    """Google's way of saying "this key only works from a browser".
+
+    A key restricted to Websites — which the setup guide tells administrators to
+    do, and which is the right thing to do — cannot be exercised from a server at
+    all. That is a correctly configured key, not a broken one, so it must not be
+    reported as a failure.
+    """
+    lowered = (text or "").lower()
+    return "referer" in lowered or "referrer" in lowered
+
+
+async def _test_maps(db=None) -> dict:
     """Geocode a known address. Reads only, costs a fraction of a cent."""
     import httpx
 
+    from app.services.map_provider import MAP_PROVIDER_KEY, normalize_provider
     from app.services.secret_manager import get_secret
 
-    provider = (await get_secret("MAPS_PROVIDER")) or "google"
+    async def _browser_reachability(key: str) -> dict:
+        """What a passing server-side check does and does not prove.
+
+        Everything above this point ran from the server with no Referer header.
+        A key correctly restricted to Websites *rejects* that, and the branches
+        above report it as untestable-and-correct. So arriving here means the
+        opposite: the key accepted a call from an origin it has never heard of,
+        and is therefore not restricted to this site.
+
+        That distinction is not academic, and it is why this page needs to say
+        something rather than show a green tick. A key whose Application
+        restriction is "IP addresses" passes every check this function can make
+        -- the server's own address is usually on the allow-list -- and still
+        fails in every resident's browser with RefererNotAllowedMapError,
+        because a browser's address is not on it and never can be. The map is
+        grey, the address box is dead, and the only place that says so is the
+        browser console.
+
+        Reported unverifiable rather than failed: an unrestricted key does work
+        for residents, so this is not proof of breakage. It is proof that the
+        thing which would break it cannot be ruled out from here.
+        """
+        tail = key[-6:]
+        origin = None
+        if db is not None:
+            try:
+                origin = await public_origin(db)
+            except Exception:
+                origin = None
+        target = f"{origin}/*" if origin else "https://your.site/*"
+        return _unverifiable(
+            f"Both APIs are enabled and billing is attached — a test address geocoded and "
+            f"address autocomplete answered. But this server used the key with no website "
+            f"attached and was allowed to, so the key ending …{tail} is not restricted "
+            f"to your site. If the map is grey in a browser, that is the cause: a key set to "
+            f"\"IP addresses\" instead of \"Websites\" passes this check from the server and "
+            f"fails in every resident's browser with RefererNotAllowedMapError. In Google "
+            f"Cloud open the key whose value ends …{tail} — check it is the same key you "
+            f"edited — and set Application restrictions to Websites with {target}."
+        )
+
+    # MAP_PROVIDER, not MAPS_PROVIDER. Nothing writes the plural, so this read
+    # always missed and every town was tested as though it were on Google --
+    # an Esri town pressing Test got a verdict on a Google key it does not have.
+    provider = normalize_provider(await get_secret(MAP_PROVIDER_KEY))
     sample = "1600 Pennsylvania Ave NW, Washington DC"
 
     async with httpx.AsyncClient(timeout=12.0) as client:
@@ -857,16 +966,62 @@ async def _test_maps() -> dict:
             key = await get_secret("GOOGLE_MAPS_API_KEY")
             if not key:
                 return {"ok": False, "detail": "No Google Maps API key is saved."}
+
             r = await client.get("https://maps.googleapis.com/maps/api/geocode/json",
                                  params={"address": sample, "key": key})
             body = r.json()
             status = body.get("status")
-            if status == "OK":
-                return {"ok": True, "detail": "Key accepted; a test address geocoded successfully."}
-            # Google's own words matter here: REQUEST_DENIED with "billing" is
-            # the single most common failure on this page and its remedy is
-            # nothing to do with the key.
-            return {"ok": False, "detail": f"Google returned {status}. {body.get('error_message', '')}".strip()}
+            geocode_error = body.get("error_message", "")
+
+            if status != "OK":
+                if _referrer_restricted(geocode_error):
+                    return _unverifiable(
+                        "This key is restricted to your website, so it cannot be tested from "
+                        "the server — which is the correct way to restrict it. Open the "
+                        "resident report form and confirm the map draws and the address box "
+                        "offers suggestions.")
+                # Google's own words matter here: REQUEST_DENIED with "billing" is
+                # the single most common failure on this page and its remedy is
+                # nothing to do with the key.
+                return {"ok": False, "detail": f"Google returned {status}. {geocode_error}".strip()}
+
+            # Geocoding alone is not enough to call this working.
+            #
+            # The address box on the report form runs on Places API (New)
+            # (places.googleapis.com), which is a *separate* product from both
+            # the Geocoding API and the older "Places API" — enabling one does
+            # not enable the others. Testing only Geocoding meant this page
+            # showed a green tick while residents got an address box that
+            # returned nothing, and there was no way to tell from here which of
+            # the two APIs was missing.
+            pr = await client.post(
+                "https://places.googleapis.com/v1/places:autocomplete",
+                headers={"Content-Type": "application/json", "X-Goog-Api-Key": key},
+                json={"input": sample, "includedRegionCodes": ["us"],
+                      "includedPrimaryTypes": ["geocode"]},
+            )
+            if pr.status_code == 200:
+                return await _browser_reachability(key)
+
+            places_error = ""
+            try:
+                places_error = pr.json().get("error", {}).get("message", "")
+            except Exception:
+                places_error = pr.text[:200]
+
+            if _referrer_restricted(places_error):
+                return _unverifiable(
+                    "Geocoding works. Address autocomplete could not be tested because the "
+                    "key is restricted to your website, which is the correct way to restrict "
+                    "it. Open the resident report form and confirm the address box offers "
+                    "suggestions as you type.")
+
+            return {"ok": False, "detail": (
+                "Geocoding works, but Places API (New) rejected the key, so the address "
+                "box on the report form will offer no suggestions. In Google Cloud enable "
+                "\"Places API (New)\" — it is a separate API from both \"Geocoding API\" "
+                "and the older \"Places API\", and if the key is restricted to a list of "
+                f"APIs it must be ticked there too. Google said: {places_error}").strip()}
 
         if provider == "azure":
             key = await get_secret("AZURE_MAPS_KEY")
@@ -1050,7 +1205,7 @@ _CAPABILITY_TESTS = {
     "ai": _test_ai,
     "translation": _test_translation,
     "identity": _test_identity,
-    "maps": lambda db=None: _test_maps(),
+    "maps": lambda db=None: _test_maps(db),
     "email": _test_email,
     "sms": _test_sms,
     "kms": _test_kms,
@@ -1392,6 +1547,9 @@ async def set_cloud_profile(
         identity_applied = True
 
     from app.services.secret_manager import clear_cache
+    # Deliberately the whole cache: a profile switch rewrites the selection for
+    # several capabilities at once, and which bundles those land in is the
+    # profile's business rather than this function's.
     clear_cache()
     # Drop the cached wrapped-DEK so the next PII write re-wraps under the new KMS.
     try:
@@ -1533,7 +1691,7 @@ async def create_or_update_secret(
         try:
             sm_success = await set_secret(secret_data.key_name, secret_data.key_value)
             if sm_success:
-                clear_cache()  # Clear cache so reads get fresh data
+                clear_cache(key_name=secret_data.key_name)  # Clear cache so reads get fresh data
         except Exception as e:
             logger.warning(f"Failed to write to Secret Manager, using database only: {e}")
     
@@ -1683,32 +1841,56 @@ async def get_current_retention_policy(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
-    """Get current retention policy configuration"""
+    """Get current retention policy configuration.
+
+    Answers "is there a policy" before "what is it". A town that has not
+    confirmed its state has no retention period and no statute to cite, and
+    this used to fill both in from NJ — so the tab headlined OPRA and a
+    seven-year schedule at towns that had never chosen either.
+    """
+    from app.services.retention_config import read_retention_config
+    from app.services.retention_scrub import describe_selection
     from app.services.retention_service import get_retention_policy, get_retention_stats
-    
+
     result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
-    
-    state_code = settings.retention_state_code if settings else "NJ"
-    override_days = settings.retention_days_override if settings else None
-    mode = settings.retention_mode if settings else "anonymize"
-    
-    policy = get_retention_policy(state_code)
-    stats = await get_retention_stats(db, state_code, override_days)
-    
-    from app.services.retention_scrub import describe_selection, normalise_mode
+
+    config = read_retention_config(settings)
+    scrub_fields = describe_selection(
+        getattr(settings, "retention_scrub_fields", None) if settings else None
+    )
+
+    if not config.configured:
+        return {
+            "configured": False,
+            "reason": config.reason,
+            "detail": config.detail,
+            # What is stored, labelled as what it is. The console needs it to
+            # pre-select the dropdown and ask "is this right?", which is a
+            # different thing from reporting it as the policy in force.
+            "state_code": None,
+            "unconfirmed_state_code": config.state_code,
+            "policy": None,
+            "override_days": config.override_days,
+            "effective_days": None,
+            "mode": config.mode,
+            "scrub_fields": scrub_fields,
+            "stats": None,
+        }
+
+    policy = get_retention_policy(config.state_code)
+    stats = await get_retention_stats(db, config.state_code, config.override_days)
 
     return {
-        "state_code": state_code,
+        "configured": True,
+        "state_code": config.state_code,
         "policy": policy,
-        "override_days": override_days,
-        "effective_days": override_days if override_days else policy["retention_days"],
-        "mode": normalise_mode(mode),
+        "override_days": config.override_days,
+        "effective_days": config.override_days if config.override_days else policy["retention_days"],
+        "mode": config.mode,
         # The catalog and this town's choice in one object, so the screen never
         # has to hold its own copy of what the fields are called.
-        "scrub_fields": describe_selection(
-            getattr(settings, "retention_scrub_fields", None) if settings else None
-        ),
+        "scrub_fields": scrub_fields,
         "stats": stats
     }
 
@@ -1747,7 +1929,16 @@ async def update_retention_policy(
         if policy["state_code"] == "DEFAULT" and state_code != "DEFAULT":
             raise HTTPException(400, f"Unknown state code: {state_code}")
         settings.retention_state_code = state_code.upper()
-    
+        # This is the confirmation. An administrator chose a state and pressed
+        # apply, which is the one signal that cannot be inherited from a column
+        # default — and it counts even when they pick the state already stored,
+        # because "yes, NJ is right" is exactly the answer being asked for.
+        #
+        # Only set when a state is actually sent. Saving a mode or a field list
+        # must not silently confirm a schedule nobody looked at.
+        settings.retention_state_confirmed = True
+
+
     if override_days is not None:
         # 0 is the explicit "clear the override, revert to the state default"
         # signal — without this, an override once set could never be removed.
@@ -1780,6 +1971,10 @@ async def update_retention_policy(
     return {
         "status": "updated",
         "state_code": settings.retention_state_code,
+        # Whether retention will now actually run. A save that stored a mode
+        # but left the schedule unconfirmed still archives nothing, and the
+        # screen should not have to infer that from the absence of a field.
+        "configured": bool(settings.retention_state_confirmed and settings.retention_state_code),
         "override_days": settings.retention_days_override,
         "mode": settings.retention_mode,
         "scrub_fields": settings.retention_scrub_fields,
@@ -1844,15 +2039,20 @@ async def preview_retention_run(
     that, not after.
     """
     from app.models import ServiceRequest
-    from app.services.retention_scrub import describe_selection, normalise_mode
+    from app.services.retention_config import read_retention_config
+    from app.services.retention_scrub import describe_selection
     from app.services.retention_service import get_retention_policy, get_retention_stats
 
     settings = await read_settings_row(db)
+    config = read_retention_config(settings)
     if settings is not None and getattr(settings, "legal_hold", False):
         return {
             "eligible": 0,
             "on_legal_hold": 0,
-            "mode": getattr(settings, "retention_mode", None) or "anonymize",
+            # Through normalise_mode, like everywhere else. Rows written before
+            # this column had a default hold NULL, and the raw `or "anonymize"`
+            # here answered with a legacy name the screen does not match on.
+            "mode": config.mode,
             "blocked": "legal_hold",
             # Listing records that "will be archived next run" while a hold
             # means nothing can be archived is the sort of contradiction that
@@ -1861,9 +2061,30 @@ async def preview_retention_run(
             "summary": None,
         }
 
-    state_code = (settings.retention_state_code if settings else None) or "NJ"
-    override_days = settings.retention_days_override if settings else None
-    mode = normalise_mode(settings.retention_mode if settings else None)
+    if not config.configured:
+        # The honest preview of a run that would do nothing. Answering with an
+        # NJ cutoff and a list of records "eligible for archival" would be a
+        # screen inviting somebody to approve a schedule this town never chose.
+        return {
+            "eligible": 0,
+            "on_legal_hold": 0,
+            "will_act_on": 0,
+            "mode": config.mode,
+            "blocked": "unconfigured",
+            "reason": config.reason,
+            "detail": config.detail,
+            "state_code": None,
+            "unconfirmed_state_code": config.state_code,
+            "policy_name": None,
+            "retention_days": None,
+            "cutoff_date": None,
+            "records": [],
+            "summary": None,
+        }
+
+    state_code = config.state_code
+    override_days = config.override_days
+    mode = config.mode
     policy = get_retention_policy(state_code)
     stats = await get_retention_stats(db, state_code, override_days)
 
@@ -1941,10 +2162,21 @@ async def run_retention_now(
     """
     from app.tasks.service_requests import enforce_retention_policy
 
-    from app.services.retention_scrub import normalise_mode
+    from app.services.retention_config import read_retention_config
 
     settings = await read_settings_row(db)
-    mode = normalise_mode(settings.retention_mode if settings else None)
+    config = read_retention_config(settings)
+
+    # Refused here rather than queued. The task would decline too, but an admin
+    # who gets back a task id and "enforcement started" has been told something
+    # happened, and the only place that contradicts it is a worker log.
+    if not config.configured:
+        raise HTTPException(
+            status_code=409,
+            detail=config.detail or "No records-retention schedule is configured.",
+        )
+
+    mode = config.mode
     if mode == "purge" and str(payload.get("confirm", "")).strip() != "PURGE":
         raise HTTPException(
             status_code=400,
@@ -2059,6 +2291,7 @@ async def export_for_public_records(
         UnknownField, build_row, headers, normalise_fields, parse_boundary,
         preamble, sensitive_selected,
     )
+    from app.services.retention_config import read_retention_config
     from app.services.retention_service import get_retention_policy
 
     try:
@@ -2078,8 +2311,24 @@ async def export_for_public_records(
     sensitive = sensitive_selected(chosen)
 
     settings = await read_settings_row(db)
-    state_code = (getattr(settings, "retention_state_code", None) or "NJ") if settings else "NJ"
-    policy = get_retention_policy(state_code)
+    config = read_retention_config(settings)
+
+    # The export still runs — a records request is answered whether or not the
+    # retention tab has been filled in, and withholding public records over a
+    # missing setting would be the wrong failure. What stops is the citation.
+    #
+    # This block headlines a statute and a state, and it defaulted to
+    # "OPRA EXPORT / State: New Jersey (NJ)" everywhere. That is a legal claim
+    # printed on a document that leaves the building and gets filed by whoever
+    # requested it, and on a town in Texas it was simply false. Unconfigured
+    # now says so rather than naming the wrong law.
+    state_code = config.state_code if config.configured else None
+    if state_code:
+        policy = get_retention_policy(state_code)
+        law, state_name = policy["public_records_law"], policy["name"]
+    else:
+        law, state_name = "PUBLIC RECORDS", "not configured"
+        state_code = "--"
 
     query = select(ServiceRequest).options(
         selectinload(ServiceRequest.assigned_department)
@@ -2104,7 +2353,7 @@ async def export_for_public_records(
     generated = datetime.now(timezone.utc)
     output = io.StringIO()
     for line in preamble(
-        law=policy["public_records_law"], state_name=policy["name"], state_code=state_code,
+        law=law, state_name=state_name, state_code=state_code,
         total=len(records), exported_by=current_user.username, fields=chosen,
         filters={
             "start_date": start_date, "end_date": end_date, "statuses": statuses,
@@ -2136,12 +2385,12 @@ async def export_for_public_records(
             "start_date": start_date, "end_date": end_date,
             "statuses": statuses, "service_codes": service_codes,
             "request_ids_count": len(request_ids) if request_ids else 0,
-            "state_code": state_code,
+            "state_code": config.state_code if config.configured else None,
         },
     )
 
     output.seek(0)
-    law_abbrev = policy["public_records_law"].split("(")[0].strip().replace(" ", "_")
+    law_abbrev = law.split("(")[0].strip().replace(" ", "_")
     filename = f"{law_abbrev}_export_{generated.strftime('%Y%m%d')}.csv"
 
     return StreamingResponse(

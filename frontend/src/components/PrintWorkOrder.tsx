@@ -1,5 +1,7 @@
 import { ServiceRequestDetail, AuditLogEntry, RequestComment } from '../types';
 import { Printer } from 'lucide-react';
+import { MapProviderConfig, mapSnapshot } from '../maps';
+import { qrSvg } from '../utils/qr';
 
 interface PrintWorkOrderProps {
     request: ServiceRequestDetail;
@@ -7,14 +9,38 @@ interface PrintWorkOrderProps {
     comments?: RequestComment[];
     townshipName?: string;
     logoUrl?: string;
-    mapsApiKey?: string | null;
+    /**
+     * The town's chosen provider. Was a bare Google key, and the location panel
+     * was a hardcoded Google Maps Embed iframe -- so a town on any other
+     * provider printed a work order with an empty rectangle on it.
+     */
+    config?: MapProviderConfig;
 }
 
-export default function PrintWorkOrder({ request, auditLog, comments, townshipName, logoUrl, mapsApiKey }: PrintWorkOrderProps) {
+export default function PrintWorkOrder({ request, auditLog, comments, townshipName, logoUrl, config }: PrintWorkOrderProps) {
     const handlePrint = () => {
         // Create a new window for printing
         const printWindow = window.open('', '_blank', 'width=800,height=600');
         if (!printWindow) return;
+
+        // A flat image from whichever provider the town uses, or null when it
+        // cannot supply one -- Apple signs its snapshots server-side, and no
+        // provider is obliged to offer this. Null prints the address and
+        // coordinates instead, which is what a crew in a van needs anyway.
+        // Drawn here rather than fetched from api.qrserver.com, which used to
+        // receive the report's coordinates in a URL on every print.
+        const staffUrl = `${window.location.origin}/staff#${
+            request.status === 'open' ? 'active'
+            : request.status === 'in_progress' ? 'in_progress'
+            : 'resolved'}/request/${request.service_request_id}`;
+        const staffQr = qrSvg(staffUrl, { badge: 'record' });
+        const mapQr = request.lat && request.long
+            ? qrSvg(`https://www.google.com/maps?q=${request.lat},${request.long}`, { badge: 'location' })
+            : null;
+
+        const snapshot = request.lat && request.long
+            ? mapSnapshot(config, { lat: request.lat, lng: request.long, zoom: 17, height: 300 })
+            : null;
 
         const ai = request.ai_analysis as Record<string, any> | null;
         const priorityScore = request.manual_priority_score ?? ai?.priority_score ?? 5;
@@ -509,9 +535,13 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
                         align-items: center;
                         text-align: center;
                     }
-                    .qr-item img {
-                        width: 80px;
-                        height: 80px;
+                    /* svg as well as img: the codes are drawn inline now, and a
+                       little larger so the glyph in the middle stays legible on
+                       paper. Vector, so this costs no sharpness. */
+                    .qr-item img,
+                    .qr-item svg {
+                        width: 96px;
+                        height: 96px;
                         border: 1px solid #e5e7eb;
                         border-radius: 4px;
                     }
@@ -744,28 +774,38 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
                             ` : ''}
                         </div>
                         <div class="qr-codes">
-                            <div class="qr-item">
-                                <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(`${window.location.origin}/staff#${request.status === 'open' ? 'active' : request.status === 'in_progress' ? 'in_progress' : 'resolved'}/request/${request.service_request_id}`)}" alt="Staff Portal QR" />
-                                <span>Staff Portal</span>
-                            </div>
-                            ${request.lat && request.long ? `
+                            ${staffQr ? `
                                 <div class="qr-item">
-                                    <img src="https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(`https://www.google.com/maps?q=${request.lat},${request.long}`)}" alt="Maps QR" />
-                                    <span>Google Maps</span>
+                                    ${staffQr}
+                                    <span>Staff Portal</span>
+                                </div>
+                            ` : ''}
+                            ${mapQr ? `
+                                <div class="qr-item">
+                                    ${mapQr}
+                                    <span>Open in Maps</span>
                                 </div>
                             ` : ''}
                         </div>
                     </div>
-                    ${request.lat && request.long && mapsApiKey ? `
+                    ${snapshot ? `
                         <div class="map-embed">
-                            <iframe
-                                src="https://www.google.com/maps/embed/v1/place?key=${mapsApiKey}&q=${request.lat},${request.long}&zoom=17&maptype=satellite"
-                                width="100%"
-                                height="150"
-                                style="border: 1px solid #e5e7eb; border-radius: 6px; margin-top: 10px;"
-                                loading="lazy"
-                                referrerpolicy="no-referrer-when-downgrade"
-                            ></iframe>
+                            ${snapshot.kind === 'image' ? `
+                                <img
+                                    src="${snapshot.url}"
+                                    alt="Aerial view of the reported location"
+                                    style="width: 100%; height: 150px; object-fit: cover; border: 1px solid #e5e7eb; border-radius: 6px; margin-top: 10px;"
+                                />
+                            ` : `
+                                <iframe
+                                    src="${snapshot.url}"
+                                    width="100%"
+                                    height="150"
+                                    style="border: 1px solid #e5e7eb; border-radius: 6px; margin-top: 10px;"
+                                    loading="lazy"
+                                    referrerpolicy="no-referrer-when-downgrade"
+                                ></iframe>
+                            `}
                         </div>
                     ` : ''}
                 </div>

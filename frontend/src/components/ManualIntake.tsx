@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { resolveMapProviderConfig, mapProviderReady, RawMapsConfig } from '../maps';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Phone, Mail, Footprints, Search, CheckCircle, Loader2, Sparkles,
@@ -104,7 +105,8 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
 
     // Map configuration — the same picker residents use, so a call taker can
     // drop a pin or search an address and the request is geolocated identically.
-    const [mapsApiKey, setMapsApiKey] = useState<string | null>(null);
+    const [mapsRaw, setMapsRaw] = useState<RawMapsConfig | null>(null);
+    const mapConfig = useMemo(() => resolveMapProviderConfig(mapsRaw), [mapsRaw]);
     const [townshipBoundary, setTownshipBoundary] = useState<object | null>(null);
     const [mapLayers, setMapLayers] = useState<MapLayer[]>([]);
     // Bumped on reset so the map picker remounts clean between back-to-back logs.
@@ -164,13 +166,13 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
     // opened, mirroring the resident portal. All optional: if the key is absent
     // the form falls back to a plain address text field.
     useEffect(() => {
-        if (!isOpen || mapsApiKey) return;
+        if (!isOpen || mapsRaw) return;
         api.getMapsConfig().then((config) => {
-            if (config.google_maps_api_key) setMapsApiKey(config.google_maps_api_key);
+            setMapsRaw(config);
             if (config.township_boundary) setTownshipBoundary(config.township_boundary);
         }).catch(() => { });
         api.getMapLayers().then(setMapLayers).catch(() => { });
-    }, [isOpen, mapsApiKey]);
+    }, [isOpen, mapsRaw]);
 
     const canSubmit = !!serviceCode && description.trim().length >= 3 && saving === null;
 
@@ -373,10 +375,10 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                     drop a pin on the map, geolocated identically to an online report. */}
                 <div>
                     <span className={labelCls}>Location <span className="normal-case tracking-normal text-white/40 font-normal ml-1">(optional)</span></span>
-                    {mapsApiKey ? (
+                    {mapProviderReady(mapsRaw) ? (
                         <LocationPicker
                             key={mapKey}
-                            apiKey={mapsApiKey}
+                            config={mapConfig}
                             townshipBoundary={townshipBoundary}
                             customLayers={mapLayers.filter(layer => {
                                 if ((layer as any).visible_on_map === false) return false;

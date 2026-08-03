@@ -364,14 +364,24 @@ class DataSourceMarkerLayer implements MarkerLayer {
         }
         const labelStyle = specs[specs.length - 1].label;
 
-        this.source = new sdk.source.DataSource(nextId('src'), {
+        // Bound to a local first, then assigned to the field.
+        //
+        // `atlasSdk()` is untyped, so `new sdk.source.DataSource(...)` is `any` --
+        // and assigning `any` to a `DataSource | null` field does not narrow it.
+        // Every later use therefore stayed `| null` and no `events.add` overload
+        // matched, which TypeScript reports as the unrelated
+        // `'click' is not assignable to 'sourceadded' | 'sourceremoved'`. The
+        // whole Azure adapter failed to type-check on that, invisibly, because
+        // `azure-maps-control` was not installed and the build never ran `tsc`.
+        const source: atlas.source.DataSource = new sdk.source.DataSource(nextId('src'), {
             cluster: true,
             clusterRadius: 50,
             clusterMaxZoom: 16,
         });
-        this.map.sources.add(this.source);
+        this.source = source;
+        this.map.sources.add(source);
 
-        this.clusterLayer = new sdk.layer.SymbolLayer(this.source, nextId('cls'), {
+        const clusterLayer: atlas.layer.SymbolLayer = new sdk.layer.SymbolLayer(source, nextId('cls'), {
             filter: ['has', 'point_count'] as any,
             visible: this.visible,
             iconOptions: { image: iconStep as any, allowOverlap: true, ignorePlacement: true },
@@ -384,7 +394,7 @@ class DataSourceMarkerLayer implements MarkerLayer {
             },
         });
 
-        this.pointLayer = new sdk.layer.SymbolLayer(this.source, nextId('pts'), {
+        const pointLayer: atlas.layer.SymbolLayer = new sdk.layer.SymbolLayer(source, nextId('pts'), {
             filter: ['all', ['!', ['has', 'point_count']], ['!=', ['get', '__hidden'], true]] as any,
             visible: this.visible,
             iconOptions: {
@@ -404,16 +414,18 @@ class DataSourceMarkerLayer implements MarkerLayer {
             sortKey: ['*', -1, ['to-number', ['coalesce', ['get', '__z'], 0]]] as any,
         });
 
-        this.map.layers.add([this.clusterLayer, this.pointLayer]);
+        this.clusterLayer = clusterLayer;
+        this.pointLayer = pointLayer;
+        this.map.layers.add([clusterLayer, pointLayer]);
 
-        this.map.events.add('click', this.pointLayer, (event: atlas.MapMouseEvent) => {
+        this.map.events.add('click', pointLayer, (event: atlas.MapMouseEvent) => {
             const properties = propertiesOf(event.shapes?.[0]);
             const entry = properties.__id !== undefined ? this.entries.get(Number(properties.__id)) : undefined;
             if (!entry?.onClick) return;
             entry.onClick({ position: entry.position }, entry.handle);
         });
 
-        this.map.events.add('click', this.clusterLayer, (event: atlas.MapMouseEvent) => {
+        this.map.events.add('click', clusterLayer, (event: atlas.MapMouseEvent) => {
             const properties = propertiesOf(event.shapes?.[0]);
             if (properties.cluster_id === undefined || !this.source) return;
             void this.source.getClusterExpansionZoom(properties.cluster_id).then(zoom => {
@@ -610,13 +622,14 @@ class AzureGeoJsonLayer implements GeoJsonLayerHandle {
         if (this.removed) return;
         const sdk = atlasSdk();
 
-        this.source = new sdk.source.DataSource(nextId('gjs'));
-        this.map.sources.add(this.source);
-        this.source.setShapes(this.collection);
+        const source: atlas.source.DataSource = new sdk.source.DataSource(nextId('gjs'));
+        this.source = source;
+        this.map.sources.add(source);
+        source.setShapes(this.collection);
 
         const visibleFilter: any[] = ['!=', ['get', '__visible'], false];
 
-        const polygonLayer = new sdk.layer.PolygonLayer(this.source, nextId('gjf'), {
+        const polygonLayer = new sdk.layer.PolygonLayer(source, nextId('gjf'), {
             filter: ['all', visibleFilter, ['==', ['geometry-type'], 'Polygon']] as any,
             visible: this.visible,
             fillColor: ['to-color', ['get', '__fill']] as any,
@@ -916,16 +929,17 @@ export class AzureMapRenderer implements MapRenderer {
         }
         if (controls.baseMapSwitcher?.enabled) {
             const types = controls.baseMapSwitcher.types ?? AZURE_CAPABILITIES.baseMapTypes;
-            this.styleControl = new sdk.control.StyleControl({
+            const styleControl: atlas.control.StyleControl = new sdk.control.StyleControl({
                 mapStyles: types.map(type => AZURE_STYLES[type]),
                 layout: 'list',
             });
-            this.map.controls.add(this.styleControl, {
+            this.styleControl = styleControl;
+            this.map.controls.add(styleControl, {
                 position: corner(controls.baseMapSwitcher.position, 'top-left') as atlas.ControlPosition,
             });
             // The control changes the style behind our back, so mirror it into
             // baseMapType and fire basemaptypechange from here.
-            this.map.events.add('styleselected', this.styleControl, (style: string) => {
+            this.map.events.add('styleselected', styleControl, (style: string) => {
                 const type = BASE_MAP_BY_STYLE[style];
                 if (!type || type === this.baseMapType) return;
                 this.baseMapType = type;

@@ -3,24 +3,29 @@ import { MapPin, Users, FileText, AlertTriangle, Eye } from 'lucide-react';
 import { HeatmapData, HeatmapPoint, HotspotData } from '../types';
 import {
     CanvasOverlayHandle,
-    MapProviderId,
     MapRenderer,
     MarkerLayer,
     MarkerOptions,
     PopupHandle,
     boundsOfPoints,
+    CONTINENTAL_US_CENTER,
     createMap,
     el,
-    legacyMapProviderConfig,
+    MapProviderConfig,
+    hasMapCredential,
     popupRoot,
+    puckIcon,
 } from '../maps';
 
 interface SpatialBiasHeatmapProps {
     heatmapData: HeatmapData | null;
     hotspots: HotspotData[];
-    apiKey: string;
-    /** Overrides the configured provider; defaults to the town's setting. */
-    provider?: MapProviderId;
+    /**
+     * The town's chosen provider and only that provider's credentials.
+     * Built once per page with resolveMapProviderConfig(); components must not
+     * assemble their own, which is how every map silently defaulted to Google.
+     */
+    config: MapProviderConfig;
     defaultCenter?: { lat: number; lng: number };
     isLoading?: boolean;
 }
@@ -247,7 +252,7 @@ function hotspotPopup(hs: HotspotData): HTMLElement {
 export default function SpatialBiasHeatmap({
     heatmapData,
     hotspots,
-    apiKey,
+    config,
     defaultCenter,
     isLoading: externalLoading,
 }: SpatialBiasHeatmapProps) {
@@ -278,11 +283,10 @@ export default function SpatialBiasHeatmap({
         const container = mapRef.current;
         if (!container) return;
 
-        const config = legacyMapProviderConfig(apiKey);
         if (!config) { setIsLoading(false); return; }
 
         createMap(container, config, {
-            center: defaultCenter || { lat: 40.3573, lng: -74.6672 },
+            center: defaultCenter || CONTINENTAL_US_CENTER,
             zoom: 13,
             controls: {
                 baseMapSwitcher: { enabled: true, position: 'top-left' },
@@ -313,7 +317,7 @@ export default function SpatialBiasHeatmap({
             hotspotLayerRef.current = null;
             popupRef.current = null;
         };
-    }, [apiKey, defaultCenter]);
+    }, [config.provider, config.apiKey, config.styleId, defaultCenter]);
 
     // Heat layer. Uses the canvas overlay where the provider has one, and
     // graduated markers where it does not.
@@ -365,14 +369,16 @@ export default function SpatialBiasHeatmap({
             const level = ratio > 4 ? 'high' : ratio > 2 ? 'moderate' : 'low';
             return {
                 position: { lat: hs.lat, lng: hs.lng },
-                icon: {
-                    type: 'circle' as const,
-                    radius: Math.min(8 + hs.count, 20),
-                    fillColor: BIAS_FILL[level],
-                    fillOpacity: 0.9,
-                    strokeColor: BIAS_STROKE[level],
+                // Through the shared puck routine, so a hotspot on this page has
+                // the same ring, shadow and lighting as a pin anywhere else --
+                // and renders identically whichever provider the town is on.
+                // The bias palette stays, because that is what it encodes.
+                icon: puckIcon({
+                    fill: BIAS_FILL[level],
+                    stroke: BIAS_STROKE[level],
+                    size: Math.min(8 + hs.count, 20) * 2,
                     strokeWidth: 2,
-                },
+                }),
                 title: `${hs.count} reports / ${reporters} reporters`,
                 zIndex: 100,
                 onClick: (_event, marker) => {
@@ -390,7 +396,7 @@ export default function SpatialBiasHeatmap({
         hotspotLayerRef.current = layer;
     }, [hotspots, showHotspotOverlay, mapReady]);
 
-    if (!apiKey) {
+    if (!hasMapCredential(config)) {
         return (
             <div className="h-full flex items-center justify-center bg-slate-900/50 rounded-lg border border-white/10">
                 <div className="text-center p-4">

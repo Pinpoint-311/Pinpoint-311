@@ -55,6 +55,11 @@ FIELDS: List[Dict[str, Any]] = [
     {"id": "description", "label": "What was reported", "attr": "description",
      "default": True, "sensitive": False,
      "note": "Written by the resident, so it can name people even when the PII fields are off."},
+    {"id": "custom_fields", "label": "Answers to the town's own questions", "attr": "custom_fields",
+     "default": True, "sensitive": False,
+     "note": "Written by the resident, like the description, so it can name people even "
+             "when the PII fields are off. Omitting it made the export an incomplete "
+             "answer to a records request."},
     {"id": "completion_message", "label": "Resolution", "attr": "completion_message",
      "default": True, "sensitive": False},
     {"id": "closed_substatus", "label": "Closure reason", "attr": "closed_substatus",
@@ -167,7 +172,21 @@ def _value(record: Any, field_id: str) -> Any:
         if value.tzinfo is None:
             value = value.replace(tzinfo=timezone.utc)
         return value.isoformat()
+    if isinstance(value, dict):
+        # The custom answers are a JSON object. A records request goes to a
+        # member of the public, so this has to be a sentence rather than a
+        # Python dict repr with braces and quotes in a spreadsheet cell.
+        return "; ".join(f"{k}: {_flatten(v)}" for k, v in value.items()) or None
+    if isinstance(value, list):
+        return "; ".join(str(v) for v in value) or None
     return value
+
+
+def _flatten(value: Any) -> str:
+    """One answer as text. Checkbox questions store a list."""
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(v) for v in value)
+    return "" if value is None else str(value)
 
 
 def build_row(record: Any, fields: Sequence[str]) -> List[Any]:

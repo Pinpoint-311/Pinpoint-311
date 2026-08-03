@@ -6,26 +6,30 @@ import { useTranslation } from '../context/TranslationContext';
 import { BANDS, bandFor, bandLabel } from './priority';
 import {
     GeoJsonLayerHandle,
-    MapProviderId,
     MapRenderer,
     MarkerLayer,
     MarkerOptions,
     PopupHandle,
     boundsOfGeoJson,
     assetIcon,
+    CONTINENTAL_US_CENTER,
+    clusterStyle,
     createMap,
     extractFeatures,
-    legacyMapProviderConfig,
+    MapProviderConfig,
+    hasMapCredential,
     requestIcon,
     el,
     popupRoot,
 } from '../maps';
 
 interface StaffDashboardMapProps {
-    apiKey: string;
-    mapId?: string | null;
-    /** Overrides the configured provider; defaults to the town's setting. */
-    provider?: MapProviderId;
+    /**
+     * The town's chosen provider and only that provider's credentials.
+     * Built once per page with resolveMapProviderConfig(); components must not
+     * assemble their own, which is how every map silently defaulted to Google.
+     */
+    config: MapProviderConfig;
     requests: ServiceRequest[];
     services: ServiceDefinition[];
     departments: Department[];
@@ -62,9 +66,7 @@ const STATUS_COLORS = {
 };
 
 export default function StaffDashboardMap({
-    apiKey,
-    mapId,
-    provider,
+    config,
     requests,
     services,
     departments,
@@ -72,7 +74,7 @@ export default function StaffDashboardMap({
     mapLayers,
     operationalFilters = false,
     townshipBoundary,
-    defaultCenter = { lat: 40.3573, lng: -74.6672 },
+    defaultCenter = CONTINENTAL_US_CENTER,
     defaultZoom = 14,
     onRequestSelect,
 }: StaffDashboardMapProps) {
@@ -162,7 +164,7 @@ export default function StaffDashboardMap({
 
     // Load the configured map provider and attach the map
     useEffect(() => {
-        if (!apiKey) {
+        if (!hasMapCredential(config)) {
             setIsLoading(false);
             return;
         }
@@ -174,16 +176,16 @@ export default function StaffDashboardMap({
             try {
                 const map = await createMap(
                     mapRef.current,
-                    legacyMapProviderConfig(apiKey, mapId, provider),
+                    config,
                     {
                         center: defaultCenter,
                         zoom: defaultZoom,
                         baseMapType: 'hybrid', // Satellite with labels
                         // Tilt/heading only take effect on providers rendering a
                         // vector basemap, which is what styleId selects.
-                        tilt: mapId ? 45 : undefined,
-                        heading: mapId ? 0 : undefined,
-                        styleId: mapId,
+                        tilt: config.styleId ? 45 : undefined,
+                        heading: config.styleId ? 0 : undefined,
+                        styleId: config.styleId,
                         controls: {
                             baseMapSwitcher: {
                                 enabled: true,
@@ -193,7 +195,7 @@ export default function StaffDashboardMap({
                             streetView: { enabled: false },
                             fullscreen: { enabled: true },
                             zoom: { enabled: true, position: 'left-bottom' },
-                            rotate: { enabled: !!mapId },
+                            rotate: { enabled: !!config.styleId },
                         },
                     },
                 );
@@ -206,25 +208,8 @@ export default function StaffDashboardMap({
                 mapInstanceRef.current = map;
                 popupRef.current = map.createPopup();
                 requestLayerRef.current = map.createMarkerLayer({
-                    cluster: {
-                        style: (count) => ({
-                            icon: {
-                                type: 'circle',
-                                radius: 18 + Math.min(count, 50) / 4,
-                                fillColor: '#4f46e5',  // Was #6366f1, darker for WCAG AA contrast
-                                fillOpacity: 0.95,
-                                strokeColor: '#ffffff',
-                                strokeWidth: 3,
-                            },
-                            label: {
-                                text: String(count),
-                                color: '#ffffff',
-                                fontSize: '12px',
-                                fontWeight: '700',
-                            },
-                            zIndex: 1000 + count,
-                        }),
-                    },
+                    // Shared with the resident map and the location picker.
+                    cluster: { style: clusterStyle },
                 });
                 layerMarkerLayerRef.current = map.createMarkerLayer();
 
@@ -253,7 +238,7 @@ export default function StaffDashboardMap({
             mapInstanceRef.current?.destroy();
             mapInstanceRef.current = null;
         };
-    }, [apiKey, mapId, provider]);
+    }, [config.provider, config.apiKey, config.styleId]);
 
     // Render township boundary and fit map to it
     const renderBoundaryAndFit = (map: MapRenderer, boundary: object) => {
@@ -559,13 +544,13 @@ export default function StaffDashboardMap({
         setLayerFilters(newFilters);
     };
 
-    if (!apiKey) {
+    if (!hasMapCredential(config)) {
         return (
             <div className="h-full flex items-center justify-center bg-white/5 rounded-xl border border-white/10">
                 <div className="text-center p-8">
                     <MapPin className="w-12 h-12 mx-auto mb-4 text-white/30" />
-                    <p className="text-white/60">Google Maps API key not configured</p>
-                    <p className="text-white/40 text-sm mt-2">Configure in Admin Console → API Keys</p>
+                    <p className="text-white/60">No map provider is configured yet</p>
+                    <p className="text-white/40 text-sm mt-2">Choose one in Admin Console → Service Providers → Maps</p>
                 </div>
             </div>
         );

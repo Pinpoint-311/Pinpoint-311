@@ -106,3 +106,96 @@ def test_the_health_check_reports_a_degraded_detector():
     assert '"warning"' in source
     assert '"critical"' in source
     assert "_redaction_check()" in inspect.getsource(ph.collect_checks)
+
+
+# ---------------------------------------------------------------------------
+# Credentials that are present and rejected
+#
+# `_usable` closes the gap for *missing* credentials, and only Google's check
+# reaches the vendor -- AWS and Azure are satisfied by the strings being present.
+# So a key that is present and refused (expired, rotated, revoked, wrong region,
+# over quota, vendor outage) walked straight past it: the call raised, `detect`
+# caught it and returned `[]`, and an unblurred photo was recorded as "we looked
+# and there was nobody there". The Test button stayed green throughout.
+# ---------------------------------------------------------------------------
+
+def _rejecting():
+    """A detector whose credentials are present and refused by the vendor."""
+    async def _fail(*_a, **_kw):
+        raise RuntimeError("403 InvalidSignatureException: credentials rejected")
+    return _fail
+
+
+def _probe_png() -> bytes:
+    from app.api.system import _one_pixel_probe_image
+    return _one_pixel_probe_image()
+
+
+def test_detect_separates_could_not_answer_from_found_nothing():
+    original = ir._azure_detect
+    ir._azure_detect = _rejecting()
+    try:
+        failed = asyncio.run(ir.detect("azure", _probe_png(), 64, 64, True, True))
+    finally:
+        ir._azure_detect = original
+    assert failed is None, "a rejected credential must not read as an empty street"
+
+    answered = asyncio.run(ir.detect("local", _probe_png(), 64, 64, True, True))
+    assert answered == [], "a blank image genuinely has nobody in it"
+
+
+def test_a_detector_that_fails_mid_call_falls_back_instead_of_publishing():
+    """`effective_provider` cannot predict this -- it only sees whether the
+    credentials exist. The retry has to happen where the failure happens."""
+    import base64
+
+    media = "data:image/png;base64," + base64.b64encode(_probe_png()).decode()
+
+    async def _usable(_p):
+        return True
+
+    orig_detect, orig_usable = ir._azure_detect, ir._usable
+    ir._azure_detect, ir._usable = _rejecting(), _usable
+    try:
+        result = asyncio.run(ir.redact_image(media, "azure", True, True))
+    finally:
+        ir._azure_detect, ir._usable = orig_detect, orig_usable
+
+    # On-server detection looked at it and found nobody, which is the honest
+    # answer for a blank image -- the point is that *something* looked.
+    assert result.skipped_reason == "no-detections"
+
+
+def test_when_the_fallback_cannot_answer_either_it_says_no_detector():
+    import base64
+
+    media = "data:image/png;base64," + base64.b64encode(_probe_png()).decode()
+
+    async def _usable(_p):
+        return True
+
+    async def _fail(*_a, **_kw):
+        raise RuntimeError("opencv exploded")
+
+    orig_azure, orig_local, orig_usable = ir._azure_detect, ir._local_detect, ir._usable
+    ir._azure_detect, ir._local_detect, ir._usable = _rejecting(), _fail, _usable
+    try:
+        result = asyncio.run(ir.redact_image(media, "azure", True, True))
+    finally:
+        ir._azure_detect, ir._local_detect, ir._usable = orig_azure, orig_local, orig_usable
+
+    assert result.skipped_reason == "no-detector", (
+        "nothing looked at this photo, and that must not be recorded as having looked"
+    )
+
+
+def test_the_test_button_asks_the_detector_rather_than_the_credential_store():
+    """Presence of a key is not evidence the vendor accepts it. The check has to
+    make a real detection call, or it reports green on a lapsed subscription."""
+    import inspect
+
+    from app.api import system
+
+    source = inspect.getsource(system._test_redaction)
+    assert "detect(" in source, "the check must exercise the detector"
+    assert "is None" in source, "and must react to it being unable to answer"

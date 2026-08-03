@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { resolveMapProviderConfig, mapProviderReady, RawMapsConfig } from '../maps';
 import { motion, AnimatePresence } from 'framer-motion';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
@@ -376,8 +377,14 @@ export function ServiceCategoriesTab({ services, setServices, loadTabData, setSh
     const thirdPartyCount = services.filter(s => s.routing_mode === 'third_party').length;
     const municipalCount = services.filter(s => !s.routing_mode || s.routing_mode === 'township').length;
 
-    const [searchQuery, setSearchQuery] = useState('');
-    const [filterMode, setFilterMode] = useState<string>('all');
+    // No setter for either: the search box and filter dropdown these were written
+    // for are not rendered anywhere, so `filteredServices` below always matches
+    // everything. Left in place rather than deleted because the filter logic is
+    // still correct and only needs a control wired to it -- but the unused
+    // setters are dropped, because the build now type-checks and they would fail
+    // it, and a name nothing can call is worse than no name.
+    const [searchQuery] = useState('');
+    const [filterMode] = useState<string>('all');
 
     const filteredServices = services.filter(s => {
         const matchesSearch = s.service_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -836,7 +843,9 @@ export default function AdminConsole() {
     const [modules, setModules] = useState({ ai_analysis: false, sms_alerts: false, email_notifications: false, research_portal: false, unlisted_reports: false });
 
     // Maps tab state
-    const [mapsApiKey, setMapsApiKey] = useState<string | null>(null);
+    const [mapsRaw, setMapsRaw] = useState<RawMapsConfig | null>(null);
+    const mapConfig = useMemo(() => resolveMapProviderConfig(mapsRaw), [mapsRaw]);
+    const mapsReady = mapProviderReady(mapsRaw);
     const [townshipSearch, setTownshipSearch] = useState('');
     const [osmSearchResults, setOsmSearchResults] = useState<Array<{
         osm_id: number;
@@ -881,7 +890,12 @@ export default function AdminConsole() {
     });
     // Nominatim search state for polygon boundaries
     const [nominatimSearch, setNominatimSearch] = useState('');
-    const [nominatimResults, setNominatimResults] = useState<{ display_name: string; osm_id: number; osm_type: string }[]>([]);
+    // Shaped by /gis/osm/search, which already filters to OSM relations and
+    // attaches each boundary's geometry. There is no osm_type here because the
+    // backend only returns relations -- a township boundary is always one.
+    const [nominatimResults, setNominatimResults] = useState<{
+        display_name: string; osm_id: number; geojson?: object;
+    }[]>([]);
     const [isSearchingNominatim, setIsSearchingNominatim] = useState(false);
 
 
@@ -899,14 +913,26 @@ export default function AdminConsole() {
         source: string;
         public_records_law: string;
     }>>([]);
-    const [retentionPolicy, setRetentionPolicy] = useState<{
-        state_code: string;
-        policy: { name: string; retention_days: number; retention_years: number; source: string; public_records_law: string };
-        override_days: number | null;
-        effective_days: number;
-        mode: 'redact' | 'purge';
-        stats: { eligible_for_archival: number; under_legal_hold: number; already_archived: number; cutoff_date: string };
-    } | null>(null);
+    /* The server's type, not a second copy of it. The local shape declared
+       `policy` and `stats` as always present, which is exactly what stopped
+       being true: a town that has not confirmed its state has no retention
+       period and no statute, and the screen must say so rather than render
+       whatever the old NJ default filled in. */
+    const [retentionPolicy, setRetentionPolicy] =
+        useState<import('../services/api').RetentionPolicyConfig | null>(null);
+    /* The policy when there actually is one, with the pieces the "Current
+       Policy" panel needs proven present rather than assumed. The panel states
+       a statute, a period and a count of records due for destruction — none of
+       which exist until a state is confirmed, and all of which the screen used
+       to show anyway because the server filled them in from NJ. */
+    const activeRetention = (retentionPolicy?.configured && retentionPolicy.policy && retentionPolicy.stats)
+        ? {
+            ...retentionPolicy,
+            policy: retentionPolicy.policy,
+            stats: retentionPolicy.stats,
+            effective_days: retentionPolicy.effective_days ?? retentionPolicy.policy.retention_days,
+        }
+        : null;
     const [selectedStateCode, setSelectedStateCode] = useState<string>('');
     const [selectedMode, setSelectedMode] = useState<'redact' | 'purge'>('redact');
     /* The records the next run would touch. Loaded on demand: it is a real
@@ -1014,7 +1040,7 @@ export default function AdminConsole() {
     useEffect(() => {
         // Always load maps config & township boundary so map features work on any tab
         api.getMapsConfig().then(mapsConfig => {
-            if (mapsConfig.google_maps_api_key) setMapsApiKey(mapsConfig.google_maps_api_key);
+            setMapsRaw(mapsConfig);
             if (mapsConfig.township_boundary) setTownshipBoundary(mapsConfig.township_boundary);
         }).catch(err => console.warn("Maps config load warning:", err));
     }, []);
@@ -1057,9 +1083,7 @@ export default function AdminConsole() {
                     // Load Maps configuration
                     try {
                         const mapsConfig = await api.getMapsConfig();
-                        if (mapsConfig.google_maps_api_key) {
-                            setMapsApiKey(mapsConfig.google_maps_api_key);
-                        }
+                        setMapsRaw(mapsConfig);
                         if (mapsConfig.township_boundary) {
                             setTownshipBoundary(mapsConfig.township_boundary);
                         }
@@ -1079,7 +1103,12 @@ export default function AdminConsole() {
                         ]);
                         setRetentionStates(states);
                         setRetentionPolicy(policy);
-                        setSelectedStateCode(policy.state_code);
+                        /* Pre-select whatever is stored, confirmed or not. An
+                           unconfirmed state is still the best guess at the
+                           answer — the town may well be in New Jersey — and the
+                           question being asked is "is this right?", which is
+                           easier to answer with the dropdown already on it. */
+                        setSelectedStateCode(policy.state_code || policy.unconfirmed_state_code || '');
                         setSelectedMode(policy.mode === 'purge' ? 'purge' : 'redact');
                         setScrubFields(policy.scrub_fields || null);
                         // Reflect the saved override in the input (was always blank before)
@@ -2495,7 +2524,7 @@ export default function AdminConsole() {
                                 </div>
 
                                 <div className="divide-y divide-white/10 [&>*]:bg-white/[0.015]">
-                                {!mapsApiKey ? (
+                                {!mapsReady ? (
                                     <div className="px-5 sm:px-6 py-5">
                                         <div className="p-4 rounded-xl bg-gradient-to-br from-yellow-500/10 to-yellow-600/5 border border-yellow-500/20">
                                             <div className="flex items-center gap-3">
@@ -2503,7 +2532,7 @@ export default function AdminConsole() {
                                                     <AlertTriangle className="w-4 h-4 text-yellow-400" />
                                                 </div>
                                                 <p className="text-sm text-yellow-300">
-                                                    Google Maps API key is required. Please configure it in the API Keys section first.
+                                                    A map provider must be configured first — see Service Providers → Maps.
                                                 </p>
                                             </div>
                                         </div>
@@ -2726,7 +2755,7 @@ export default function AdminConsole() {
                             </div>
 
                             {/* Custom Map Layers — its own card/section, matching Maps Configuration above */}
-                            {mapsApiKey && (
+                            {mapsReady && (
                                 <div className="mt-6 rounded-2xl bg-white/[0.03] backdrop-blur-xl border border-white/10 overflow-hidden shadow-2xl">
                                     <div className="px-5 sm:px-6 py-4 border-b border-white/10 bg-gradient-to-r from-white/[0.05] to-transparent flex items-center justify-between gap-4">
                                                 <div className="flex items-center gap-3">
@@ -2893,11 +2922,56 @@ export default function AdminConsole() {
                                     <p className="text-white/60">Configure state-mandated record retention policies</p>
                                 </motion.div>
 
+                                {/* Nothing is running, and this is the only place that says so.
+                                    The state code used to default to New Jersey, so this tab
+                                    confidently headlined "OPRA · 7 years" at towns that had
+                                    never chosen either — and the nightly job anonymised their
+                                    records on that schedule. Retention now waits for an
+                                    answer, which is safe but silent, so the silence has to be
+                                    visible. */}
+                                {retentionPolicy && !retentionPolicy.configured && (
+                                    <motion.div
+                                        initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+                                        role="status"
+                                        className="rounded-xl border border-amber-400/40 bg-amber-500/10 p-5"
+                                    >
+                                        <div className="flex gap-3 items-start">
+                                            <AlertTriangle className="w-5 h-5 text-amber-300 flex-shrink-0 mt-0.5" aria-hidden="true" />
+                                            <div className="space-y-2">
+                                                <h3 className="text-white font-semibold">
+                                                    No retention schedule is in force
+                                                </h3>
+                                                <p className="text-white/75 text-sm leading-relaxed">
+                                                    {retentionPolicy.detail}
+                                                </p>
+                                                {retentionPolicy.unconfirmed_state_code && (
+                                                    <p className="text-white/60 text-sm leading-relaxed">
+                                                        This instance was shipped set to{' '}
+                                                        <strong className="text-white/80">
+                                                            {retentionStates.find(s => s.code === retentionPolicy.unconfirmed_state_code)?.name
+                                                                || retentionPolicy.unconfirmed_state_code}
+                                                        </strong>
+                                                        , which is a default rather than a choice anyone here made.
+                                                        If it is right, confirm it below and retention resumes on that
+                                                        schedule. If it is not, pick the correct state — records were
+                                                        never archived on the wrong one, because nothing has run.
+                                                    </p>
+                                                )}
+                                                <p className="text-white/50 text-sm">
+                                                    Nothing has been deleted or redacted in the meantime. Closed
+                                                    records are all still here, including any that are past the date
+                                                    your published policy gives.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </motion.div>
+                                )}
+
                                 {/* Current Policy Status */}
-                                {retentionPolicy && (
+                                {activeRetention && (
                                     <AccordionSection
-                                        title={`Current Policy: ${retentionPolicy.policy.public_records_law}`}
-                                        subtitle={`${retentionPolicy.policy.name} • ${formatYears(retentionPolicy.effective_days)} retention${retentionPolicy.override_days ? ' (custom override)' : ''} • ${retentionPolicy.mode === 'purge' ? 'Purge mode' : 'Redact mode'}`}
+                                        title={`Current Policy: ${activeRetention.policy.public_records_law}`}
+                                        subtitle={`${activeRetention.policy.name} • ${formatYears(activeRetention.effective_days)} retention${activeRetention.override_days ? ' (custom override)' : ''} • ${activeRetention.mode === 'purge' ? 'Purge mode' : 'Redact mode'}`}
                                         icon={Shield}
                                         iconClassName="text-green-400"
                                         badge={<Badge variant="success">Active</Badge>}
@@ -2906,23 +2980,23 @@ export default function AdminConsole() {
                                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                                             <div className="bg-white/5 rounded-lg p-4">
                                                 <div className="text-white/60 text-sm">Public Records Law</div>
-                                                <div className="text-2xl font-bold text-white">{retentionPolicy.policy.public_records_law}</div>
-                                                <div className="text-white/40 text-sm">{retentionPolicy.policy.name} ({retentionPolicy.state_code})</div>
+                                                <div className="text-2xl font-bold text-white">{activeRetention.policy.public_records_law}</div>
+                                                <div className="text-white/40 text-sm">{activeRetention.policy.name} ({activeRetention.state_code})</div>
                                             </div>
                                             <div className="bg-white/5 rounded-lg p-4">
                                                 <div className="text-white/60 text-sm">Retention Period</div>
-                                                <div className="text-2xl font-bold text-amber-400">{formatYears(retentionPolicy.effective_days)}</div>
+                                                <div className="text-2xl font-bold text-amber-400">{formatYears(activeRetention.effective_days)}</div>
                                                 <div className="text-white/40 text-sm">
-                                                    {retentionPolicy.effective_days.toLocaleString()} days
-                                                    {retentionPolicy.override_days
-                                                        ? ` • custom (state minimum ${retentionPolicy.policy.retention_years} yrs)`
+                                                    {activeRetention.effective_days.toLocaleString()} days
+                                                    {activeRetention.override_days
+                                                        ? ` • custom (state minimum ${activeRetention.policy.retention_years} yrs)`
                                                         : ' • state default'}
                                                 </div>
                                             </div>
                                             <div className="bg-white/5 rounded-lg p-4">
                                                 <div className="text-white/60 text-sm">Mode</div>
-                                                <div className="text-2xl font-bold text-white capitalize">{retentionPolicy.mode}</div>
-                                                <div className="text-white/40 text-sm">{retentionPolicy.mode === 'purge' ? 'Every field cleared, row kept' : 'Chosen fields cleared, row kept'}</div>
+                                                <div className="text-2xl font-bold text-white capitalize">{activeRetention.mode}</div>
+                                                <div className="text-white/40 text-sm">{activeRetention.mode === 'purge' ? 'Every field cleared, row kept' : 'Chosen fields cleared, row kept'}</div>
                                             </div>
                                         </div>
 
@@ -2933,7 +3007,7 @@ export default function AdminConsole() {
                                                 className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4 text-left hover:bg-blue-500/20 hover:border-blue-500/50 transition-all cursor-pointer"
                                             >
                                                 <div className="text-blue-300 text-sm">Eligible for Archival</div>
-                                                <div className="text-2xl font-bold text-blue-300">{retentionPolicy.stats.eligible_for_archival}</div>
+                                                <div className="text-2xl font-bold text-blue-300">{activeRetention.stats.eligible_for_archival}</div>
                                                 <div className="text-blue-200 text-xs mt-1">Click to view →</div>
                                             </button>
                                             <button
@@ -2952,16 +3026,16 @@ export default function AdminConsole() {
                                                 className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 text-left hover:bg-amber-500/20 hover:border-amber-500/50 transition-all cursor-pointer"
                                             >
                                                 <div className="text-amber-400 text-sm">Under Legal Hold</div>
-                                                <div className="text-2xl font-bold text-amber-400">{retentionPolicy.stats.under_legal_hold}</div>
+                                                <div className="text-2xl font-bold text-amber-400">{activeRetention.stats.under_legal_hold}</div>
                                                 <div className="text-amber-300 text-xs mt-1">Click to view →</div>
                                             </button>
                                             <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
                                                 <div className="text-green-400 text-sm">Already Archived</div>
-                                                <div className="text-2xl font-bold text-green-400">{retentionPolicy.stats.already_archived}</div>
+                                                <div className="text-2xl font-bold text-green-400">{activeRetention.stats.already_archived}</div>
                                             </div>
                                         </div>
                                         <p className="text-white/40 text-sm mt-4">
-                                            Source: {retentionPolicy.policy.source}
+                                            Source: {activeRetention.policy.source}
                                         </p>
                                     </AccordionSection>
                                 )}
@@ -3235,6 +3309,19 @@ export default function AdminConsole() {
                                                     });
                                                     return;
                                                 }
+                                                /* Before the "nothing is due" branch below, which would
+                                                   otherwise report an empty run as a quiet success —
+                                                   "no records have passed the null-day retention
+                                                   period" is not the reason nothing would happen. */
+                                                if (plan.blocked === 'unconfigured') {
+                                                    await dialog.alert({
+                                                        title: 'No retention schedule is set',
+                                                        message: plan.detail
+                                                            || 'Confirm which state this town is in before running retention. Until then there is no retention period to measure records against.',
+                                                        variant: 'warning',
+                                                    });
+                                                    return;
+                                                }
                                                 if (!plan.eligible) {
                                                     await dialog.alert({
                                                         title: 'Nothing is due yet',
@@ -3481,6 +3568,14 @@ export default function AdminConsole() {
                                                 <p className="p-4 text-sm text-amber-200">
                                                     The instance-wide legal hold is on, so nothing is eligible. Lift it
                                                     first if this run is meant to happen.
+                                                </p>
+                                            ) : retentionPreview.blocked === 'unconfigured' ? (
+                                                /* Not "nothing is eligible". Nothing has been *measured* —
+                                                   there is no retention period until a state is confirmed,
+                                                   and every closed record is still here regardless of age. */
+                                                <p className="p-4 text-sm text-amber-200">
+                                                    {retentionPreview.detail
+                                                        || 'No state is confirmed, so there is no retention period to measure records against and nothing can run.'}
                                                 </p>
                                             ) : !retentionPreview.summary || retentionPreview.summary.total === 0 ? (
                                                 <p className="p-4 text-sm text-white/70">
@@ -4774,7 +4869,7 @@ export default function AdminConsole() {
                                             onTrimsChange={setSegmentTrims}
                                             corridorMetres={corridorMetres}
                                             onCorridorMetresChange={setCorridorMetres}
-                                            apiKey={mapsApiKey}
+                                            config={mapConfig}
                                         />
                                     </div>
                                 )}
@@ -5098,11 +5193,12 @@ export default function AdminConsole() {
                                                     // Trigger search
                                                     if (nominatimSearch.trim()) {
                                                         setIsSearchingNominatim(true);
-                                                        fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(nominatimSearch)}&format=json&polygon_geojson=0&limit=10`)
-                                                            .then(res => res.json())
-                                                            .then(results => {
-                                                                setNominatimResults(results.filter((r: any) => r.osm_type === 'way' || r.osm_type === 'relation'));
-                                                            })
+                                                        // Through our own backend, not the browser.
+                                                        // A direct call is refused by the
+                                                        // Content-Security-Policy, and cannot set the
+                                                        // User-Agent Nominatim's usage policy requires.
+                                                        api.searchOsmTownship(nominatimSearch)
+                                                            .then(({ results }) => setNominatimResults(results))
                                                             .catch(console.error)
                                                             .finally(() => setIsSearchingNominatim(false));
                                                     }
@@ -5116,11 +5212,8 @@ export default function AdminConsole() {
                                             onClick={() => {
                                                 if (nominatimSearch.trim()) {
                                                     setIsSearchingNominatim(true);
-                                                    fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(nominatimSearch)}&format=json&polygon_geojson=0&limit=10`)
-                                                        .then(res => res.json())
-                                                        .then(results => {
-                                                            setNominatimResults(results.filter((r: any) => r.osm_type === 'way' || r.osm_type === 'relation'));
-                                                        })
+                                                    api.searchOsmTownship(nominatimSearch)
+                                                        .then(({ results }) => setNominatimResults(results))
                                                         .catch(console.error)
                                                         .finally(() => setIsSearchingNominatim(false));
                                                 }
@@ -5142,11 +5235,12 @@ export default function AdminConsole() {
                                                         // Fetch the actual boundary GeoJSON
                                                         setIsSearchingNominatim(true);
                                                         try {
-                                                            const osmType = result.osm_type === 'way' ? 'W' : 'R';
-                                                            const response = await fetch(
-                                                                `https://nominatim.openstreetmap.org/details?osmtype=${osmType}&osmid=${result.osm_id}&format=json&polygon_geojson=1`
-                                                            );
-                                                            const details = await response.json();
+                                                            // No second lookup: /gis/osm/search asks
+                                                            // Nominatim for polygon_geojson and hands the
+                                                            // geometry back with the result. The old
+                                                            // /details call was a browser request to
+                                                            // Nominatim, which the CSP refuses anyway.
+                                                            const details = { geometry: (result as { geojson?: object }).geojson };
                                                             if (details.geometry) {
                                                                 const geojson = {
                                                                     type: 'Feature',

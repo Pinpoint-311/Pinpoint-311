@@ -217,13 +217,19 @@ export interface RetentionPreview {
     on_legal_hold: number;
     will_act_on?: number;
     mode: 'redact' | 'purge';
-    state_code?: string;
-    policy_name?: string;
-    retention_days?: number;
+    state_code?: string | null;
+    /** Stored but unconfirmed, when blocked on 'unconfigured'. */
+    unconfirmed_state_code?: string | null;
+    policy_name?: string | null;
+    retention_days?: number | null;
     cutoff_date?: string | null;
     confirmation_required?: string | null;
-    /** Set to 'legal_hold' when an instance-wide hold freezes everything. */
+    /** 'legal_hold' when an instance-wide hold freezes everything, or
+     *  'unconfigured' when no state has been confirmed — with no state there is
+     *  no retention period, so a run would have nothing to measure against. */
     blocked?: string;
+    /** Why, in words a clerk can act on. Set alongside blocked. */
+    detail?: string | null;
     /** What a run will actually empty, in the words the settings screen uses. */
     scrub_fields?: string[];
     /** The records themselves, oldest first. Empty under a legal hold. */
@@ -816,6 +822,14 @@ class ApiClient {
         has_google_maps: boolean;
         google_maps_api_key: string | null;
         google_maps_map_id: string | null;
+        // The provider-neutral fields. `map_credentials` carries only the
+        // credentials the selected provider actually uses, and
+        // `map_provider_missing` is non-empty when it is not finished being set
+        // up -- which is what the pages gate the map on.
+        map_provider?: string | null;
+        geocode_provider?: string | null;
+        map_credentials?: Record<string, unknown> | null;
+        map_provider_missing?: string[] | null;
         township_boundary: object | null;
         default_center: { lat: number; lng: number };
         default_zoom: number;
@@ -1608,7 +1622,20 @@ export interface ScrubField {
 }
 
 export interface RetentionPolicyConfig {
-    state_code: string;
+    /** Whether a state has actually been chosen and confirmed. False means no
+     *  retention period exists and nothing is being archived or deleted — the
+     *  state code used to default to NJ, so every town outside New Jersey ran
+     *  a schedule it never picked. `policy`, `effective_days` and `stats` are
+     *  all null in that case rather than filled in from a guess. */
+    configured: boolean;
+    /** 'no_settings' | 'no_state' | 'unconfirmed', when not configured. */
+    reason?: string | null;
+    /** Plain-language explanation, including where to go to fix it. */
+    detail?: string | null;
+    /** The state stored but never confirmed — what the old default left behind.
+     *  Shown so the console can pre-select it and ask whether it is right. */
+    unconfirmed_state_code?: string | null;
+    state_code: string | null;
     /** The catalog and this town's choice in one object, so the screen never
      *  holds its own copy of what the fields are called. */
     scrub_fields?: ScrubField[];
@@ -1619,9 +1646,9 @@ export interface RetentionPolicyConfig {
         retention_years: number;
         source: string;
         public_records_law: string;
-    };
+    } | null;
     override_days: number | null;
-    effective_days: number;
+    effective_days: number | null;
     mode: 'redact' | 'purge';
     stats: {
         retention_policy: object;
@@ -1630,7 +1657,7 @@ export interface RetentionPolicyConfig {
         under_legal_hold: number;
         already_archived: number;
         next_run: string;
-    };
+    } | null;
 }
 
 // Database Backup types
