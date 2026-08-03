@@ -89,11 +89,25 @@ async def configure_notifications(db):
         })
         logger.info("[SMS Config] Configured Azure Communication Services provider")
     else:
+        # Cleared, not just logged. `notification_service` is a singleton that
+        # outlives this call, so a previously built sender stays on it and keeps
+        # sending -- switching from Twilio to a blank or mistyped provider left
+        # Twilio doing the work, and the log line said the opposite.
+        notification_service._sms_provider = None
+        notification_service._sms_provider_name = None
         logger.warning("[SMS Config] Unknown or empty SMS_PROVIDER - SMS will not work")
 
     # Configure Email provider
     email_enabled = await get_secret(db, "EMAIL_ENABLED")
-    if email_enabled.lower() == "true":
+    if email_enabled.lower() != "true":
+        # Same reason as the SMS branch above. Setting EMAIL_ENABLED to false
+        # skipped the configure call and left the sender built by the previous
+        # one in place, so a town that switched resident email off carried on
+        # emailing residents until the worker happened to restart.
+        notification_service._email_provider = None
+        notification_service._email_provider_name = None
+        logger.info("[Email Config] EMAIL_ENABLED is not true — email is switched off")
+    else:
         email_provider = (await get_secret(db, "EMAIL_PROVIDER") or "smtp").strip().lower()
         from_name = await get_secret(db, "SMTP_FROM_NAME") or "Township 311"
         if email_provider == "ses":

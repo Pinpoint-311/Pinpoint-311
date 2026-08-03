@@ -186,6 +186,26 @@ _kms_client = None
 _kms_key_name = None
 
 
+def reset_kms_cache() -> None:
+    """Forget the cached KMS client and key path.
+
+    Both are resolved once per process and then held for its lifetime, which is
+    correct for a setting that never changes and wrong for one the admin console
+    can edit. Change the key ring, the location or the key name on the PII
+    Encryption card and the running process carries on wrapping with the old
+    path -- the card says the new key is in use, the data says otherwise, and
+    nothing reconciles them until a deploy.
+
+    `pii_crypto.clear_caches()` already documents itself as the thing to call
+    after rotating a key, and it dropped the data key without dropping the path
+    the data key is wrapped against, so the rotation it existed to serve was the
+    one case it could not complete.
+    """
+    global _kms_client, _kms_key_name
+    _kms_client = None
+    _kms_key_name = None
+
+
 def _get_config_sync(key_name: str) -> Optional[str]:
     """Synchronously get a config value from env var or database."""
     # First check environment variable
