@@ -6,7 +6,8 @@
     "scripts": {
         "dev": "vite --host",
         "prebuild": "node scripts/generate-licenses.mjs",
-        "build": "vite build",
+        "typecheck": "tsc --noEmit -p tsconfig.json",
+        "build": "npm run typecheck && vite build",
         "lint": "eslint .",
         "preview": "vite preview",
         "test": "vitest run",
