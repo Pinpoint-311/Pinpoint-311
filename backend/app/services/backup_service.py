@@ -318,30 +318,52 @@ async def cleanup_old_backups(retention_days: int = None) -> Dict[str, Any]:
     """
     Delete backups older than the retention period.
     Uses state-specific retention policy if none specified.
+
+    With no state confirmed there is no retention period, and this deletes
+    nothing rather than picking one. The old code fell back to NJ and then, if
+    even that failed, to a bare seven years — two guesses at how long a town
+    must be able to restore from, on the destructive side of the decision.
+    Keeping backups too long costs storage; deleting them early can cost the
+    town the only copy of records it is required to produce.
     """
     config = await get_backup_config()
     if not config:
         return {"status": "error", "message": "Backup not configured"}
-    
+
     # Get retention days from policy if not specified
     if retention_days is None:
         try:
             from app.db.session import SessionLocal
-            from app.models import SystemSettings
+            from app.services.retention_config import load_retention_config
             from app.services.retention_service import get_retention_policy
-            from sqlalchemy import select
-            
+
             async with SessionLocal() as db:
-                result = await db.execute(select(SystemSettings).order_by(SystemSettings.id))
-                settings = result.scalar_one_or_none()
-                
-                state_code = settings.retention_state_code if settings else "NJ"
-                policy = get_retention_policy(state_code)
-                retention_days = policy["retention_days"]
+                retention = await load_retention_config(db)
+
+            if not retention.configured:
+                logger.info("[Backups] No confirmed retention state (%s) — "
+                            "keeping every backup this run", retention.reason)
+                return {
+                    "status": "skipped",
+                    "reason": "retention_unconfigured",
+                    "deleted": [],
+                    "deleted_count": 0,
+                    "message": retention.detail,
+                }
+
+            policy = get_retention_policy(retention.state_code)
+            retention_days = policy["retention_days"]
         except Exception as e:
-            logger.warning(f"Could not get retention policy, using 7 years: {e}")
-            retention_days = 7 * 365  # Default to 7 years
-    
+            # Unreadable settings are not permission to start deleting either.
+            logger.warning(f"Could not get retention policy, keeping every backup: {e}")
+            return {
+                "status": "skipped",
+                "reason": "retention_unreadable",
+                "deleted": [],
+                "deleted_count": 0,
+                "message": "Could not read the retention policy, so no backups were removed.",
+            }
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
     
     try:

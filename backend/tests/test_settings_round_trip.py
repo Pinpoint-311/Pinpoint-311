@@ -52,6 +52,11 @@ DEDICATED = {
     "retention_state_code":    ("POST /system/retention/policy", "GET /system/retention/policy"),
     "retention_days_override": ("POST /system/retention/policy", "GET /system/retention/policy"),
     "retention_scrub_fields":  ("POST /system/retention/policy", "GET /system/retention/policy"),
+    # Written by choosing a state on that POST -- the act of choosing is the
+    # confirmation -- and read back as `configured` on the GET rather than as
+    # its own boolean, because what the screen needs to know is whether
+    # retention will run, not which column says so.
+    "retention_state_confirmed": ("POST /system/retention/policy", "GET /system/retention/policy"),
     "legal_hold":              ("POST /system/retention/legal-hold", "GET /system/retention/policy"),
     "township_boundary":       ("POST /gis/boundaries", "GET /system/settings (maps config)"),
 }
