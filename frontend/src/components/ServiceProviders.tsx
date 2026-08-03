@@ -238,7 +238,12 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const [model, setModel] = useState<string>('');
     const [values, setValues] = useState<Record<string, string>>({});
     const [busy, setBusy] = useState<'save' | 'test' | null>(null);
-    const [result, setResult] = useState<{ ok: boolean; detail: string } | null>(null);
+    /* `recorded === false` rides along, because "we cannot check this from
+     * here" is a third answer and the box only had two. It was drawn in the
+     * same amber as a failure, so a generic HTTP gateway -- which by definition
+     * has no read-only call to make -- carried a permanent warning about a
+     * gateway that might be working perfectly. */
+    const [result, setResult] = useState<{ ok: boolean; detail: string; recorded?: boolean } | null>(null);
 
     /* What to show in the result box: this session's test, or the last one
      * recorded, whichever is fresher.
@@ -273,8 +278,14 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             // here", which is not a pass and must not render as one.
             ok: currentHealth.verifiable !== false && currentHealth.status === 'working',
             detail: currentHealth.last_result,
+            recorded: currentHealth.verifiable !== false,
         }
         : null);
+    /* Neither a pass nor a failure. Drawn plainly rather than in the amber a
+     * real failure gets: nothing here is wrong, and a warning that no action
+     * can ever clear is how a page teaches people to stop reading it. */
+    const resultUncheckable = !!shownResult && shownResult.ok === false
+        && shownResult.recorded === false;
     const [error, setError] = useState<string | null>(null);
     // Live model discovery (AI only)
     // Copy targets inside steps: a callback URL retyped by hand is the single
@@ -804,9 +815,15 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                     initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
                     className={`mt-3 rounded-xl px-3 py-2.5 text-xs border flex items-start gap-2 ${shownResult.ok
                         ? 'bg-emerald-500/10 border-emerald-400/30 text-emerald-200'
-                        : 'bg-amber-500/10 border-amber-400/30 text-amber-200'}`}
+                        : resultUncheckable
+                            ? 'bg-white/[0.05] border-white/15 text-white/70'
+                            : 'bg-amber-500/10 border-amber-400/30 text-amber-200'}`}
                 >
-                    {shownResult.ok ? <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
+                    {shownResult.ok
+                        ? <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                        : resultUncheckable
+                            ? <HelpCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                            : <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
                     <span>{shownResult.detail}</span>
                 </motion.div>
             )}

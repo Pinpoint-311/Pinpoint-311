@@ -423,3 +423,135 @@ def test_the_secret_store_cannot_be_switched_from_a_card():
     every other card's credentials unreadable."""
     assert "secrets" in system._READ_ONLY_SELECTION
     assert "secrets" in system._PROVIDER_SELECT_KEY, "it is still reported and tested"
+
+
+# ---------------------------------------------------------------------------
+# Text messages, one provider at a time
+# ---------------------------------------------------------------------------
+#
+# All four are switchable and only two could be checked. The generic gateway
+# answered "there is no way to check http without sending a real text" whatever
+# the town had done, so its card could never go green -- and ACS, which does
+# have a read-only call on the same resource, fell through to the same sentence.
+
+
+def test_each_sms_provider_has_a_branch_of_its_own():
+    """The fallthrough is the bug: a sentence about "this provider cannot be
+    checked" printed for providers that can be."""
+    src = _source(system._test_delivery)
+    for provider in ('"twilio"', '"sns"', '"acs"', '"http"'):
+        assert f"provider == {provider}" in src, provider
+
+
+def test_the_acs_check_asks_which_numbers_the_resource_owns():
+    """The access key being valid is not what breaks an ACS send. Sending from a
+    number the resource does not own is, and that is invisible until a resident
+    does not get a text."""
+    src = _source(system._test_delivery)
+    assert "phoneNumbers" in src
+    assert "_acs_auth_headers" in src, "it must sign with the same key sends use"
+
+
+def test_the_acs_check_sends_nothing():
+    """Every check on this page has to be safe to press repeatedly."""
+    src = _source(system._test_delivery)
+    acs = src[src.index('provider == "acs"'):src.index('provider == "http"')]
+    assert "client.get(" in acs and "client.post(" not in acs
+
+
+def test_a_gateway_with_a_status_url_is_checked_rather_than_excused():
+    src = _source(system._test_delivery)
+    assert "SMS_HTTP_TEST_URL" in src
+
+
+def test_textbelt_is_checked_by_name_because_the_send_path_already_knows_it():
+    """GenericHTTPSMSProvider branches on textbelt, and textbelt publishes a
+    quota endpoint. Knowing the vendor and then reporting it untestable would be
+    a choice rather than a limitation."""
+    src = _source(system._test_delivery)
+    assert "textbelt.com/quota" in src
+
+
+def test_an_exhausted_key_is_a_failure_rather_than_a_pass():
+    """A key that authenticates and has no messages left delivers nothing. A
+    plain 200 would have called that healthy."""
+    src = _source(system._test_delivery)
+    assert "quotaRemaining" in src
+
+
+def test_a_gateway_with_nothing_to_check_is_not_recorded_as_broken(monkeypatch):
+    """Still the honest answer where there genuinely is one -- but now it is the
+    answer for a gateway that offered no way to check, not for every gateway."""
+    from app.services import secret_manager
+    monkeypatch.setattr(secret_manager, "get_secret",
+                        _secrets(SMS_PROVIDER="http", SMS_HTTP_API_URL="https://gw.example/send"))
+
+    result = _run(system._test_delivery("sms"))
+    assert result["recorded"] is False
+    assert "status URL" in result["detail"], "it has to say what would make this checkable"
+
+
+# ---------------------------------------------------------------------------
+# SMS_ENABLED
+# ---------------------------------------------------------------------------
+#
+# It was read nowhere in the backend. Setting it did nothing, which is worse
+# than not offering it, because somebody believed it. Email was already gated on
+# EMAIL_ENABLED, so the two capabilities disagreed about whether such a switch
+# means anything.
+
+def test_switched_off_beats_the_selected_provider(monkeypatch):
+    """A card reporting Twilio as working while SMS_ENABLED is false describes a
+    send that cannot happen."""
+    from app.services import secret_manager
+    monkeypatch.setattr(secret_manager, "get_secret",
+                        _secrets(SMS_PROVIDER="twilio", SMS_ENABLED="false",
+                                 TWILIO_ACCOUNT_SID="AC", TWILIO_AUTH_TOKEN="t",
+                                 TWILIO_PHONE_NUMBER="+15005550006"))
+
+    result = _run(system._test_delivery("sms"))
+    assert result["ok"] is True
+    assert "switched off" in result["detail"]
+
+
+def test_an_unset_flag_does_not_switch_texting_off(monkeypatch):
+    """Unlike EMAIL_ENABLED, which a town must set to "true". SMS already has an
+    off state -- provider `none` -- so requiring an extra yes would silently
+    stop texts for every town that configured Twilio and never heard of this
+    key."""
+    from app.services import secret_manager
+    monkeypatch.setattr(secret_manager, "get_secret", _secrets(SMS_PROVIDER="twilio"))
+
+    result = _run(system._test_delivery("sms"))
+    # Reaches the Twilio branch and complains about credentials, rather than
+    # reporting texting as switched off.
+    assert "switched off" not in result["detail"]
+
+
+def test_the_dispatch_code_honours_it_too():
+    """The check and the sender have to agree, or the card is describing
+    something the worker does not do."""
+    import inspect
+
+    from app.tasks import service_requests
+
+    src = inspect.getsource(service_requests.configure_notifications)
+    assert "SMS_ENABLED" in src
+    assert "switched_off" in src
+
+
+def test_switched_off_is_reported_as_no_provider():
+    """`effective_provider_for` is what the badge and the daily sweep read."""
+    import asyncio as _asyncio
+
+    from app.services import secret_manager
+
+    async def run():
+        original = secret_manager.get_secret
+        secret_manager.get_secret = _secrets(SMS_PROVIDER="twilio", SMS_ENABLED="false")
+        try:
+            return await system.effective_provider_for("sms")
+        finally:
+            secret_manager.get_secret = original
+
+    assert _asyncio.run(run()) is None
