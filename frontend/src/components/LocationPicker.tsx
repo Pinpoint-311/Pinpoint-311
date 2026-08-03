@@ -47,9 +47,8 @@ interface LocationPickerProps {
 
 // The dropped pin and the cluster bubbles both come from src/maps/markerIcons,
 // which is the only place any map glyph is described. They used to be defined
-// here, and separately again in RequestDetailMap, ResidentMapView and
-// StaffDashboardMap -- four components, three cluster styles, three asset
-// markers, no two maps looking alike.
+// here, and separately again in RequestDetailMap and StaffDashboardMap -- three
+// cluster styles, three asset markers, no two maps looking alike.
 export default function LocationPicker({
     config,
     townshipBoundary,
