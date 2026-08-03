@@ -5,6 +5,10 @@
 
 # Dependencies
 node_modules/
+# Without this, a node_modules *symlink* is not ignored -- only the directory
+# form is. One `git add -A` committed such a link, and a later `git checkout -f`
+# then materialised it over the real install and deleted it.
+node_modules
 __pycache__/
 *.pyc
 .pytest_cache/
