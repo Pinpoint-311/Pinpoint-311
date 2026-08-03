@@ -102,3 +102,38 @@ def test_the_providers_that_reuse_credentials_do_not_ask_again():
     for provider in ("google", "aws", "local"):
         offered = {f["key"] for f in REDACTION_CATALOG[provider]["credential_fields"]}
         assert offered == {"REDACT_FACES", "REDACT_PLATES"}, (provider, offered)
+
+
+def test_a_reused_credential_is_still_declared_as_needed():
+    """Not asking for it is not the same as not needing it.
+
+    Because these two collected nothing but the optional blur toggles, the
+    "are all required fields stored" check found nothing required and reported
+    both detectors configured on a deployment with no Google and no AWS account
+    at all. `requires` says what the provider needs without drawing a box for
+    it, so the badge stops disagreeing with `image_redaction._usable`.
+    """
+    from app.services.delivery_providers import REDACTION_CATALOG
+
+    needed = {
+        provider: {r["key"] for r in REDACTION_CATALOG[provider].get("requires", [])}
+        for provider in ("google", "aws", "local")
+    }
+    assert needed["google"] == {"VERTEX_AI_SERVICE_ACCOUNT_KEY"}
+    assert needed["aws"] == {"AWS_REGION"}
+    # On-server detection genuinely needs nothing, and must not be given a
+    # requirement it cannot satisfy -- it is the fallback everything else
+    # degrades to.
+    assert needed["local"] == set()
+
+
+def test_a_borrowed_requirement_says_where_to_enter_it():
+    """There is no box for these on this card, so naming the credential without
+    naming the card it lives on is a dead end."""
+    from app.services.delivery_providers import _CATALOGS
+
+    for cap, catalog in _CATALOGS.items():
+        for provider, spec in catalog.items():
+            for req in spec.get("requires", []):
+                assert req.get("label"), f"{cap}/{provider}: {req['key']} has no label"
+                assert req.get("where"), f"{cap}/{provider}: {req['key']} does not say where"
