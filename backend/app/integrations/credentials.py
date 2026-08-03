@@ -70,6 +70,7 @@ async def store_credentials(platform: str, credentials: Dict[str, str]) -> Dict[
     from app.core.sanitize import sanitize_for_log
 
     wrote = False
+    written: list[str] = []
     for field, value in credentials.items():
         if is_reference(value):
             out[field] = value
@@ -88,16 +89,21 @@ async def store_credentials(platform: str, credentials: Dict[str, str]) -> Dict[
         if ok:
             out[field] = make_reference(name)  # vault of record — no raw in DB
             wrote = True
+            written.append(name)
         else:
             # No external vault (or transient failure): fall back to keeping the
             # value, which the model encrypts at rest in the DB column.
             out[field] = value
 
     if wrote:
-        try:
-            clear_cache()
-        except Exception:
-            pass
+        # Only the bundles these keys live in. This loop can span several, so it
+        # clears each rather than everything -- an integration save should not
+        # cost the next request a refetch of every other capability's secrets.
+        for name in written:
+            try:
+                clear_cache(key_name=name)
+            except Exception:
+                pass
     return out
 
 
