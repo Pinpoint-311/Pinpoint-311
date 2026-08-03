@@ -8,6 +8,7 @@ import {
     MarkerOptions,
     PopupHandle,
     boundsOfPoints,
+    CONTINENTAL_US_CENTER,
     createMap,
     el,
     MapProviderConfig,
@@ -285,7 +286,7 @@ export default function SpatialBiasHeatmap({
         if (!config) { setIsLoading(false); return; }
 
         createMap(container, config, {
-            center: defaultCenter || { lat: 40.3573, lng: -74.6672 },
+            center: defaultCenter || CONTINENTAL_US_CENTER,
             zoom: 13,
             controls: {
                 baseMapSwitcher: { enabled: true, position: 'top-left' },

@@ -973,34 +973,51 @@ def enforce_retention_policy():
 
     async def _enforce():
         from app.models import SystemSettings
-        from app.services.retention_scrub import REDACT, normalise_fields, normalise_mode
+        from app.services.retention_config import read_retention_config
         from app.services.retention_service import (
             get_records_for_archival,
             archive_record,
             get_retention_policy
         )
-        
+
         async with SessionLocal() as db:
             # Get retention settings
             settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
             settings = settings_result.scalar_one_or_none()
-            
-            if not settings:
-                logger.warning("[Retention] No system settings found, using defaults")
-                state_code = "NJ"
-                override_days = None
-                archive_mode = REDACT
-                scrub_fields = normalise_fields(None)
-            else:
-                # Instance-wide legal hold: freeze ALL purging until it is lifted.
-                if getattr(settings, "legal_hold", False):
-                    logger.info("[Retention] Legal hold is active — purge suspended, nothing archived")
-                    return {"status": "skipped_legal_hold", "archived": 0}
-                state_code = settings.retention_state_code or "NJ"
-                override_days = settings.retention_days_override
-                archive_mode = normalise_mode(settings.retention_mode)
-                scrub_fields = normalise_fields(getattr(settings, "retention_scrub_fields", None))
-            
+
+            # Instance-wide legal hold: freeze ALL purging until it is lifted.
+            if settings is not None and getattr(settings, "legal_hold", False):
+                logger.info("[Retention] Legal hold is active — purge suspended, nothing archived")
+                return {"status": "skipped_legal_hold", "archived": 0}
+
+            # No state, or a state nobody has confirmed, and the run stops here.
+            #
+            # This used to fall back to NJ, which meant a town in Texas quietly
+            # anonymised records on New Jersey's seven-year OPRA clock — four
+            # years before the Texas statute allows, with a nightly job
+            # reporting success. Guessing is the one thing this must not do:
+            # every wrong guess destroys resident data that cannot be restored,
+            # while stopping costs a town some records kept too long and leaves
+            # a warning on the console saying exactly why.
+            config = read_retention_config(settings)
+            if not config.configured:
+                # The console learns this from the proactive health check,
+                # which reads the same settings row live — nothing to record
+                # here, and nothing that can go stale between runs.
+                logger.warning("[Retention] Not configured (%s) — nothing archived. %s",
+                               config.reason, config.detail)
+                return {
+                    "status": "skipped_unconfigured",
+                    "archived": 0,
+                    "reason": config.reason,
+                    "message": config.detail,
+                }
+
+            state_code = config.state_code
+            override_days = config.override_days
+            archive_mode = config.mode
+            scrub_fields = config.scrub_fields
+
             policy = get_retention_policy(state_code)
             logger.info(f"[Retention] Enforcing policy: {policy['name']} ({policy['retention_years']} years)")
             

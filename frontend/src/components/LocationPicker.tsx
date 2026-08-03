@@ -16,6 +16,7 @@ import {
     locationPinIcon,
     chainGeocoders,
     createGeocoder,
+    CONTINENTAL_US_CENTER,
     createMap,
     extractFeatures,
     firstPolygonRings,
@@ -53,7 +54,7 @@ export default function LocationPicker({
     config,
     townshipBoundary,
     customLayers = [],
-    defaultCenter = { lat: 40.3573, lng: -74.6672 }, // Default to central NJ
+    defaultCenter = CONTINENTAL_US_CENTER,
     defaultZoom = 17,
     value,
     onChange,
