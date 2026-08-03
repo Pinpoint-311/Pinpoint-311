@@ -3,7 +3,6 @@ import { MapPin } from 'lucide-react';
 import { MapLayer } from '../services/api';
 import {
     GeoJsonLayerHandle,
-    MapProviderId,
     MapRenderer,
     MarkerHandle,
     PopupHandle,
@@ -11,7 +10,8 @@ import {
     createMap,
     locationPinIcon,
     el,
-    legacyMapProviderConfig,
+    MapProviderConfig,
+    hasMapCredential,
     popupRoot,
     propertyRows,
 } from '../maps';
@@ -29,9 +29,12 @@ interface RequestDetailMapProps {
     lng: number;
     matchedAsset?: MatchedAsset | null;
     mapLayers: MapLayer[];
-    apiKey: string;
-    /** Overrides the configured provider; defaults to the town's setting. */
-    provider?: MapProviderId;
+    /**
+     * The town's chosen provider and only that provider's credentials.
+     * Built once per page with resolveMapProviderConfig(); components must not
+     * assemble their own, which is how every map silently defaulted to Google.
+     */
+    config: MapProviderConfig;
 }
 
 export default function RequestDetailMap({
@@ -39,8 +42,7 @@ export default function RequestDetailMap({
     lng,
     matchedAsset,
     mapLayers,
-    apiKey,
-    provider,
+    config,
 }: RequestDetailMapProps) {
     const mapRef = useRef<HTMLDivElement>(null);
     const mapInstanceRef = useRef<MapRenderer | null>(null);
@@ -54,7 +56,7 @@ export default function RequestDetailMap({
 
     // Load the configured map provider and attach the map
     useEffect(() => {
-        if (!apiKey) {
+        if (!hasMapCredential(config)) {
             setIsLoading(false);
             return;
         }
@@ -66,7 +68,7 @@ export default function RequestDetailMap({
             try {
                 const map = await createMap(
                     mapRef.current,
-                    legacyMapProviderConfig(apiKey, null, provider),
+                    config,
                     {
                         center: { lat, lng },
                         zoom: 18,
@@ -108,7 +110,7 @@ export default function RequestDetailMap({
             mapInstanceRef.current?.destroy();
             mapInstanceRef.current = null;
         };
-    }, [apiKey, provider]);
+    }, [config.provider, config.apiKey, config.styleId]);
 
     // Update map when coordinates change
     useEffect(() => {
@@ -245,7 +247,7 @@ export default function RequestDetailMap({
         }
     }, [matchedAsset, mapLayers, mapReady]);
 
-    if (!apiKey) {
+    if (!hasMapCredential(config)) {
         return (
             <div className="h-full flex items-center justify-center bg-slate-900/50 rounded-lg border border-white/10">
                 <div className="text-center p-4">

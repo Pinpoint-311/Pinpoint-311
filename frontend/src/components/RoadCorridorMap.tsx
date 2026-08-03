@@ -13,7 +13,8 @@ import {
     boundsOfGeoJson,
     createMap,
     fractionAlongLine,
-    legacyMapProviderConfig,
+    MapProviderConfig,
+    hasMapCredential,
     pointAtFraction, subPathByFractions,
     puckIcon,
 } from '../maps';
@@ -49,7 +50,12 @@ interface RoadCorridorMapProps {
     onTrimsChange: (trims: Record<string, SegmentTrim>) => void;
     corridorMetres: number;
     onCorridorMetresChange: (metres: number) => void;
-    apiKey?: string | null;
+    /**
+     * The town's chosen provider and only that provider's credentials.
+     * Built once per page with resolveMapProviderConfig(); components must not
+     * assemble their own, which is how every map silently defaulted to Google.
+     */
+    config: MapProviderConfig;
 }
 
 const INCLUDED = '#f87171';
@@ -58,7 +64,7 @@ const EXCLUDED = '#64748b';
 export default function RoadCorridorMap({
     roads, townshipBoundary, excludedFeatureIds, onExcludedChange,
     trims, onTrimsChange,
-    corridorMetres, onCorridorMetresChange, apiKey,
+    corridorMetres, onCorridorMetresChange, config,
 }: RoadCorridorMapProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const rendererRef = useRef<MapRenderer | null>(null);
@@ -94,8 +100,7 @@ export default function RoadCorridorMap({
         let cancelled = false;
         let unsubscribeIdle: (() => void) | undefined;
         const container = containerRef.current;
-        const config = legacyMapProviderConfig(apiKey);
-        if (!container || !config) return;
+        if (!container || !hasMapCredential(config)) return;
 
         createMap(container, config, {
             center: (townshipBoundary as any)?.center ? (townshipBoundary as any).center : { lat: 40.7312, lng: -74.2734 },
@@ -148,7 +153,7 @@ export default function RoadCorridorMap({
             bufferLayerRef.current = null;
             centerlineLayerRef.current = null;
         };
-    }, [apiKey]);
+    }, [config.provider, config.apiKey, config.styleId]);
 
         const bufferStyleFor = useCallback((feature: GeoFeature): VectorStyle => {
         const id = String(feature.properties?.feature_id ?? "");

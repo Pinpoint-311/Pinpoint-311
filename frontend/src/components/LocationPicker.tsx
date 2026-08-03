@@ -6,7 +6,6 @@ import {
     AutocompleteHandle,
     GeocodingProvider,
     LatLng,
-    MapProviderId,
     MapRenderer,
     MarkerHandle,
     MarkerOptions,
@@ -21,15 +20,19 @@ import {
     extractFeatures,
     firstPolygonRings,
     isPointInGeoJson,
-    legacyMapProviderConfig,
+    MapProviderConfig,
+    hasMapCredential,
     el,
     popupRoot,
 } from '../maps';
 
 interface LocationPickerProps {
-    apiKey: string;
-    /** Overrides the configured provider; defaults to the town's setting. */
-    provider?: MapProviderId;
+    /**
+     * The town's chosen provider and only that provider's credentials.
+     * Built once per page with resolveMapProviderConfig(); components must not
+     * assemble their own, which is how every map silently defaulted to Google.
+     */
+    config: MapProviderConfig;
     townshipBoundary?: object | null; // GeoJSON boundary from OpenStreetMap
     customLayers?: MapLayer[]; // Custom GeoJSON layers (parks, storm drains, etc.)
     defaultCenter?: { lat: number; lng: number };
@@ -48,8 +51,7 @@ interface LocationPickerProps {
 // StaffDashboardMap -- four components, three cluster styles, three asset
 // markers, no two maps looking alike.
 export default function LocationPicker({
-    apiKey,
-    provider,
+    config,
     townshipBoundary,
     customLayers = [],
     defaultCenter = { lat: 40.3573, lng: -74.6672 }, // Default to central NJ
@@ -196,14 +198,13 @@ export default function LocationPicker({
 
     // Initialize the map
     useEffect(() => {
-        if (!apiKey) {
-            setError('Map API key is required');
+        if (!hasMapCredential(config)) {
+            setError('No map provider is configured yet.');
             setIsLoading(false);
             return;
         }
 
         let isMounted = true;
-        const providerConfig = legacyMapProviderConfig(apiKey, null, provider);
 
         const initMap = async () => {
             try {
@@ -222,7 +223,7 @@ export default function LocationPicker({
                     mapCenter = { lat: value.lat, lng: value.lng };
                 }
 
-                const map = await createMap(mapContainerRef.current, providerConfig, {
+                const map = await createMap(mapContainerRef.current, config, {
                     center: mapCenter,
                     zoom: defaultZoom,
                     baseMapType: 'hybrid', // Satellite with labels
@@ -246,7 +247,7 @@ export default function LocationPicker({
 
                 geocoderRef.current = chainGeocoders(
                     backendGeocodingProvider,
-                    await createGeocoder(providerConfig),
+                    await createGeocoder(config),
                 );
 
                 // Add township boundary overlay if GeoJSON is provided
@@ -472,7 +473,7 @@ export default function LocationPicker({
             mapRef.current?.destroy();
             mapRef.current = null;
         };
-    }, [apiKey, provider]); // Only re-init when the provider changes, not on every value change
+    }, [config.provider, config.apiKey, config.styleId]); // Only re-init when the provider or its credentials change
 
     // Update marker position when value changes from parent
     useEffect(() => {
