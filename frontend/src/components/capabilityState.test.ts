@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import { capabilityState, healthIsAboutCurrentProvider, providerLabel } from './ServiceProviders';
+import type { ProviderInfo } from '../services/api';
 
 /**
  * Which of the two questions a badge is answering.
@@ -205,5 +206,46 @@ describe('providerLabel', () => {
 
     it('has something to say when no provider was recorded', () => {
         expect(providerLabel(null, null)).toBe('the previous provider');
+    });
+});
+
+describe('what a card says it needs but does not ask for', () => {
+    /* The backend declares two things no per-field flag can say -- `requires`
+     * (a credential collected on another card) and `requires_any` (alternative
+     * sets, any one of which is enough) -- and the frontend types modelled
+     * neither, so both were dropped on arrival.
+     *
+     * The visible consequence: photo redaction on Google shows two blur
+     * toggles, both optional, and a badge saying "Not set up", because the
+     * service account it needs is entered on the AI card. A finished-looking
+     * form and an unfinished badge, with nothing on screen connecting them. */
+
+    it('carries the borrowed credential through the type', () => {
+        const info: ProviderInfo = {
+            provider: 'google', name: 'Google Cloud Vision', credential_fields: [],
+            requires: [{ key: 'VERTEX_AI_SERVICE_ACCOUNT_KEY', label: 'Google service account', where: 'the AI card' }],
+        };
+        expect(info.requires?.[0].where).toBe('the AI card');
+    });
+
+    it('carries the alternative sets through the type', () => {
+        const info: ProviderInfo = {
+            provider: 'azure', name: 'Azure AI Vision', credential_fields: [],
+            requires_any: [['AZURE_FACE_ENDPOINT', 'AZURE_FACE_KEY'], ['AZURE_VISION_ENDPOINT', 'AZURE_VISION_KEY']],
+        };
+        expect(info.requires_any).toHaveLength(2);
+    });
+
+    it('models which fields are required, which the form draws a marker from', () => {
+        // Sent on every field all along and not modelled, so a box the provider
+        // cannot work without and a genuinely optional one looked identical.
+        const info: ProviderInfo = {
+            provider: 'smtp', name: 'SMTP',
+            credential_fields: [
+                { key: 'SMTP_HOST', label: 'SMTP host', required: true },
+                { key: 'SMTP_PORT', label: 'Port', required: false },
+            ],
+        };
+        expect(info.credential_fields.filter(f => f.required)).toHaveLength(1);
     });
 });

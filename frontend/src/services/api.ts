@@ -103,6 +103,22 @@ export interface ProviderFieldSpec {
     key: string;
     label: string;
     secret?: boolean;
+    /** Whether the provider cannot work without it. The backend has sent this
+     *  on every field all along and the type did not model it, so the form drew
+     *  a required box and an optional one identically — the only hint a clerk
+     *  got was prose inside the label. */
+    required?: boolean;
+}
+
+/** A credential this provider needs but does not collect, because another card
+ *  already does. Photo redaction on Google and AWS runs on the service account
+ *  and access keys entered elsewhere; asking twice would be two boxes writing
+ *  one secret. `where` names the card to go to — without it the card says "not
+ *  set up" and offers nothing to do about it. */
+export interface BorrowedRequirement {
+    key: string;
+    label: string;
+    where?: string;
 }
 
 export interface ProviderModelSpec {
@@ -120,6 +136,13 @@ export interface ProviderInfo {
     default_model?: string;
     credential_fields: ProviderFieldSpec[];
     field_help?: Record<string, string>;
+    /** Credentials needed but collected on another card. */
+    requires?: BorrowedRequirement[];
+    /** Alternative sets of `credential_fields`, any one of which is enough.
+     *  Azure photo redaction needs an AI Face resource for faces or an AI
+     *  Vision resource for plates, and either alone is a working setup — which
+     *  no per-field flag can say. */
+    requires_any?: string[][];
     models_source?: 'live' | 'curated';
     models_fetched_at?: number | null;  // epoch seconds
 }

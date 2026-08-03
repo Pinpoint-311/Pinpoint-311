@@ -1,4 +1,4 @@
-import { CheckCircle, AlertCircle, ShieldCheck } from 'lucide-react';
+import { CheckCircle, AlertCircle, Info, ShieldCheck } from 'lucide-react';
 
 import SecretField from './SecretField';
 import { claimedFields, stepsFor } from './setupSteps';
@@ -82,6 +82,14 @@ export default function ProviderCredentialSteps({
                 key={f.key}
                 label={f.label}
                 secret={f.secret}
+                /* The backend has declared this per field all along and nothing
+                 * passed it on, so a box the provider cannot work without and
+                 * one that is genuinely optional were drawn identically. The
+                 * only signal was prose inside the label, which is why the
+                 * older catalogs encode optionality by ending the label with
+                 * "(optional)" — a convention that exists because this marker
+                 * was not being shown. */
+                required={f.required}
                 value={values[f.key] || ''}
                 onChange={(v) => onChange(f.key, v)}
                 placeholder={`Enter ${f.label.toLowerCase()}`}
@@ -95,8 +103,52 @@ export default function ProviderCredentialSteps({
     const claimed = claimedFields(steps);
     const leftover = active.credential_fields.filter(f => !claimed.has(f.key));
 
+    /* What this provider needs and this card does not ask for.
+     *
+     * The backend declares both of these and nothing rendered either, so a card
+     * could sit on "Not set up" with no box to fill in and no explanation.
+     * Photo redaction on Google is the case: two blur toggles, both optional,
+     * and a service account it needs and does not collect because the AI card
+     * already does. The clerk sees a finished-looking form and an unfinished
+     * badge.
+     *
+     * Only drawn when it is actually unmet. On a set-up provider this is noise
+     * about a decision somebody already made correctly. */
+    const borrowed = alreadySet ? [] : (active.requires ?? []);
+    const alternatives = alreadySet ? [] : (active.requires_any ?? []);
+    const labelFor = (key: string) =>
+        active.credential_fields.find(f => f.key === key)?.label ?? key;
+
     return (
         <div>
+            {(borrowed.length > 0 || alternatives.length > 0) && (
+                <div className="mb-4 rounded-xl border border-white/15 bg-white/[0.04] px-3 py-2.5">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-white/45 mb-1.5">
+                        Also needed
+                    </p>
+                    {borrowed.map(r => (
+                        <p key={r.key} className="text-xs text-white/70 flex items-start gap-1.5 mt-1 first:mt-0">
+                            <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary-300/70" aria-hidden="true" />
+                            <span>
+                                <span className="font-medium text-white/85">{r.label}</span>
+                                {r.where ? <> — entered on {r.where}, not here, so one credential does not end up in two boxes.</> : null}
+                            </span>
+                        </p>
+                    ))}
+                    {alternatives.length > 0 && (
+                        <p className="text-xs text-white/70 flex items-start gap-1.5 mt-1">
+                            <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary-300/70" aria-hidden="true" />
+                            {/* Either pair is a working setup, so "fill everything
+                                in" would be wrong and "these are all optional" is
+                                what the empty card already looked like. */}
+                            <span>
+                                One of these sets, not all of them:{' '}
+                                {alternatives.map(group => group.map(labelFor).join(' + ')).join(', or ')}.
+                            </span>
+                        </p>
+                    )}
+                </div>
+            )}
             {steps.map((st, i) => (
                 <div key={i} className={compact ? 'mb-3' : 'mb-4'}>
                     <div className="flex gap-3">
