@@ -2171,7 +2171,7 @@ export default function StaffDashboard() {
                                                     comments={comments}
                                                     townshipName={settings?.township_name}
                                                     logoUrl={settings?.logo_url || undefined}
-                                                    mapsApiKey={mapsConfig?.google_maps_api_key}
+                                                    config={mapConfig}
                                                 />
                                             </div>
                                         </div>

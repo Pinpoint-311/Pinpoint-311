@@ -17,6 +17,8 @@ export {
 } from './config';
 export type { RawMapsConfig } from './config';
 export { backendGeocodingProvider } from './providers/backend';
+export { mapSnapshot } from './staticMap';
+export type { MapSnapshot, MapSnapshotRequest } from './staticMap';
 export {
     assetIcon,
     requestIcon,
