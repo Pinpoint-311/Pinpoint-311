@@ -975,7 +975,14 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 })()}
 
                 {/* Credential/config fields */}
-                {active && (active?.credential_fields || []).length > 0 && (() => {
+                {/* Also when the provider collects nothing but needs something.
+                    Gating on credential_fields alone meant a provider whose
+                    credentials all live on another card -- the secret store,
+                    every one of whose providers collects nothing -- skipped this
+                    block entirely, so "Not set up" appeared with no box and no
+                    reason. */}
+                {active && ((active?.credential_fields || []).length > 0
+                    || (active?.requires || []).length > 0) && (() => {
                     const alreadySet = !!(catalog.configured?.[selected] && selected === catalog.current_provider);
 
                     /* Steps own the boxes they produce, so each instruction is
