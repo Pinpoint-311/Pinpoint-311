@@ -342,16 +342,22 @@ boundary_service: Optional[BoundaryService] = None
 
 
 def get_geocoding_service(google_api_key: Optional[str] = None) -> GeocodingService:
-    """Get or create geocoding service instance"""
-    global geocoding_service
-    if geocoding_service is None:
-        geocoding_service = GeocodingService(google_api_key)
-    return geocoding_service
+    """A geocoding service for this call.
+
+    Deliberately not cached. The previous version memoised the instance on first
+    use, which meant it also memoised the API key it was built with: a town that
+    changed its Maps key kept geocoding with the old one until somebody restarted
+    the backend, and the symptom was a credential that tested fine and still
+    failed. The object holds a key and two URLs, so rebuilding it costs nothing.
+    """
+    return GeocodingService(google_api_key)
 
 
 def get_boundary_service(google_api_key: Optional[str] = None) -> BoundaryService:
-    """Get or create boundary service instance"""
-    global boundary_service
-    if boundary_service is None:
-        boundary_service = BoundaryService(google_api_key)
-    return boundary_service
+    """A boundary service for this call.
+
+    `google_api_key` is accepted for callers that still pass one and is unused:
+    this class is pure geometry -- bounds, point-in-polygon -- and never was a
+    Maps client. Not cached, for the same reason as above.
+    """
+    return BoundaryService(google_api_key)
