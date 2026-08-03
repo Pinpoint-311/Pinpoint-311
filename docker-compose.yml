@@ -180,7 +180,9 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: [ "CMD", "celery", "-A", "app.core.celery_app", "inspect", "ping", "-d", "celery@$$HOSTNAME" ]
+      # Shell form, so $$HOSTNAME expands inside the container. In exec form it
+      # is passed through literally and the ping never finds a node to answer.
+      test: [ "CMD-SHELL", "celery -A app.core.celery_app inspect ping -d celery@$$HOSTNAME" ]
       interval: 60s
       timeout: 10s
       retries: 3
