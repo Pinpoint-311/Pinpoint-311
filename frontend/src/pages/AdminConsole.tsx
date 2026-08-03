@@ -890,7 +890,12 @@ export default function AdminConsole() {
     });
     // Nominatim search state for polygon boundaries
     const [nominatimSearch, setNominatimSearch] = useState('');
-    const [nominatimResults, setNominatimResults] = useState<{ display_name: string; osm_id: number; osm_type: string }[]>([]);
+    // Shaped by /gis/osm/search, which already filters to OSM relations and
+    // attaches each boundary's geometry. There is no osm_type here because the
+    // backend only returns relations -- a township boundary is always one.
+    const [nominatimResults, setNominatimResults] = useState<{
+        display_name: string; osm_id: number; geojson?: object;
+    }[]>([]);
     const [isSearchingNominatim, setIsSearchingNominatim] = useState(false);
 
 
@@ -5188,11 +5193,12 @@ export default function AdminConsole() {
                                                     // Trigger search
                                                     if (nominatimSearch.trim()) {
                                                         setIsSearchingNominatim(true);
-                                                        fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(nominatimSearch)}&format=json&polygon_geojson=0&limit=10`)
-                                                            .then(res => res.json())
-                                                            .then(results => {
-                                                                setNominatimResults(results.filter((r: any) => r.osm_type === 'way' || r.osm_type === 'relation'));
-                                                            })
+                                                        // Through our own backend, not the browser.
+                                                        // A direct call is refused by the
+                                                        // Content-Security-Policy, and cannot set the
+                                                        // User-Agent Nominatim's usage policy requires.
+                                                        api.searchOsmTownship(nominatimSearch)
+                                                            .then(({ results }) => setNominatimResults(results))
                                                             .catch(console.error)
                                                             .finally(() => setIsSearchingNominatim(false));
                                                     }
@@ -5206,11 +5212,8 @@ export default function AdminConsole() {
                                             onClick={() => {
                                                 if (nominatimSearch.trim()) {
                                                     setIsSearchingNominatim(true);
-                                                    fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(nominatimSearch)}&format=json&polygon_geojson=0&limit=10`)
-                                                        .then(res => res.json())
-                                                        .then(results => {
-                                                            setNominatimResults(results.filter((r: any) => r.osm_type === 'way' || r.osm_type === 'relation'));
-                                                        })
+                                                    api.searchOsmTownship(nominatimSearch)
+                                                        .then(({ results }) => setNominatimResults(results))
                                                         .catch(console.error)
                                                         .finally(() => setIsSearchingNominatim(false));
                                                 }
@@ -5232,11 +5235,12 @@ export default function AdminConsole() {
                                                         // Fetch the actual boundary GeoJSON
                                                         setIsSearchingNominatim(true);
                                                         try {
-                                                            const osmType = result.osm_type === 'way' ? 'W' : 'R';
-                                                            const response = await fetch(
-                                                                `https://nominatim.openstreetmap.org/details?osmtype=${osmType}&osmid=${result.osm_id}&format=json&polygon_geojson=1`
-                                                            );
-                                                            const details = await response.json();
+                                                            // No second lookup: /gis/osm/search asks
+                                                            // Nominatim for polygon_geojson and hands the
+                                                            // geometry back with the result. The old
+                                                            // /details call was a browser request to
+                                                            // Nominatim, which the CSP refuses anyway.
+                                                            const details = { geometry: (result as { geojson?: object }).geojson };
                                                             if (details.geometry) {
                                                                 const geojson = {
                                                                     type: 'Feature',
