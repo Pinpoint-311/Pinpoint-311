@@ -12,6 +12,7 @@ import {
     PopupHandle,
     boundsOfGeoJson,
     assetIcon,
+    CONTINENTAL_US_CENTER,
     clusterStyle,
     createMap,
     extractFeatures,
@@ -73,7 +74,7 @@ export default function StaffDashboardMap({
     mapLayers,
     operationalFilters = false,
     townshipBoundary,
-    defaultCenter = { lat: 40.3573, lng: -74.6672 },
+    defaultCenter = CONTINENTAL_US_CENTER,
     defaultZoom = 14,
     onRequestSelect,
 }: StaffDashboardMapProps) {

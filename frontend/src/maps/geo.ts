@@ -11,6 +11,23 @@ import { GeoFeature, GeometryType, LatLng, LatLngBounds } from './types';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+/**
+ * Where a map points when nothing better is known.
+ *
+ * Five components each carried `{ lat: 40.3573, lng: -74.6672 }` commented
+ * "central NJ", and one carried Newark. On a town in Oregon that is not a
+ * default, it is a wrong answer rendered confidently: the map opens three
+ * thousand miles away and a resident's first pin drop starts there.
+ *
+ * The real centre comes from the town's boundary — `default_center` on the maps
+ * config is derived from it server-side, and `boundsOfGeoJson` fits to it once
+ * the boundary loads. This is only for the gap before either exists, so it is
+ * the middle of the contiguous states at a zoom that shows all of them:
+ * obviously provisional rather than plausibly wrong.
+ */
+export const CONTINENTAL_US_CENTER: LatLng = { lat: 39.8283, lng: -98.5795 };
+export const CONTINENTAL_US_ZOOM = 4;
+
 export class BoundsBuilder {
     private south = Infinity;
     private west = Infinity;

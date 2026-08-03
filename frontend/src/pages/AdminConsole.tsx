@@ -902,14 +902,26 @@ export default function AdminConsole() {
         source: string;
         public_records_law: string;
     }>>([]);
-    const [retentionPolicy, setRetentionPolicy] = useState<{
-        state_code: string;
-        policy: { name: string; retention_days: number; retention_years: number; source: string; public_records_law: string };
-        override_days: number | null;
-        effective_days: number;
-        mode: 'redact' | 'purge';
-        stats: { eligible_for_archival: number; under_legal_hold: number; already_archived: number; cutoff_date: string };
-    } | null>(null);
+    /* The server's type, not a second copy of it. The local shape declared
+       `policy` and `stats` as always present, which is exactly what stopped
+       being true: a town that has not confirmed its state has no retention
+       period and no statute, and the screen must say so rather than render
+       whatever the old NJ default filled in. */
+    const [retentionPolicy, setRetentionPolicy] =
+        useState<import('../services/api').RetentionPolicyConfig | null>(null);
+    /* The policy when there actually is one, with the pieces the "Current
+       Policy" panel needs proven present rather than assumed. The panel states
+       a statute, a period and a count of records due for destruction — none of
+       which exist until a state is confirmed, and all of which the screen used
+       to show anyway because the server filled them in from NJ. */
+    const activeRetention = (retentionPolicy?.configured && retentionPolicy.policy && retentionPolicy.stats)
+        ? {
+            ...retentionPolicy,
+            policy: retentionPolicy.policy,
+            stats: retentionPolicy.stats,
+            effective_days: retentionPolicy.effective_days ?? retentionPolicy.policy.retention_days,
+        }
+        : null;
     const [selectedStateCode, setSelectedStateCode] = useState<string>('');
     const [selectedMode, setSelectedMode] = useState<'redact' | 'purge'>('redact');
     /* The records the next run would touch. Loaded on demand: it is a real
@@ -1080,7 +1092,12 @@ export default function AdminConsole() {
                         ]);
                         setRetentionStates(states);
                         setRetentionPolicy(policy);
-                        setSelectedStateCode(policy.state_code);
+                        /* Pre-select whatever is stored, confirmed or not. An
+                           unconfirmed state is still the best guess at the
+                           answer — the town may well be in New Jersey — and the
+                           question being asked is "is this right?", which is
+                           easier to answer with the dropdown already on it. */
+                        setSelectedStateCode(policy.state_code || policy.unconfirmed_state_code || '');
                         setSelectedMode(policy.mode === 'purge' ? 'purge' : 'redact');
                         setScrubFields(policy.scrub_fields || null);
                         // Reflect the saved override in the input (was always blank before)
@@ -2894,11 +2911,56 @@ export default function AdminConsole() {
                                     <p className="text-white/60">Configure state-mandated record retention policies</p>
                                 </motion.div>
 
+                                {/* Nothing is running, and this is the only place that says so.
+                                    The state code used to default to New Jersey, so this tab
+                                    confidently headlined "OPRA · 7 years" at towns that had
+                                    never chosen either — and the nightly job anonymised their
+                                    records on that schedule. Retention now waits for an
+                                    answer, which is safe but silent, so the silence has to be
+                                    visible. */}
+                                {retentionPolicy && !retentionPolicy.configured && (
+                                    <motion.div
+                                        initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+                                        role="status"
+                                        className="rounded-xl border border-amber-400/40 bg-amber-500/10 p-5"
+                                    >
+                                        <div className="flex gap-3 items-start">
+                                            <AlertTriangle className="w-5 h-5 text-amber-300 flex-shrink-0 mt-0.5" aria-hidden="true" />
+                                            <div className="space-y-2">
+                                                <h3 className="text-white font-semibold">
+                                                    No retention schedule is in force
+                                                </h3>
+                                                <p className="text-white/75 text-sm leading-relaxed">
+                                                    {retentionPolicy.detail}
+                                                </p>
+                                                {retentionPolicy.unconfirmed_state_code && (
+                                                    <p className="text-white/60 text-sm leading-relaxed">
+                                                        This instance was shipped set to{' '}
+                                                        <strong className="text-white/80">
+                                                            {retentionStates.find(s => s.code === retentionPolicy.unconfirmed_state_code)?.name
+                                                                || retentionPolicy.unconfirmed_state_code}
+                                                        </strong>
+                                                        , which is a default rather than a choice anyone here made.
+                                                        If it is right, confirm it below and retention resumes on that
+                                                        schedule. If it is not, pick the correct state — records were
+                                                        never archived on the wrong one, because nothing has run.
+                                                    </p>
+                                                )}
+                                                <p className="text-white/50 text-sm">
+                                                    Nothing has been deleted or redacted in the meantime. Closed
+                                                    records are all still here, including any that are past the date
+                                                    your published policy gives.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </motion.div>
+                                )}
+
                                 {/* Current Policy Status */}
-                                {retentionPolicy && (
+                                {activeRetention && (
                                     <AccordionSection
-                                        title={`Current Policy: ${retentionPolicy.policy.public_records_law}`}
-                                        subtitle={`${retentionPolicy.policy.name} • ${formatYears(retentionPolicy.effective_days)} retention${retentionPolicy.override_days ? ' (custom override)' : ''} • ${retentionPolicy.mode === 'purge' ? 'Purge mode' : 'Redact mode'}`}
+                                        title={`Current Policy: ${activeRetention.policy.public_records_law}`}
+                                        subtitle={`${activeRetention.policy.name} • ${formatYears(activeRetention.effective_days)} retention${activeRetention.override_days ? ' (custom override)' : ''} • ${activeRetention.mode === 'purge' ? 'Purge mode' : 'Redact mode'}`}
                                         icon={Shield}
                                         iconClassName="text-green-400"
                                         badge={<Badge variant="success">Active</Badge>}
@@ -2907,23 +2969,23 @@ export default function AdminConsole() {
                                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                                             <div className="bg-white/5 rounded-lg p-4">
                                                 <div className="text-white/60 text-sm">Public Records Law</div>
-                                                <div className="text-2xl font-bold text-white">{retentionPolicy.policy.public_records_law}</div>
-                                                <div className="text-white/40 text-sm">{retentionPolicy.policy.name} ({retentionPolicy.state_code})</div>
+                                                <div className="text-2xl font-bold text-white">{activeRetention.policy.public_records_law}</div>
+                                                <div className="text-white/40 text-sm">{activeRetention.policy.name} ({activeRetention.state_code})</div>
                                             </div>
                                             <div className="bg-white/5 rounded-lg p-4">
                                                 <div className="text-white/60 text-sm">Retention Period</div>
-                                                <div className="text-2xl font-bold text-amber-400">{formatYears(retentionPolicy.effective_days)}</div>
+                                                <div className="text-2xl font-bold text-amber-400">{formatYears(activeRetention.effective_days)}</div>
                                                 <div className="text-white/40 text-sm">
-                                                    {retentionPolicy.effective_days.toLocaleString()} days
-                                                    {retentionPolicy.override_days
-                                                        ? ` • custom (state minimum ${retentionPolicy.policy.retention_years} yrs)`
+                                                    {activeRetention.effective_days.toLocaleString()} days
+                                                    {activeRetention.override_days
+                                                        ? ` • custom (state minimum ${activeRetention.policy.retention_years} yrs)`
                                                         : ' • state default'}
                                                 </div>
                                             </div>
                                             <div className="bg-white/5 rounded-lg p-4">
                                                 <div className="text-white/60 text-sm">Mode</div>
-                                                <div className="text-2xl font-bold text-white capitalize">{retentionPolicy.mode}</div>
-                                                <div className="text-white/40 text-sm">{retentionPolicy.mode === 'purge' ? 'Every field cleared, row kept' : 'Chosen fields cleared, row kept'}</div>
+                                                <div className="text-2xl font-bold text-white capitalize">{activeRetention.mode}</div>
+                                                <div className="text-white/40 text-sm">{activeRetention.mode === 'purge' ? 'Every field cleared, row kept' : 'Chosen fields cleared, row kept'}</div>
                                             </div>
                                         </div>
 
@@ -2934,7 +2996,7 @@ export default function AdminConsole() {
                                                 className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4 text-left hover:bg-blue-500/20 hover:border-blue-500/50 transition-all cursor-pointer"
                                             >
                                                 <div className="text-blue-300 text-sm">Eligible for Archival</div>
-                                                <div className="text-2xl font-bold text-blue-300">{retentionPolicy.stats.eligible_for_archival}</div>
+                                                <div className="text-2xl font-bold text-blue-300">{activeRetention.stats.eligible_for_archival}</div>
                                                 <div className="text-blue-200 text-xs mt-1">Click to view →</div>
                                             </button>
                                             <button
@@ -2953,16 +3015,16 @@ export default function AdminConsole() {
                                                 className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 text-left hover:bg-amber-500/20 hover:border-amber-500/50 transition-all cursor-pointer"
                                             >
                                                 <div className="text-amber-400 text-sm">Under Legal Hold</div>
-                                                <div className="text-2xl font-bold text-amber-400">{retentionPolicy.stats.under_legal_hold}</div>
+                                                <div className="text-2xl font-bold text-amber-400">{activeRetention.stats.under_legal_hold}</div>
                                                 <div className="text-amber-300 text-xs mt-1">Click to view →</div>
                                             </button>
                                             <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
                                                 <div className="text-green-400 text-sm">Already Archived</div>
-                                                <div className="text-2xl font-bold text-green-400">{retentionPolicy.stats.already_archived}</div>
+                                                <div className="text-2xl font-bold text-green-400">{activeRetention.stats.already_archived}</div>
                                             </div>
                                         </div>
                                         <p className="text-white/40 text-sm mt-4">
-                                            Source: {retentionPolicy.policy.source}
+                                            Source: {activeRetention.policy.source}
                                         </p>
                                     </AccordionSection>
                                 )}
@@ -3236,6 +3298,19 @@ export default function AdminConsole() {
                                                     });
                                                     return;
                                                 }
+                                                /* Before the "nothing is due" branch below, which would
+                                                   otherwise report an empty run as a quiet success —
+                                                   "no records have passed the null-day retention
+                                                   period" is not the reason nothing would happen. */
+                                                if (plan.blocked === 'unconfigured') {
+                                                    await dialog.alert({
+                                                        title: 'No retention schedule is set',
+                                                        message: plan.detail
+                                                            || 'Confirm which state this town is in before running retention. Until then there is no retention period to measure records against.',
+                                                        variant: 'warning',
+                                                    });
+                                                    return;
+                                                }
                                                 if (!plan.eligible) {
                                                     await dialog.alert({
                                                         title: 'Nothing is due yet',
@@ -3482,6 +3557,14 @@ export default function AdminConsole() {
                                                 <p className="p-4 text-sm text-amber-200">
                                                     The instance-wide legal hold is on, so nothing is eligible. Lift it
                                                     first if this run is meant to happen.
+                                                </p>
+                                            ) : retentionPreview.blocked === 'unconfigured' ? (
+                                                /* Not "nothing is eligible". Nothing has been *measured* —
+                                                   there is no retention period until a state is confirmed,
+                                                   and every closed record is still here regardless of age. */
+                                                <p className="p-4 text-sm text-amber-200">
+                                                    {retentionPreview.detail
+                                                        || 'No state is confirmed, so there is no retention period to measure records against and nothing can run.'}
                                                 </p>
                                             ) : !retentionPreview.summary || retentionPreview.summary.total === 0 ? (
                                                 <p className="p-4 text-sm text-white/70">

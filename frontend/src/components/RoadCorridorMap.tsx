@@ -11,6 +11,7 @@ import {
     MarkerLayer,
     VectorStyle,
     boundsOfGeoJson,
+    CONTINENTAL_US_CENTER,
     createMap,
     fractionAlongLine,
     MapProviderConfig,
@@ -103,7 +104,7 @@ export default function RoadCorridorMap({
         if (!container || !hasMapCredential(config)) return;
 
         createMap(container, config, {
-            center: (townshipBoundary as any)?.center ? (townshipBoundary as any).center : { lat: 40.7312, lng: -74.2734 },
+            center: (townshipBoundary as any)?.center ? (townshipBoundary as any).center : CONTINENTAL_US_CENTER,
             zoom: 13,
             controls: { zoom: { enabled: true }, fullscreen: { enabled: true } },
         })
