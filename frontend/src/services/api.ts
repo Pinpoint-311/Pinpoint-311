@@ -1751,10 +1751,21 @@ export interface HealthSummary {
 /** An identity attached to the compute by the cloud itself. When present, the
  *  listed keys need no value — and leaving them empty is the better answer, not
  *  merely an allowed one. */
-/** Per capability: the provider in use, and which providers are set up. */
+/** Per capability: the provider in use, and which providers are set up.
+ *
+ *  `current_provider` is what dispatch resolves, not what is stored — photo
+ *  redaction infers its detector from the moderation and AI settings, so a
+ *  blank secret there does not mean no detector.
+ *
+ *  `ready` is the whole question the setup checklist asks: does the provider
+ *  this capability is actually on have what it needs. Computed on the server so
+ *  there is one answer. The page used to work it out from hard-coded secret
+ *  names ORed across providers and disagreed with this endpoint in both
+ *  directions. */
 export type ProviderStatusMap = Record<string, {
     current_provider: string | null;
     configured: Record<string, boolean>;
+    ready: boolean;
 }>;
 
 export interface CloudIdentity {

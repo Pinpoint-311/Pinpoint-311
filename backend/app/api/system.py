@@ -199,22 +199,83 @@ async def providers_for(capability: str) -> List[Dict[str, Any]]:
     return getattr(__import__(module, fromlist=[name]), name)()
 
 
-async def capability_is_configured(capability: str) -> bool:
-    """Whether the provider currently selected for this capability has its
-    credentials stored.
+# What each capability falls back to when its selection secret is empty. These
+# are not guesses: each one is the default the dispatch code itself applies, and
+# each was already hard-coded in that capability's catalog endpoint. Gathered
+# here so "which provider is this town on" has one answer instead of nine.
+_CAPABILITY_DEFAULT_PROVIDER = {
+    "ai": "vertex",
+    "translation": "google",
+    "identity": "auth0",
+}
 
-    Used to decide what the daily sweep bothers testing. A town that has not set
-    up text messages has not made a mistake, and testing it would write a
-    failure that shows an amber badge on something deliberately switched off --
-    which is the noise that teaches people to ignore badges.
+# Values that mean "switched off" wherever a provider is selected.
+_OFF_VALUES = ("none", "off", "disabled")
+
+
+async def effective_provider_for(capability: str) -> Optional[str]:
+    """The provider this capability is actually running on right now.
+
+    Not the stored secret. An empty `REDACTION_PROVIDER` does not mean no
+    detector: `resolve_provider()` falls through to the moderation provider and
+    then to the AI provider, and lands on on-server detection if neither says
+    anything -- so on a town running Vertex, photo redaction is Google Cloud
+    Vision and the secret is blank. Reading the raw value answered "nothing",
+    and both the card and the setup checklist repeated it about a detector that
+    was actively blurring faces.
+
+    Every other capability has the milder version of the same gap: a blank
+    secret means the dispatch default, which each catalog endpoint knew and
+    nothing else did.
+
+    Returns None only where "off" is a real state a town has chosen.
     """
     from app.services.secret_manager import get_secret
 
     select_key = _PROVIDER_SELECT_KEY.get(capability)
     if not select_key:
-        return False
-    current = ((await get_secret(select_key)) or "").strip().lower()
-    if not current or current in ("none", "off", "disabled"):
+        return None
+
+    if capability == "redaction":
+        # The one capability whose selection is inferred rather than stored.
+        from app.services import image_redaction
+
+        return await image_redaction.resolve_provider()
+
+    raw = ((await get_secret(select_key)) or "").strip().lower()
+
+    if capability in ("email", "sms", "kms"):
+        from app.services.delivery_providers import normalize_provider
+
+        resolved = normalize_provider(capability, raw)
+        return None if resolved in _OFF_VALUES else resolved
+
+    if capability == "maps":
+        from app.services.map_provider import normalize_provider as normalize_map
+
+        return normalize_map(raw)
+
+    if raw in _OFF_VALUES:
+        return None
+    return raw or _CAPABILITY_DEFAULT_PROVIDER.get(capability)
+
+
+async def capability_is_configured(capability: str) -> bool:
+    """Whether the provider currently selected for this capability has its
+    credentials stored.
+
+    Used to decide what the daily sweep bothers testing, and it is the single
+    answer the setup page's checklist now reads. A town that has not set up text
+    messages has not made a mistake, and testing it would write a failure that
+    shows an amber badge on something deliberately switched off -- which is the
+    noise that teaches people to ignore badges.
+
+    "Selected" means what dispatch resolves, not what is stored. Asking the raw
+    secret meant photo redaction -- whose selection is inferred -- was reported
+    as unconfigured on a deployment where it was blurring every photo.
+    """
+    current = await effective_provider_for(capability)
+    if not current:
         return False
     providers = await providers_for(capability)
     return (await _configured_map(providers)).get(current, False)
@@ -588,7 +649,13 @@ async def get_capability_catalog(
     from app.services.delivery_providers import _DEFAULTS
     from app.services import connector_health
 
-    current = normalize_provider(capability, await get_secret(_PROVIDER_SELECT_KEY[capability]))
+    # What is running, not what is stored. `normalize_provider` alone answered
+    # "on this server (no cloud)" for photo redaction on a deployment where
+    # `resolve_provider()` had settled on Google Cloud Vision and was using it
+    # -- the card named one detector and a different one did the work.
+    current = await effective_provider_for(capability) or normalize_provider(
+        capability, await get_secret(_PROVIDER_SELECT_KEY[capability])
+    )
     providers = catalog_for_api(capability)
     health_map = await connector_health.snapshot(db)
     h = health_map.get(capability)
@@ -1507,19 +1574,33 @@ async def get_provider_status(_: User = Depends(get_current_admin)):
     was present -- so a town that had set up Google Maps and then switched to
     Esri saw a green tick against a provider with no credentials at all, and the
     guide skipped straight past the thing it most needed to ask for.
+
+    `ready` is that judgement made once, here, rather than eight times in the
+    browser. The page had been recomputing it from hard-coded secret names ORed
+    across providers, which disagreed with this endpoint in both directions:
+    photo redaction and PII encryption were reported as not set up while both
+    were demonstrably running, and `AWS_REGION` -- shared by SES, SNS, Bedrock,
+    AWS KMS and AWS Translate -- would have marked AI and translation as set up
+    the moment a town configured email.
     """
     from app.core.sanitize import sanitize_for_log
-    from app.services.secret_manager import get_secret
 
     out: Dict[str, Any] = {}
-    for capability, select_key in _PROVIDER_SELECT_KEY.items():
+    for capability in _PROVIDER_SELECT_KEY:
         try:
 
             providers = await providers_for(capability)
-            current = ((await get_secret(select_key)) or "").strip().lower()
+            current = await effective_provider_for(capability)
+            configured = await _configured_map(providers)
             out[capability] = {
-                "current_provider": current or None,
-                "configured": await _configured_map(providers),
+                "current_provider": current,
+                "configured": configured,
+                # Off is not unfinished. A town that has deliberately switched
+                # text messages off has answered the question, and a checklist
+                # that keeps asking is one people learn to ignore -- but it is
+                # not set up either, so this is False and the page says
+                # "switched off" rather than ticking it.
+                "ready": bool(current) and configured.get(current, False),
             }
         except Exception as exc:
             # One capability failing to report must not blank the other seven.

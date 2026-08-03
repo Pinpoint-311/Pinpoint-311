@@ -386,7 +386,11 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             .then(setProviderStatus)
             .catch(() => { /* leaves everything unfinished, which is the safe way to be wrong */ });
     }, []);
-    useEffect(() => { loadProviderStatus(); }, [loadProviderStatus, secrets.length]);
+    /* Also on `providerRefresh`, not only when the number of secrets changes.
+     * The checklist reads its answer entirely from this response now, and
+     * re-saving a credential that already existed leaves `secrets.length`
+     * exactly where it was -- so the item stayed unticked until a reload. */
+    useEffect(() => { loadProviderStatus(); }, [loadProviderStatus, secrets.length, providerRefresh]);
     useEffect(() => {
         fetch('/api/system/config')
             .then(r => (r.ok ? r.json() : null))
@@ -416,58 +420,61 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     };
 
 
-    // Check configuration status
-    // Staff sign-in is required; Auth0 specifically is not. Identity is a
-    // pluggable capability with four providers (Auth0, Entra, Okta, and generic
-    // OIDC for anything else), so the checklist asks whether ANY of them is
-    // configured. Naming one vendor as "required" was both wrong and exactly
-    // the kind of lock-in framing this platform exists to avoid.
-    const signInConfigured =
-        (isConfigured('AUTH0_DOMAIN') && isConfigured('AUTH0_CLIENT_ID') && isConfigured('AUTH0_CLIENT_SECRET'))
-        || (isConfigured('ENTRA_TENANT_ID') && isConfigured('ENTRA_CLIENT_ID') && isConfigured('ENTRA_CLIENT_SECRET'))
-        || (isConfigured('OKTA_ISSUER') && isConfigured('OKTA_CLIENT_ID') && isConfigured('OKTA_CLIENT_SECRET'))
-        || (isConfigured('OIDC_ISSUER') && isConfigured('OIDC_CLIENT_ID') && isConfigured('OIDC_CLIENT_SECRET'));
-    const smsProviderFromSecrets = secrets.find(s => s.key_name === 'SMS_PROVIDER')?.key_value;
-    // Email is provider-pluggable too (EMAIL_PROVIDER = smtp | ses | acs), so
-    // checking only the SMTP pair marked a town running SES or Azure
-    // Communication Services as unconfigured. Same bug as sign-in and maps.
-    const smtpConfigured =
-        (isConfigured('SMTP_HOST') && isConfigured('SMTP_FROM_EMAIL'))
-        || (isConfigured('AWS_REGION') && (isConfigured('SES_FROM_EMAIL') || isConfigured('SMTP_FROM_EMAIL')))
-        || (isConfigured('ACS_ENDPOINT') && isConfigured('ACS_ACCESS_KEY'));
+    /* Whether a capability is set up, asked of the server.
+     *
+     * Everything below used to be worked out here instead, from hard-coded
+     * secret names ORed across every provider a capability has. That is a
+     * second implementation of a question the backend already answers per
+     * provider (`_configured_map` against the provider dispatch resolves), and
+     * the two disagreed in both directions on this deployment:
+     *
+     *   - Photo redaction was read off `REDACTION_PROVIDER`, which is empty on
+     *     a town that never opened the card -- while `resolve_provider()` had
+     *     inferred Google Cloud Vision from the AI setting and was blurring
+     *     every photo. The page said "not set up" about a working detector.
+     *   - PII encryption was read off KMS_KEY_ID / AZURE_KEYVAULT_URL /
+     *     AWS_KMS_KEY_ID, all three of which are empty when the Google key is
+     *     on its defaults -- so the page said "not set up" while Google Cloud
+     *     KMS was wrapping the data key.
+     *   - The other direction was waiting to happen: AI and translation both
+     *     ORed `AWS_REGION`, which SES, SNS, Bedrock, AWS KMS and AWS Translate
+     *     all share. Setting up email over SES would have ticked AI and
+     *     translation for a town with neither.
+     *
+     * The OR was also wrong in principle: it asks whether ANY provider's
+     * credentials exist, not whether the selected one's do -- the exact bug
+     * /providers/status was added to fix, reintroduced one component over.
+     *
+     * `undefined` until the request lands, which reads as unfinished. That is
+     * the safe direction: the cost is asking about something already done,
+     * rather than skipping something that is not.
+     */
+    const capReady = (cap: string): boolean | undefined => providerStatus?.[cap]?.ready;
 
+    const signInConfigured = capReady('identity');
+    const smtpConfigured = capReady('email');
+    const mapsConfigured = capReady('maps');
+    const aiConfigured = capReady('ai');
+    const translationConfigured = capReady('translation');
+    const kmsConfigured = capReady('kms');
+    const redactionConfigured = capReady('redaction');
+    /* Off is a real answer here, and `ready` is already false for it -- the
+     * server treats "none" as not set up rather than as done. */
+    const smsConfigured = capReady('sms') === true;
+
+    /* Not capabilities: no provider to pick, so no catalog and no status entry.
+     * These stay secret-name checks because a secret name is genuinely all
+     * there is to check. */
     const sentryConfigured = isConfigured('SENTRY_DSN');
     const gcpConfigured = isConfigured('GOOGLE_CLOUD_PROJECT');
-    // Same trap as sign-in: maps is a pluggable capability with four providers,
-    // so checking only Google's key left a town running Esri or Apple showing
-    // "map provider: not configured" forever.
-    const mapsConfigured =
-        isConfigured('GOOGLE_MAPS_API_KEY')
-        || isConfigured('ARCGIS_API_KEY')
-        || isConfigured('AZURE_MAPS_KEY')
-        || (isConfigured('APPLE_MAPKIT_TEAM_ID') && isConfigured('APPLE_MAPKIT_KEY_ID')
-            && isConfigured('APPLE_MAPKIT_PRIVATE_KEY'));
-    // Read straight from the stored provider: the Text Messages card writes it,
-    // and 'none' is a real value there rather than an absence.
-    const smsConfigured = !!(smsProviderFromSecrets && smsProviderFromSecrets !== 'none');
     const backupConfigured = isConfigured('BACKUP_S3_BUCKET') && isConfigured('BACKUP_S3_ACCESS_KEY') && isConfigured('BACKUP_S3_SECRET_KEY') && isConfigured('BACKUP_ENCRYPTION_KEY');
-    // The capabilities that gained a card. Each is "done" when any one of its
-    // providers has the credentials that provider needs, so a town on Azure is
-    // not marked incomplete for having no Google key.
-    const aiConfigured = isConfigured('VERTEX_AI_PROJECT') || isConfigured('AZURE_OPENAI_API_KEY') || isConfigured('AWS_REGION');
-    const translationConfigured = isConfigured('GOOGLE_CLOUD_PROJECT') || isConfigured('AZURE_TRANSLATOR_KEY') || isConfigured('AWS_REGION');
-    const kmsConfigured = isConfigured('KMS_KEY_ID') || isConfigured('AZURE_KEYVAULT_URL') || isConfigured('AWS_KMS_KEY_ID');
-    // Redaction needs no credentials of its own -- it reuses the cloud ones --
-    // so it counts as set up once a detector has been chosen.
-    const redactionConfigured = isConfigured('REDACTION_PROVIDER');
 
     /* Whether one wizard item is already set up.
      *
      * Reuses the flags computed above rather than fetching eight catalogs to
-     * fill in a list of ticks -- the answer is already in `secrets`, which the
-     * page has loaded anyway. Anything not listed is treated as unfinished,
-     * which is the safe direction: an item wrongly shown as done is one nobody
-     * ever opens.
+     * fill in a list of ticks -- /providers/status answers all eight in one
+     * request. Anything not listed is treated as unfinished, which is the safe
+     * direction: an item wrongly shown as done is one nobody ever opens.
      */
     const DONE_BY_ITEM: Record<string, boolean> = {
         identity: !!signInConfigured,
@@ -537,10 +544,13 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
     useEffect(() => {
         // secrets arrives as a prop; an empty array means it has not loaded yet.
-        if (guideAutoSet.current || secrets.length === 0) return;
+        // Provider status likewise: this fires once, so deciding before the
+        // answer arrives would throw the guide open at a town that has
+        // everything set up, and never reconsider.
+        if (guideAutoSet.current || secrets.length === 0 || !providerStatus) return;
         guideAutoSet.current = true;
         if (!signInConfigured || !mapsConfigured) setExpandedGuide('master');
-    }, [secrets.length, signInConfigured, mapsConfigured]);
+    }, [secrets.length, providerStatus, signInConfigured, mapsConfigured]);
 
     // Toggle helper for collapsible instruction panels
     const toggleGuide = (id: string) => setExpandedGuide(prev => prev === id ? null : id);
