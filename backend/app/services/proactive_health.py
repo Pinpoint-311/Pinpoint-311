@@ -380,6 +380,49 @@ async def _cpu_check(window: float = 0.4) -> Dict[str, Any]:
         return _check("cpu", "CPU", "unknown", None, "Could not read CPU usage.")
 
 
+async def _retention_check(db) -> Dict[str, Any]:
+    """Has this town said which state's records schedule it is on?
+
+    Leading indicator in both directions, which is why it belongs here rather
+    than only on the compliance tab. Until a state is confirmed the nightly run
+    archives nothing, so the town is quietly keeping records past the date its
+    own published policy says they are gone — and the moment somebody confirms
+    the wrong state, records start being destroyed early. Neither shows up
+    anywhere a clerk looks; the retention tab is a screen nobody opens twice.
+
+    Warning rather than critical: nothing is being lost while this is unset,
+    and confirming the state fixes it in one click. Contrast `_kms_check`,
+    which is critical because its failure window closes on data that cannot be
+    recovered afterwards.
+    """
+    try:
+        from app.services.retention_config import load_retention_config
+
+        config = await load_retention_config(db)
+        if config.configured:
+            from app.services.retention_service import get_retention_policy
+
+            policy = get_retention_policy(config.state_code)
+            years = (config.override_days or policy["retention_days"]) // 365
+            return _check("retention", "Records retention", "ok", config.state_code,
+                          f"Records are kept for {years} years under "
+                          f"{policy['public_records_law']} ({policy['name']}).")
+
+        return _check(
+            "retention", "Records retention", "warning", config.state_code or None,
+            config.detail or "No records-retention schedule is configured.",
+            action=(
+                "Open Settings → Compliance → Document Retention and confirm the state "
+                "this town is in. Nothing is archived or deleted until you do, so the "
+                "records your published policy says are gone are all still here."
+            ),
+        )
+    except Exception:
+        logger.debug("Retention health probe failed", exc_info=True)
+        return _check("retention", "Records retention", "unknown", None,
+                      "Could not determine which retention schedule is in force.")
+
+
 async def collect_checks(db) -> List[Dict[str, Any]]:
     """Run all proactive checks. Never raises; failed probes return 'unknown'."""
     checks = [
@@ -391,6 +434,7 @@ async def collect_checks(db) -> List[Dict[str, Any]]:
         await _redis_check(),
         await _kms_check(),
         await _redaction_check(),
+        await _retention_check(db),
     ]
     return checks
 

@@ -1683,32 +1683,56 @@ async def get_current_retention_policy(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
-    """Get current retention policy configuration"""
+    """Get current retention policy configuration.
+
+    Answers "is there a policy" before "what is it". A town that has not
+    confirmed its state has no retention period and no statute to cite, and
+    this used to fill both in from NJ — so the tab headlined OPRA and a
+    seven-year schedule at towns that had never chosen either.
+    """
+    from app.services.retention_config import read_retention_config
+    from app.services.retention_scrub import describe_selection
     from app.services.retention_service import get_retention_policy, get_retention_stats
-    
+
     result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
     settings = result.scalar_one_or_none()
-    
-    state_code = settings.retention_state_code if settings else "NJ"
-    override_days = settings.retention_days_override if settings else None
-    mode = settings.retention_mode if settings else "anonymize"
-    
-    policy = get_retention_policy(state_code)
-    stats = await get_retention_stats(db, state_code, override_days)
-    
-    from app.services.retention_scrub import describe_selection, normalise_mode
+
+    config = read_retention_config(settings)
+    scrub_fields = describe_selection(
+        getattr(settings, "retention_scrub_fields", None) if settings else None
+    )
+
+    if not config.configured:
+        return {
+            "configured": False,
+            "reason": config.reason,
+            "detail": config.detail,
+            # What is stored, labelled as what it is. The console needs it to
+            # pre-select the dropdown and ask "is this right?", which is a
+            # different thing from reporting it as the policy in force.
+            "state_code": None,
+            "unconfirmed_state_code": config.state_code,
+            "policy": None,
+            "override_days": config.override_days,
+            "effective_days": None,
+            "mode": config.mode,
+            "scrub_fields": scrub_fields,
+            "stats": None,
+        }
+
+    policy = get_retention_policy(config.state_code)
+    stats = await get_retention_stats(db, config.state_code, config.override_days)
 
     return {
-        "state_code": state_code,
+        "configured": True,
+        "state_code": config.state_code,
         "policy": policy,
-        "override_days": override_days,
-        "effective_days": override_days if override_days else policy["retention_days"],
-        "mode": normalise_mode(mode),
+        "override_days": config.override_days,
+        "effective_days": config.override_days if config.override_days else policy["retention_days"],
+        "mode": config.mode,
         # The catalog and this town's choice in one object, so the screen never
         # has to hold its own copy of what the fields are called.
-        "scrub_fields": describe_selection(
-            getattr(settings, "retention_scrub_fields", None) if settings else None
-        ),
+        "scrub_fields": scrub_fields,
         "stats": stats
     }
 
@@ -1747,7 +1771,16 @@ async def update_retention_policy(
         if policy["state_code"] == "DEFAULT" and state_code != "DEFAULT":
             raise HTTPException(400, f"Unknown state code: {state_code}")
         settings.retention_state_code = state_code.upper()
-    
+        # This is the confirmation. An administrator chose a state and pressed
+        # apply, which is the one signal that cannot be inherited from a column
+        # default — and it counts even when they pick the state already stored,
+        # because "yes, NJ is right" is exactly the answer being asked for.
+        #
+        # Only set when a state is actually sent. Saving a mode or a field list
+        # must not silently confirm a schedule nobody looked at.
+        settings.retention_state_confirmed = True
+
+
     if override_days is not None:
         # 0 is the explicit "clear the override, revert to the state default"
         # signal — without this, an override once set could never be removed.
@@ -1780,6 +1813,10 @@ async def update_retention_policy(
     return {
         "status": "updated",
         "state_code": settings.retention_state_code,
+        # Whether retention will now actually run. A save that stored a mode
+        # but left the schedule unconfirmed still archives nothing, and the
+        # screen should not have to infer that from the absence of a field.
+        "configured": bool(settings.retention_state_confirmed and settings.retention_state_code),
         "override_days": settings.retention_days_override,
         "mode": settings.retention_mode,
         "scrub_fields": settings.retention_scrub_fields,
@@ -1844,15 +1881,20 @@ async def preview_retention_run(
     that, not after.
     """
     from app.models import ServiceRequest
-    from app.services.retention_scrub import describe_selection, normalise_mode
+    from app.services.retention_config import read_retention_config
+    from app.services.retention_scrub import describe_selection
     from app.services.retention_service import get_retention_policy, get_retention_stats
 
     settings = await read_settings_row(db)
+    config = read_retention_config(settings)
     if settings is not None and getattr(settings, "legal_hold", False):
         return {
             "eligible": 0,
             "on_legal_hold": 0,
-            "mode": getattr(settings, "retention_mode", None) or "anonymize",
+            # Through normalise_mode, like everywhere else. Rows written before
+            # this column had a default hold NULL, and the raw `or "anonymize"`
+            # here answered with a legacy name the screen does not match on.
+            "mode": config.mode,
             "blocked": "legal_hold",
             # Listing records that "will be archived next run" while a hold
             # means nothing can be archived is the sort of contradiction that
@@ -1861,9 +1903,30 @@ async def preview_retention_run(
             "summary": None,
         }
 
-    state_code = (settings.retention_state_code if settings else None) or "NJ"
-    override_days = settings.retention_days_override if settings else None
-    mode = normalise_mode(settings.retention_mode if settings else None)
+    if not config.configured:
+        # The honest preview of a run that would do nothing. Answering with an
+        # NJ cutoff and a list of records "eligible for archival" would be a
+        # screen inviting somebody to approve a schedule this town never chose.
+        return {
+            "eligible": 0,
+            "on_legal_hold": 0,
+            "will_act_on": 0,
+            "mode": config.mode,
+            "blocked": "unconfigured",
+            "reason": config.reason,
+            "detail": config.detail,
+            "state_code": None,
+            "unconfirmed_state_code": config.state_code,
+            "policy_name": None,
+            "retention_days": None,
+            "cutoff_date": None,
+            "records": [],
+            "summary": None,
+        }
+
+    state_code = config.state_code
+    override_days = config.override_days
+    mode = config.mode
     policy = get_retention_policy(state_code)
     stats = await get_retention_stats(db, state_code, override_days)
 
@@ -1941,10 +2004,21 @@ async def run_retention_now(
     """
     from app.tasks.service_requests import enforce_retention_policy
 
-    from app.services.retention_scrub import normalise_mode
+    from app.services.retention_config import read_retention_config
 
     settings = await read_settings_row(db)
-    mode = normalise_mode(settings.retention_mode if settings else None)
+    config = read_retention_config(settings)
+
+    # Refused here rather than queued. The task would decline too, but an admin
+    # who gets back a task id and "enforcement started" has been told something
+    # happened, and the only place that contradicts it is a worker log.
+    if not config.configured:
+        raise HTTPException(
+            status_code=409,
+            detail=config.detail or "No records-retention schedule is configured.",
+        )
+
+    mode = config.mode
     if mode == "purge" and str(payload.get("confirm", "")).strip() != "PURGE":
         raise HTTPException(
             status_code=400,
@@ -2059,6 +2133,7 @@ async def export_for_public_records(
         UnknownField, build_row, headers, normalise_fields, parse_boundary,
         preamble, sensitive_selected,
     )
+    from app.services.retention_config import read_retention_config
     from app.services.retention_service import get_retention_policy
 
     try:
@@ -2078,8 +2153,24 @@ async def export_for_public_records(
     sensitive = sensitive_selected(chosen)
 
     settings = await read_settings_row(db)
-    state_code = (getattr(settings, "retention_state_code", None) or "NJ") if settings else "NJ"
-    policy = get_retention_policy(state_code)
+    config = read_retention_config(settings)
+
+    # The export still runs — a records request is answered whether or not the
+    # retention tab has been filled in, and withholding public records over a
+    # missing setting would be the wrong failure. What stops is the citation.
+    #
+    # This block headlines a statute and a state, and it defaulted to
+    # "OPRA EXPORT / State: New Jersey (NJ)" everywhere. That is a legal claim
+    # printed on a document that leaves the building and gets filed by whoever
+    # requested it, and on a town in Texas it was simply false. Unconfigured
+    # now says so rather than naming the wrong law.
+    state_code = config.state_code if config.configured else None
+    if state_code:
+        policy = get_retention_policy(state_code)
+        law, state_name = policy["public_records_law"], policy["name"]
+    else:
+        law, state_name = "PUBLIC RECORDS", "not configured"
+        state_code = "--"
 
     query = select(ServiceRequest).options(
         selectinload(ServiceRequest.assigned_department)
@@ -2104,7 +2195,7 @@ async def export_for_public_records(
     generated = datetime.now(timezone.utc)
     output = io.StringIO()
     for line in preamble(
-        law=policy["public_records_law"], state_name=policy["name"], state_code=state_code,
+        law=law, state_name=state_name, state_code=state_code,
         total=len(records), exported_by=current_user.username, fields=chosen,
         filters={
             "start_date": start_date, "end_date": end_date, "statuses": statuses,
@@ -2136,12 +2227,12 @@ async def export_for_public_records(
             "start_date": start_date, "end_date": end_date,
             "statuses": statuses, "service_codes": service_codes,
             "request_ids_count": len(request_ids) if request_ids else 0,
-            "state_code": state_code,
+            "state_code": config.state_code if config.configured else None,
         },
     )
 
     output.seek(0)
-    law_abbrev = policy["public_records_law"].split("(")[0].strip().replace(" ", "_")
+    law_abbrev = law.split("(")[0].strip().replace(" ", "_")
     filename = f"{law_abbrev}_export_{generated.strftime('%Y%m%d')}.csv"
 
     return StreamingResponse(

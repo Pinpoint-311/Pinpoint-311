@@ -7,6 +7,7 @@ import {
     MarkerOptions,
     PopupHandle,
     boundsOfGeoJson,
+    CONTINENTAL_US_CENTER,
     createMap,
     el,
     legacyMapProviderConfig,
@@ -58,7 +59,7 @@ export default function ResidentMapView({
     provider,
     requests,
     townshipBoundary,
-    defaultCenter = { lat: 40.3573, lng: -74.6672 },
+    defaultCenter = CONTINENTAL_US_CENTER,
     defaultZoom = 13,
     onRequestSelect,
 }: ResidentMapViewProps) {
