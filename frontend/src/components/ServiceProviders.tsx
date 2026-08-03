@@ -49,6 +49,13 @@ const CAPS: { key: Capability; title: string; blurb: string; icon: typeof Sparkl
     { key: 'sms', title: 'Text Messages', blurb: 'Optional text alerts. Residents who give a mobile number get updates without checking email.', icon: MessageSquare },
     { key: 'kms', title: 'PII Encryption (KMS)', blurb: 'Which key service wraps the key that encrypts resident personal information. Cloud KMS is stronger than the application key.', icon: Lock },
     { key: 'redaction', title: 'Photo Redaction', blurb: 'Blurs faces and licence plates in resident photos before they are stored, so a municipal site never publishes them.', icon: ImageIcon },
+    // The capability every card above depends on, and the last to get a check.
+    // A credential saved while the store is unreachable stays in the encrypted
+    // database and the card that saved it still shows a tick, so the failure
+    // was invisible from here. No provider to pick: switching stores does not
+    // move what is already in the old one, so that belongs to the cloud
+    // profile. This says which store is in use and offers the round trip.
+    { key: 'secrets', title: 'Secret Storage', blurb: 'Where every credential on this page is kept. The check writes a throwaway key, reads it back and removes it.', icon: ShieldCheck },
 ];
 
 /** A numbered section heading inside a provider card.
@@ -984,9 +991,16 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 })()}
 
                 <div className="flex flex-wrap items-center gap-2.5 pt-1 border-t border-white/5 mt-1">
-                    <Action variant="primary" onClick={handleSave} busy={busy === 'save'} disabled={busy !== null}>
-                        {busy === 'save' ? 'Saving…' : 'Save & Test'}
-                    </Action>
+                    {/* No Save where there is nothing this card may change. The
+                        secret store is repointed by the cloud-profile flow,
+                        which moves the existing credentials across; a Save
+                        button here would post a selection the API refuses, and
+                        a button that always errors is worse than no button. */}
+                    {catalog.selectable !== false && (
+                        <Action variant="primary" onClick={handleSave} busy={busy === 'save'} disabled={busy !== null}>
+                            {busy === 'save' ? 'Saving…' : 'Save & Test'}
+                        </Action>
+                    )}
                     <Action onClick={handleTest} busy={busy === 'test'} disabled={busy !== null}>
                         {busy === 'test' ? 'Testing…' : 'Test connection'}
                     </Action>
@@ -1224,7 +1238,10 @@ export default function ServiceProviders({ show, extras, footer, extraOff = [], 
         setStatuses(prev => ({ ...prev, [cap]: { ...prev[cap], ...s } }));
     }, []);
 
-    const ALWAYS = new Set<Capability>(['identity', 'maps']);
+    /* Not optional, so never filed under "switched off". Staff have to sign in
+     * and residents have to drop a pin -- and every credential either of those
+     * needs is kept by the secret store, which is not a feature a town ticks. */
+    const ALWAYS = new Set<Capability>(['identity', 'maps', 'secrets']);
     const visible = CAPS.filter(c => !show || ALWAYS.has(c.key) || show.has(c.key));
     /* The other half of the answer.
      *

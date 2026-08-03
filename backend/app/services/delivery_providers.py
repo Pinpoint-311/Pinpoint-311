@@ -334,17 +334,81 @@ REDACTION_CATALOG: Dict[str, Dict[str, Any]] = {
 }
 
 
+# ---- where the credentials themselves live -----------------------------------
+# Branches: secret_manager._secrets_provider() returns "azure", "aws" or
+# "google", and every write falls back to the encrypted database when the
+# selected store is unreachable -- which is a supported state for a small
+# self-hosted town, so "database" is listed rather than hidden.
+#
+# This catalog exists to be *reported*, not chosen. Switching stores does not
+# move the credentials that are already in the old one, so the setting is owned
+# by the cloud-profile flow, which does move them; `_READ_ONLY_SELECTION` in the
+# API refuses a save. What it buys is the same badge, the same daily sweep and
+# the same Test button every other capability has -- and this is the capability
+# every other one depends on, so it was the worst one to have no check at all.
+
+SECRETS_PROVIDER_KEY = "SECRETS_PROVIDER"
+DEFAULT_SECRETS_PROVIDER = "google"
+
+SECRETS_CATALOG: Dict[str, Dict[str, Any]] = {
+    "google": {
+        "name": "Google Secret Manager",
+        "description": "Keeps every credential this town enters. Uses your existing Google Cloud service account.",
+        "boundary": "Google Cloud — Assured Workloads / FedRAMP High",
+        "credential_fields": [],
+        "requires": [
+            {"key": "GOOGLE_CLOUD_PROJECT", "label": "Google Cloud project", "where": "Setup"},
+            {"key": "GCP_SERVICE_ACCOUNT_JSON", "label": "Google service account", "where": "Setup"},
+        ],
+    },
+    "azure": {
+        "name": "Azure Key Vault",
+        "description": "Keeps every credential this town enters, in the vault that also wraps the PII key if you use it for that.",
+        "boundary": "Azure Government / GCC High",
+        "credential_fields": [],
+        "requires": [
+            {"key": "AZURE_KEYVAULT_URL", "label": "Key Vault URL", "where": "the PII Encryption card"},
+            {"key": "AZURE_TENANT_ID", "label": "Directory (tenant) ID", "where": "the PII Encryption card"},
+            {"key": "AZURE_KEYVAULT_CLIENT_ID", "label": "Application (client) ID", "where": "the PII Encryption card"},
+            {"key": "AZURE_KEYVAULT_CLIENT_SECRET", "label": "Client secret", "where": "the PII Encryption card"},
+        ],
+    },
+    "aws": {
+        "name": "AWS Secrets Manager",
+        "description": "Keeps every credential this town enters, using your existing AWS credentials.",
+        "boundary": "AWS — GovCloud available",
+        "credential_fields": [],
+        "requires": [
+            {"key": "AWS_REGION", "label": "AWS Region",
+             "where": "any AWS card — email, text messages or encryption"},
+        ],
+    },
+    "database": {
+        "name": "This server's database (no cloud store)",
+        "description": (
+            "Credentials stay in this application's own database, encrypted with its key. "
+            "Supported, and the normal state of a small self-hosted install — but a cloud "
+            "store is the stronger choice where one is available."
+        ),
+        "boundary": "Self-hosted",
+        "credential_fields": [],
+    },
+}
+
+
 _CATALOGS = {
     "email": EMAIL_CATALOG,
     "sms": SMS_CATALOG,
     "kms": KMS_CATALOG,
     "redaction": REDACTION_CATALOG,
+    "secrets": SECRETS_CATALOG,
 }
 _DEFAULTS = {
     "email": DEFAULT_EMAIL_PROVIDER,
     "sms": DEFAULT_SMS_PROVIDER,
     "kms": DEFAULT_KMS_PROVIDER,
     "redaction": DEFAULT_REDACTION_PROVIDER,
+    "secrets": DEFAULT_SECRETS_PROVIDER,
 }
 
 

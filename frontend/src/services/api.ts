@@ -139,6 +139,11 @@ export interface ProviderCatalog {
         status?: string;
         verifiable?: boolean | null;
     } | null;
+    /** Whether this card may change the provider. False for the secret store:
+     *  every credential the town has is in the current one and repointing the
+     *  setting does not move them, so the switch belongs to the cloud-profile
+     *  flow, which does. Absent means yes. */
+    selectable?: boolean;
 }
 
 export interface AIModelRefreshResult {
@@ -200,7 +205,10 @@ export interface CloudProfileResult {
  *  switchable in the backend and had no catalog, so nothing surfaced them. */
 export type Capability =
     | 'ai' | 'translation' | 'identity' | 'maps'
-    | 'email' | 'sms' | 'kms' | 'redaction';
+    | 'email' | 'sms' | 'kms' | 'redaction'
+    /** Where the credentials for all of the above are kept. Reported and
+     *  tested here; switched by the cloud-profile flow, which moves them. */
+    | 'secrets';
 
 export interface RetentionPreviewRecord {
     service_request_id: string | null;

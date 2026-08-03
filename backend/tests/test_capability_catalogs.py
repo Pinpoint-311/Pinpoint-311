@@ -101,6 +101,10 @@ def test_the_catalog_matches_the_providers_the_dispatch_code_branches_on(capabil
         "sms": {"none", "twilio", "http", "sns", "acs"},
         "kms": {"google", "azure", "aws", "local"},
         "redaction": {"google", "aws", "azure", "local"},
+        # `_secrets_provider()` branches on three, and every write falls back to
+        # the encrypted database when the selected store is unreachable -- a
+        # supported state, so it is a listed provider rather than a hidden one.
+        "secrets": {"google", "azure", "aws", "database"},
     }[capability]
     assert set(_CATALOGS[capability]) == implemented
 
