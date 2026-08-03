@@ -117,6 +117,63 @@ def _field_required(field: Dict[str, Any]) -> bool:
     return not str(field.get("label", "")).rstrip().endswith("(optional)")
 
 
+def _borrowed_requirements(provider: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Credentials this provider cannot work without but does not collect.
+
+    Photo redaction on Google and AWS runs on the service account and access
+    keys entered on other cards, and offering a second box for the same secret
+    is its own bug -- whichever was filled last wins. So those providers
+    declared no credentials at all, which left `_configured_map` with nothing
+    required to check and a green badge on a detector with no cloud account
+    behind it.
+
+    Declaring the requirement without drawing the box separates the two
+    questions that had been collapsed: what this card asks you to type, and what
+    this provider needs in order to work.
+    """
+    return [r for r in (provider.get("requires") or []) if r.get("key")]
+
+
+def _requirement_groups(provider: Dict[str, Any]) -> List[List[str]]:
+    """Alternative credential sets, any one of which is enough.
+
+    Some providers cannot be described by a per-field flag. Azure photo
+    redaction needs an AI Face resource for faces and a separate AI Vision
+    resource for plates, and having either one is a working setup -- a town
+    stuck behind Microsoft's Limited Access review for Face runs on Vision
+    alone. Marking all four required calls that town unconfigured; marking none
+    required is what let an Azure card with four empty boxes read as ready.
+
+    So the provider declares the alternatives and this reads them. Fields that
+    appear in a group are deliberately *not* also flagged required, or the group
+    would never get a chance to be the thing that decides.
+    """
+    return [list(group) for group in (provider.get("requires_any") or []) if group]
+
+
+async def _skippable_keys() -> set:
+    """Credentials an attached cloud identity supplies, so nothing is entered.
+
+    The credential form already greys these out and says "nothing to enter"
+    (ProviderCredentialSteps reads the same list). Without this the badge
+    disagreed with the box directly above it: the form said there was nothing to
+    supply and the badge said the provider was not set up because it had not
+    been supplied.
+    """
+    try:
+        from app.services import cloud_identity
+
+        detected = cloud_identity.detect()
+        if not detected:
+            return set()
+        return set(cloud_identity.SKIPPABLE.get(detected.get("provider") or "", []))
+    except Exception:
+        # A metadata probe that fails means "no attached identity", which is the
+        # same as the empty set. It must never make a configured provider look
+        # broken.
+        return set()
+
+
 async def providers_for(capability: str) -> List[Dict[str, Any]]:
     """The catalog for one capability, without going through its endpoint.
 
@@ -174,18 +231,32 @@ async def _configured_map(providers: List[Dict[str, Any]]) -> Dict[str, bool]:
     to re-paste credentials that were already fine.
 
     A provider with no required fields counts as configured: there is nothing to
-    supply, so there is nothing missing.
+    supply, so there is nothing missing. That rule is right and it was also
+    load-bearing in the wrong direction, because a catalog that simply had not
+    declared its credentials looked identical to one that needs none. Every
+    photo-redaction provider declared the two blur toggles and nothing else, all
+    four toggles were optional, and so all four detectors -- including Amazon
+    Rekognition and Azure AI Vision on a deployment with no AWS or Azure account
+    -- reported themselves configured. A provider that needs nothing is now a
+    claim its catalog entry has to make on purpose.
     """
     from app.services.secret_manager import get_secret
+
+    skippable = await _skippable_keys()
 
     out: Dict[str, bool] = {}
     for provider in providers:
         pkey = provider.get("provider") or provider.get("id") or ""
         if not pkey:
             continue
-        required = [f["key"] for f in provider.get("credential_fields", []) if _field_required(f)]
-        present = True
-        for key in required:
+        required = [
+            f["key"] for f in provider.get("credential_fields", [])
+            if _field_required(f) and f["key"] not in skippable
+        ] + [
+            r["key"] for r in _borrowed_requirements(provider)
+            if r["key"] not in skippable
+        ]
+        async def stored(key: str) -> bool:
             try:
                 # `.strip()`, so that a value of " " is absent here as well as
                 # everywhere else.
@@ -196,14 +267,34 @@ async def _configured_map(providers: List[Dict[str, Any]]) -> Dict[str, bool]:
                 # and simultaneously untestable, and the card said "Set up.
                 # There is no way to test this one from here" about a service
                 # nobody had entered anything for.
-                if not (await get_secret(key) or "").strip():
-                    present = False
-                    break
+                return bool((await get_secret(key) or "").strip())
             except Exception:
                 # An unreachable secret store is not the same as an unconfigured
                 # provider. Say nothing rather than say something false.
+                return False
+
+        present = True
+        for key in required:
+            if not await stored(key):
                 present = False
                 break
+
+        groups = [
+            [k for k in group if k not in skippable]
+            for group in _requirement_groups(provider)
+        ]
+        if present and groups:
+            present = False
+            for group in groups:
+                satisfied = True
+                for key in group:
+                    if not await stored(key):
+                        satisfied = False
+                        break
+                if satisfied:
+                    present = True
+                    break
+
         out[pkey] = present
     return out
 
@@ -712,15 +803,52 @@ async def save_provider(
     if not configured_now:
         from app.services.secret_manager import get_secret
 
-        for field in catalog[provider_id].get("credential_fields", []):
-            if not _field_required(field):
-                continue
+        skippable = await _skippable_keys()
+        labels = {
+            f["key"]: (f.get("label") or f["key"])
+            for f in catalog[provider_id].get("credential_fields", [])
+        }
+
+        async def stored(key: str) -> bool:
             try:
-                present = bool((await get_secret(field["key"]) or "").strip())
+                return bool((await get_secret(key) or "").strip())
             except Exception:
-                present = False
-            if not present:
-                missing.append(field.get("label") or field["key"])
+                return False
+
+        for field in catalog[provider_id].get("credential_fields", []):
+            # An attached cloud identity supplies these, and the form says so.
+            # Naming them here would ask for a value the page has just told the
+            # clerk not to enter.
+            if not _field_required(field) or field["key"] in skippable:
+                continue
+            if not await stored(field["key"]):
+                missing.append(labels[field["key"]])
+
+        # Named with where to go, because there is no box for them on this card.
+        # "Google service account" alone would be a dead end.
+        for borrowed in _borrowed_requirements(catalog[provider_id]):
+            if borrowed["key"] in skippable or await stored(borrowed["key"]):
+                continue
+            label = borrowed.get("label") or borrowed["key"]
+            where = borrowed.get("where")
+            missing.append(f"{label} (on {where})" if where else label)
+
+        # Alternatives read as one clause, not as every box in every branch:
+        # listing four Azure fields when any two of them would do reads as
+        # "fill in all four".
+        groups = [
+            [k for k in group if k not in skippable]
+            for group in _requirement_groups(catalog[provider_id])
+        ]
+        if groups:
+            phrases = []
+            for group in groups:
+                if all([await stored(k) for k in group]):
+                    phrases = []
+                    break
+                phrases.append(" + ".join(labels.get(k, k) for k in group))
+            if phrases:
+                missing.append("either " + ", or ".join(phrases))
 
     return {
         "ok": True,

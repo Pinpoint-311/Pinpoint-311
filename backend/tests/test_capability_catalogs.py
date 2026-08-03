@@ -37,6 +37,11 @@ DISPATCH_SOURCES = (
     "app/core/pii_crypto.py",
     "app/services/notifications.py",
     "app/services/image_redaction.py",
+    # image_redaction dispatches Google and AWS detection through here, so this
+    # is where the cloud credentials the redaction card collects are read.
+    # Missing from the list, a card could ask for a Google or AWS key under any
+    # name it liked and this test would have nodded it through.
+    "app/services/cloud_moderation.py",
 )
 
 
@@ -44,7 +49,12 @@ def _keys_the_code_reads():
     seen = set()
     for path in DISPATCH_SOURCES:
         try:
-            seen |= set(re.findall(r'"([A-Z][A-Z0-9_]{3,})"', open(path).read()))
+            # Both quote styles. Only double quotes were matched, and
+            # encryption.py reads the Google service account out of the database
+            # with a single-quoted SQL literal -- so the one credential the KMS
+            # card cannot work without looked, to this test, like a key nothing
+            # reads.
+            seen |= set(re.findall(r'''["']([A-Z][A-Z0-9_]{3,})["']''', open(path).read()))
         except OSError:
             pass
     return seen
@@ -56,14 +66,29 @@ def test_every_declared_field_is_a_key_the_code_reads():
     TWILIO_FROM_NUMBER for TWILIO_PHONE_NUMBER, SMS_API_URL for
     SMS_HTTP_API_URL, AZURE_KEY_VAULT_URL for AZURE_KEYVAULT_URL."""
     read = _keys_the_code_reads()
-    orphans = [
-        f"{cap}/{provider}: {field['key']}"
+    declared = [
+        (cap, provider, entry["key"])
         for cap, catalog in _CATALOGS.items()
         for provider, spec in catalog.items()
-        for field in spec["credential_fields"]
-        if field["key"] not in read
+        # `requires` too. It names credentials collected on another card, and a
+        # typo there is worse than a typo in a box: there is no box to look at,
+        # so the only symptom is a badge that never goes green.
+        for entry in list(spec["credential_fields"]) + list(spec.get("requires", []))
     ]
+    orphans = [f"{cap}/{provider}: {key}" for cap, provider, key in declared if key not in read]
     assert not orphans, "fields nothing reads: " + ", ".join(orphans)
+
+
+def test_alternative_credential_sets_name_fields_the_card_collects():
+    """`requires_any` lists keys, not field definitions. A key that is not also
+    a credential field is a rule about a box that does not exist."""
+    for cap, catalog in _CATALOGS.items():
+        for provider, spec in catalog.items():
+            offered = {f["key"] for f in spec["credential_fields"]}
+            for group in spec.get("requires_any", []):
+                assert group, f"{cap}/{provider}: empty alternative group"
+                for key in group:
+                    assert key in offered, f"{cap}/{provider}: {key} is in requires_any but has no field"
 
 
 @pytest.mark.parametrize("capability", sorted(_CATALOGS))
