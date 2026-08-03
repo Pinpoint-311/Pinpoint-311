@@ -149,3 +149,66 @@ describe('what the setup checklist counts as configured', () => {
         expect(completed(await mount())).toBe(0);
     });
 });
+
+describe('seedAnswersFrom', () => {
+    /* Five questionnaire answers began at Google/Auth0/Google on every page
+     * load, on a town that might have been on Azure and Entra for a year --
+     * while /providers/status had reported the real ones all along. The guide
+     * asked a question it could have answered, then computed "done" against its
+     * own default.
+     *
+     * Not cosmetic: `redactionProvider` falls back to the cloud answer, so a
+     * fresh load evaluated the blurring task against Google's credentials on an
+     * Azure town and insisted a finished setup was unfinished. */
+
+    const azureTown = {
+        identity: cap('entra', true), maps: cap('azure', true), ai: cap('azure', true),
+        translation: cap('azure', true), kms: cap('azure', true),
+        redaction: cap('azure', true), email: cap('acs', true), sms: cap('acs', true),
+        secrets: cap('azure', true),
+    } as any;
+
+    it('takes every answer from what the server reports', async () => {
+        const { seedAnswersFrom } = await import('./SetupIntegrationsPage');
+        expect(seedAnswersFrom(azureTown)).toEqual({
+            cloud: 'azure', idp: 'entra', maps: 'azure',
+            email: 'acs', sms: 'acs', redaction: 'azure',
+        });
+    });
+
+    it('leaves every answer alone when the response never arrived', async () => {
+        const { seedAnswersFrom } = await import('./SetupIntegrationsPage');
+        expect(seedAnswersFrom(null)).toEqual({
+            cloud: null, idp: null, maps: null, email: null, sms: null, redaction: null,
+        });
+    });
+
+    it('does not seed the text-message answer when texting is off', async () => {
+        // `none` is a real state and not one of the options that question
+        // offers; seeding it would have to invent an answer.
+        const { seedAnswersFrom } = await import('./SetupIntegrationsPage');
+        expect(seedAnswersFrom({ ...azureTown, sms: cap(null, false) }).sms).toBeNull();
+    });
+
+    it('reads the cloud from the secret store, falling back to key management', async () => {
+        // Neither is "the cloud" as such -- the cloud is wherever the
+        // credentials are, and the secret store answers that most directly.
+        const { seedAnswersFrom } = await import('./SetupIntegrationsPage');
+        expect(seedAnswersFrom({ secrets: cap('aws', true), kms: cap('azure', true) } as any).cloud)
+            .toBe('aws');
+        expect(seedAnswersFrom({ secrets: cap('database', true), kms: cap('azure', true) } as any).cloud)
+            .toBe('azure');
+    });
+
+    it('ignores a provider the questionnaire has no option for', async () => {
+        // "database" is a real secret-store provider and not a cloud. Seeding
+        // it would leave the picker showing nothing selected.
+        const { seedAnswersFrom } = await import('./SetupIntegrationsPage');
+        expect(seedAnswersFrom({ secrets: cap('database', true) } as any).cloud).toBeNull();
+    });
+
+    it('ignores a value the server invented', async () => {
+        const { seedAnswersFrom } = await import('./SetupIntegrationsPage');
+        expect(seedAnswersFrom({ identity: cap('something-new', true) } as any).idp).toBeNull();
+    });
+});
