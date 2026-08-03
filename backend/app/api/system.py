@@ -563,7 +563,9 @@ async def _persist_secret(db: AsyncSession, key_name: str, value: str) -> bool:
         try:
             if await set_secret(key_name, value):
                 stored_externally = True
-                clear_cache()
+                # Only the bundle this key lives in. Dropping all of them made a
+                # single save refetch every other capability's credentials too.
+                clear_cache(key_name=key_name)
         except Exception as e:
             from app.core.sanitize import sanitize_for_log
             logger.warning(f"Provider secret store write failed for {sanitize_for_log(key_name)}: {sanitize_for_log(str(e))}")
@@ -657,8 +659,9 @@ async def save_provider(
         if value:  # blank = keep existing
             if not await _persist_secret(db, key, value):
                 db_only.append(key)
-    from app.services.secret_manager import clear_cache
-    clear_cache()
+    # No clear_cache() here: _persist_secret already dropped the bundle for each
+    # key it wrote, and the provider-selection key above. A blanket clear would
+    # undo that targeting and refetch every other capability's credentials.
     # Shape findings are advisory and never block: a rule is a heuristic about
     # someone else's format, and refusing a credential that would have worked is
     # a worse failure than accepting one that will not -- the second is
@@ -1544,6 +1547,9 @@ async def set_cloud_profile(
         identity_applied = True
 
     from app.services.secret_manager import clear_cache
+    # Deliberately the whole cache: a profile switch rewrites the selection for
+    # several capabilities at once, and which bundles those land in is the
+    # profile's business rather than this function's.
     clear_cache()
     # Drop the cached wrapped-DEK so the next PII write re-wraps under the new KMS.
     try:
@@ -1685,7 +1691,7 @@ async def create_or_update_secret(
         try:
             sm_success = await set_secret(secret_data.key_name, secret_data.key_value)
             if sm_success:
-                clear_cache()  # Clear cache so reads get fresh data
+                clear_cache(key_name=secret_data.key_name)  # Clear cache so reads get fresh data
         except Exception as e:
             logger.warning(f"Failed to write to Secret Manager, using database only: {e}")
     

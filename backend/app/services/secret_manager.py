@@ -33,9 +33,9 @@ _sm_client = None
 
 def _cache_ttl() -> int:
     try:
-        return int(os.getenv("SECRET_CACHE_TTL_SECONDS", "300"))
+        return int(os.getenv("SECRET_CACHE_TTL_SECONDS", "900"))
     except ValueError:
-        return 300
+        return 900
 
 
 def _cache_get(name: str) -> Optional[Dict[str, str]]:
@@ -419,9 +419,25 @@ async def get_secrets_bundle(prefix: str) -> Dict[str, str]:
     return result
 
 
-def clear_cache():
-    """Clear the secret cache (useful after updates)."""
+def clear_cache(bundle: Optional[str] = None, key_name: Optional[str] = None) -> None:
+    """Forget cached secrets. One bundle by default, everything if asked.
+
+    This used to always drop all of it. Saving a single Maps key therefore threw
+    away the cached auth, smtp, sms, config and google bundles too, and the next
+    few requests refetched every one of them -- so a normal trip through the
+    setup page, which saves several times, caused a small stampede each time.
+    Reads are inside Google's free allowance so this was never a bill, but they
+    are latency on somebody's request and cold starts on every deploy.
+
+    `key_name` is the convenience the callers actually want: they know which
+    secret they just wrote, not which bundle it belongs to.
+    """
     global _secret_cache
+    if key_name and not bundle:
+        bundle = _get_bundle_name(key_name)
+    if bundle:
+        _secret_cache.pop(bundle, None)
+        return
     _secret_cache = {}
 
 
@@ -471,6 +487,74 @@ def _create_secret_if_not_exists(client, project: str, secret_id: str) -> bool:
     except Exception as e:
         logger.error(f"Failed to create secret {secret_id}: {e}")
         return False
+
+
+def _keep_versions() -> int:
+    """How many secret versions to keep. Newest first, including the live one."""
+    try:
+        return max(1, int(os.getenv("SECRET_KEEP_VERSIONS", "3")))
+    except ValueError:
+        return 3
+
+
+def _prune_versions(client, secret_path: str) -> int:
+    """Destroy versions this write superseded. Returns how many went.
+
+    Google bills per *active* secret version, and every write adds one. Nothing
+    ever retired the old ones, so a bundle written a few dozen times cost a few
+    dozen times as much as the single version anything reads. On the deployment
+    this was written against there were 166 active versions across five bundles
+    -- about $9.96/month -- of which exactly five were reachable. Pruning to the
+    newest three brought it to about $0.90.
+
+    Three, not one: `latest` is what every read resolves, and keeping two behind
+    it leaves room to roll a bad credential back by hand without reaching for a
+    backup.
+
+    Never destroys what `latest` resolves to, and treats a version that is
+    already gone as success -- a concurrent writer pruning the same bundle is
+    expected, not an error. A failure here is logged and swallowed: the write
+    itself already succeeded, and refusing to return that because cleanup
+    stumbled would turn a billing tidy-up into a lost credential.
+    """
+    keep = _keep_versions()
+    try:
+        from google.api_core import exceptions as gexc
+
+        live = sorted(
+            (int(v.name.rsplit("/", 1)[-1])
+             for v in client.list_secret_versions(request={"parent": secret_path})
+             if v.state.name == "ENABLED"),
+            reverse=True,
+        )
+        if len(live) <= keep:
+            return 0
+
+        latest = int(client.access_secret_version(
+            request={"name": f"{secret_path}/versions/latest"}).name.rsplit("/", 1)[-1])
+
+        destroyed = 0
+        for number in live[keep:]:
+            if number == latest:
+                # Should be impossible -- latest is the newest enabled version --
+                # but this is the one mistake that would cost a credential.
+                continue
+            try:
+                client.destroy_secret_version(
+                    request={"name": f"{secret_path}/versions/{number}"})
+                destroyed += 1
+            except gexc.FailedPrecondition:
+                pass          # already destroyed by another writer
+            except gexc.NotFound:
+                pass
+        if destroyed:
+            logger.info("Retired %d superseded version(s) of %s",
+                        destroyed, secret_path.rsplit("/", 1)[-1])
+        return destroyed
+    except Exception as exc:
+        logger.warning("Could not prune old versions of %s: %s",
+                       secret_path.rsplit("/", 1)[-1], exc)
+        return 0
 
 
 def set_secret_sync(key_name: str, value: str) -> bool:
@@ -538,6 +622,9 @@ def set_secret_sync(key_name: str, value: str) -> bool:
 
             # Refresh the cache with exactly what we just wrote.
             _cache_put(bundle_name, existing_bundle)
+
+            # And retire the versions this one just superseded.
+            _prune_versions(client, secret_path)
 
         logger.info(f"Secret {key_name} written to Secret Manager bundle {bundle_name}")
         return True

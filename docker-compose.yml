@@ -91,7 +91,13 @@ services:
   backend:
     build: ./backend
     restart: unless-stopped
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # No --reload. This file is what the live deployment runs, and ./backend is
+    # bind-mounted, so --reload made the API restart on any file write: every
+    # deploy, and every stray editor save. Each restart drops in-flight requests
+    # and starts with a cold secret cache, which is most of why this instance had
+    # 13,433 Secret Manager reads. Backend code changes now need an explicit
+    # `docker compose restart backend`, which is what a deploy does anyway.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     volumes:
       - ./backend:/app
       - .:/project
