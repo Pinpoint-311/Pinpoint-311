@@ -749,6 +749,41 @@ _PROVIDER_SELECT_KEY = {
 _READ_ONLY_SELECTION = {"secrets"}
 
 
+# Settings resolved once per process and then held for its lifetime. That is
+# right for something fixed at deploy and wrong for anything this console can
+# edit, and each of these is editable from a card.
+_PROCESS_CACHED_PREFIXES = ("KMS_", "GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT")
+_IDENTITY_PREFIXES = ("AUTH0_", "ENTRA_", "OKTA_", "OIDC_", "IDENTITY_PROVIDER")
+
+
+def _invalidate_process_caches(key_name: str) -> None:
+    """Drop whatever this process is holding that the new value replaces.
+
+    Never raises: this runs inside a save, and failing to clear a cache must not
+    fail the write that produced it.
+    """
+    try:
+        if key_name.startswith(_PROCESS_CACHED_PREFIXES):
+            # The KMS client and the resolved key path are both process-lifetime
+            # globals. Change the key ring or the key name and the process keeps
+            # wrapping resident data against the old path while the card reports
+            # the new one.
+            from app.core.encryption import reset_kms_cache
+
+            reset_kms_cache()
+        if key_name.startswith(_IDENTITY_PREFIXES):
+            # The OIDC discovery document is cached per issuer with no
+            # expiry, so a provider that moves its endpoints -- or a town that
+            # corrects a mistyped issuer -- keeps being sent to the old ones.
+            from app.services import identity
+
+            identity._discovery_cache.clear()
+    except Exception:
+        from app.core.sanitize import sanitize_for_log
+
+        logger.warning("Could not clear the in-process cache for %s", sanitize_for_log(key_name))
+
+
 async def _persist_secret(db: AsyncSession, key_name: str, value: str) -> bool:
     """Write a secret to the configured store and keep an encrypted DB copy.
 
@@ -794,6 +829,10 @@ async def _persist_secret(db: AsyncSession, key_name: str, value: str) -> bool:
         except Exception as e:
             from app.core.sanitize import sanitize_for_log
             logger.warning(f"Provider secret store write failed for {sanitize_for_log(key_name)}: {sanitize_for_log(str(e))}")
+    # Some settings are read once per process and then held. Saving one has to
+    # reach the process, or the card reports a change the running system is not
+    # making -- which is the shape of every bug in this pass.
+    _invalidate_process_caches(key_name)
     result = await db.execute(select(SystemSecret).where(SystemSecret.key_name == key_name))
     secret = result.scalar_one_or_none()
     enc = encrypt(value) if value else None
