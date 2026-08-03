@@ -94,6 +94,16 @@ SCRUB_FIELDS: List[Dict[str, Any]] = [
         "default": True,
     },
     {
+        "id": "custom_fields",
+        "label": "Answers to the town's own questions",
+        "detail": "Whatever residents typed into the follow-up questions this "
+                  "town added. Free text, so it holds the same names, phone "
+                  "numbers and neighbours' details the description does -- and "
+                  "unlike the description it was invisible to retention "
+                  "entirely, so it outlived every other field on the record.",
+        "default": True,
+    },
+    {
         "id": "staff_notes",
         "label": "Internal staff notes",
         "detail": "Notes staff added to the request.",
@@ -221,6 +231,13 @@ def apply_scrub(record: Any, fields: Optional[Iterable[str]] = None) -> List[str
     if "description" in chosen:
         record.description = "[Content archived per retention policy]"
         done.append("description")
+    if "custom_fields" in chosen:
+        # Emptied rather than set to None: the column is JSON and downstream
+        # readers (the work order, the Open311 payload) do `if custom_fields`,
+        # which an empty dict answers the same way a null does -- while keeping
+        # the column's type honest for anything that reads it as a mapping.
+        record.custom_fields = {}
+        done.append("custom_fields")
     if "staff_notes" in chosen:
         record.staff_notes = None
         done.append("staff_notes")

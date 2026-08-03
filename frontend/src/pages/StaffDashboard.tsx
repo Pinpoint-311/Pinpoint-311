@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, FormEvent } from 'react';
+import { resolveMapProviderConfig, mapProviderReady, RawMapsConfig } from '../maps';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
@@ -145,7 +146,9 @@ export default function StaffDashboard() {
     const [departments, setDepartments] = useState<Department[]>([]);
     const [users, setUsers] = useState<UserType[]>([]);
     const [mapLayers, setMapLayers] = useState<MapLayer[]>([]);
-    const [mapsConfig, setMapsConfig] = useState<{ google_maps_api_key: string | null; google_maps_map_id: string | null; township_boundary: object | null; default_center?: { lat: number; lng: number } } | null>(null);
+    const [mapsConfig, setMapsConfig] = useState<(RawMapsConfig & { township_boundary: object | null; default_center?: { lat: number; lng: number } }) | null>(null);
+    // One config for every map on this page, from the town's chosen provider.
+    const mapConfig = useMemo(() => resolveMapProviderConfig(mapsConfig), [mapsConfig]);
 
     // Intake form state
     const [intakeData, setIntakeData] = useState({
@@ -1074,26 +1077,25 @@ export default function StaffDashboard() {
                     <div className="flex-1 flex flex-col p-4 lg:p-6 overflow-auto">
                         {/* Map Section */}
                         <div className="flex-1 min-h-[400px] lg:min-h-[500px] mb-6 rounded-xl overflow-hidden">
-                            {mapsConfig?.google_maps_api_key ? (
+                            {mapProviderReady(mapsConfig) ? (
                                 <StaffDashboardMap
-                                    apiKey={mapsConfig.google_maps_api_key}
-                                    mapId={mapsConfig.google_maps_map_id}
+                                    config={mapConfig}
                                     requests={mapFilteredRequests}
                                     services={services}
                                     departments={departments}
                                     users={users}
                                     mapLayers={mapLayers}
                                     operationalFilters
-                                    townshipBoundary={mapsConfig.township_boundary}
-                                    defaultCenter={mapsConfig.default_center}
+                                    townshipBoundary={mapsConfig?.township_boundary}
+                                    defaultCenter={mapsConfig?.default_center}
                                     onRequestSelect={handleMapRequestSelect}
                                 />
                             ) : (
                                 <div className="h-full flex items-center justify-center bg-white/5 rounded-xl border border-white/10">
                                     <div className="text-center p-8">
                                         <Map className="w-12 h-12 mx-auto mb-4 text-white/30" />
-                                        <p className="text-white/60">Google Maps API key not configured</p>
-                                        <p className="text-white/40 text-sm mt-2">Configure in Admin Console → API Keys</p>
+                                        <p className="text-white/60">No map provider is configured yet</p>
+                                        <p className="text-white/40 text-sm mt-2">Choose one in Admin Console → Service Providers → Maps</p>
                                     </div>
                                 </div>
                             )}
@@ -1611,7 +1613,7 @@ export default function StaffDashboard() {
                             <SpatialBiasHeatmap
                                 heatmapData={heatmapData}
                                 hotspots={advancedStats?.hotspots || []}
-                                apiKey={mapsConfig?.google_maps_api_key || ''}
+                                config={mapConfig}
                                 defaultCenter={mapsConfig?.default_center || advancedStats?.geographic_center || undefined}
                             />
                         </div>
@@ -2169,7 +2171,7 @@ export default function StaffDashboard() {
                                                     comments={comments}
                                                     townshipName={settings?.township_name}
                                                     logoUrl={settings?.logo_url || undefined}
-                                                    mapsApiKey={mapsConfig?.google_maps_api_key}
+                                                    config={mapConfig}
                                                 />
                                             </div>
                                         </div>
@@ -2812,19 +2814,19 @@ export default function StaffDashboard() {
                                                         <p className="text-white/80 mb-3">{selectedRequest.address}</p>
                                                     )}
                                                     {/* Interactive Google Maps with Asset Overlay */}
-                                                    {selectedRequest.lat && selectedRequest.long && mapsConfig?.google_maps_api_key && (
+                                                    {selectedRequest.lat && selectedRequest.long && mapProviderReady(mapsConfig) && (
                                                         <div className="rounded-lg overflow-hidden h-64 bg-slate-900">
                                                             <RequestDetailMap
                                                                 lat={selectedRequest.lat}
                                                                 lng={selectedRequest.long}
                                                                 matchedAsset={(selectedRequest as any).matched_asset}
                                                                 mapLayers={mapLayers}
-                                                                apiKey={mapsConfig.google_maps_api_key}
+                                                                config={mapConfig}
                                                             />
                                                         </div>
                                                     )}
                                                     {/* Fallback for no API key */}
-                                                    {selectedRequest.lat && selectedRequest.long && !mapsConfig?.google_maps_api_key && (
+                                                    {selectedRequest.lat && selectedRequest.long && !mapProviderReady(mapsConfig) && (
                                                         <div className="rounded-lg overflow-hidden h-48 bg-slate-900">
                                                             <iframe
                                                                 width="100%"

@@ -3,13 +3,15 @@ import { MapPin } from 'lucide-react';
 import { MapLayer } from '../services/api';
 import {
     GeoJsonLayerHandle,
-    MapProviderId,
     MapRenderer,
     MarkerHandle,
     PopupHandle,
+    assetIcon,
     createMap,
+    locationPinIcon,
     el,
-    legacyMapProviderConfig,
+    MapProviderConfig,
+    hasMapCredential,
     popupRoot,
     propertyRows,
 } from '../maps';
@@ -27,27 +29,20 @@ interface RequestDetailMapProps {
     lng: number;
     matchedAsset?: MatchedAsset | null;
     mapLayers: MapLayer[];
-    apiKey: string;
-    /** Overrides the configured provider; defaults to the town's setting. */
-    provider?: MapProviderId;
+    /**
+     * The town's chosen provider and only that provider's credentials.
+     * Built once per page with resolveMapProviderConfig(); components must not
+     * assemble their own, which is how every map silently defaulted to Google.
+     */
+    config: MapProviderConfig;
 }
-
-// The asset pin. Google drew this as a scaled SymbolPath; as an SVG data URI it
-// looks the same whichever provider rasterises it. Diamond is 7x10 at scale 1.2
-// with a 2px stroke, so the box carries 1px of slack on every side.
-const ASSET_ICON_URL = 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-    <svg xmlns="http://www.w3.org/2000/svg" width="19" height="26" viewBox="-9.5 -13 19 26">
-        <path d="M 0,-12 L 8.4,0 L 0,12 L -8.4,0 Z" fill="#22c55e" stroke="#ffffff" stroke-width="2"/>
-    </svg>
-`);
 
 export default function RequestDetailMap({
     lat,
     lng,
     matchedAsset,
     mapLayers,
-    apiKey,
-    provider,
+    config,
 }: RequestDetailMapProps) {
     const mapRef = useRef<HTMLDivElement>(null);
     const mapInstanceRef = useRef<MapRenderer | null>(null);
@@ -61,7 +56,7 @@ export default function RequestDetailMap({
 
     // Load the configured map provider and attach the map
     useEffect(() => {
-        if (!apiKey) {
+        if (!hasMapCredential(config)) {
             setIsLoading(false);
             return;
         }
@@ -73,7 +68,7 @@ export default function RequestDetailMap({
             try {
                 const map = await createMap(
                     mapRef.current,
-                    legacyMapProviderConfig(apiKey, null, provider),
+                    config,
                     {
                         center: { lat, lng },
                         zoom: 18,
@@ -115,7 +110,7 @@ export default function RequestDetailMap({
             mapInstanceRef.current?.destroy();
             mapInstanceRef.current = null;
         };
-    }, [apiKey, provider]);
+    }, [config.provider, config.apiKey, config.styleId]);
 
     // Update map when coordinates change
     useEffect(() => {
@@ -127,14 +122,9 @@ export default function RequestDetailMap({
         markerRef.current?.remove();
         markerRef.current = map.addMarker({
             position: { lat, lng },
-            icon: {
-                type: 'circle',
-                radius: 12,
-                fillColor: '#ef4444',
-                fillOpacity: 1,
-                strokeColor: '#ffffff',
-                strokeWidth: 3,
-            },
+            // A pin, not a puck: this map is about one exact spot, which is what
+            // the pin shape means everywhere else in the app.
+            icon: locationPinIcon('#ef4444'),
             title: 'Request Location',
             zIndex: 1000,
             onClick: (_e, marker) => {
@@ -206,13 +196,10 @@ export default function RequestDetailMap({
                 const coords = targetFeature.geometry.coordinates;
                 assetMarkerRef.current = map.addMarker({
                     position: { lat: coords[1], lng: coords[0] },
-                    icon: {
-                        type: 'image',
-                        url: ASSET_ICON_URL,
-                        width: 19,
-                        height: 26,
-                        anchor: { x: 9.5, y: 13 },
-                    },
+                    // The same asset glyph the other maps use. This had its own
+                    // hardcoded green diamond, so the matched asset here looked
+                    // nothing like the identical asset on the staff dashboard.
+                    icon: assetIcon('#22c55e'),
                     title: `${matchedAsset.layer_name}${matchedAsset.asset_id ? ` - ${matchedAsset.asset_id}` : ''}`,
                     zIndex: 999,
                     onClick: (_e, marker) => {
@@ -260,7 +247,7 @@ export default function RequestDetailMap({
         }
     }, [matchedAsset, mapLayers, mapReady]);
 
-    if (!apiKey) {
+    if (!hasMapCredential(config)) {
         return (
             <div className="h-full flex items-center justify-center bg-slate-900/50 rounded-lg border border-white/10">
                 <div className="text-center p-4">

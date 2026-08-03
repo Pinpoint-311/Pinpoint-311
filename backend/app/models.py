@@ -506,9 +506,22 @@ class SystemSettings(Base):
     accessibility_statement = Column(Text)  # Custom accessibility statement
     
     # Document retention configuration
-    retention_state_code = Column(String(2), default="NJ")  # State for retention rules
+    #
+    # No default, deliberately. This is how long a resident's report is kept and
+    # which statute is cited when it is destroyed, and it defaulted to NJ/OPRA —
+    # so every town outside New Jersey ran a schedule it never chose. NULL is
+    # read as "not configured", and an unconfigured town archives nothing at
+    # all; see app/services/retention_config.py.
+    retention_state_code = Column(String(2))  # State for retention rules
+    # Whether a human picked the state above. The old default already wrote 'NJ'
+    # into existing rows, which makes the value itself ambiguous — it is what a
+    # town in Newark chose and also what a town in Amarillo never chose. This
+    # flag is the part that cannot be inherited.
+    retention_state_confirmed = Column(
+        Boolean, default=False, server_default='false', nullable=False
+    )
     retention_days_override = Column(Integer)  # Custom override (null = use state default)
-    retention_mode = Column(String(20), default="anonymize")  # "anonymize" or "delete"
+    retention_mode = Column(String(20), default="redact")  # "redact" or "purge"
     # Which fields a retention run clears. NULL means never configured, which
     # is read as the defaults rather than as "nothing": a town upgrading into
     # this keeps the behaviour it already had. An empty list is a deliberate

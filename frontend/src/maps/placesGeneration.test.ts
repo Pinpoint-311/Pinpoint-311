@@ -18,9 +18,12 @@ import { createGoogleGeocoder } from './providers/google/geocoder';
  * enable an API that was already enabled. The key was right. The code was
  * asking for a generation Google no longer issues.
  *
- * Both generations are supported now, because towns running since before the
- * cutoff still have the legacy API and do not need a migration they did not
- * ask for.
+ * Places API (New) is now the only surface this provider calls. Legacy is not
+ * a second path it falls back to: Google closed it to new projects, so the
+ * generation a town has is decided by when its project was created rather than
+ * by anything the app can choose, and keeping two code paths meant the one
+ * nobody could reach still had to be reasoned about. A town whose key predates
+ * the cutoff must enable Places API (New) alongside what it already has.
  */
 
 const original = (globalThis as any).window?.google;
@@ -87,16 +90,32 @@ describe('a key with only Places API (New)', () => {
     });
 
     it('translates "addresses only" into the types the new API accepts', async () => {
-        // The legacy value is `address`; the new API calls it `street_address`
-        // and rejects an unrecognised type outright rather than ignoring it.
+        // The legacy value is `address`, which the new API rejects outright
+        // rather than ignoring. `geocode` is its equivalent collection.
         const fetchImpl = vi.fn(async (_req: any) => ({ suggestions: [] as any[] }));
         newGeneration(fetchImpl);
         await createGoogleGeocoder().suggest!('1 Main', { addressesOnly: true, countries: ['us'] });
 
         const request = fetchImpl.mock.calls[0][0] as any;
-        expect(request.includedPrimaryTypes).toContain('street_address');
+        expect(request.includedPrimaryTypes).toEqual(['geocode']);
         expect(request.includedRegionCodes).toEqual(['us']);
         expect(request.types).toBeUndefined();
+    });
+
+    it('does not narrow "addresses only" to a specific building', async () => {
+        // `street_address` and `premise` only match a whole building, so Places
+        // (New) returned nothing at all until a house number had been typed --
+        // "Springfield Av" gave an empty list, which is a dead address box for
+        // the entire time a resident is actually typing. They also exclude
+        // `subpremise`, dropping flats and unit addresses even once the number
+        // was there. Asking for the narrower pair is the bug, not a detail.
+        const fetchImpl = vi.fn(async (_req: any) => ({ suggestions: [] as any[] }));
+        newGeneration(fetchImpl);
+        await createGoogleGeocoder().suggest!('Springfield Av', { addressesOnly: true });
+
+        const types = (fetchImpl.mock.calls[0][0] as any).includedPrimaryTypes as string[];
+        expect(types).not.toContain('street_address');
+        expect(types).not.toContain('premise');
     });
 
     it('passes viewport bias in the shape the new API wants', async () => {
@@ -115,27 +134,32 @@ describe('a key with only Places API (New)', () => {
     });
 });
 
-describe('a key with the legacy Places API', () => {
-    it('still uses the legacy service, so long-running towns are untouched', async () => {
+describe('a key with only the legacy Places API', () => {
+    // These two used to assert the opposite -- that the legacy service was
+    // still called and the legacy widget still attached. That stopped being
+    // true when Places (New) became the only surface, and the assertions were
+    // left behind, so the suite was reporting on a code path that no longer
+    // existed. What matters for such a town is that it degrades quietly and the
+    // Test button on the setup page tells them which API to enable, which is
+    // what the backend check now does.
+    it('offers no suggestions rather than throwing', async () => {
         legacyGeneration([{
             place_id: 'legacy-1',
             description: '1 Main Street, Cranbury, NJ',
             structured_formatting: { main_text: '1 Main Street', secondary_text: 'Cranbury, NJ' },
         }]);
 
-        const suggestions = await createGoogleGeocoder().suggest!('1 Main');
-        expect(suggestions[0]).toEqual({
-            id: 'legacy-1',
-            label: '1 Main Street',
-            secondaryLabel: 'Cranbury, NJ',
-        });
+        await expect(createGoogleGeocoder().suggest!('1 Main')).resolves.toEqual([]);
     });
 
-    it('still attaches the legacy widget', () => {
+    it('declines the legacy widget too, so the caller renders its own list', () => {
+        // Constructing places.Autocomplete is what produced
+        // ApiTargetBlockedMapError on a new-generation key, so this provider no
+        // longer constructs it for anyone.
         legacyGeneration([]);
         const handle = createGoogleGeocoder()
             .attachAutocomplete!(document.createElement('input'), { onSelect: () => {} });
-        expect(handle).not.toBeNull();
+        expect(handle).toBeNull();
     });
 });
 

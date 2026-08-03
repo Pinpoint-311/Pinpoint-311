@@ -11,10 +11,13 @@ import {
     MarkerLayer,
     VectorStyle,
     boundsOfGeoJson,
+    CONTINENTAL_US_CENTER,
     createMap,
     fractionAlongLine,
-    legacyMapProviderConfig,
+    MapProviderConfig,
+    hasMapCredential,
     pointAtFraction, subPathByFractions,
+    puckIcon,
 } from '../maps';
 
 /**
@@ -48,7 +51,12 @@ interface RoadCorridorMapProps {
     onTrimsChange: (trims: Record<string, SegmentTrim>) => void;
     corridorMetres: number;
     onCorridorMetresChange: (metres: number) => void;
-    apiKey?: string | null;
+    /**
+     * The town's chosen provider and only that provider's credentials.
+     * Built once per page with resolveMapProviderConfig(); components must not
+     * assemble their own, which is how every map silently defaulted to Google.
+     */
+    config: MapProviderConfig;
 }
 
 const INCLUDED = '#f87171';
@@ -57,7 +65,7 @@ const EXCLUDED = '#64748b';
 export default function RoadCorridorMap({
     roads, townshipBoundary, excludedFeatureIds, onExcludedChange,
     trims, onTrimsChange,
-    corridorMetres, onCorridorMetresChange, apiKey,
+    corridorMetres, onCorridorMetresChange, config,
 }: RoadCorridorMapProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const rendererRef = useRef<MapRenderer | null>(null);
@@ -93,11 +101,10 @@ export default function RoadCorridorMap({
         let cancelled = false;
         let unsubscribeIdle: (() => void) | undefined;
         const container = containerRef.current;
-        const config = legacyMapProviderConfig(apiKey);
-        if (!container || !config) return;
+        if (!container || !hasMapCredential(config)) return;
 
         createMap(container, config, {
-            center: (townshipBoundary as any)?.center ? (townshipBoundary as any).center : { lat: 40.7312, lng: -74.2734 },
+            center: (townshipBoundary as any)?.center ? (townshipBoundary as any).center : CONTINENTAL_US_CENTER,
             zoom: 13,
             controls: { zoom: { enabled: true }, fullscreen: { enabled: true } },
         })
@@ -147,7 +154,7 @@ export default function RoadCorridorMap({
             bufferLayerRef.current = null;
             centerlineLayerRef.current = null;
         };
-    }, [apiKey]);
+    }, [config.provider, config.apiKey, config.styleId]);
 
         const bufferStyleFor = useCallback((feature: GeoFeature): VectorStyle => {
         const id = String(feature.properties?.feature_id ?? "");
@@ -392,14 +399,10 @@ export default function RoadCorridorMap({
             return position ? [{
                 position,
                 draggable: true,
-                icon: {
-                    type: 'circle' as const,
-                    radius: 9,
-                    fillColor: '#fbbf24',
-                    fillOpacity: 1,
-                    strokeColor: '#78350f',
-                    strokeWidth: 2,
-                },
+                // A drag handle rather than a marker, but it still goes through
+                // the shared puck so it is the same shape language -- and so it
+                // looks the same on Esri as it does on Google.
+                icon: puckIcon({ fill: '#fbbf24', stroke: '#78350f', size: 20, strokeWidth: 2 }),
                 title: which === 'start' ? 'Drag: where this rule starts' : 'Drag: where this rule ends',
                 zIndex: 200,
                 onDrag: handleDrag(which),

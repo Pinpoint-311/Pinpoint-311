@@ -19,6 +19,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TASK = (ROOT / "app/tasks/service_requests.py").read_text()
 API = (ROOT / "app/api/system.py").read_text()
+# Where reading the settings row now happens. The task, the preview, the run
+# button and the backup pruner all used to resolve retention themselves, each
+# with its own `or "NJ"`; they share this instead.
+CONFIG = (ROOT / "app/services/retention_config.py").read_text()
 BLOCK = TASK[TASK.index("def enforce_retention_policy"):]
 BLOCK = BLOCK[:BLOCK.index("\n@celery_app.task")]
 
@@ -116,8 +120,17 @@ class TestTheTownChoosesWhatIsRemoved:
         assert "Unknown fields to scrub" in API
 
     def test_the_task_reads_the_choice(self):
-        assert "retention_scrub_fields" in TASK
-        assert "scrub_fields" in TASK
+        """The column is read, and what it says reaches the archiver.
+
+        The read moved into retention_config when the NJ default was removed,
+        so this follows it rather than asserting the task file still names the
+        column. What must not change is that a run clears the fields the town
+        picked -- checked at both ends: the column is read somewhere, and the
+        task hands the result to archive_record.
+        """
+        assert "retention_scrub_fields" in CONFIG
+        assert "scrub_fields = config.scrub_fields" in BLOCK
+        assert "archive_mode, scrub_fields" in BLOCK
 
     def test_the_preview_names_what_will_be_cleared(self):
         """"142 records" without saying what happens to them is not consent."""

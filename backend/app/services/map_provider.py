@@ -54,8 +54,10 @@ MAP_CATALOG: Dict[str, Dict[str, Any]] = {
             "GOOGLE_MAPS_API_KEY": (
                 "Google Cloud Console -> APIs & Services -> Credentials -> Create "
                 "credentials -> API key. Enable 'Maps JavaScript API', 'Geocoding "
-                "API' and 'Places API'. Restrict the key to your site's domain "
-                "before saving it anywhere."
+                "API' and 'Places API (New)' -- the last one is a separate product "
+                "from the older 'Places API', and the address box needs the new "
+                "one. Restrict the key to your site's domain before saving it "
+                "anywhere."
             ),
             "GOOGLE_MAPS_MAP_ID": (
                 "Optional. Google Cloud Console -> Google Maps Platform -> Map "
