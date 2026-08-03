@@ -377,8 +377,14 @@ export function ServiceCategoriesTab({ services, setServices, loadTabData, setSh
     const thirdPartyCount = services.filter(s => s.routing_mode === 'third_party').length;
     const municipalCount = services.filter(s => !s.routing_mode || s.routing_mode === 'township').length;
 
-    const [searchQuery, setSearchQuery] = useState('');
-    const [filterMode, setFilterMode] = useState<string>('all');
+    // No setter for either: the search box and filter dropdown these were written
+    // for are not rendered anywhere, so `filteredServices` below always matches
+    // everything. Left in place rather than deleted because the filter logic is
+    // still correct and only needs a control wired to it -- but the unused
+    // setters are dropped, because the build now type-checks and they would fail
+    // it, and a name nothing can call is worse than no name.
+    const [searchQuery] = useState('');
+    const [filterMode] = useState<string>('all');
 
     const filteredServices = services.filter(s => {
         const matchesSearch = s.service_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
