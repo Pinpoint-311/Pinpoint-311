@@ -89,6 +89,57 @@ function Options({ value, onChange, options }: {
     );
 }
 
+
+export type SeededAnswers = {
+    cloud: 'google' | 'azure' | 'aws' | null;
+    idp: 'auth0' | 'entra' | 'okta' | 'oidc' | null;
+    maps: 'google' | 'esri' | 'azure' | 'apple' | null;
+    email: string | null;
+    sms: string | null;
+    redaction: string | null;
+};
+
+/**
+ * The questionnaire's opening answers, taken from what the town is running.
+ *
+ * These five began at Google/Auth0/Google on every page load, on a town that
+ * might have been on Azure and Entra for a year -- while the backend knew all
+ * along: /providers/status reports the provider each capability resolves to.
+ * The guide asked a question it could have answered, then computed "done"
+ * against its own default rather than against the town.
+ *
+ * Not cosmetic. `redactionProvider` falls back to the cloud answer, so a fresh
+ * load evaluated the blurring task against Google's credentials on an Azure
+ * town, and the checklist insisted a finished setup was unfinished with nothing
+ * on screen to say why.
+ *
+ * `null` means "leave the default alone" rather than a value, so an unreachable
+ * or partial response cannot overwrite an answer with a worse one.
+ */
+export function seedAnswersFrom(status: ProviderStatusMap | null): SeededAnswers {
+    const at = (cap: string) => status?.[cap]?.current_provider ?? null;
+    const pick = <T extends string>(value: string | null, allowed: readonly T[]): T | null =>
+        value && (allowed as readonly string[]).includes(value) ? (value as T) : null;
+
+    const CLOUDS = ['google', 'azure', 'aws'] as const;
+    return {
+        /* The cloud is not stored as such: it is whichever one the credentials
+         * are in. The secret store answers that most directly, with key
+         * management as the fallback; "database" means no cloud has been chosen
+         * yet, so the default stands. */
+        cloud: pick(at('secrets'), CLOUDS) ?? pick(at('kms'), CLOUDS),
+        idp: pick(at('identity'), ['auth0', 'entra', 'okta', 'oidc'] as const),
+        maps: pick(at('maps'), ['google', 'esri', 'azure', 'apple'] as const),
+        email: pick(at('email'), ['smtp', 'ses', 'acs'] as const),
+        /* Not seeded when text messages are off. `none` is a real state and not
+         * one of the options this question offers -- whether a town wants texts
+         * at all is the feature tick, further up, so seeding it here would have
+         * to invent an answer. */
+        sms: pick(at('sms'), ['twilio', 'sns', 'acs', 'http'] as const),
+        redaction: pick(at('redaction'), ['local', 'google', 'azure', 'aws'] as const),
+    };
+}
+
 interface ModulesState {
     ai_analysis: boolean;
     sms_alerts: boolean;
@@ -293,6 +344,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         });
     const wants = (f: string) => wantedFeatures.has(f);
 
+
     /* The questionnaire's answers, translated into the provider ids the
      * catalogs actually use.
      *
@@ -317,6 +369,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [emailOverride, setEmailOverride] = useState<string | null>(null);
     const [smsOverride, setSmsOverride] = useState<string | null>(null);
     const [redactionOverride, setRedactionOverride] = useState<string | null>(null);
+
 
     const aiProvider = AI_BY_CLOUD[setupCloud];
     const emailProvider = emailOverride ?? EMAIL_BY_CLOUD[setupCloud];
@@ -391,6 +444,30 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * re-saving a credential that already existed leaves `secrets.length`
      * exactly where it was -- so the item stayed unticked until a reload. */
     useEffect(() => { loadProviderStatus(); }, [loadProviderStatus, secrets.length, providerRefresh]);
+
+    /* Start from what the town is actually running.
+     *
+     * The mapping itself is `seedAnswersFrom`, above and pure, so it can be
+     * tested without rendering a page whose questionnaire is collapsed exactly
+     * when every answer is already correct.
+     *
+     * Seeded once. After that the picker is the clerk's, including the case
+     * where they are planning a move and want the guide for a provider they
+     * have not switched to yet -- which is the whole point of it being a
+     * question rather than a readout.
+     */
+    const seededFromServer = useRef(false);
+    useEffect(() => {
+        if (seededFromServer.current || !providerStatus) return;
+        seededFromServer.current = true;
+        const seed = seedAnswersFrom(providerStatus);
+        if (seed.cloud) setSetupCloud(seed.cloud);
+        if (seed.idp) setSetupIdp(seed.idp);
+        if (seed.maps) setSetupMaps(seed.maps);
+        if (seed.email) setEmailOverride(seed.email);
+        if (seed.sms) setSmsOverride(seed.sms);
+        if (seed.redaction) setRedactionOverride(seed.redaction);
+    }, [providerStatus]);
     useEffect(() => {
         fetch('/api/system/config')
             .then(r => (r.ok ? r.json() : null))
