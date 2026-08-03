@@ -37,11 +37,15 @@ async def geocode_address(
     address: str,
     db: AsyncSession = Depends(get_db)
 ):
-    """Geocode an address to coordinates"""
-    api_key = await get_google_api_key(db)
-    service = get_geocoding_service(api_key)
-    
-    result = await service.geocode(address)
+    """Geocode an address to coordinates, using the town's own geocoder.
+
+    Was hardwired to Google-then-OpenStreetMap and biased to nowhere, so an Esri
+    town's county address locator went unused and a search for a common street
+    name answered from the other side of the continent.
+    """
+    from app.services import geocode_dispatch
+
+    result = await geocode_dispatch.geocode(db, address)
     if not result:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -62,11 +66,10 @@ async def reverse_geocode(
     lng: float,
     db: AsyncSession = Depends(get_db)
 ):
-    """Convert coordinates to address"""
-    api_key = await get_google_api_key(db)
-    service = get_geocoding_service(api_key)
-    
-    result = await service.reverse_geocode(lat, lng)
+    """Convert coordinates to address, using the town's own geocoder."""
+    from app.services import geocode_dispatch
+
+    result = await geocode_dispatch.reverse_geocode(db, lat, lng)
     if not result:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -85,8 +88,7 @@ async def list_boundaries(
     db: AsyncSession = Depends(get_db)
 ):
     """List all configured boundaries"""
-    api_key = await get_google_api_key(db)
-    service = get_boundary_service(api_key)
+    service = get_boundary_service()
     
     boundaries = service.get_all_boundaries()
     return [
@@ -104,8 +106,7 @@ async def get_boundary(
     db: AsyncSession = Depends(get_db)
 ):
     """Get a specific boundary with full geometry"""
-    api_key = await get_google_api_key(db)
-    service = get_boundary_service(api_key)
+    service = get_boundary_service()
     
     boundary = service.get_boundary(name)
     if not boundary:
@@ -210,8 +211,7 @@ async def upload_boundary(
         content = await file.read()
         geojson = json.loads(content.decode())
         
-        api_key = await get_google_api_key(db)
-        service = get_boundary_service(api_key)
+        service = get_boundary_service()
         service.load_boundary_from_geojson(name, geojson)
 
         outcome = await persist_boundary(db, geojson, name)
@@ -240,8 +240,7 @@ async def check_point_in_boundary(
     db: AsyncSession = Depends(get_db)
 ):
     """Check if a point is within a boundary"""
-    api_key = await get_google_api_key(db)
-    service = get_boundary_service(api_key)
+    service = get_boundary_service()
     
     is_inside = service.point_in_boundary(lat, lng, boundary_name)
     
@@ -422,8 +421,7 @@ async def save_census_boundary(
 ):
     """Save a Census boundary as the township boundary"""
     try:
-        api_key = await get_google_api_key(db)
-        service = get_boundary_service(api_key)
+        service = get_boundary_service()
         
         # Convert single geometry/feature to GeoJSON FeatureCollection if needed
         if "type" in geojson_data and geojson_data["type"] in ["Polygon", "MultiPolygon"]:
