@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { resolveMapProviderConfig, mapProviderReady, RawMapsConfig } from '../maps';
 import { motion, AnimatePresence } from 'framer-motion';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
@@ -836,7 +837,9 @@ export default function AdminConsole() {
     const [modules, setModules] = useState({ ai_analysis: false, sms_alerts: false, email_notifications: false, research_portal: false, unlisted_reports: false });
 
     // Maps tab state
-    const [mapsApiKey, setMapsApiKey] = useState<string | null>(null);
+    const [mapsRaw, setMapsRaw] = useState<RawMapsConfig | null>(null);
+    const mapConfig = useMemo(() => resolveMapProviderConfig(mapsRaw), [mapsRaw]);
+    const mapsReady = mapProviderReady(mapsRaw);
     const [townshipSearch, setTownshipSearch] = useState('');
     const [osmSearchResults, setOsmSearchResults] = useState<Array<{
         osm_id: number;
@@ -1014,7 +1017,7 @@ export default function AdminConsole() {
     useEffect(() => {
         // Always load maps config & township boundary so map features work on any tab
         api.getMapsConfig().then(mapsConfig => {
-            if (mapsConfig.google_maps_api_key) setMapsApiKey(mapsConfig.google_maps_api_key);
+            setMapsRaw(mapsConfig);
             if (mapsConfig.township_boundary) setTownshipBoundary(mapsConfig.township_boundary);
         }).catch(err => console.warn("Maps config load warning:", err));
     }, []);
@@ -1057,9 +1060,7 @@ export default function AdminConsole() {
                     // Load Maps configuration
                     try {
                         const mapsConfig = await api.getMapsConfig();
-                        if (mapsConfig.google_maps_api_key) {
-                            setMapsApiKey(mapsConfig.google_maps_api_key);
-                        }
+                        setMapsRaw(mapsConfig);
                         if (mapsConfig.township_boundary) {
                             setTownshipBoundary(mapsConfig.township_boundary);
                         }
@@ -2495,7 +2496,7 @@ export default function AdminConsole() {
                                 </div>
 
                                 <div className="divide-y divide-white/10 [&>*]:bg-white/[0.015]">
-                                {!mapsApiKey ? (
+                                {!mapsReady ? (
                                     <div className="px-5 sm:px-6 py-5">
                                         <div className="p-4 rounded-xl bg-gradient-to-br from-yellow-500/10 to-yellow-600/5 border border-yellow-500/20">
                                             <div className="flex items-center gap-3">
@@ -2503,7 +2504,7 @@ export default function AdminConsole() {
                                                     <AlertTriangle className="w-4 h-4 text-yellow-400" />
                                                 </div>
                                                 <p className="text-sm text-yellow-300">
-                                                    Google Maps API key is required. Please configure it in the API Keys section first.
+                                                    A map provider must be configured first — see Service Providers → Maps.
                                                 </p>
                                             </div>
                                         </div>
@@ -2726,7 +2727,7 @@ export default function AdminConsole() {
                             </div>
 
                             {/* Custom Map Layers — its own card/section, matching Maps Configuration above */}
-                            {mapsApiKey && (
+                            {mapsReady && (
                                 <div className="mt-6 rounded-2xl bg-white/[0.03] backdrop-blur-xl border border-white/10 overflow-hidden shadow-2xl">
                                     <div className="px-5 sm:px-6 py-4 border-b border-white/10 bg-gradient-to-r from-white/[0.05] to-transparent flex items-center justify-between gap-4">
                                                 <div className="flex items-center gap-3">
@@ -4774,7 +4775,7 @@ export default function AdminConsole() {
                                             onTrimsChange={setSegmentTrims}
                                             corridorMetres={corridorMetres}
                                             onCorridorMetresChange={setCorridorMetres}
-                                            apiKey={mapsApiKey}
+                                            config={mapConfig}
                                         />
                                     </div>
                                 )}

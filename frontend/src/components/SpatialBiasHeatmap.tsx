@@ -3,7 +3,6 @@ import { MapPin, Users, FileText, AlertTriangle, Eye } from 'lucide-react';
 import { HeatmapData, HeatmapPoint, HotspotData } from '../types';
 import {
     CanvasOverlayHandle,
-    MapProviderId,
     MapRenderer,
     MarkerLayer,
     MarkerOptions,
@@ -11,7 +10,8 @@ import {
     boundsOfPoints,
     createMap,
     el,
-    legacyMapProviderConfig,
+    MapProviderConfig,
+    hasMapCredential,
     popupRoot,
     puckIcon,
 } from '../maps';
@@ -19,9 +19,12 @@ import {
 interface SpatialBiasHeatmapProps {
     heatmapData: HeatmapData | null;
     hotspots: HotspotData[];
-    apiKey: string;
-    /** Overrides the configured provider; defaults to the town's setting. */
-    provider?: MapProviderId;
+    /**
+     * The town's chosen provider and only that provider's credentials.
+     * Built once per page with resolveMapProviderConfig(); components must not
+     * assemble their own, which is how every map silently defaulted to Google.
+     */
+    config: MapProviderConfig;
     defaultCenter?: { lat: number; lng: number };
     isLoading?: boolean;
 }
@@ -248,7 +251,7 @@ function hotspotPopup(hs: HotspotData): HTMLElement {
 export default function SpatialBiasHeatmap({
     heatmapData,
     hotspots,
-    apiKey,
+    config,
     defaultCenter,
     isLoading: externalLoading,
 }: SpatialBiasHeatmapProps) {
@@ -279,7 +282,6 @@ export default function SpatialBiasHeatmap({
         const container = mapRef.current;
         if (!container) return;
 
-        const config = legacyMapProviderConfig(apiKey);
         if (!config) { setIsLoading(false); return; }
 
         createMap(container, config, {
@@ -314,7 +316,7 @@ export default function SpatialBiasHeatmap({
             hotspotLayerRef.current = null;
             popupRef.current = null;
         };
-    }, [apiKey, defaultCenter]);
+    }, [config.provider, config.apiKey, config.styleId, defaultCenter]);
 
     // Heat layer. Uses the canvas overlay where the provider has one, and
     // graduated markers where it does not.
@@ -393,7 +395,7 @@ export default function SpatialBiasHeatmap({
         hotspotLayerRef.current = layer;
     }, [hotspots, showHotspotOverlay, mapReady]);
 
-    if (!apiKey) {
+    if (!hasMapCredential(config)) {
         return (
             <div className="h-full flex items-center justify-center bg-slate-900/50 rounded-lg border border-white/10">
                 <div className="text-center p-4">

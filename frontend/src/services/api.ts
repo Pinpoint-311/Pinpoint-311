@@ -816,6 +816,14 @@ class ApiClient {
         has_google_maps: boolean;
         google_maps_api_key: string | null;
         google_maps_map_id: string | null;
+        // The provider-neutral fields. `map_credentials` carries only the
+        // credentials the selected provider actually uses, and
+        // `map_provider_missing` is non-empty when it is not finished being set
+        // up -- which is what the pages gate the map on.
+        map_provider?: string | null;
+        geocode_provider?: string | null;
+        map_credentials?: Record<string, unknown> | null;
+        map_provider_missing?: string[] | null;
         township_boundary: object | null;
         default_center: { lat: number; lng: number };
         default_zoom: number;

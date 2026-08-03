@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { resolveMapProviderConfig, mapProviderReady, RawMapsConfig } from '../maps';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link, useParams } from 'react-router-dom';
 import {
@@ -237,7 +238,10 @@ export default function ResidentPortal() {
         lat: null,
         lng: null
     });
-    const [mapsApiKey, setMapsApiKey] = useState<string | null>(null);
+    // The whole payload, not just a key: the provider and its own credentials
+    // live in here, and gating on a Google key left an Esri town with no map.
+    const [mapsRaw, setMapsRaw] = useState<RawMapsConfig | null>(null);
+    const mapConfig = useMemo(() => resolveMapProviderConfig(mapsRaw), [mapsRaw]);
     const [townshipBoundary, setTownshipBoundary] = useState<object | null>(null);
     const [isLocationOutOfBounds, setIsLocationOutOfBounds] = useState(false);
 
@@ -245,9 +249,7 @@ export default function ResidentPortal() {
     // Load Maps API key and configuration
     useEffect(() => {
         api.getMapsConfig().then((config) => {
-            if (config.google_maps_api_key) {
-                setMapsApiKey(config.google_maps_api_key);
-            }
+            setMapsRaw(config);
             if (config.township_boundary) {
                 setTownshipBoundary(config.township_boundary);
             }
@@ -888,7 +890,7 @@ export default function ResidentPortal() {
                                     </p>
                                     <div className="h-[500px] rounded-2xl overflow-hidden">
                                         <StaffDashboardMap
-                                            apiKey={mapsApiKey || ''}
+                                            config={mapConfig}
                                             requests={allRequests}
                                             mapLayers={mapLayers}
                                             services={services}
@@ -994,13 +996,13 @@ export default function ResidentPortal() {
                                                 />
 
                                                 {/* Google Maps Location Picker */}
-                                                {mapsApiKey ? (
+                                                {mapProviderReady(mapsRaw) ? (
                                                     <div>
                                                         <label className="block text-sm font-medium text-white/70 mb-2">
                                                             {"Location / Address"}
                                                         </label>
                                                         <LocationPicker
-                                                            apiKey={mapsApiKey}
+                                                            config={mapConfig}
                                                             townshipBoundary={townshipBoundary}
                                                             customLayers={mapLayers.filter(layer => {
                                                                 // Check if layer is visible
@@ -1053,7 +1055,7 @@ export default function ResidentPortal() {
                                                         />
                                                         <div className="p-4 rounded-xl bg-white/5 border border-white/10 text-center text-white/40">
                                                             <MapPin className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                                                            <p className="text-sm">Interactive map requires Google Maps API key</p>
+                                                            <p className="text-sm">The interactive map needs a map provider to be configured</p>
                                                         </div>
                                                     </>
                                                 )}
