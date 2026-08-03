@@ -48,6 +48,7 @@ async def verify_all(
     *,
     checks: Optional[Mapping[str, Check]] = None,
     is_configured: Optional[Callable[[str], Awaitable[bool]]] = None,
+    provider_of: Optional[Callable[[str], Awaitable[Optional[str]]]] = None,
     health=None,
     alerts=None,
 ) -> Dict[str, Any]:
@@ -58,6 +59,28 @@ async def verify_all(
         is_configured = is_configured or capability_is_configured
     if health is None:
         from app.services import connector_health as health
+
+    async def _provider(capability: str) -> Optional[str]:
+        """Which provider this verdict is about.
+
+        Recorded with every result, because a verdict is only true of the
+        provider that produced it. The column has existed since the table did
+        and only the circuit breaker ever filled it, so a switch from one
+        provider to another left yesterday's answer on the card with nothing to
+        say it was about yesterday's vendor.
+
+        Resolved here rather than at the top, and swallowed: like the checks
+        themselves this is injected so the module stays importable without
+        FastAPI, and a sweep must not fail to record a real result because it
+        could not name the vendor that produced it.
+        """
+        try:
+            resolve = provider_of
+            if resolve is None:
+                from app.api.system import effective_provider_for as resolve
+            return await resolve(capability)
+        except Exception:
+            return None
 
     checked: Dict[str, str] = {}
     for capability, check in checks.items():
@@ -70,24 +93,30 @@ async def verify_all(
             # redundant one.
             pass
 
+        provider = await _provider(capability)
+
         try:
             outcome = await check(db)
         except Exception as exc:
             # The provider's own words. A clerk searching the web for their
             # error needs the real string, not our paraphrase of it.
-            await health.record_failure(db, capability, str(exc)[:300])
+            await health.record_failure(db, capability, str(exc)[:300], provider=provider)
             checked[capability] = "error"
             logger.info("[Health] %s raised during the daily check: %s",
                         sanitize_for_log(capability), sanitize_for_log(str(exc)[:200]))
             continue
 
         if outcome.get("recorded") is False:
+            # Nothing written, as before. "We cannot check this from here" is
+            # not evidence either way, and the sweep runs unattended -- writing
+            # it here would let a nightly pass mark a connector unverifiable
+            # over a verdict an administrator had already got by hand.
             checked[capability] = "unverifiable"
         elif outcome.get("ok"):
-            await health.record_success(db, capability)
+            await health.record_success(db, capability, provider=provider)
             checked[capability] = "working"
         else:
-            await health.record_failure(db, capability, outcome.get("detail", ""))
+            await health.record_failure(db, capability, outcome.get("detail", ""), provider=provider)
             checked[capability] = "failing"
 
     failing = sorted(k for k, v in checked.items() if v in ("failing", "error"))

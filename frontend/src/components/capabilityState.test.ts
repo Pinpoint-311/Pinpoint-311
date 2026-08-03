@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { capabilityState } from './ServiceProviders';
+import { capabilityState, healthIsAboutCurrentProvider, providerLabel } from './ServiceProviders';
 
 /**
  * Which of the two questions a badge is answering.
@@ -110,5 +110,100 @@ describe('a check result outlives the session that ran it', () => {
     it('treats an absent flag as unknown rather than as unverifiable', () => {
         // Rows written before the column existed have neither value.
         expect(capabilityState({ configured: true }, health('unknown'))).toBe('unchecked');
+    });
+});
+
+describe('a verdict belongs to the provider that produced it', () => {
+    /* `connector_health` has always carried the provider a result was recorded
+     * against and nothing compared it. Live, the text messages card read "There
+     * is no way to check http without sending a real text" while SMS_PROVIDER
+     * was 'acs' -- a true sentence about the gateway the town had switched away
+     * from, shown as the state of the one it is on. The green direction is the
+     * same bug and nobody notices it: a passing check on the old provider would
+     * have kept the card green for a vendor that had never been tested. */
+
+    it('ignores a stored result recorded against a different provider', () => {
+        expect(capabilityState(
+            { configured: true, provider: 'acs' },
+            health('working', { provider: 'http' }),
+        )).toBe('unchecked');
+    });
+
+    it('does not carry "cannot be tested" across a provider change', () => {
+        // The live case. Azure Communication Services has an endpoint that can
+        // be checked; the generic HTTP gateway does not, and its verdict was
+        // being shown on the ACS card.
+        expect(capabilityState(
+            { configured: true, provider: 'acs' },
+            health('unknown', { provider: 'http', verifiable: false }),
+        )).toBe('unchecked');
+    });
+
+    it('does not carry a failure across a provider change either', () => {
+        // Switching provider because the old one was broken must not leave the
+        // new one red before anything has tried it.
+        expect(capabilityState(
+            { configured: true, provider: 'twilio' },
+            health('down', { provider: 'http' }),
+        )).toBe('unchecked');
+    });
+
+    it('uses a stored result recorded against the provider in use', () => {
+        expect(capabilityState(
+            { configured: true, provider: 'twilio' },
+            health('working', { provider: 'twilio' }),
+        )).toBe('working');
+    });
+
+    it('keeps a row that names no provider', () => {
+        // Every row written before the column was filled looks like this.
+        // Discarding a real verdict is the more expensive of the two mistakes.
+        expect(capabilityState(
+            { configured: true, provider: 'twilio' },
+            health('working'),
+        )).toBe('working');
+    });
+
+    it('keeps a row when the catalog has not said which provider is current', () => {
+        expect(capabilityState(
+            { configured: true },
+            health('failing', { provider: 'http' }),
+        )).toBe('failing');
+    });
+});
+
+describe('healthIsAboutCurrentProvider', () => {
+    it('is false when there is no health row at all', () => {
+        expect(healthIsAboutCurrentProvider({ configured: true, provider: 'acs' }, undefined))
+            .toBe(false);
+    });
+
+    it('is true when both name the same provider', () => {
+        expect(healthIsAboutCurrentProvider(
+            { provider: 'acs' }, health('working', { provider: 'acs' }),
+        )).toBe(true);
+    });
+
+    it('is false when they disagree', () => {
+        expect(healthIsAboutCurrentProvider(
+            { provider: 'acs' }, health('working', { provider: 'http' }),
+        )).toBe(false);
+    });
+});
+
+describe('providerLabel', () => {
+    it('uses the vendor name the catalog gives', () => {
+        // "acs" is our word for it; "Azure Communication Services" is theirs.
+        expect(providerLabel(
+            { providers: [{ provider: 'acs', name: 'Azure Communication Services' }] }, 'acs',
+        )).toBe('Azure Communication Services');
+    });
+
+    it('falls back to the id rather than showing nothing', () => {
+        expect(providerLabel({ providers: [] }, 'http')).toBe('http');
+    });
+
+    it('has something to say when no provider was recorded', () => {
+        expect(providerLabel(null, null)).toBe('the previous provider');
     });
 });

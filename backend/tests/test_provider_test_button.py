@@ -222,7 +222,7 @@ def test_no_check_sends_anything_to_a_resident(monkeypatch):
 
 def test_maps_without_a_key_says_which_key(monkeypatch):
     from app.services import secret_manager
-    monkeypatch.setattr(secret_manager, "get_secret", _secrets(MAPS_PROVIDER="google"))
+    monkeypatch.setattr(secret_manager, "get_secret", _secrets(MAP_PROVIDER="google"))
     result = _run(system._test_maps())
     assert result["ok"] is False
     assert "Google Maps API key" in result["detail"]
@@ -230,7 +230,14 @@ def test_maps_without_a_key_says_which_key(monkeypatch):
 
 def test_apple_maps_is_unverifiable_rather_than_failing(monkeypatch):
     """It needs a token signed in the browser, so there is genuinely nothing to
-    check from the server."""
+    check from the server.
+
+    Both maps tests here set MAPS_PROVIDER, the plural nothing writes. `_test_maps`
+    was fixed to read MAP_PROVIDER and these were not, so every one of them fell
+    through to the Google branch -- which is why this one had been failing with a
+    KeyError on a key the Google branch does not return, and why the test above it
+    passed for the wrong reason.
+    """
     from app.services import secret_manager
-    monkeypatch.setattr(secret_manager, "get_secret", _secrets(MAPS_PROVIDER="apple"))
+    monkeypatch.setattr(secret_manager, "get_secret", _secrets(MAP_PROVIDER="apple"))
     assert _run(system._test_maps())["recorded"] is False

@@ -661,6 +661,16 @@ async def get_capability_catalog(
     h = health_map.get(capability)
 
     last_result = None
+    # Only if it is a verdict about the provider now selected. A result belongs
+    # to the provider that produced it, and this card was rehydrating the box
+    # from whatever was last recorded -- so the text messages card opened
+    # saying "there is no way to check http without sending a real text" on a
+    # town whose SMS_PROVIDER had since been changed to acs. A row with no
+    # provider recorded is kept: everything written before the column was
+    # filled looks like that, and discarding a real verdict is the worse of the
+    # two mistakes.
+    if h and h.provider and h.provider != current:
+        h = None
     if h and (h.last_result or h.last_error):
         last_result = {
             "ok": h.ok,
@@ -1438,6 +1448,17 @@ async def test_provider(
             detail=f"Unknown capability. Expected one of: {', '.join(sorted(_PROVIDER_SELECT_KEY))}.",
         )
 
+    # Which provider this verdict is about, captured before the check runs.
+    #
+    # The column existed and only the circuit breaker ever filled it, so every
+    # row written by this button had provider NULL -- and a stored verdict with
+    # no provider against it is a verdict about whatever was selected at the
+    # time, which nothing records and nobody can reconstruct. Live: the SMS card
+    # was showing "There is no way to check http without sending a real text"
+    # while SMS_PROVIDER read 'acs'. Had the old provider passed instead, the
+    # card would have shown green for a provider the town no longer uses.
+    tested_provider = await effective_provider_for(capability)
+
     async def _remember(outcome: dict) -> dict:
         try:
             # A check that failed part-way may have left the session in a
@@ -1454,9 +1475,11 @@ async def test_provider(
             if outcome.get("ok"):
                 # The message too, not just the timestamp. "Checked 6 hours
                 # ago" cannot say what it found.
-                await connector_health.record_success(db, capability, detail=outcome.get("detail"))
+                await connector_health.record_success(
+                    db, capability, provider=tested_provider, detail=outcome.get("detail"))
             else:
-                await connector_health.record_failure(db, capability, outcome.get("detail", ""))
+                await connector_health.record_failure(
+                    db, capability, outcome.get("detail", ""), provider=tested_provider)
         except Exception:
             # Bookkeeping must never turn a passing test into a failing one.
             pass
@@ -1481,7 +1504,7 @@ async def test_provider(
             try:
                 if outcome.get("configured") is not False:
                     await connector_health.record_unverifiable(
-                        db, capability, outcome.get("detail", ""))
+                        db, capability, outcome.get("detail", ""), provider=tested_provider)
             except Exception:
                 pass
             return outcome
