@@ -26,6 +26,8 @@ import { Card, Input, Button, Textarea } from './ui';
 import { api } from '../services/api';
 import { PublicServiceRequest, RequestComment, AuditLogEntry } from '../types';
 import { TranslatedContent } from './TranslatedContent';
+import RequestDetailMap from './RequestDetailMap';
+import { RawMapsConfig, mapProviderReady, resolveMapProviderConfig } from '../maps';
 
 type StatusFilter = 'all' | 'open' | 'in_progress' | 'closed';
 
@@ -79,7 +81,11 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
     const [copied, setCopied] = useState(false);
     const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
     const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
-    const [mapsApiKey, setMapsApiKey] = useState<string | null>(null);
+    // The whole payload: this used to keep only the Google key and render a
+    // hardcoded Google Maps Embed iframe, so a town on any other provider got no
+    // map here at all.
+    const [mapsRaw, setMapsRaw] = useState<RawMapsConfig | null>(null);
+    const mapConfig = useMemo(() => resolveMapProviderConfig(mapsRaw), [mapsRaw]);
 
     // Read "my requests" IDs from localStorage
     const myRequestIds = useMemo<Set<string>>(() => {
@@ -89,13 +95,9 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
         } catch { return new Set(); }
     }, [requests]); // re-read when requests reload (after submission)
 
-    // Load Maps API key on mount
+    // Load the town's map configuration on mount
     useEffect(() => {
-        api.getMapsConfig().then((config) => {
-            if (config.google_maps_api_key) {
-                setMapsApiKey(config.google_maps_api_key);
-            }
-        }).catch(() => { });
+        api.getMapsConfig().then(setMapsRaw).catch(() => { });
     }, []);
 
     useEffect(() => {
@@ -419,15 +421,16 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                 <p className="text-white/70">{selectedRequest.address}</p>
                             </div>
 
-                            {selectedRequest.lat && selectedRequest.long && mapsApiKey && (
+                            {selectedRequest.lat && selectedRequest.long && mapProviderReady(mapsRaw) && (
                                 <div className="h-48 bg-white/5 border-t border-white/10">
-                                    <iframe
-                                        width="100%"
-                                        height="100%"
-                                        style={{ border: 0 }}
-                                        loading="lazy"
-                                        src={`https://www.google.com/maps/embed/v1/place?key=${mapsApiKey}&q=${selectedRequest.lat},${selectedRequest.long}&zoom=17&maptype=satellite`}
-                                        allowFullScreen
+                                    {/* The real map rather than a vendor iframe: it
+                                        draws with whichever provider the town chose,
+                                        and gets the same pin as every other map. */}
+                                    <RequestDetailMap
+                                        config={mapConfig}
+                                        lat={selectedRequest.lat}
+                                        lng={selectedRequest.long}
+                                        mapLayers={[]}
                                     />
                                 </div>
                             )}
