@@ -827,7 +827,56 @@ async def _test_redaction(db=None) -> dict:
         return {"ok": False, "detail": (
             f"{degraded_from} has no usable credentials, so blurring is falling back to "
             f"on-server detection. Photos are still redacted, less accurately.")}
-    return {"ok": True, "detail": f"{actual} is available and will blur faces and plates."}
+
+    # Everything above only asked whether credentials are *present*, and for AWS
+    # and Azure that is all `_usable` can tell -- only Google's check reaches the
+    # vendor. So a key that is present and rejected passed every test on this
+    # page while every resident photo went out unblurred. Send one tiny image
+    # through the real detector, which is the only question worth answering here:
+    # does this detector answer when we ask it to blur something?
+    from app.services.image_redaction import detect
+
+    probe = _one_pixel_probe_image()
+    try:
+        answered = await detect(actual, probe, 64, 64, True, True)
+    except Exception as exc:                     # detect() should not raise, but this page must not 500
+        return {"ok": False, "detail": f"{actual} raised while detecting: {str(exc)[:160]}"}
+
+    if answered is None:
+        return {"ok": False, "detail": (
+            f"{actual} has credentials saved but rejected them when asked to scan an image, "
+            f"so photos would be stored without blurring. Check the key has not expired or "
+            f"been rotated, and that the region and endpoint match. The server log line "
+            f"beginning \"[Redaction] {actual} could not detect\" has the vendor's own words.")}
+
+    return {"ok": True, "detail": (
+        f"{actual} answered a live detection request and will blur faces and plates. "
+        f"(No faces in the test image, which is the expected answer.)")}
+
+
+def _one_pixel_probe_image() -> bytes:
+    """A tiny valid PNG, for asking a detector whether it answers at all.
+
+    Deliberately not a photograph of anybody: the useful signal is whether the
+    call succeeds, not what it finds, and sending a real face to a vendor to test
+    a checkbox would be its own problem. 64x64 mid-grey, built here so the check
+    needs no fixture file on disk.
+    """
+    import struct
+    import zlib
+
+    width = height = 64
+    row = b"\x00" + b"\x80" * (width * 3)
+    raw = row * height
+
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return (struct.pack(">I", len(payload)) + kind + payload
+                + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF))
+
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw))
+            + chunk(b"IEND", b""))
 
 
 async def _test_email(db=None) -> dict:

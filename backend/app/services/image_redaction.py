@@ -680,8 +680,28 @@ async def settings() -> Tuple[Optional[str], bool, bool]:
 # --------------------------------------------------------------------------
 
 async def detect(provider: str, raw: bytes, width: int, height: int,
-                 faces: bool, plates: bool) -> List[Box]:
-    """Every detection this provider can make on one image. Never raises."""
+                 faces: bool, plates: bool) -> Optional[List[Box]]:
+    """Every detection this provider can make on one image. Never raises.
+
+    `[]` and `None` mean different things, and conflating them is how unblurred
+    faces got published:
+
+        []    the detector answered, and there is nobody in this photo
+        None  the detector could not answer
+
+    This used to return `[]` for both. `_usable()` catches *missing* credentials,
+    but only Google's check reaches the vendor -- AWS and Azure are satisfied by
+    the strings being present -- so credentials that are present and rejected
+    (expired, rotated, revoked, wrong region, over quota, vendor outage) got past
+    it. The call then raised, was caught here, and became "no faces found": the
+    photo was stored as submitted, `skipped_reason` said `no-detections`, and the
+    Test button stayed green. A town's Azure key could lapse on a Tuesday and
+    every photo after it published a resident's face.
+
+    The caller decides what to do about `None`; this only stops pretending it did
+    not happen. Logged at warning rather than info for the same reason -- a
+    detector that cannot answer is not routine.
+    """
     found: List[Box] = []
     try:
         if provider == "google":
@@ -692,10 +712,12 @@ async def detect(provider: str, raw: bytes, width: int, height: int,
             found = await _azure_detect(raw, width, height, faces, plates)
         elif provider == "local":
             found = await _local_detect(raw, width, height, faces, plates)
+        else:
+            return None
     except Exception as exc:
         from app.core.sanitize import sanitize_for_log
-        logger.info("[Redaction] %s detection unavailable: %s", provider, sanitize_for_log(str(exc)))
-        return []
+        logger.warning("[Redaction] %s could not detect: %s", provider, sanitize_for_log(str(exc)))
+        return None
     return found
 
 
@@ -1109,6 +1131,26 @@ async def redact_image(media: str, provider: str, faces: bool, plates: bool) -> 
         return RedactionResult(payload, changed=False, skipped_reason="no-detector")
 
     found = await detect(provider, raw, width, height, faces, plates)
+
+    # The detector failed *during* the call, which `effective_provider` above
+    # cannot predict -- it can only see whether credentials are present. Try the
+    # on-server detector before giving up, the same way a missing credential
+    # would have.
+    if found is None and provider != "local" and await _usable("local"):
+        logger.warning(
+            "[Redaction] %s failed on this photo; retrying with on-server "
+            "detection so it is still blurred. If this repeats, the credentials "
+            "are being rejected -- check the Photo Redaction card.", provider,
+        )
+        found = await detect("local", raw, width, height, faces, plates)
+
+    if found is None:
+        # Nothing could look at it. Keep the photo, but do not let this be
+        # recorded as "we looked and there was nobody there".
+        cleaned = strip_exif(raw)
+        payload = _encode(cleaned, "image/jpeg") if cleaned is not None else media
+        return RedactionResult(payload, changed=False, skipped_reason="no-detector")
+
     if not found:
         # No faces, but the EXIF is still worth removing -- see strip_exif.
         cleaned = strip_exif(raw)
