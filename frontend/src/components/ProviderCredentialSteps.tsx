@@ -27,7 +27,7 @@ import type { Capability, CloudIdentity, ProviderInfo } from '../services/api';
  * town already chose in the questionnaire.
  */
 export default function ProviderCredentialSteps({
-    cap, provider, active, values, onChange, ctx, identity, alreadySet = false, compact = false,
+    cap, provider, active, values, onChange, ctx, identity, storedFields, alreadySet = false, compact = false,
 }: {
     cap: Capability;
     /** Which provider's walk to render. Not read off the catalog: the guide
@@ -40,8 +40,16 @@ export default function ProviderCredentialSteps({
     /** Attached cloud identity, if any -- turns credential boxes it replaces
      *  into "nothing to enter" rather than leaving them looking unfinished. */
     identity?: CloudIdentity | null;
+    /** Which of this provider's boxes have something stored against them.
+     *
+     *  Replaces a single provider-level flag. The hint exists to tell a clerk
+     *  that leaving a box empty keeps the stored value rather than clearing it,
+     *  and applying it per provider made that promise about optional boxes
+     *  nobody had ever filled in -- where it is false. */
+    storedFields?: Record<string, boolean>;
     /** Credentials for this provider are already stored, so an empty box means
-     *  "keep what is there" rather than "not done yet". */
+     *  "keep what is there" rather than "not done yet". Used for the
+     *  requirements block; the per-box hint reads `storedFields`. */
     alreadySet?: boolean;
     /** Tighter spacing for the guide, which nests this inside a step list. */
     compact?: boolean;
@@ -94,7 +102,7 @@ export default function ProviderCredentialSteps({
                 onChange={(v) => onChange(f.key, v)}
                 placeholder={`Enter ${f.label.toLowerCase()}`}
                 help={active.field_help?.[f.key]}
-                savedHint={alreadySet}
+                savedHint={storedFields?.[f.key] ?? false}
             />
         );
     };

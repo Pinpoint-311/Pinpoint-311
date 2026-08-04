@@ -19,7 +19,7 @@ const base: PlanInput = {
     emailProvider: 'acs',
     smsProvider: 'acs',
     redactionProvider: 'azure',
-    wanted: new Set(['ai', 'translation', 'safety', 'email', 'sms', 'secrets', 'backups', 'errors']),
+    wanted: new Set(['ai', 'translation', 'safety', 'email', 'sms', 'kms', 'backups', 'errors']),
 };
 
 const plan = (over: Partial<PlanInput> = {}) => buildPlan({ ...base, ...over });

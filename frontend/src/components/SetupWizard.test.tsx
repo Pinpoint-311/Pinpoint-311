@@ -178,7 +178,7 @@ describe('one item open at a time', () => {
      * the screen at once: the Azure task rendered about six thousand pixels
      * tall while the rail said "1 left". Items collapse for the same reason
      * tasks do. */
-    const AZURE_WORK = { wanted: new Set(['ai', 'translation', 'secrets']) };
+    const AZURE_WORK = { wanted: new Set(['ai', 'translation', 'kms']) };
 
     const itemHeaders = () =>
         Array.from(container.querySelectorAll<HTMLButtonElement>('section button[aria-expanded]'));

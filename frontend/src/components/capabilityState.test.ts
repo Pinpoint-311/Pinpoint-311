@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import { capabilityState, healthIsAboutCurrentProvider, providerLabel } from './ServiceProviders';
-import type { ProviderInfo } from '../services/api';
+import type { ProviderCatalog, ProviderInfo } from '../services/api';
 
 /**
  * Which of the two questions a badge is answering.
@@ -247,5 +247,30 @@ describe('what a card says it needs but does not ask for', () => {
             ],
         };
         expect(info.credential_fields.filter(f => f.required)).toHaveLength(1);
+    });
+});
+
+describe('the "Saved" hint is per box, not per provider', () => {
+    /* It read a single provider-level flag, so once a provider counted as
+     * configured every one of its boxes claimed to be saved -- including an
+     * optional one nobody had ever filled in. The hint exists to say that
+     * leaving a box empty keeps the stored value rather than clearing it, and
+     * that promise is false where there is nothing stored. */
+
+    it('models presence per credential key', () => {
+        const catalog: Pick<ProviderCatalog, 'stored_fields'> = {
+            stored_fields: { GOOGLE_MAPS_API_KEY: true, GOOGLE_MAPS_MAP_ID: false },
+        };
+        expect(catalog.stored_fields?.GOOGLE_MAPS_API_KEY).toBe(true);
+        // The optional one nobody filled in. Previously this was also "Saved".
+        expect(catalog.stored_fields?.GOOGLE_MAPS_MAP_ID).toBe(false);
+    });
+
+    it('treats an absent map as nothing stored rather than everything', () => {
+        // An older backend, or a catalog that failed to report. Hinting nothing
+        // is the safe direction: the worst case is a clerk retyping a value
+        // that was already there, rather than clearing one they meant to keep.
+        const catalog: Pick<ProviderCatalog, 'stored_fields'> = {};
+        expect(catalog.stored_fields?.ANYTHING ?? false).toBe(false);
     });
 });

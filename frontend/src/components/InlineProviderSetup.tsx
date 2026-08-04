@@ -207,6 +207,7 @@ export default function InlineProviderSetup({
                 onChange={(key, value) => setValues(prev => ({ ...prev, [key]: value }))}
                 ctx={ctx}
                 identity={identity}
+                storedFields={catalog.stored_fields}
                 alreadySet={alreadySet && isCurrent}
                 compact
             />
