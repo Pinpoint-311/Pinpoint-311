@@ -38,10 +38,10 @@ let host: HTMLDivElement; let root: Root;
 beforeEach(() => { host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host); });
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.clearAllMocks(); });
 
-async function mount(show?: Set<string>) {
+async function mount(show?: Set<string>, statusMap?: Record<string, unknown>) {
     const { default: ServiceProviders } = await import('./ServiceProviders');
     await act(async () => {
-        root.render(React.createElement(ServiceProviders as any, { show }));
+        root.render(React.createElement(ServiceProviders as any, { show, statusMap }));
     });
     return host.textContent || '';
 }
@@ -63,6 +63,43 @@ describe('capabilities the town switched off', () => {
     it('says nothing when the town asked for everything', async () => {
         const text = await mount(new Set(['ai', 'translation', 'email', 'sms', 'kms', 'redaction']));
         expect(text).not.toContain('Switched off');
+    });
+
+    /* The requirement, in the reporter's words: "I can for example save an
+     * email or AI key but not use it and then this is reflected in the service
+     * provider card but things are still saved."
+     *
+     * Half of that was already true -- the card disappeared into this section.
+     * The other half was not said anywhere, and the safe assumption from a
+     * greyed-out tile is that whatever was entered has gone, which makes
+     * switching something off feel like throwing work away. */
+    it('says when a switched-off capability still has its credentials', async () => {
+        const text = await mount(new Set(['ai']), {
+            sms: { current_provider: 'twilio', configured: { twilio: true }, enabled: false },
+        });
+
+        expect(text).toContain('Switched off — credentials still saved');
+        expect(text).toMatch(/Nothing was deleted/);
+    });
+
+    it('does not claim credentials for one that never had any', async () => {
+        const text = await mount(new Set(['ai']), {
+            sms: { current_provider: 'twilio', configured: { twilio: false }, enabled: false },
+        });
+
+        expect(text).toContain('Not switched on');
+        expect(text).not.toMatch(/Nothing was deleted/);
+    });
+
+    it('does not claim credentials for a provider the town has since left', async () => {
+        // `configured` is per provider for a reason: a town that set up Twilio
+        // and then selected a gateway it has entered nothing for has no stored
+        // credentials for the provider in use.
+        const text = await mount(new Set(['ai']), {
+            sms: { current_provider: 'http', configured: { twilio: true }, enabled: false },
+        });
+
+        expect(text).not.toMatch(/Nothing was deleted/);
     });
 
     it('never lists sign-in or maps, which cannot be switched off', async () => {
