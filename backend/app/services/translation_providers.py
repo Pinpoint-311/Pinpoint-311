@@ -185,8 +185,18 @@ def catalog_for_api() -> List[Dict[str, Any]]:
 
 async def get_translation_provider() -> Optional[TranslationProvider]:
     """Return the configured translation provider (default google), or None if
-    the selected provider isn't configured."""
+    the selected provider isn't configured -- or if the town switched
+    translation off while leaving its credentials in place.
+
+    Google is the default and needs no key of its own beyond the cloud account,
+    so before the switch existed a town on Google Cloud got translation whether
+    or not it wanted it, and had nothing it could remove to stop it.
+    """
+    from app.services import capability_switches
     from app.services.secret_manager import get_secret
+
+    if not await capability_switches.enabled("translation"):
+        return None
 
     provider = (await get_secret(TRANSLATION_PROVIDER_KEY)) or "google"
     provider = provider.strip().lower()

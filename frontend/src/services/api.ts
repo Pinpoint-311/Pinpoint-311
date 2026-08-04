@@ -731,8 +731,20 @@ class ApiClient {
      *  text. That is not a failure, and the backend deliberately does not write
      *  it to connector health. Dropping the flag here is what made those show
      *  up as "Not working". */
-    async testProvider(capability: string): Promise<{ ok: boolean; detail: string; recorded?: boolean; configured?: boolean }> {
+    async testProvider(capability: string): Promise<{ ok: boolean; detail: string; recorded?: boolean; configured?: boolean; off?: boolean }> {
         return this.request(`/system/providers/${capability}/test`, { method: 'POST' });
+    }
+
+    /** Record which integrations the town wants, credentials aside.
+     *
+     *  A partial map: only what changed. The questionnaire posts the chip that
+     *  was clicked, and a town that has never been asked about photo redaction
+     *  must not get an answer to it from a click on backups. */
+    async setCapabilitySwitches(switches: Record<string, boolean>): Promise<{ switches: Record<string, boolean> }> {
+        return this.request('/system/capabilities', {
+            method: 'PUT',
+            body: JSON.stringify({ switches }),
+        });
     }
 
     /** Which provider each capability is on, and which of its providers have
@@ -1766,9 +1778,21 @@ export interface HealthSummary {
  *  names ORed across providers and disagreed with this endpoint in both
  *  directions. */
 export type ProviderStatusMap = Record<string, {
-    current_provider: string | null;
-    configured: Record<string, boolean>;
-    ready: boolean;
+    current_provider?: string | null;
+    configured?: Record<string, boolean>;
+    /** Whether the town wants this at all, independent of whether it is set up.
+     *
+     *  The third fact, and the one that had nowhere to live: wanted-ness was a
+     *  `Set<string>` in the setup page's React state, initialised to
+     *  everything, so unticking a feature hid part of the guide and switched
+     *  nothing off. Reported beside `configured` rather than folded into it,
+     *  because "switched off with the key still saved" and "never set up" are
+     *  different states and looked identical.
+     *
+     *  `backups` and `errors` appear here with only this field — they are
+     *  switchable but have no provider to choose. */
+    enabled?: boolean;
+    ready?: boolean;
 }>;
 
 export interface CloudIdentity {
