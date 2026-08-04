@@ -21,8 +21,14 @@ The `modules` JSON keeps `unlisted_reports` and `research_portal`: product
 features with no provider, no credentials and nothing to configure. See
 app/services/capability_switches.py for the rule.
 
-Revision ID: d6e7f8a9b0c1
-Revises: c5d6e7f8a9b0
+Revision ID: f1a2b3c4d5e6
+Revises: d6e7f8a9b0c1
+
+Parented on the retention branch's migration rather than on
+`c5d6e7f8a9b0`, which both were originally written against. Two sessions
+picked the same generated revision id off the same parent; that one is
+already applied to the running deployment, so this chain sits after it and
+the history stays linear. This branch therefore has to merge after that one.
 """
 import json
 from typing import Sequence, Union
@@ -30,8 +36,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "d6e7f8a9b0c1"
-down_revision: Union[str, None] = "c5d6e7f8a9b0"
+revision: str = "f1a2b3c4d5e6"
+down_revision: Union[str, None] = "d6e7f8a9b0c1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
