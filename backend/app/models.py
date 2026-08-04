@@ -355,7 +355,7 @@ class RequestAuditLog(Base):
     # Additional context (JSON for flexibility)
     extra_data = Column(JSON)  # { substatus, completion_message, etc. }
 
-    # Tamper-evidence: SHA-256 hash chain (OPRA-grade immutable audit trail).
+    # Tamper-evidence: SHA-256 hash chain (immutable public-records audit trail).
     # entry_hash = SHA256(previous_hash + canonical(this row)); computed
     # automatically on insert (see the before_insert listener below). Any
     # alteration or deletion of a row breaks the chain and is detectable via
@@ -507,25 +507,22 @@ class SystemSettings(Base):
     
     # Document retention configuration
     #
-    # No default, deliberately. This is how long a resident's report is kept and
-    # which statute is cited when it is destroyed, and it defaulted to NJ/OPRA —
-    # so every town outside New Jersey ran a schedule it never chose. NULL is
-    # read as "not configured", and an unconfigured town archives nothing at
+    # No defaults, deliberately, on either of the two columns that decide what
+    # gets destroyed. The product used to supply both — a per-state period from
+    # a table of 51 unverified entries, and a fixed list of seven fields — so
+    # every town ran a destruction schedule it had never chosen. NULL on either
+    # is read as "not configured", and an unconfigured town archives nothing at
     # all; see app/services/retention_config.py.
-    retention_state_code = Column(String(2))  # State for retention rules
-    # Whether a human picked the state above. The old default already wrote 'NJ'
-    # into existing rows, which makes the value itself ambiguous — it is what a
-    # town in Newark chose and also what a town in Amarillo never chose. This
-    # flag is the part that cannot be inherited.
-    retention_state_confirmed = Column(
-        Boolean, default=False, server_default='false', nullable=False
-    )
-    retention_days_override = Column(Integer)  # Custom override (null = use state default)
+    #
+    # How long a closed request is kept, in days. One period for every record,
+    # not a schedule broken down by record class — the UI says so, because a
+    # real retention schedule distinguishes a routine pothole report from one
+    # attached to a claim and this does not.
+    retention_days = Column(Integer)
     retention_mode = Column(String(20), default="redact")  # "redact" or "purge"
-    # Which fields a retention run clears. NULL means never configured, which
-    # is read as the defaults rather than as "nothing": a town upgrading into
-    # this keeps the behaviour it already had. An empty list is a deliberate
-    # choice and is honoured.
+    # Which fields a retention run clears. NULL means never configured, and
+    # that is all it means: there is no list we can supply on a town's behalf,
+    # because the list is what is permanently destroyed.
     retention_scrub_fields = Column(JSON)
 
     # The town's own clock, for display only. Everything is stored in UTC and

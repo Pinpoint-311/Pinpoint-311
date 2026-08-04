@@ -353,7 +353,7 @@ async def verify_audit_log(
 
     Recomputes each entry's chained HMAC-SHA256 from its stored fields +
     stored previous_hash and reports any mismatch — proving to a records
-    officer (OPRA) that the log has not been altered since it was written.
+    officer that the log has not been altered since it was written.
     Entries written before the keyed-chain upgrade are accepted under the
     legacy unkeyed hash and counted separately, so an operator can see how
     much of the trail carries the stronger guarantee.
@@ -731,7 +731,7 @@ async def create_request(
     #
     # The blur is destructive and happens before anything is written -- see
     # image_redaction -- so no unredacted copy exists to leak through the
-    # Open311 API, the research export or an OPRA response. The EXIF block goes
+    # Open311 API, the research export or a public-records response. The EXIF block goes
     # too, which is the larger privacy win and costs nothing.
     from app.services import image_redaction
     verdict, redacted = await image_redaction.screen_and_redact(request_data.media_urls)

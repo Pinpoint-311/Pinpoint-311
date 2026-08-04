@@ -1,11 +1,18 @@
 """What goes into a public-records response, chosen deliberately.
 
-A records custodian answering an OPRA or FOIA request is doing something
-specific: releasing the records that were asked for, and not the ones that were
-not. The export gave them one fixed set of ten columns and a date range. So a
-request for "pothole complaints on Main Street in 2024" was answered with every
-report the town has ever taken, and a request that should have excluded staff
-notes could not exclude them.
+A records custodian answering a request under whatever law their state has is
+doing something specific: releasing the records that were asked for, and not
+the ones that were not. The export gave them one fixed set of ten columns and a
+date range. So a request for "pothole complaints on Main Street in 2024" was
+answered with every report the town has ever taken, and a request that should
+have excluded staff notes could not exclude them.
+
+It also printed a statute at the top of every file. The name came from a table
+of public-records laws the product had assembled for all 51 US jurisdictions
+and never verified, defaulting to "Federal FOIA" for anything unlisted — a
+legal claim, on a document that leaves the building and gets filed by whoever
+requested it. This module no longer names a law, because the town knows which
+one it is answering under and we do not.
 
 Over-disclosure is the failure mode that matters here. A custodian who releases
 a resident's phone number in response to a request that did not ask for it
@@ -198,8 +205,7 @@ def headers(fields: Sequence[str]) -> List[str]:
     return [_BY_ID[f]["label"] for f in fields]
 
 
-def preamble(*, law: str, state_name: str, state_code: str,
-             total: int, exported_by: str, fields: Sequence[str],
+def preamble(*, total: int, exported_by: str, fields: Sequence[str],
              filters: Dict[str, Any], generated: datetime) -> List[str]:
     """The comment block at the top of the file.
 
@@ -207,12 +213,16 @@ def preamble(*, law: str, state_name: str, state_code: str,
     producing this months later, to a requester who says it is incomplete,
     needs the file itself to say what was asked for -- which dates, which
     statuses, which fields, and which fields were deliberately left out.
+
+    What it does not say is which statute the request was made under. It used
+    to, from a table we had guessed at, so a town in Texas released files
+    headed "OPRA EXPORT / State: New Jersey (NJ)". Every fact printed here is
+    one this system actually knows.
     """
     included = ", ".join(_BY_ID[f]["label"] for f in fields)
     omitted = ", ".join(_BY_ID[f]["label"] for f in FIELD_IDS if f not in set(fields))
     lines = [
-        f"# {law} EXPORT",
-        f"# State: {state_name} ({state_code})",
+        "# RECORDS EXPORT",
         f"# Generated: {generated.isoformat()}",
         f"# Exported by: {exported_by}",
         f"# Total records: {total}",

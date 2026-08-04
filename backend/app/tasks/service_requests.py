@@ -1002,7 +1002,6 @@ def enforce_retention_policy():
         from app.services.retention_service import (
             get_records_for_archival,
             archive_record,
-            get_retention_policy
         )
 
         async with SessionLocal() as db:
@@ -1015,15 +1014,15 @@ def enforce_retention_policy():
                 logger.info("[Retention] Legal hold is active — purge suspended, nothing archived")
                 return {"status": "skipped_legal_hold", "archived": 0}
 
-            # No state, or a state nobody has confirmed, and the run stops here.
+            # No period, or nothing chosen to remove, and the run stops here.
             #
-            # This used to fall back to NJ, which meant a town in Texas quietly
-            # anonymised records on New Jersey's seven-year OPRA clock — four
-            # years before the Texas statute allows, with a nightly job
-            # reporting success. Guessing is the one thing this must not do:
-            # every wrong guess destroys resident data that cannot be restored,
-            # while stopping costs a town some records kept too long and leaves
-            # a warning on the console saying exactly why.
+            # There is no fallback left to take. This used to reach for a table
+            # of per-state periods the product had invented, so a town in Texas
+            # quietly anonymised records on a seven-year clock nobody had
+            # checked, with a nightly job reporting success. Guessing is the one
+            # thing this must not do: a wrong guess destroys resident data that
+            # cannot be restored, while stopping costs a town some records kept
+            # too long and leaves a warning on the console saying exactly why.
             config = read_retention_config(settings)
             if not config.configured:
                 # The console learns this from the proactive health check,
@@ -1038,13 +1037,12 @@ def enforce_retention_policy():
                     "message": config.detail,
                 }
 
-            state_code = config.state_code
-            override_days = config.override_days
+            retention_days = config.retention_days
             archive_mode = config.mode
             scrub_fields = config.scrub_fields
 
-            policy = get_retention_policy(state_code)
-            logger.info(f"[Retention] Enforcing policy: {policy['name']} ({policy['retention_years']} years)")
+            logger.info("[Retention] Enforcing this town's schedule: %s days, %s, clearing %s",
+                        retention_days, archive_mode, ", ".join(scrub_fields) or "nothing")
             
             # Everything eligible, in batches.
             #
@@ -1070,7 +1068,7 @@ def enforce_retention_policy():
             batches = 0
 
             while True:
-                records = await get_records_for_archival(db, state_code, override_days, limit=BATCH_SIZE)
+                records = await get_records_for_archival(db, retention_days, limit=BATCH_SIZE)
                 if not records:
                     break
                 batches += 1
@@ -1107,7 +1105,8 @@ def enforce_retention_policy():
             )
             return {
                 "status": "success",
-                "policy": policy,
+                "retention_days": retention_days,
+                "mode": archive_mode,
                 "archived": archived_count,
                 "skipped": skipped_count,
                 "errors": len(errors),
@@ -1158,9 +1157,10 @@ def backup_database():
 def cleanup_expired_backups():
     """
     Delete database backups older than the retention period.
-    
+
     Should be scheduled to run weekly via Celery Beat.
-    Uses state-specific retention policy to determine cutoff.
+    Uses the retention period this town configured. If it has not configured
+    one, nothing is deleted — see cleanup_old_backups.
     """
     import logging
     logger = logging.getLogger(__name__)

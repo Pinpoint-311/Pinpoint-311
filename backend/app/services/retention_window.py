@@ -1,27 +1,17 @@
 """When a record becomes eligible for retention, in one place.
 
-There were two answers to that question and they disagreed.
+There were three answers to that question at one point and they disagreed.
+Two came from the same pair of inputs -- a state "minimum" the product had
+invented and a town override -- combined one way in `calculate_retention_date`
+and the other way in `get_records_for_archival`, so a 30-day override in a
+state we had guessed at seven years selected seven years of records in one and
+thirty days of records in the other.
 
-`calculate_retention_date` honoured a town's override only when it was
-*longer* than the state minimum -- correct, because the minimum is a legal
-floor and a records retention schedule is not something a clerk can shorten by
-typing a smaller number into a settings box.
-
-`get_records_for_archival` built its cutoff with
-
-    retention_days = override_days if override_days else policy[...]
-
-which takes the override whatever it is. So an override of 30 days in a state
-with a seven-year minimum selected seven years of records for scrubbing, and
-the function whose name says it calculates the retention date was not the one
-deciding.
-
-Nobody would notice from the outside. The run reports how many records it
-archived, and that number is equally plausible either way.
-
-This module is the single answer, and it is pure, so the preview an
-administrator confirms against and the sweep that runs at 3am cannot drift
-apart -- which is the whole point of showing a preview.
+Both inputs are gone. There is one number now, the period the municipality
+configured, and no arithmetic to get wrong. What remains here is a single
+definition of the cutoff it implies, kept pure so the preview an administrator
+confirms against and the sweep that runs at 3am cannot drift apart -- which is
+the whole point of showing a preview.
 """
 
 from __future__ import annotations
@@ -30,26 +20,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 
-def effective_retention_days(policy_days: int, override_days: Optional[int]) -> int:
-    """The retention period actually in force.
-
-    An override lengthens and never shortens. A town keeping records longer
-    than the state requires is its own business; keeping them for less is not
-    a setting, it is a violation, and the place to stop it is here rather than
-    in a form validator somebody can bypass with a PUT.
-    """
-    if override_days and override_days > policy_days:
-        return override_days
-    return policy_days
-
-
-def retention_cutoff(policy_days: int, override_days: Optional[int] = None,
+def retention_cutoff(retention_days: int,
                      now: Optional[datetime] = None) -> datetime:
     """Records closed before this moment are eligible."""
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
-    return now - timedelta(days=effective_retention_days(policy_days, override_days))
+    return now - timedelta(days=retention_days)
 
 
 def as_utc(moment: Optional[datetime]) -> Optional[datetime]:
