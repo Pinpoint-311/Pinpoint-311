@@ -15,16 +15,16 @@ at a deployment that has been running for a year: a settings row older than a
 day with any credential stored is not a fresh install. A town in its first day
 gets the guide, which is what it is for.
 
-Revision ID: e7f8a9b0c1d2
-Revises: d6e7f8a9b0c1
+Revision ID: a2b3c4d5e6f7
+Revises: f1a2b3c4d5e6
 """
 from typing import Sequence, Union
 
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "e7f8a9b0c1d2"
-down_revision: Union[str, None] = "d6e7f8a9b0c1"
+revision: str = "a2b3c4d5e6f7"
+down_revision: Union[str, None] = "f1a2b3c4d5e6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
