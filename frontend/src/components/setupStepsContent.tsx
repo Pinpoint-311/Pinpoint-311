@@ -873,6 +873,18 @@ defineSteps('sms', 'http', () => [
         fields: ['SMS_HTTP_API_URL', 'SMS_HTTP_API_KEY'],
         note: <>If their API expects a different shape or a different header, this will fail on every send. Check with them before relying on it, and send yourself a test message from the button below.</>,
     },
+    {
+        body: (
+            <>
+                If your gateway publishes a URL that reports your balance, quota or key status,
+                paste it here. Everything else on this page can be checked without doing anything
+                a resident would notice; a gateway that only accepts sends cannot, so without this
+                the card can only ever say it does not know.
+            </>
+        ),
+        fields: ['SMS_HTTP_TEST_URL'],
+        note: <>Optional, and it is only ever fetched — nothing is sent to it. Leave it blank and the card will say plainly that it cannot check this one, rather than guessing.</>,
+    },
 ]);
 
 /**

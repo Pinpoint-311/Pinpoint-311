@@ -21,8 +21,20 @@ def field(key, label, **kw):
     return {"key": key, "label": label, "secret": True, **kw}
 
 
-def provider(pid, *fields):
-    return {"provider": pid, "name": pid, "credential_fields": list(fields)}
+def provider(pid, *fields, **kw):
+    return {"provider": pid, "name": pid, "credential_fields": list(fields), **kw}
+
+
+@pytest.fixture(autouse=True)
+def no_attached_identity(monkeypatch):
+    """No cloud instance role, unless a test says otherwise.
+
+    `_configured_map` asks whether the host has an identity that supplies some
+    of these credentials. Left real, every assertion here would depend on a
+    metadata-server probe from wherever the suite happens to run.
+    """
+    import app.services.cloud_identity as ci
+    monkeypatch.setattr(ci, "detect", lambda: None)
 
 
 @pytest.fixture
@@ -128,6 +140,139 @@ async def test_an_unreachable_secret_store_does_not_claim_configured(monkeypatch
     assert await _configured_map([provider("p", field("A", "A"))]) == {"p": False}
 
 
+# ---- credentials collected on another card ------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_borrowed_credential_is_required_even_though_no_box_asks_for_it(store):
+    got = await _configured_map([provider(
+        "google",
+        field("TOGGLE", "Blur faces", required=False),
+        requires=[{"key": "SA_JSON", "label": "Service account", "where": "the AI card"}],
+    )])
+    assert got == {"google": False}
+
+
+@pytest.mark.asyncio
+async def test_a_borrowed_credential_that_is_stored_counts(store):
+    store.update({"SA_JSON": "{...}"})
+    got = await _configured_map([provider(
+        "google",
+        field("TOGGLE", "Blur faces", required=False),
+        requires=[{"key": "SA_JSON", "label": "Service account", "where": "the AI card"}],
+    )])
+    assert got == {"google": True}
+
+
+# ---- either/or credential sets ------------------------------------------------
+#
+# Azure photo redaction needs an AI Face resource for faces and a separate AI
+# Vision resource for plates. Having one of the two is a working setup, so
+# neither pair can be flagged required and leaving both unflagged is what let an
+# Azure card with four empty boxes report itself ready.
+
+@pytest.mark.asyncio
+async def test_one_satisfied_group_is_enough(store):
+    store.update({"FACE_URL": "https://face", "FACE_KEY": "k"})
+    got = await _configured_map([provider(
+        "azure",
+        field("FACE_URL", "Face endpoint", required=False),
+        field("FACE_KEY", "Face key", required=False),
+        field("VISION_URL", "Vision endpoint", required=False),
+        field("VISION_KEY", "Vision key", required=False),
+        requires_any=[["FACE_URL", "FACE_KEY"], ["VISION_URL", "VISION_KEY"]],
+    )])
+    assert got == {"azure": True}
+
+
+@pytest.mark.asyncio
+async def test_a_half_finished_group_does_not_count(store):
+    """An endpoint with no key against it cannot call anything."""
+    store.update({"FACE_URL": "https://face"})
+    got = await _configured_map([provider(
+        "azure",
+        field("FACE_URL", "Face endpoint", required=False),
+        field("FACE_KEY", "Face key", required=False),
+        field("VISION_URL", "Vision endpoint", required=False),
+        field("VISION_KEY", "Vision key", required=False),
+        requires_any=[["FACE_URL", "FACE_KEY"], ["VISION_URL", "VISION_KEY"]],
+    )])
+    assert got == {"azure": False}
+
+
+@pytest.mark.asyncio
+async def test_no_group_satisfied_is_not_configured(store):
+    got = await _configured_map([provider(
+        "azure",
+        field("FACE_URL", "Face endpoint", required=False),
+        field("FACE_KEY", "Face key", required=False),
+        requires_any=[["FACE_URL", "FACE_KEY"]],
+    )])
+    assert got == {"azure": False}
+
+
+@pytest.mark.asyncio
+async def test_a_group_does_not_excuse_a_flat_required_field(store):
+    """Both rules apply. The AWS card carries a required region *and* could
+    carry alternatives; satisfying one must not waive the other."""
+    store.update({"FACE_URL": "https://face", "FACE_KEY": "k"})
+    got = await _configured_map([provider(
+        "azure",
+        field("REGION", "Region", required=True),
+        field("FACE_URL", "Face endpoint", required=False),
+        field("FACE_KEY", "Face key", required=False),
+        requires_any=[["FACE_URL", "FACE_KEY"]],
+    )])
+    assert got == {"azure": False}
+
+
+# ---- credentials an attached cloud identity supplies --------------------------
+
+@pytest.mark.asyncio
+async def test_an_attached_identity_satisfies_the_key_it_replaces(store, monkeypatch):
+    """The credential form already draws these boxes as "nothing to enter". The
+    badge used to disagree with the box directly above it -- form says there is
+    nothing to supply, badge says not set up because it was not supplied."""
+    import app.services.cloud_identity as ci
+    monkeypatch.setattr(ci, "detect", lambda: {"provider": "google", "identity": "sa@example"})
+
+    store.update({"GOOGLE_CLOUD_PROJECT": "p"})
+    got = await _configured_map([provider(
+        "google",
+        field("GOOGLE_CLOUD_PROJECT", "Project", required=True),
+        field("GCP_SERVICE_ACCOUNT_JSON", "Service account JSON", required=True),
+    )])
+    assert got == {"google": True}
+
+
+@pytest.mark.asyncio
+async def test_an_attached_identity_does_not_supply_which_resource_to_use(store, monkeypatch):
+    """An instance role proves who is asking. It does not name a project, a
+    region or a key, so those still have to be entered."""
+    import app.services.cloud_identity as ci
+    monkeypatch.setattr(ci, "detect", lambda: {"provider": "google", "identity": "sa@example"})
+
+    got = await _configured_map([provider(
+        "google",
+        field("GOOGLE_CLOUD_PROJECT", "Project", required=True),
+        field("GCP_SERVICE_ACCOUNT_JSON", "Service account JSON", required=True),
+    )])
+    assert got == {"google": False}
+
+
+@pytest.mark.asyncio
+async def test_a_failing_identity_probe_is_treated_as_no_identity(store, monkeypatch):
+    """A metadata probe that throws must not decide anything. It must certainly
+    not throw out of the catalog endpoint."""
+    import app.services.cloud_identity as ci
+
+    def boom():
+        raise RuntimeError("no metadata server here")
+
+    monkeypatch.setattr(ci, "detect", boom)
+    store.update({"A": "x"})
+    assert await _configured_map([provider("p", field("A", "A"))]) == {"p": True}
+
+
 # ---- the real catalogs --------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -146,6 +291,194 @@ async def test_every_shipped_capability_reports_every_provider(store):
         for p in providers:
             if any(_field_required(f) for f in p["credential_fields"]):
                 assert got[p["provider"]] is False, f"{name}/{p['provider']}"
+
+
+@pytest.mark.asyncio
+async def test_a_cloud_detector_needs_a_cloud_account(store):
+    """The bug this pass fixes, in the catalog it happened in.
+
+    Every photo-redaction provider declared the two blur toggles and nothing
+    else, both toggles are optional, and a provider with no required fields
+    counts as configured -- so a deployment with no AWS and no Azure account
+    read `{'google': True, 'aws': True, 'azure': True, 'local': True}`. The
+    Azure card said "configured" while `resolve_provider` found no Azure
+    credentials and quietly ran OpenCV instead.
+
+    Only the on-server detector may claim to be ready with nothing stored,
+    because it is the only one that genuinely needs nothing.
+    """
+    from app.services.delivery_providers import catalog_for_api
+
+    got = await _configured_map(catalog_for_api("redaction"))
+    assert got == {"google": False, "aws": False, "azure": False, "local": True}
+
+
+@pytest.mark.asyncio
+async def test_a_cloud_key_service_needs_a_cloud_account(store):
+    """Same shape on the KMS card. Its three fields only *name* a key and all
+    three have defaults, so Google Cloud KMS reported itself configured on a
+    town with no Google account -- while `_wrap_dek` fell through to wrapping
+    resident PII with the application's own SECRET_KEY."""
+    from app.services.delivery_providers import catalog_for_api
+
+    got = await _configured_map(catalog_for_api("kms"))
+    assert got["google"] is False
+    assert got["local"] is True
+
+
+# ---- which provider a capability is actually on -------------------------------
+#
+# The setup page had been answering this in the browser, from hard-coded secret
+# names ORed across providers. Two of its answers were false on the live
+# deployment and a third was waiting to be: photo redaction and PII encryption
+# both reported "not set up" while both were demonstrably running, and AI and
+# translation both ORed AWS_REGION, which SES, SNS, Bedrock, AWS KMS and AWS
+# Translate all share.
+
+@pytest.mark.asyncio
+async def test_an_unset_capability_reports_the_provider_dispatch_would_use(store):
+    """A blank selection is not "no provider". Every catalog endpoint knew its
+    own default and nothing else did."""
+    from app.api.system import effective_provider_for
+
+    assert await effective_provider_for("identity") == "auth0"
+    assert await effective_provider_for("translation") == "google"
+    assert await effective_provider_for("ai") == "vertex"
+    assert await effective_provider_for("maps") == "google"
+    assert await effective_provider_for("email") == "smtp"
+    assert await effective_provider_for("kms") == "google"
+
+
+@pytest.mark.asyncio
+async def test_redaction_reports_the_detector_it_infers_rather_than_the_empty_secret(store):
+    """`REDACTION_PROVIDER` is empty on a town that never opened the card, and
+    `resolve_provider()` falls through to the AI provider -- so a town on Vertex
+    is running Google Cloud Vision on every photo. Reading the raw secret said
+    "nothing", about a detector that was actively blurring faces."""
+    from app.api.system import effective_provider_for
+
+    store.update({"AI_PROVIDER": "vertex"})
+    assert await effective_provider_for("redaction") == "google"
+
+
+@pytest.mark.asyncio
+async def test_redaction_falls_to_on_server_detection_rather_than_to_nothing(store):
+    from app.api.system import effective_provider_for
+
+    assert await effective_provider_for("redaction") == "local"
+
+
+@pytest.mark.asyncio
+async def test_switched_off_is_reported_as_no_provider(store):
+    """Text messages default to off, and off is not a provider. It is also not
+    unfinished -- the caller decides which of those to say."""
+    from app.api.system import effective_provider_for
+
+    assert await effective_provider_for("sms") is None
+    store.update({"SMS_PROVIDER": "twilio"})
+    assert await effective_provider_for("sms") == "twilio"
+
+
+@pytest.mark.asyncio
+async def test_switched_off_is_not_configured(store):
+    """`ready` has to be false here, or a checklist ticks an item nobody set
+    up."""
+    from app.api.system import capability_is_configured
+
+    assert await capability_is_configured("sms") is False
+
+
+@pytest.mark.asyncio
+async def test_a_capability_on_its_default_provider_is_configured_when_that_provider_is(store):
+    from app.api.system import capability_is_configured
+
+    store.update({"AUTH0_DOMAIN": "t.auth0.com", "AUTH0_CLIENT_ID": "id",
+                  "AUTH0_CLIENT_SECRET": "sh", "AUTH0_AUDIENCE": "api"})
+    assert await capability_is_configured("identity") is True
+
+
+# ---- what Save tells you is still missing -------------------------------------
+
+class _NoBackground:
+    def add_task(self, *a, **kw):
+        pass
+
+
+async def _save(capability, provider, store, monkeypatch, settings=None):
+    from app.api import system
+
+    async def fake_persist(db, key_name, value):
+        store[key_name] = value
+        return True
+
+    monkeypatch.setattr(system, "_persist_secret", fake_persist)
+    body = system.ProviderSaveRequest(provider=provider, settings=settings or {})
+    return await system.save_provider(capability, body, _NoBackground(), db=None, _=None)
+
+
+@pytest.mark.asyncio
+async def test_saving_a_detector_with_no_cloud_account_does_not_claim_it_is_ready(store, monkeypatch):
+    """Selecting Amazon Rekognition on a town with no AWS account used to
+    answer configured: true, because the card collected only the blur
+    toggles."""
+    out = await _save("redaction", "aws", store, monkeypatch)
+    assert out["configured"] is False
+    assert out["missing"] == ["AWS Region (on any AWS card — email, text messages or encryption)"]
+
+
+@pytest.mark.asyncio
+async def test_the_missing_credential_says_which_card_to_enter_it_on(store, monkeypatch):
+    """There is no box for it here, so the name alone is a dead end."""
+    out = await _save("redaction", "google", store, monkeypatch)
+    assert out["missing"] == ["Google service account (on the AI card)"]
+
+
+@pytest.mark.asyncio
+async def test_alternatives_are_reported_as_a_choice_not_as_four_empty_boxes(store, monkeypatch):
+    out = await _save("redaction", "azure", store, monkeypatch)
+    assert out["configured"] is False
+    assert out["missing"] == [
+        "either Face endpoint + Face key, or Vision endpoint + Vision key"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_one_azure_pair_is_enough_to_be_configured(store, monkeypatch):
+    store.update({"AZURE_VISION_ENDPOINT": "https://v", "AZURE_VISION_KEY": "k"})
+    out = await _save("redaction", "azure", store, monkeypatch)
+    assert out["configured"] is True
+    assert out["missing"] == []
+
+
+@pytest.mark.asyncio
+async def test_on_server_detection_is_ready_with_nothing_entered(store, monkeypatch):
+    """It is the fallback everything degrades to. If it ever reported itself
+    unconfigured there would be no configured detector at all."""
+    out = await _save("redaction", "local", store, monkeypatch)
+    assert out["configured"] is True
+    assert out["missing"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_save_endpoint_still_refuses_a_key_the_provider_does_not_declare(store, monkeypatch):
+    """`requires` names credentials collected elsewhere. It must not become a
+    second allow-list for writing them through this endpoint."""
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        await _save("redaction", "google", store, monkeypatch,
+                    settings={"VERTEX_AI_SERVICE_ACCOUNT_KEY": "{}"})
+    assert exc.value.status_code == 400
+    assert "VERTEX_AI_SERVICE_ACCOUNT_KEY" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_the_save_endpoint_still_accepts_the_keys_it_declares(store, monkeypatch):
+    out = await _save("redaction", "local", store, monkeypatch,
+                      settings={"REDACT_FACES": "true", "REDACT_PLATES": "false"})
+    assert out["ok"] is True
+    assert store["REDACT_FACES"] == "true"
+    assert store["REDACTION_PROVIDER"] == "local"
 
 
 # ---- the test endpoint's allow-list -------------------------------------------

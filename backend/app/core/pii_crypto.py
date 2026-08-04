@@ -295,6 +295,11 @@ def clear_caches() -> None:
         _active = None
         _unwrap_cache.clear()
         _plain_cache.clear()
+    # The key path too, not just the key. Dropping the data key and keeping the
+    # resolved key name meant the re-wrap went straight back to the key the
+    # town had just moved off.
+    from app.core.encryption import reset_kms_cache
+    reset_kms_cache()
 
 
 def _track(op: str) -> None:
