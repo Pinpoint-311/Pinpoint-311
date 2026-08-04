@@ -359,7 +359,13 @@ class NotificationService:
     _instance = None
     _sms_provider: Optional[SMSProvider] = None
     _email_provider: Optional[EmailProvider] = None
-    
+    # Which vendor each configured provider is, kept so a health row written by
+    # a real send says whose verdict it is. Without it every send recorded
+    # provider NULL, and a town that switched from one gateway to another kept
+    # the previous vendor's answer on the card with nothing to say so.
+    _sms_provider_name: Optional[str] = None
+    _email_provider_name: Optional[str] = None
+
     @classmethod
     def get_instance(cls) -> "NotificationService":
         if cls._instance is None:
@@ -368,6 +374,7 @@ class NotificationService:
     
     def configure_sms(self, provider_type: str, config: Dict[str, Any]):
         """Configure SMS provider dynamically"""
+        self._sms_provider_name = provider_type
         if provider_type == "twilio":
             self._sms_provider = TwilioProvider(
                 account_sid=config.get("account_sid", ""),
@@ -398,6 +405,9 @@ class NotificationService:
     def configure_email(self, config: Dict[str, Any], provider_type: str = "smtp"):
         """Configure the Email provider. Defaults to SMTP (works with any relay,
         including SES/ACS SMTP endpoints); 'ses' and 'acs' use the native APIs."""
+        # "smtp" for anything that is not one of the two native APIs, matching
+        # the branch below and the value EMAIL_PROVIDER stores.
+        self._email_provider_name = provider_type if provider_type in ("ses", "acs") else "smtp"
         if provider_type == "ses":
             self._email_provider = SESEmailProvider(
                 region=config.get("region", ""),
@@ -425,6 +435,15 @@ class NotificationService:
                 use_tls=config.get("use_tls", True)
             )
     
+    def _provider_name(self, connector: str) -> Optional[str]:
+        """The vendor behind this connector, for the health row.
+
+        A verdict is only true of the provider that produced it. Recording
+        without one leaves a card showing yesterday's answer about a vendor the
+        town has since switched away from, and nothing on screen able to tell.
+        """
+        return self._sms_provider_name if connector == "sms" else self._email_provider_name
+
     async def _record_health(self, connector: str, success: bool) -> None:
         """Record a real send against connector health.
 
@@ -441,11 +460,14 @@ class NotificationService:
         try:
             from app.db.session import SessionLocal
             from app.services import connector_health as ch
+            provider = self._provider_name(connector)
             async with SessionLocal() as db:
                 if success:
-                    await ch.record_success(db, connector)
+                    await ch.record_success(db, connector, provider=provider)
                 else:
-                    await ch.record_failure(db, connector, "The provider did not accept the message")
+                    await ch.record_failure(
+                        db, connector, "The provider did not accept the message",
+                        provider=provider)
         except Exception as exc:
             logger.debug("Could not record %s health: %s", connector, exc)
 

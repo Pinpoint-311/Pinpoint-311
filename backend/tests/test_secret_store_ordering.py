@@ -63,3 +63,51 @@ def test_it_is_advisory_rather_than_a_failure():
     assert '"severity": "info"' in src
     # The response still reports success.
     assert '"ok": True' in src
+
+
+# ---------------------------------------------------------------------------
+# Switching the store the credentials are already in
+# ---------------------------------------------------------------------------
+
+def test_the_secret_store_cannot_be_repointed_from_a_card():
+    """Every credential the town has is in the current store, and changing the
+    setting does not move them. A picker on a card would be one click between a
+    working town and an apparently empty one."""
+    src = inspect.getsource(system.save_provider)
+    assert "_READ_ONLY_SELECTION" in src
+
+
+def test_the_refusal_says_what_to_do_instead():
+    """It used to say the cloud profile "moves the existing credentials across".
+    It does not -- `set_cloud_profile` repoints SECRETS_PROVIDER and migrates
+    nothing -- so the message sent people to a flow that would have caused the
+    problem it was warning about."""
+    src = inspect.getsource(system.save_provider)
+    assert "does not move them" in src
+    assert "hourly migration" in src
+
+
+def test_switching_cloud_profile_warns_about_the_credentials_left_behind():
+    """The KMS half of this has carried a warning since it was written and the
+    secret half never did -- and the secret half is worse. PII stays readable
+    while the old KMS credentials are in place; a repointed secret store takes
+    the mail relay, the map key and the identity provider with it."""
+    src = inspect.getsource(system.set_cloud_profile)
+    assert "_vaulted_key_names" in src, "it has to know whether anything is at risk"
+    assert "are not moved" in src
+
+
+def test_the_warning_is_skipped_when_nothing_is_at_risk():
+    """A town whose secrets are all still in the database loses nothing by
+    repointing, and a warning that always fires is one nobody reads."""
+    src = inspect.getsource(system.set_cloud_profile)
+    assert "if await _vaulted_key_names():" in src
+
+
+def test_only_secrets_whose_sole_copy_is_the_vault_count():
+    """A scrubbed row is one whose encrypted database copy was removed after
+    being verified in the store. Those are exactly the ones that become
+    unreadable, and DB_REQUIRED_KEYS never get scrubbed."""
+    src = inspect.getsource(system._vaulted_key_names)
+    assert "key_value.is_(None)" in src
+    assert "is_configured.is_(True)" in src

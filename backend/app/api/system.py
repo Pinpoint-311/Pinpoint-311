@@ -117,6 +117,63 @@ def _field_required(field: Dict[str, Any]) -> bool:
     return not str(field.get("label", "")).rstrip().endswith("(optional)")
 
 
+def _borrowed_requirements(provider: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Credentials this provider cannot work without but does not collect.
+
+    Photo redaction on Google and AWS runs on the service account and access
+    keys entered on other cards, and offering a second box for the same secret
+    is its own bug -- whichever was filled last wins. So those providers
+    declared no credentials at all, which left `_configured_map` with nothing
+    required to check and a green badge on a detector with no cloud account
+    behind it.
+
+    Declaring the requirement without drawing the box separates the two
+    questions that had been collapsed: what this card asks you to type, and what
+    this provider needs in order to work.
+    """
+    return [r for r in (provider.get("requires") or []) if r.get("key")]
+
+
+def _requirement_groups(provider: Dict[str, Any]) -> List[List[str]]:
+    """Alternative credential sets, any one of which is enough.
+
+    Some providers cannot be described by a per-field flag. Azure photo
+    redaction needs an AI Face resource for faces and a separate AI Vision
+    resource for plates, and having either one is a working setup -- a town
+    stuck behind Microsoft's Limited Access review for Face runs on Vision
+    alone. Marking all four required calls that town unconfigured; marking none
+    required is what let an Azure card with four empty boxes read as ready.
+
+    So the provider declares the alternatives and this reads them. Fields that
+    appear in a group are deliberately *not* also flagged required, or the group
+    would never get a chance to be the thing that decides.
+    """
+    return [list(group) for group in (provider.get("requires_any") or []) if group]
+
+
+async def _skippable_keys() -> set:
+    """Credentials an attached cloud identity supplies, so nothing is entered.
+
+    The credential form already greys these out and says "nothing to enter"
+    (ProviderCredentialSteps reads the same list). Without this the badge
+    disagreed with the box directly above it: the form said there was nothing to
+    supply and the badge said the provider was not set up because it had not
+    been supplied.
+    """
+    try:
+        from app.services import cloud_identity
+
+        detected = cloud_identity.detect()
+        if not detected:
+            return set()
+        return set(cloud_identity.SKIPPABLE.get(detected.get("provider") or "", []))
+    except Exception:
+        # A metadata probe that fails means "no attached identity", which is the
+        # same as the empty set. It must never make a configured provider look
+        # broken.
+        return set()
+
+
 async def providers_for(capability: str) -> List[Dict[str, Any]]:
     """The catalog for one capability, without going through its endpoint.
 
@@ -126,7 +183,7 @@ async def providers_for(capability: str) -> List[Dict[str, Any]]:
     imports into a task module would be a second place to update when a ninth
     capability appears.
     """
-    if capability in ("email", "sms", "kms", "redaction"):
+    if capability in ("email", "sms", "kms", "redaction", "secrets"):
         from app.services.delivery_providers import catalog_for_api as delivery
         return delivery(capability)
     loaders = {
@@ -142,25 +199,139 @@ async def providers_for(capability: str) -> List[Dict[str, Any]]:
     return getattr(__import__(module, fromlist=[name]), name)()
 
 
-async def capability_is_configured(capability: str) -> bool:
-    """Whether the provider currently selected for this capability has its
-    credentials stored.
+# What each capability falls back to when its selection secret is empty. These
+# are not guesses: each one is the default the dispatch code itself applies, and
+# each was already hard-coded in that capability's catalog endpoint. Gathered
+# here so "which provider is this town on" has one answer instead of nine.
+_CAPABILITY_DEFAULT_PROVIDER = {
+    "ai": "vertex",
+    "translation": "google",
+    "identity": "auth0",
+}
 
-    Used to decide what the daily sweep bothers testing. A town that has not set
-    up text messages has not made a mistake, and testing it would write a
-    failure that shows an amber badge on something deliberately switched off --
-    which is the noise that teaches people to ignore badges.
+# Values that mean "switched off" wherever a provider is selected.
+_OFF_VALUES = ("none", "off", "disabled")
+
+
+async def effective_provider_for(capability: str) -> Optional[str]:
+    """The provider this capability is actually running on right now.
+
+    Not the stored secret. An empty `REDACTION_PROVIDER` does not mean no
+    detector: `resolve_provider()` falls through to the moderation provider and
+    then to the AI provider, and lands on on-server detection if neither says
+    anything -- so on a town running Vertex, photo redaction is Google Cloud
+    Vision and the secret is blank. Reading the raw value answered "nothing",
+    and both the card and the setup checklist repeated it about a detector that
+    was actively blurring faces.
+
+    Every other capability has the milder version of the same gap: a blank
+    secret means the dispatch default, which each catalog endpoint knew and
+    nothing else did.
+
+    Returns None only where "off" is a real state a town has chosen.
     """
     from app.services.secret_manager import get_secret
 
     select_key = _PROVIDER_SELECT_KEY.get(capability)
     if not select_key:
-        return False
-    current = ((await get_secret(select_key)) or "").strip().lower()
-    if not current or current in ("none", "off", "disabled"):
+        return None
+
+    if capability == "redaction":
+        # The one capability whose selection is inferred rather than stored.
+        from app.services import image_redaction
+
+        return await image_redaction.resolve_provider()
+
+    raw = ((await get_secret(select_key)) or "").strip().lower()
+
+    if capability == "secrets":
+        # `_secrets_provider()` is the reader of record: it consults the
+        # environment before the database, because the host can pin the store
+        # and the database copy would then be describing somewhere else. Ask it
+        # rather than re-deriving the answer from the secret.
+        from app.services.secret_manager import _secrets_provider
+        from app.services.storage_maintenance import store_reachable
+
+        # An unreachable store means credentials are in the encrypted database,
+        # which is a supported place for them to be and a different provider
+        # from the one that was selected. Saying "Google Secret Manager" about a
+        # town whose secrets are all in Postgres is the kind of confident wrong
+        # answer this pass is removing.
+        return _secrets_provider() if store_reachable() else "database"
+
+    if capability in ("email", "sms", "kms"):
+        from app.services.delivery_providers import normalize_provider, switched_off
+
+        # The ENABLED flags are part of the answer to "which provider is this
+        # running on", because the answer is "none" when one of them says no.
+        # A card naming Twilio while SMS_ENABLED is false describes a send that
+        # will not happen.
+        enable_key = {"email": "EMAIL_ENABLED", "sms": "SMS_ENABLED"}.get(capability)
+        if enable_key and switched_off(await get_secret(enable_key)):
+            return None
+
+        resolved = normalize_provider(capability, raw)
+        return None if resolved in _OFF_VALUES else resolved
+
+    if capability == "maps":
+        from app.services.map_provider import normalize_provider as normalize_map
+
+        return normalize_map(raw)
+
+    if raw in _OFF_VALUES:
+        return None
+    return raw or _CAPABILITY_DEFAULT_PROVIDER.get(capability)
+
+
+async def capability_is_configured(capability: str) -> bool:
+    """Whether the provider currently selected for this capability has its
+    credentials stored.
+
+    Used to decide what the daily sweep bothers testing, and it is the single
+    answer the setup page's checklist now reads. A town that has not set up text
+    messages has not made a mistake, and testing it would write a failure that
+    shows an amber badge on something deliberately switched off -- which is the
+    noise that teaches people to ignore badges.
+
+    "Selected" means what dispatch resolves, not what is stored. Asking the raw
+    secret meant photo redaction -- whose selection is inferred -- was reported
+    as unconfigured on a deployment where it was blurring every photo.
+    """
+    current = await effective_provider_for(capability)
+    if not current:
         return False
     providers = await providers_for(capability)
     return (await _configured_map(providers)).get(current, False)
+
+
+async def _stored_fields(providers: List[Dict[str, Any]]) -> Dict[str, bool]:
+    """{credential key: is there a value stored for it}.
+
+    Per field, because the form's "Saved" hint was per provider: once a provider
+    counted as configured, every one of its boxes claimed to be saved --
+    including an optional one nobody had ever filled in. An empty box marked
+    "Saved" is worse than an unmarked one, because the reason the hint exists is
+    to tell a clerk that leaving a box empty will keep the stored value rather
+    than clear it, and that promise is false where there is nothing stored.
+
+    Presence only. No value ever leaves here, and the same fact is already
+    implied by `configured` -- this only says which of the fields it is made of
+    are filled.
+    """
+    from app.services.secret_manager import get_secret
+
+    keys = {
+        field["key"]
+        for provider in providers
+        for field in provider.get("credential_fields", [])
+    }
+    out: Dict[str, bool] = {}
+    for key in sorted(keys):
+        try:
+            out[key] = bool((await get_secret(key) or "").strip())
+        except Exception:
+            out[key] = False
+    return out
 
 
 async def _configured_map(providers: List[Dict[str, Any]]) -> Dict[str, bool]:
@@ -174,18 +345,32 @@ async def _configured_map(providers: List[Dict[str, Any]]) -> Dict[str, bool]:
     to re-paste credentials that were already fine.
 
     A provider with no required fields counts as configured: there is nothing to
-    supply, so there is nothing missing.
+    supply, so there is nothing missing. That rule is right and it was also
+    load-bearing in the wrong direction, because a catalog that simply had not
+    declared its credentials looked identical to one that needs none. Every
+    photo-redaction provider declared the two blur toggles and nothing else, all
+    four toggles were optional, and so all four detectors -- including Amazon
+    Rekognition and Azure AI Vision on a deployment with no AWS or Azure account
+    -- reported themselves configured. A provider that needs nothing is now a
+    claim its catalog entry has to make on purpose.
     """
     from app.services.secret_manager import get_secret
+
+    skippable = await _skippable_keys()
 
     out: Dict[str, bool] = {}
     for provider in providers:
         pkey = provider.get("provider") or provider.get("id") or ""
         if not pkey:
             continue
-        required = [f["key"] for f in provider.get("credential_fields", []) if _field_required(f)]
-        present = True
-        for key in required:
+        required = [
+            f["key"] for f in provider.get("credential_fields", [])
+            if _field_required(f) and f["key"] not in skippable
+        ] + [
+            r["key"] for r in _borrowed_requirements(provider)
+            if r["key"] not in skippable
+        ]
+        async def stored(key: str) -> bool:
             try:
                 # `.strip()`, so that a value of " " is absent here as well as
                 # everywhere else.
@@ -196,14 +381,34 @@ async def _configured_map(providers: List[Dict[str, Any]]) -> Dict[str, bool]:
                 # and simultaneously untestable, and the card said "Set up.
                 # There is no way to test this one from here" about a service
                 # nobody had entered anything for.
-                if not (await get_secret(key) or "").strip():
-                    present = False
-                    break
+                return bool((await get_secret(key) or "").strip())
             except Exception:
                 # An unreachable secret store is not the same as an unconfigured
                 # provider. Say nothing rather than say something false.
+                return False
+
+        present = True
+        for key in required:
+            if not await stored(key):
                 present = False
                 break
+
+        groups = [
+            [k for k in group if k not in skippable]
+            for group in _requirement_groups(provider)
+        ]
+        if present and groups:
+            present = False
+            for group in groups:
+                satisfied = True
+                for key in group:
+                    if not await stored(key):
+                        satisfied = False
+                        break
+                if satisfied:
+                    present = True
+                    break
+
         out[pkey] = present
     return out
 
@@ -379,7 +584,8 @@ async def get_identity_catalog(_: User = Depends(get_current_admin)):
     current = (await get_secret(IDENTITY_PROVIDER_KEY)) or "auth0"
     providers = catalog_for_api()
     return {"current_provider": current.strip().lower(), "default_provider": "auth0",
-            "providers": providers, "configured": await _configured_map(providers)}
+            "providers": providers, "configured": await _configured_map(providers),
+            "stored_fields": await _stored_fields(providers)}
 
 
 @router.get("/translation/catalog")
@@ -390,7 +596,8 @@ async def get_translation_catalog(_: User = Depends(get_current_admin)):
     current = (await get_secret(TRANSLATION_PROVIDER_KEY)) or "google"
     providers = catalog_for_api()
     return {"current_provider": current.strip().lower(), "default_provider": "google",
-            "providers": providers, "configured": await _configured_map(providers)}
+            "providers": providers, "configured": await _configured_map(providers),
+            "stored_fields": await _stored_fields(providers)}
 
 
 @router.get("/maps/catalog")
@@ -403,7 +610,8 @@ async def get_maps_catalog(_: User = Depends(get_current_admin)):
     current = normalize_provider(await get_secret(MAP_PROVIDER_KEY))
     providers = catalog_for_api()
     return {"current_provider": current, "default_provider": "google",
-            "providers": providers, "configured": await _configured_map(providers)}
+            "providers": providers, "configured": await _configured_map(providers),
+            "stored_fields": await _stored_fields(providers)}
 
 
 @router.get("/ai/catalog")
@@ -453,6 +661,7 @@ async def get_ai_catalog(
         "current_model": resolved_model,
         "current_model_available": md.model_is_available(current_models, current_model),
         "configured": configured,
+        "stored_fields": await _stored_fields(providers),
         "providers": providers,
     }
 
@@ -497,12 +706,28 @@ async def get_capability_catalog(
     from app.services.delivery_providers import _DEFAULTS
     from app.services import connector_health
 
-    current = normalize_provider(capability, await get_secret(_PROVIDER_SELECT_KEY[capability]))
+    # What is running, not what is stored. `normalize_provider` alone answered
+    # "on this server (no cloud)" for photo redaction on a deployment where
+    # `resolve_provider()` had settled on Google Cloud Vision and was using it
+    # -- the card named one detector and a different one did the work.
+    current = await effective_provider_for(capability) or normalize_provider(
+        capability, await get_secret(_PROVIDER_SELECT_KEY[capability])
+    )
     providers = catalog_for_api(capability)
     health_map = await connector_health.snapshot(db)
     h = health_map.get(capability)
 
     last_result = None
+    # Only if it is a verdict about the provider now selected. A result belongs
+    # to the provider that produced it, and this card was rehydrating the box
+    # from whatever was last recorded -- so the text messages card opened
+    # saying "there is no way to check http without sending a real text" on a
+    # town whose SMS_PROVIDER had since been changed to acs. A row with no
+    # provider recorded is kept: everything written before the column was
+    # filled looks like that, and discarding a real verdict is the worse of the
+    # two mistakes.
+    if h and h.provider and h.provider != current:
+        h = None
     if h and (h.last_result or h.last_error):
         last_result = {
             "ok": h.ok,
@@ -516,7 +741,16 @@ async def get_capability_catalog(
         "default_provider": _DEFAULTS[capability],
         "providers": providers,
         "configured": await _configured_map(providers),
+        # Which individual boxes have something in them, so the form's
+        # "Saved" hint stops appearing on empty optional ones.
+        "stored_fields": await _stored_fields(providers),
         "last_result": last_result,
+        # Whether this card may change the selection. The secret store may not:
+        # every credential the town has is in the current one and repointing the
+        # setting does not move them, so a Save button here would be one click
+        # that makes every other card unreadable. The card shows what is in use
+        # and offers the check; the cloud-profile flow owns the switch.
+        "selectable": capability not in _READ_ONLY_SELECTION,
     }
 
 
@@ -535,7 +769,79 @@ _PROVIDER_SELECT_KEY = {
     "sms": "SMS_PROVIDER",
     "kms": "KMS_PROVIDER",
     "redaction": "REDACTION_PROVIDER",
+    # Where credentials themselves are kept. Listed so it can be badged, swept
+    # and tested like the rest; see _READ_ONLY_SELECTION for why it cannot be
+    # switched from a card.
+    "secrets": "SECRETS_PROVIDER",
 }
+
+
+# Capabilities whose provider may be reported but not chosen here.
+#
+# Switching the secret store is not like switching a map vendor: every
+# credential this town has is in the old one, and repointing the setting does
+# not move them. A picker on a card would be a single click that makes every
+# other card's credentials unreadable. It is set by the cloud-profile flow,
+# which moves the secrets across, and that stays the only way.
+_READ_ONLY_SELECTION = {"secrets"}
+
+
+# Settings resolved once per process and then held for its lifetime. That is
+# right for something fixed at deploy and wrong for anything this console can
+# edit, and each of these is editable from a card.
+_PROCESS_CACHED_PREFIXES = ("KMS_", "GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT")
+_IDENTITY_PREFIXES = ("AUTH0_", "ENTRA_", "OKTA_", "OIDC_", "IDENTITY_PROVIDER")
+
+
+def _invalidate_process_caches(key_name: str) -> None:
+    """Drop whatever this process is holding that the new value replaces.
+
+    Never raises: this runs inside a save, and failing to clear a cache must not
+    fail the write that produced it.
+    """
+    try:
+        if key_name.startswith(_PROCESS_CACHED_PREFIXES):
+            # The KMS client and the resolved key path are both process-lifetime
+            # globals. Change the key ring or the key name and the process keeps
+            # wrapping resident data against the old path while the card reports
+            # the new one.
+            from app.core.encryption import reset_kms_cache
+
+            reset_kms_cache()
+        if key_name.startswith(_IDENTITY_PREFIXES):
+            # The OIDC discovery document is cached per issuer with no
+            # expiry, so a provider that moves its endpoints -- or a town that
+            # corrects a mistyped issuer -- keeps being sent to the old ones.
+            from app.services import identity
+
+            identity._discovery_cache.clear()
+    except Exception:
+        from app.core.sanitize import sanitize_for_log
+
+        logger.warning("Could not clear the in-process cache for %s", sanitize_for_log(key_name))
+
+
+async def _vaulted_key_names() -> set:
+    """Keys whose only copy is in the secret store.
+
+    A migrated secret keeps its database row with `key_value` scrubbed to NULL,
+    so this is exactly the set that becomes unreadable if the store is
+    repointed. Never raises: it decides whether to add a warning, and failing to
+    warn must not fail the operation being warned about.
+    """
+    try:
+        from app.db.session import SessionLocal
+
+        async with SessionLocal() as session:
+            rows = await session.execute(
+                select(SystemSecret.key_name).where(
+                    SystemSecret.is_configured.is_(True),
+                    SystemSecret.key_value.is_(None),
+                )
+            )
+            return set(rows.scalars().all())
+    except Exception:
+        return set()
 
 
 async def _persist_secret(db: AsyncSession, key_name: str, value: str) -> bool:
@@ -555,6 +861,20 @@ async def _persist_secret(db: AsyncSession, key_name: str, value: str) -> bool:
     from app.core.managed import reject_platform_key_writes
     from app.services.secret_manager import set_secret, clear_cache
     reject_platform_key_writes(key_name)
+    # Surrounding whitespace is never part of a credential, and a paste that
+    # picks up a leading space is invisible in a password box.
+    #
+    # This is not hypothetical: SMTP_USER on this deployment was stored as
+    # " a475c9001@smtp-brevo.com" and the relay answered 535 Authentication
+    # failed, so no resident email was going out. Nothing caught it. The
+    # advisory in credential_checks strips before it looks for spaces, so it
+    # only ever sees the ones in the middle; `_configured_map` strips before
+    # deciding a value is present, so the badge was green; and the value handed
+    # to the vendor was the only unstripped one in the chain.
+    #
+    # Stripping here rather than at each reader, because a value that differs
+    # depending on who asks is the thing that made this hard to see.
+    value = (value or "").strip()
     # These two are deliberately database-only: they are what makes the secret
     # store reachable in the first place, so storing them in it is circular.
     bootstrap_keys = {"GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT"}
@@ -569,6 +889,10 @@ async def _persist_secret(db: AsyncSession, key_name: str, value: str) -> bool:
         except Exception as e:
             from app.core.sanitize import sanitize_for_log
             logger.warning(f"Provider secret store write failed for {sanitize_for_log(key_name)}: {sanitize_for_log(str(e))}")
+    # Some settings are read once per process and then held. Saving one has to
+    # reach the process, or the card reports a change the running system is not
+    # making -- which is the shape of every bug in this pass.
+    _invalidate_process_caches(key_name)
     result = await db.execute(select(SystemSecret).where(SystemSecret.key_name == key_name))
     secret = result.scalar_one_or_none()
     enc = encrypt(value) if value else None
@@ -600,7 +924,7 @@ def _capability_catalog(capability: str) -> Dict:
     if capability == "maps":
         from app.services.map_provider import MAP_CATALOG
         return MAP_CATALOG
-    if capability in ("email", "sms", "kms", "redaction"):
+    if capability in ("email", "sms", "kms", "redaction", "secrets"):
         from app.services.delivery_providers import _CATALOGS
         return _CATALOGS[capability]
     return {}
@@ -618,6 +942,13 @@ async def save_provider(
     Blank values are ignored (existing secret kept)."""
     if capability not in _PROVIDER_SELECT_KEY:
         raise HTTPException(status_code=400, detail=f"Unknown capability: {capability}")
+    if capability in _READ_ONLY_SELECTION:
+        raise HTTPException(status_code=400, detail=(
+            "The secret store cannot be switched from a card: every credential this town has "
+            "is in the current one, and repointing the setting does not move them. Set up the "
+            "new store's credentials first, let the hourly migration copy them across, and "
+            "change the store after that."
+        ))
     catalog = _capability_catalog(capability)
     provider_id = (body.provider or "").strip().lower()
     if provider_id not in catalog:
@@ -712,15 +1043,52 @@ async def save_provider(
     if not configured_now:
         from app.services.secret_manager import get_secret
 
-        for field in catalog[provider_id].get("credential_fields", []):
-            if not _field_required(field):
-                continue
+        skippable = await _skippable_keys()
+        labels = {
+            f["key"]: (f.get("label") or f["key"])
+            for f in catalog[provider_id].get("credential_fields", [])
+        }
+
+        async def stored(key: str) -> bool:
             try:
-                present = bool((await get_secret(field["key"]) or "").strip())
+                return bool((await get_secret(key) or "").strip())
             except Exception:
-                present = False
-            if not present:
-                missing.append(field.get("label") or field["key"])
+                return False
+
+        for field in catalog[provider_id].get("credential_fields", []):
+            # An attached cloud identity supplies these, and the form says so.
+            # Naming them here would ask for a value the page has just told the
+            # clerk not to enter.
+            if not _field_required(field) or field["key"] in skippable:
+                continue
+            if not await stored(field["key"]):
+                missing.append(labels[field["key"]])
+
+        # Named with where to go, because there is no box for them on this card.
+        # "Google service account" alone would be a dead end.
+        for borrowed in _borrowed_requirements(catalog[provider_id]):
+            if borrowed["key"] in skippable or await stored(borrowed["key"]):
+                continue
+            label = borrowed.get("label") or borrowed["key"]
+            where = borrowed.get("where")
+            missing.append(f"{label} (on {where})" if where else label)
+
+        # Alternatives read as one clause, not as every box in every branch:
+        # listing four Azure fields when any two of them would do reads as
+        # "fill in all four".
+        groups = [
+            [k for k in group if k not in skippable]
+            for group in _requirement_groups(catalog[provider_id])
+        ]
+        if groups:
+            phrases = []
+            for group in groups:
+                if all([await stored(k) for k in group]):
+                    phrases = []
+                    break
+                phrases.append(" + ".join(labels.get(k, k) for k in group))
+            if phrases:
+                missing.append("either " + ", or ".join(phrases))
 
     return {
         "ok": True,
@@ -776,13 +1144,89 @@ async def _test_translation(db) -> dict:
 
 
 async def _test_identity(db) -> dict:
+    """Discovery, and then the client credentials against the token endpoint.
+
+    Discovery alone was the whole check, and it proves nothing about this
+    town's registration: `.well-known/openid-configuration` is public. A card
+    could sit green with a client secret that had been rotated in the vendor
+    console a month earlier, and the first anybody heard of it was a member of
+    staff being bounced *after* their password was accepted -- which reads as a
+    forgotten password, not as a misconfiguration.
+
+    There is no user present, so the authorization code flow cannot be run.
+    A client_credentials request can: the token endpoint has to identify the
+    client before it can decide anything about the grant, so its answer
+    separates "we do not know this client / that secret is wrong" from "we know
+    you, and you may not do this". The second is a pass. Most towns do not
+    enable client_credentials for a login app, so the refusal is the expected
+    result and is deliberately not reported as a failure.
+    """
+    import httpx
+
     from app.services.identity import resolve_identity_config, get_oidc_metadata
+
     cfg = await resolve_identity_config(db)
     if not cfg:
         return {"ok": False, "detail": "No identity provider is configured."}
     meta = await get_oidc_metadata(cfg)
-    return {"ok": bool(meta.get("authorization_endpoint")),
-            "detail": f"Discovered {cfg['provider']} endpoints at {cfg['issuer_base']}"}
+    if not meta.get("authorization_endpoint"):
+        return {"ok": False, "detail": (
+            f"{cfg['issuer_base']} answered, but the response is not an OIDC "
+            f"discovery document — check the issuer URL.")}
+
+    found = f"Discovered {cfg['provider']} endpoints at {cfg['issuer_base']}"
+    token_endpoint = meta.get("token_endpoint")
+    if not token_endpoint:
+        return {"ok": True, "detail": f"{found}. It publishes no token endpoint, so the "
+                                      f"client secret could not be checked from here."}
+
+    try:
+        from app.integrations.base import _assert_public_url
+        _assert_public_url(token_endpoint)
+        data = {
+            "grant_type": "client_credentials",
+            "client_id": cfg["client_id"],
+            "client_secret": cfg["client_secret"],
+        }
+        audience = (cfg.get("extra_authorize_params") or {}).get("audience")
+        if audience:
+            data["audience"] = audience
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            resp = await client.post(token_endpoint, data=data)
+    except Exception as exc:
+        # The discovery document was fetched, so the issuer is real and
+        # reachable. Failing the whole card on a token-endpoint hiccup would
+        # report a working sign-in as broken.
+        from app.core.sanitize import sanitize_for_log
+        logger.info("[Identity] token endpoint probe failed: %s", sanitize_for_log(str(exc)[:200]))
+        return {"ok": True, "detail": f"{found}. The client secret could not be checked from here."}
+
+    if resp.status_code == 200:
+        return {"ok": True, "detail": f"{found}, and the client ID and secret were accepted."}
+
+    try:
+        error = (resp.json() or {}).get("error") or ""
+    except Exception:
+        error = ""
+
+    # The vendor knows this client and refused the *grant*. That is the normal
+    # answer for a login app, and it is only reachable once the secret has been
+    # verified -- so it is the strongest evidence this check can produce.
+    if error in ("unauthorized_client", "invalid_grant", "unsupported_grant_type",
+                 "access_denied", "invalid_scope", "invalid_target", "invalid_request"):
+        return {"ok": True, "detail": (
+            f"{found}, and the client ID and secret were accepted "
+            f"(the provider recognised this application and declined a "
+            f"machine-to-machine token, which is expected for a sign-in app).")}
+
+    if error == "invalid_client" or resp.status_code in (401, 403):
+        return {"ok": False, "detail": (
+            f"{cfg['provider']} rejected the client ID or client secret. Staff sign-in will "
+            f"fail after the password is accepted. Re-copy both from the provider console.")}
+
+    return {"ok": True, "detail": (
+        f"{found}. The client secret could not be checked from here "
+        f"(the token endpoint answered HTTP {resp.status_code}).")}
 
 
 async def _test_kms(db=None) -> dict:
@@ -1110,9 +1554,26 @@ async def _test_delivery(capability: str) -> dict:
                 return {"ok": False, "detail": "No SMTP host is saved."}
             port = int((await get_secret("SMTP_PORT")) or 587)
 
+            sender = ((await get_secret("SMTP_FROM_EMAIL")) or "").strip()
+
             def _connect():
-                # Connect and authenticate only. Nothing is sent, so this is
-                # safe to press repeatedly.
+                """Connect, authenticate, and offer the envelope. No DATA, so
+                no message is queued and this is safe to press repeatedly.
+
+                The envelope is the half that was missing. Signing in proves the
+                relay knows this account; it does not prove the relay will carry
+                mail *from this address*, and that is a separate permission on
+                every hosted relay -- a verified sender on Brevo, an authorised
+                domain on Mailgun, a verified identity on SES. A town that
+                switches relay keeps its From address and loses the
+                authorisation attached to it, which is precisely the moment this
+                button gets pressed.
+
+                Relays differ on when they enforce it: some refuse at MAIL FROM,
+                some at DATA. This catches the first kind and says so; the
+                second cannot be caught without sending, and the message does
+                not pretend otherwise.
+                """
                 if port == 465:
                     server = smtplib.SMTP_SSL(host, port, timeout=12)
                 else:
@@ -1121,10 +1582,48 @@ async def _test_delivery(capability: str) -> dict:
                 with server:
                     if user and password:
                         server.login(user, password)
-                return True
+                    if not sender:
+                        return None
+                    try:
+                        code, message = server.mail(sender)
+                        if code >= 400:
+                            return (code, message)
+                        code, message = server.rcpt(sender)
+                        if code >= 400:
+                            return (code, message)
+                    finally:
+                        # Abandon the envelope explicitly rather than relying on
+                        # the disconnect, so nothing is left half-stated on a
+                        # relay that counts attempts.
+                        try:
+                            server.rset()
+                        except Exception:
+                            pass
+                return None
 
-            await asyncio.get_event_loop().run_in_executor(None, _connect)
-            return {"ok": True, "detail": f"Connected to {host}:{port} and signed in. Nothing was sent."}
+            refusal = await asyncio.get_event_loop().run_in_executor(None, _connect)
+            if refusal:
+                code, message = refusal
+                said = message.decode("utf-8", "replace") if isinstance(message, bytes) else str(message)
+                return {"ok": False, "detail": (
+                    f"Signed in to {host}, and it will not carry mail from {sender}: "
+                    f"{code} {said.strip()[:200]}. That address has to be a verified sender on "
+                    f"this relay — the sign-in and the permission to send as an address are two "
+                    f"different things, and switching relay keeps the address and loses the "
+                    f"permission."
+                )}
+            # Only claim the sign-in that actually happened. Without a username
+            # and password this opens a socket and negotiates TLS, which proves
+            # the host is reachable and nothing about whether it will accept
+            # mail from us -- and the message said "signed in" either way.
+            if user and password:
+                envelope = f" It accepts mail from {sender}." if sender else ""
+                return {"ok": True, "detail": (
+                    f"Connected to {host}:{port} and signed in.{envelope} Nothing was sent.")}
+            return {"ok": True, "detail": (
+                f"Connected to {host}:{port}. No username and password are saved, so nothing "
+                f"was signed in to — the server is reachable, but whether it will relay for "
+                f"this town is untested.")}
 
         if provider == "ses":
             import asyncio
@@ -1152,7 +1651,17 @@ async def _test_delivery(capability: str) -> dict:
             "Azure Communication Services has no check that avoids sending a real "
             "message. Save, then send yourself a test from a request.")
 
+    from app.services.delivery_providers import switched_off
+
     provider = (await get_secret("SMS_PROVIDER")) or "none"
+    if switched_off(await get_secret("SMS_ENABLED")):
+        # Reported before the provider, because it overrides it. A card that
+        # tested Twilio and reported it working while SMS_ENABLED was false
+        # would be describing a send that cannot happen.
+        return {"ok": True, "detail": (
+            "Text messages are switched off (SMS_ENABLED is false), so nothing is sent "
+            "whatever provider is selected."
+        )}
     if provider == "none":
         return {"ok": True, "detail": "Text messages are switched off, as configured."}
 
@@ -1191,9 +1700,205 @@ async def _test_delivery(capability: str) -> dict:
         await asyncio.get_event_loop().run_in_executor(None, _attrs)
         return {"ok": True, "detail": "SNS reachable and authenticated. Nothing was sent."}
 
+    if provider == "acs":
+        # ACS has no read-only SMS call, but the phone-number list on the same
+        # resource takes the same HMAC key -- so this authenticates the access
+        # key AND answers the question that actually breaks sends: is the number
+        # in the From box one this resource owns? Nothing is sent.
+        from app.services.notifications import _acs_auth_headers
+
+        endpoint = ((await get_secret("ACS_ENDPOINT")) or "").rstrip("/")
+        access_key = await get_secret("ACS_ACCESS_KEY")
+        from_number = ((await get_secret("SMS_FROM_NUMBER")) or "").strip()
+        url = f"{endpoint}/phoneNumbers?api-version=2022-12-01"
+        try:
+            headers = _acs_auth_headers("GET", url, b"", access_key)
+        except Exception:
+            return {"ok": False, "detail": (
+                "The ACS access key is not valid base64, so it cannot sign a request. "
+                "Copy it again from the Keys page of the Communication Services resource."
+            )}
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            r = await client.get(url, headers=headers)
+
+        if r.status_code in (401, 403):
+            return {"ok": False, "detail": "Azure rejected the ACS endpoint or access key."}
+        if not r.is_success:
+            return {"ok": False, "detail": f"Azure Communication Services returned HTTP {r.status_code}."}
+
+        try:
+            owned = [n.get("phoneNumber") for n in (r.json() or {}).get("value", [])]
+        except Exception:
+            owned = []
+        if from_number and owned and from_number not in owned:
+            return {"ok": False, "detail": (
+                f"The access key works, but {from_number} is not one of the numbers this "
+                f"Communication Services resource owns. Sends will be rejected. Numbers on "
+                f"this resource: {', '.join(n for n in owned if n) or 'none'}."
+            )}
+        if not owned:
+            return {"ok": False, "detail": (
+                "The access key works, but this Communication Services resource owns no phone "
+                "numbers, so it cannot send. Buy a number in the Azure portal first."
+            )}
+        return {"ok": True, "detail": (
+            f"Azure Communication Services accepted the key and owns {from_number or owned[0]}. "
+            f"Nothing was sent."
+        )}
+
+    if provider == "http":
+        api_url = ((await get_secret("SMS_HTTP_API_URL")) or "").strip()
+        api_key = ((await get_secret("SMS_HTTP_API_KEY")) or "").strip()
+        test_url = ((await get_secret("SMS_HTTP_TEST_URL")) or "").strip()
+
+        # Textbelt is the one generic gateway this code already knows by name
+        # -- GenericHTTPSMSProvider branches on it -- and it publishes a quota
+        # endpoint. Knowing the vendor and then reporting it untestable would be
+        # a choice, not a limitation.
+        if not test_url and "textbelt" in api_url.lower() and api_key:
+            test_url = f"https://textbelt.com/quota/{api_key}"
+
+        if not test_url:
+            return _unverifiable(
+                "This gateway has not been given a status URL, and a generic HTTP gateway has no "
+                "standard one — so the only way to exercise it is to send a real text. Add a "
+                "status URL above if your gateway publishes one, or send yourself a message from "
+                "a request to confirm delivery.")
+
+        try:
+            from app.integrations.base import _assert_public_url
+            _assert_public_url(test_url)
+            async with httpx.AsyncClient(timeout=12.0) as client:
+                r = await client.get(test_url)
+        except Exception as exc:
+            return {"ok": False, "detail": f"The status URL could not be reached: {str(exc)[:200]}"}
+
+        if r.status_code in (401, 403):
+            return {"ok": False, "detail": "The gateway rejected the API key."}
+        if not r.is_success:
+            return {"ok": False, "detail": f"The status URL answered HTTP {r.status_code}."}
+
+        # Textbelt answers {"success": true, "quotaRemaining": n}. A remaining
+        # quota of zero is a key that authenticates and cannot send, which is
+        # the failure a plain 200 would have called healthy.
+        try:
+            body = r.json()
+        except Exception:
+            body = None
+        if isinstance(body, dict):
+            if body.get("success") is False:
+                return {"ok": False, "detail": (
+                    f"The gateway rejected the API key: {body.get('error') or 'no reason given'}.")}
+            quota = body.get("quotaRemaining")
+            if isinstance(quota, int):
+                if quota <= 0:
+                    return {"ok": False, "detail": (
+                        "The API key is valid and has no messages left on it, so nothing will "
+                        "be delivered. Top it up with your gateway.")}
+                return {"ok": True, "detail": (
+                    f"The gateway accepted the API key. {quota} messages remaining. "
+                    f"Nothing was sent.")}
+        return {"ok": True, "detail": "The gateway accepted the API key. Nothing was sent."}
+
     return _unverifiable(
         f"There is no way to check {provider} without sending a real text message. "
         f"Save, then send yourself one from a request to confirm delivery.")
+
+
+async def _test_secrets(db=None) -> dict:
+    """Write a throwaway key, read it back, and take it away again.
+
+    The one capability with no check at all, and the one whose failure is least
+    visible. Everything else on this page depends on it: a credential is saved
+    through `set_secret`, and when that returns False the value quietly stays in
+    the encrypted database and the card still shows a tick. The only signal was
+    a DEBUG line.
+
+    The existing signal, `store_reachable()`, asks the credential store whether
+    it has credentials -- `_is_gcp_available()` on Google. That is the shape of
+    check this pass exists to replace: it answers yes for a service account
+    whose Secret Manager permission was revoked last week, because the service
+    account is still there.
+
+    So this does the round trip the rest of the system does, in order: write,
+    read back, compare, delete. Each stage fails differently and the message
+    says which, because "the secret store is broken" and "the secret store
+    accepts writes and serves stale reads" have completely different remedies.
+
+    The probe key is named for what it is and is deleted whichever way the check
+    goes. An earlier hand-run probe left a `test-write-check` secret behind in
+    Google, and a self-test that litters is one nobody runs twice.
+    """
+    import uuid
+
+    from app.services.secret_manager import (
+        _secrets_provider, clear_cache, delete_secret, get_secret, set_secret,
+    )
+
+    provider = _secrets_provider()
+    label = {"azure": "Azure Key Vault", "aws": "AWS Secrets Manager"}.get(
+        provider, "Google Secret Manager")
+
+    # Named so anybody who finds it in a console knows what it is and that it is
+    # safe to remove, and unique per run so two checks at once cannot read each
+    # other's value and both pass.
+    key = "PINPOINT_SELFTEST_WRITE_CHECK"
+    expected = f"pinpoint-selftest-{uuid.uuid4().hex}"
+
+    async def _cleanup() -> bool:
+        try:
+            gone = await delete_secret(key)
+        except Exception:
+            gone = False
+        clear_cache(key_name=key)
+        return gone
+
+    try:
+        wrote = await set_secret(key, expected)
+    except Exception as e:
+        await _cleanup()
+        return {"ok": False, "detail": f"{label} refused a test write: {str(e)[:200]}"}
+
+    if not wrote:
+        await _cleanup()
+        # Not a failure of the town's doing when no store is configured: the
+        # encrypted database is a supported place for secrets to live.
+        from app.services.storage_maintenance import store_reachable
+        if not store_reachable():
+            return _unverifiable(
+                f"{label} is not configured, so there is nothing to check. Credentials are "
+                f"held encrypted in the database, which is supported — they move across on "
+                f"their own once a store is set up.")
+        return {"ok": False, "detail": (
+            f"{label} is configured but would not accept a test write. Credentials saved on "
+            f"this page are being kept in the encrypted database instead.")}
+
+    # Straight past the cache. Reading our own write out of memory would pass
+    # on a store that never received it, which is the exact failure.
+    clear_cache(key_name=key)
+    try:
+        got = await get_secret(key)
+    except Exception as e:
+        await _cleanup()
+        return {"ok": False, "detail": f"{label} took the write but the read back failed: {str(e)[:200]}"}
+
+    if got != expected:
+        await _cleanup()
+        if got is None:
+            return {"ok": False, "detail": (
+                f"{label} accepted a test write and then had nothing to return. Credentials "
+                f"saved here may not be readable by the workers that need them.")}
+        return {"ok": False, "detail": (
+            f"{label} returned a different value than the one just written to it. "
+            f"Something else is writing the same key, or reads are being served stale.")}
+
+    removed = await _cleanup()
+    if not removed:
+        # The check passed. Say the part that needs a human anyway.
+        return {"ok": True, "detail": (
+            f"Wrote a test key to {label}, read it back, and could not remove it again. "
+            f"Delete {key} by hand — nothing depends on it.")}
+    return {"ok": True, "detail": f"Wrote a test key to {label}, read it back, and removed it."}
 
 
 # One table, so the set of capabilities the endpoint accepts and the set it can
@@ -1210,6 +1915,9 @@ _CAPABILITY_TESTS = {
     "sms": _test_sms,
     "kms": _test_kms,
     "redaction": _test_redaction,
+    # The one everything else on this page depends on, and the last to get a
+    # check of its own.
+    "secrets": _test_secrets,
 }
 
 
@@ -1243,6 +1951,17 @@ async def test_provider(
             detail=f"Unknown capability. Expected one of: {', '.join(sorted(_PROVIDER_SELECT_KEY))}.",
         )
 
+    # Which provider this verdict is about, captured before the check runs.
+    #
+    # The column existed and only the circuit breaker ever filled it, so every
+    # row written by this button had provider NULL -- and a stored verdict with
+    # no provider against it is a verdict about whatever was selected at the
+    # time, which nothing records and nobody can reconstruct. Live: the SMS card
+    # was showing "There is no way to check http without sending a real text"
+    # while SMS_PROVIDER read 'acs'. Had the old provider passed instead, the
+    # card would have shown green for a provider the town no longer uses.
+    tested_provider = await effective_provider_for(capability)
+
     async def _remember(outcome: dict) -> dict:
         try:
             # A check that failed part-way may have left the session in a
@@ -1259,9 +1978,11 @@ async def test_provider(
             if outcome.get("ok"):
                 # The message too, not just the timestamp. "Checked 6 hours
                 # ago" cannot say what it found.
-                await connector_health.record_success(db, capability, detail=outcome.get("detail"))
+                await connector_health.record_success(
+                    db, capability, provider=tested_provider, detail=outcome.get("detail"))
             else:
-                await connector_health.record_failure(db, capability, outcome.get("detail", ""))
+                await connector_health.record_failure(
+                    db, capability, outcome.get("detail", ""), provider=tested_provider)
         except Exception:
             # Bookkeeping must never turn a passing test into a failing one.
             pass
@@ -1286,7 +2007,7 @@ async def test_provider(
             try:
                 if outcome.get("configured") is not False:
                     await connector_health.record_unverifiable(
-                        db, capability, outcome.get("detail", ""))
+                        db, capability, outcome.get("detail", ""), provider=tested_provider)
             except Exception:
                 pass
             return outcome
@@ -1379,19 +2100,33 @@ async def get_provider_status(_: User = Depends(get_current_admin)):
     was present -- so a town that had set up Google Maps and then switched to
     Esri saw a green tick against a provider with no credentials at all, and the
     guide skipped straight past the thing it most needed to ask for.
+
+    `ready` is that judgement made once, here, rather than eight times in the
+    browser. The page had been recomputing it from hard-coded secret names ORed
+    across providers, which disagreed with this endpoint in both directions:
+    photo redaction and PII encryption were reported as not set up while both
+    were demonstrably running, and `AWS_REGION` -- shared by SES, SNS, Bedrock,
+    AWS KMS and AWS Translate -- would have marked AI and translation as set up
+    the moment a town configured email.
     """
     from app.core.sanitize import sanitize_for_log
-    from app.services.secret_manager import get_secret
 
     out: Dict[str, Any] = {}
-    for capability, select_key in _PROVIDER_SELECT_KEY.items():
+    for capability in _PROVIDER_SELECT_KEY:
         try:
 
             providers = await providers_for(capability)
-            current = ((await get_secret(select_key)) or "").strip().lower()
+            current = await effective_provider_for(capability)
+            configured = await _configured_map(providers)
             out[capability] = {
-                "current_provider": current or None,
-                "configured": await _configured_map(providers),
+                "current_provider": current,
+                "configured": configured,
+                # Off is not unfinished. A town that has deliberately switched
+                # text messages off has answered the question, and a checklist
+                # that keeps asking is one people learn to ignore -- but it is
+                # not set up either, so this is False and the page says
+                # "switched off" rather than ticking it.
+                "ready": bool(current) and configured.get(current, False),
             }
         except Exception as exc:
             # One capability failing to report must not blank the other seven.
@@ -1532,6 +2267,30 @@ async def set_cloud_profile(
             # rather than blocking the switch.
             pass
 
+    # Secret-store migration safety.
+    #
+    # This repoints SECRETS_PROVIDER and moves nothing. Every credential the
+    # town has already entered is in the old store, and most have had their
+    # encrypted database copy scrubbed after being verified there -- so the
+    # moment the pointer moves, `get_secret` starts asking somewhere that has
+    # never heard of them and each one reads as absent.
+    #
+    # The KMS half of this has carried a warning since it was written and the
+    # secret half never did, which is the more dangerous of the two: PII stays
+    # readable while the old KMS credentials are in place, whereas a repointed
+    # secret store takes the mail relay, the map key and the identity provider
+    # with it.
+    # No DB_REQUIRED_KEYS filter needed: those always keep their database copy
+    # and so never appear in this set by construction.
+    if await _vaulted_key_names():
+        warnings.append(
+            f"Credentials already saved are in your previous secret store and are not moved "
+            f"by this. They stay readable only while that store is reachable. Enter the "
+            f"{ {'azure': 'Azure Key Vault', 'aws': 'AWS Secrets Manager'}.get(p['secrets'], 'Google Secret Manager') } "
+            f"credentials, then let the hourly migration copy everything across before "
+            f"retiring the old one."
+        )
+
     # KMS migration safety: existing PII is unwrapped by the KMS tag stored in
     # each value, so it stays readable ONLY while the previous KMS credentials
     # remain in place. New PII uses the new KMS immediately.
@@ -1651,21 +2410,55 @@ async def list_secrets(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
-    """List all secrets (admin only). Non-sensitive config values are returned."""
-    # These keys can have their values exposed (they're config choices, not secrets)
-    SAFE_TO_RETURN = {'SMS_PROVIDER', 'EMAIL_ENABLED', 'SMTP_USE_TLS', 'SMTP_PORT'}
-    
+    """Every secret this town has, and whether it is really there.
+
+    `is_configured` is reported from the store of record rather than from the
+    database column of that name, and the two are not the same claim. The column
+    says "a value was written here once". `get_secret` says "there is a value
+    there now" -- which is what every other part of this console means by
+    configured, and what `_configured_map` answers for the provider cards.
+
+    They diverge exactly when it matters. A secret migrated into the vault keeps
+    `is_configured = True` in the database with its encrypted copy scrubbed, so
+    when the vault is unreachable the column still says yes about a value
+    nothing can currently read. The provider cards say "we cannot tell, so no";
+    this endpoint said yes; and the settings with no provider card -- backups,
+    crash reporting -- had only this answer, so a town whose vault was down saw
+    a tick on backups whose credentials the backup task could not load.
+
+    One definition, and it is the pessimistic one: if we cannot read it, we do
+    not claim it. Reads are bundle-cached, so this is a handful of fetches
+    rather than one per key.
+
+    No values are returned, for any key. Four were exempted as "config choices,
+    not secrets" -- SMS_PROVIDER, EMAIL_ENABLED, SMTP_USE_TLS and SMTP_PORT --
+    and the exemption returned `secret.key_value`, the *database* column. That
+    column holds ciphertext while a secret is in the database and None once it
+    has been migrated to the vault and scrubbed, which all four have been. So
+    the branch returned null for every key it existed to expose, and would have
+    returned an encrypted blob if it had not. Nothing read it either: the one
+    consumer compared the returned SMS_PROVIDER against 'none' to decide whether
+    texting was on, and now asks /providers/status, which reports what dispatch
+    resolves rather than what is stored.
+    """
+    from app.services.secret_manager import get_secret
+
     result = await db.execute(select(SystemSecret))
     secrets = result.scalars().all()
-    
+
     response = []
     for secret in secrets:
         data = SecretResponse.model_validate(secret)
-        # Only include key_value for non-sensitive config options
-        if secret.key_name in SAFE_TO_RETURN and secret.is_configured:
-            data.key_value = secret.key_value
+        data.key_value = None
+        try:
+            data.is_configured = bool((await get_secret(secret.key_name) or "").strip())
+        except Exception:
+            # An unreachable store is not the same as an unconfigured secret,
+            # and saying so is the safe direction: the cost is asking about
+            # something already done, rather than ticking something unreadable.
+            data.is_configured = False
         response.append(data)
-    
+
     return response
 
 
@@ -1681,6 +2474,12 @@ async def create_or_update_secret(
     from app.services.secret_manager import set_secret, clear_cache
 
     reject_platform_key_writes(secret_data.key_name)
+
+    # Same reason as `_persist_secret`: surrounding whitespace is never part of
+    # a credential, and this is the endpoint the plain secret fields on the
+    # setup page post to -- the one SMTP_USER came in through with a leading
+    # space, which the mail relay answered with 535 Authentication failed.
+    secret_data.key_value = (secret_data.key_value or "").strip()
 
     # Bootstrap keys that must stay in database (needed to access Secret Manager)
     bootstrap_keys = {"GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT"}
