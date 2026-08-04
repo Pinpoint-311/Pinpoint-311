@@ -2945,9 +2945,24 @@ async def run_retention_now(
     settings = await read_settings_row(db)
     config = read_retention_config(settings)
 
-    # Refused here rather than queued. The task would decline too, but an admin
-    # who gets back a task id and "enforcement started" has been told something
-    # happened, and the only place that contradicts it is a worker log.
+    # The hold outranks everything, and is checked before the policy for the
+    # same reason the task checks it first: it is not a variation on the
+    # schedule, it is the schedule not applying.
+    #
+    # Refused rather than queued, which it was not. The task declines correctly
+    # and archives nothing, so no record was ever at risk -- but the endpoint
+    # answered "Retention enforcement started" with a task id, and the only
+    # place contradicting it was a worker log. An admin who places a litigation
+    # hold and then sees a retention run report as started has been told the
+    # opposite of what happened, on the one subject where being sure matters.
+    if settings is not None and getattr(settings, "legal_hold", False):
+        raise HTTPException(
+            status_code=409,
+            detail="An instance-wide legal hold is in place, so nothing can be archived "
+                   "or deleted. Lift the hold first if this run is meant to happen.",
+        )
+
+    # Refused here rather than queued, for the same reason.
     if not config.configured:
         raise HTTPException(
             status_code=409,

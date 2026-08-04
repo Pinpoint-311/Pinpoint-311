@@ -268,6 +268,24 @@ class TestLegalHoldOverridesThePolicy:
             "the hold must not consult the policy it is overriding"
         )
 
+    def test_the_run_button_refuses_under_a_hold(self):
+        """It used to answer "Retention enforcement started" with a task id.
+
+        Nothing was ever at risk -- the task checks the hold and archives
+        nothing -- but an admin who places a litigation hold and then watches a
+        retention run report as started has been told the opposite of what
+        happened, and the only place contradicting it is a worker log.
+        """
+        block = API[API.index("async def run_retention_now"):]
+        block = block[:block.index("\n@router")]
+        hold = block.index('getattr(settings, "legal_hold", False)')
+        assert hold < block.index("enforce_retention_policy.delay"), (
+            "the hold is checked before anything is queued"
+        )
+        assert hold < block.index("if not config.configured:"), (
+            "a hold is not a variation on the schedule; it outranks it"
+        )
+
     def test_the_preview_reports_the_hold_rather_than_listing_records(self):
         """Listing records that "will be archived next run" while a hold means
         nothing can be is the sort of contradiction that gets a screen
