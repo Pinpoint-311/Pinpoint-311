@@ -33,10 +33,20 @@ export function StorageStatusLine() {
 
     if (!status) return null;
 
+    /* No store, no sentence.
+     *
+     * This defaulted to "Google Secret Manager" for anything it did not
+     * recognise, including a town that has not chosen a store -- so the line
+     * told a fresh install its secrets were in a Google product it had never
+     * signed in to. The setup gate says the rest; there is nothing useful to
+     * add here. */
+    if (!status.secrets.store) return null;
+
     const storeName = {
         azure: 'Azure Key Vault',
         aws: 'AWS Secrets Manager',
-    }[status.secrets.store ?? ''] ?? 'Google Secret Manager';
+        database: "this deployment's own encrypted database",
+    }[status.secrets.store] ?? 'Google Secret Manager';
 
     const pending: string[] = [];
     if (status.secrets.count && status.secrets.reachable) {

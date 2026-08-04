@@ -735,6 +735,24 @@ class ApiClient {
         return this.request(`/system/providers/${capability}/test`, { method: 'POST' });
     }
 
+    /** Where this town's credentials are kept, and whether anyone said so.
+     *
+     *  `chosen: false` used to be unreachable: the backend answered "google"
+     *  for a town that had never been asked, so nothing could tell a deliberate
+     *  choice from silence. */
+    async getSecretStore(): Promise<SecretStoreChoice> {
+        return this.request<SecretStoreChoice>('/system/secrets/store');
+    }
+
+    /** Record it. Set-once — repointing the store does not move what is in the
+     *  old one, so a second choice here would make every card unreadable. */
+    async chooseSecretStore(store: string): Promise<SecretStoreChoice> {
+        return this.request<SecretStoreChoice>('/system/secrets/store', {
+            method: 'POST',
+            body: JSON.stringify({ store }),
+        });
+    }
+
     /** Record which integrations the town wants, credentials aside.
      *
      *  A partial map: only what changed. The questionnaire posts the chip that
@@ -1794,6 +1812,22 @@ export type ProviderStatusMap = Record<string, {
     enabled?: boolean;
     ready?: boolean;
 }>;
+
+/** Where a town's credentials are kept, and whether it was asked.
+ *
+ *  The gate on the setup page. A credential saved before this is answered lands
+ *  in the encrypted database; the live row is later swept into the store and
+ *  scrubbed, but a database backup taken in between keeps it, and backups go
+ *  off-site. So the question is asked first. `database` is one of the answers --
+ *  the gate is about consent, not about having a cloud vault. */
+export interface SecretStoreChoice {
+    chosen: boolean;
+    store: string | null;
+    options: string[];
+    /** Whether the chosen store can be contacted. Not a blocker: the
+     *  credentials that make a vault reachable are entered on the same page. */
+    reachable: boolean;
+}
 
 export interface CloudIdentity {
     attached: boolean;
