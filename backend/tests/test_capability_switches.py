@@ -341,19 +341,38 @@ def test_advisory_only_is_not_a_place_to_hide_things():
 def test_crash_reporting_answers_without_touching_the_database():
     """`before_send` runs on the error path, and the error may be that the
     database is unreachable. It reads the snapshot, which is why the snapshot
-    exists."""
-    import inspect
+    exists.
 
-    from app import main
+    Parsed rather than imported. `app.main` pulls in every router, and importing
+    it from the test suite hits a pre-existing failure in `app.api.api_usage`
+    that also breaks `test_security_headers` at collection -- unrelated to this,
+    and not worth making this assertion depend on. Parsed rather than grepped,
+    too: the docstring explains why the function must not open a session, so a
+    substring search finds "SessionLocal" in the explanation and fails a function
+    that is doing exactly the right thing.
+    """
+    import ast
+    from pathlib import Path
 
-    fn = main._crash_reporting_wanted
-    # The code object rather than the source text: the docstring explains why it
-    # must not open a session, so grepping the source finds the word "SessionLocal"
-    # in the explanation and fails a function that is doing the right thing.
-    names = set(fn.__code__.co_names)
-    assert "wanted_sync" in names
-    assert "SessionLocal" not in names
-    assert not inspect.iscoroutinefunction(fn), "before_send is called synchronously"
+    main_py = Path(cs.__file__).resolve().parent.parent / "main.py"
+    tree = ast.parse(main_py.read_text(encoding="utf-8"))
+
+    hook = next(
+        (n for n in ast.walk(tree)
+         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+         and n.name == "_crash_reporting_wanted"),
+        None,
+    )
+    assert hook is not None, "the before_send hook is gone, so the switch is inert again"
+    assert not isinstance(hook, ast.AsyncFunctionDef), "before_send is called synchronously"
+
+    body = ast.dump(ast.Module(body=hook.body, type_ignores=[]))
+    assert "wanted_sync" in body
+    assert "SessionLocal" not in body
+    assert "Await" not in body, "there is no event loop on this path"
+
+    # And that it is actually wired in, rather than defined and forgotten.
+    assert "before_send=_crash_reporting_wanted" in main_py.read_text(encoding="utf-8")
 
 
 def test_the_snapshot_survives_a_failed_read(monkeypatch):
