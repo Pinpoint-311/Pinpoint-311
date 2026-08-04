@@ -731,8 +731,53 @@ class ApiClient {
      *  text. That is not a failure, and the backend deliberately does not write
      *  it to connector health. Dropping the flag here is what made those show
      *  up as "Not working". */
-    async testProvider(capability: string): Promise<{ ok: boolean; detail: string; recorded?: boolean; configured?: boolean }> {
+    async testProvider(capability: string): Promise<{ ok: boolean; detail: string; recorded?: boolean; configured?: boolean; off?: boolean }> {
         return this.request(`/system/providers/${capability}/test`, { method: 'POST' });
+    }
+
+    /** Whether anybody has said this town is set up.
+     *
+     *  A marker rather than a derived answer. "Is everything configured" is the
+     *  obvious proxy and it never goes true for a town that deliberately
+     *  switches most things off, so the guide would greet it on every login
+     *  forever. */
+    async getSetupState(): Promise<{ completed: boolean; completed_at: string | null }> {
+        return this.request('/system/setup/state');
+    }
+
+    /** "I am done here." */
+    async markSetupComplete(): Promise<{ completed: boolean; completed_at: string | null }> {
+        return this.request('/system/setup/state', { method: 'POST' });
+    }
+
+    /** Where this town's credentials are kept, and whether anyone said so.
+     *
+     *  `chosen: false` used to be unreachable: the backend answered "google"
+     *  for a town that had never been asked, so nothing could tell a deliberate
+     *  choice from silence. */
+    async getSecretStore(): Promise<SecretStoreChoice> {
+        return this.request<SecretStoreChoice>('/system/secrets/store');
+    }
+
+    /** Record it. Set-once — repointing the store does not move what is in the
+     *  old one, so a second choice here would make every card unreadable. */
+    async chooseSecretStore(store: string): Promise<SecretStoreChoice> {
+        return this.request<SecretStoreChoice>('/system/secrets/store', {
+            method: 'POST',
+            body: JSON.stringify({ store }),
+        });
+    }
+
+    /** Record which integrations the town wants, credentials aside.
+     *
+     *  A partial map: only what changed. The questionnaire posts the chip that
+     *  was clicked, and a town that has never been asked about photo redaction
+     *  must not get an answer to it from a click on backups. */
+    async setCapabilitySwitches(switches: Record<string, boolean>): Promise<{ switches: Record<string, boolean> }> {
+        return this.request('/system/capabilities', {
+            method: 'PUT',
+            body: JSON.stringify({ switches }),
+        });
     }
 
     /** Which provider each capability is on, and which of its providers have
@@ -1766,10 +1811,38 @@ export interface HealthSummary {
  *  names ORed across providers and disagreed with this endpoint in both
  *  directions. */
 export type ProviderStatusMap = Record<string, {
-    current_provider: string | null;
-    configured: Record<string, boolean>;
-    ready: boolean;
+    current_provider?: string | null;
+    configured?: Record<string, boolean>;
+    /** Whether the town wants this at all, independent of whether it is set up.
+     *
+     *  The third fact, and the one that had nowhere to live: wanted-ness was a
+     *  `Set<string>` in the setup page's React state, initialised to
+     *  everything, so unticking a feature hid part of the guide and switched
+     *  nothing off. Reported beside `configured` rather than folded into it,
+     *  because "switched off with the key still saved" and "never set up" are
+     *  different states and looked identical.
+     *
+     *  `backups` and `errors` appear here with only this field — they are
+     *  switchable but have no provider to choose. */
+    enabled?: boolean;
+    ready?: boolean;
 }>;
+
+/** Where a town's credentials are kept, and whether it was asked.
+ *
+ *  The gate on the setup page. A credential saved before this is answered lands
+ *  in the encrypted database; the live row is later swept into the store and
+ *  scrubbed, but a database backup taken in between keeps it, and backups go
+ *  off-site. So the question is asked first. `database` is one of the answers --
+ *  the gate is about consent, not about having a cloud vault. */
+export interface SecretStoreChoice {
+    chosen: boolean;
+    store: string | null;
+    options: string[];
+    /** Whether the chosen store can be contacted. Not a blocker: the
+     *  credentials that make a vault reachable are entered on the same page. */
+    reachable: boolean;
+}
 
 export interface CloudIdentity {
     attached: boolean;

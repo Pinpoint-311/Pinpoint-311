@@ -252,24 +252,35 @@ async def effective_provider_for(capability: str) -> Optional[str]:
         from app.services.secret_manager import _secrets_provider
         from app.services.storage_maintenance import store_reachable
 
+        chosen = _secrets_provider()
+        # Nothing has been chosen. Not "database" -- a town that has not
+        # answered the question has not chosen the database either, and saying
+        # it had would tick the box the setup gate exists to hold open.
+        if not chosen:
+            return None
+        if chosen == "database":
+            return "database"
         # An unreachable store means credentials are in the encrypted database,
         # which is a supported place for them to be and a different provider
         # from the one that was selected. Saying "Google Secret Manager" about a
         # town whose secrets are all in Postgres is the kind of confident wrong
         # answer this pass is removing.
-        return _secrets_provider() if store_reachable() else "database"
+        return chosen if store_reachable() else "database"
 
     if capability in ("email", "sms", "kms"):
-        from app.services.delivery_providers import normalize_provider, switched_off
+        from app.services.delivery_providers import normalize_provider
 
-        # The ENABLED flags are part of the answer to "which provider is this
-        # running on", because the answer is "none" when one of them says no.
-        # A card naming Twilio while SMS_ENABLED is false describes a send that
-        # will not happen.
-        enable_key = {"email": "EMAIL_ENABLED", "sms": "SMS_ENABLED"}.get(capability)
-        if enable_key and switched_off(await get_secret(enable_key)):
-            return None
-
+        # The ENABLED flags used to be folded in here, so that a switched-off
+        # capability reported no provider at all.
+        #
+        # That is the conflation this pass exists to undo. "Which provider is
+        # selected" and "does the town want this" are two facts, and answering
+        # both with one field is why a card could not tell "switched off, key
+        # still saved" from "never set up" -- it saw no provider either way, so
+        # it looked at the credentials for a provider it had not been given and
+        # concluded nothing was there. `/providers/status` now reports `enabled`
+        # beside `configured`, and every dispatch path asks
+        # `capability_switches.enabled` directly.
         resolved = normalize_provider(capability, raw)
         return None if resolved in _OFF_VALUES else resolved
 
@@ -297,6 +308,14 @@ async def capability_is_configured(capability: str) -> bool:
     secret meant photo redaction -- whose selection is inferred -- was reported
     as unconfigured on a deployment where it was blurring every photo.
     """
+    from app.services import capability_switches
+
+    # A town that switched something off has not left work outstanding, so the
+    # sweep has nothing to check. Same reasoning as the paragraph above about
+    # text messages, generalised now that every capability can be switched off
+    # rather than only the two with an ENABLED flag.
+    if not await capability_switches.enabled(capability):
+        return False
     current = await effective_provider_for(capability)
     if not current:
         return False
@@ -710,9 +729,11 @@ async def get_capability_catalog(
     # "on this server (no cloud)" for photo redaction on a deployment where
     # `resolve_provider()` had settled on Google Cloud Vision and was using it
     # -- the card named one detector and a different one did the work.
-    current = await effective_provider_for(capability) or normalize_provider(
-        capability, await get_secret(_PROVIDER_SELECT_KEY[capability])
-    )
+    current = await effective_provider_for(capability)
+    if current is None and capability != "secrets":
+        current = normalize_provider(
+            capability, await get_secret(_PROVIDER_SELECT_KEY[capability])
+        )
     providers = catalog_for_api(capability)
     health_map = await connector_health.snapshot(db)
     h = health_map.get(capability)
@@ -738,7 +759,13 @@ async def get_capability_catalog(
 
     return {
         "current_provider": current,
-        "default_provider": _DEFAULTS[capability],
+        # No default for the secret store, because having one is the bug the
+        # setup gate exists to close. `_DEFAULTS["secrets"]` is still "google",
+        # and reporting it here made the card draw Google Secret Manager as the
+        # selected store on a town that had chosen nothing -- while the gate
+        # beside it asked where credentials should go and every save returned
+        # 409. Two answers to one question, and the confident one was wrong.
+        "default_provider": None if capability == "secrets" else _DEFAULTS[capability],
         "providers": providers,
         "configured": await _configured_map(providers),
         # Which individual boxes have something in them, so the form's
@@ -844,6 +871,53 @@ async def _vaulted_key_names() -> set:
         return set()
 
 
+def _require_a_secret_store() -> None:
+    """Refuse a credential until the town has said where credentials go.
+
+    Not tidiness. `_persist_secret` falls back to the encrypted database when
+    the external store is unreachable, and says so (`db_only`). `vault_secrets`
+    later sweeps those into the store and scrubs the database copy -- on a
+    schedule, and again after every provider save -- so the live database heals
+    itself and the whole thing looks harmless.
+
+    Database *backups* taken inside that window do not heal. They keep the
+    plaintext-equivalent row forever and they go off-site: a pg_dump of this
+    instance contains `COPY public.system_secrets (id, key_name, key_value,
+    ...)`. Sweeping the live row reaches nothing that has already been dumped.
+    So the credential has to not be written until somebody has decided where it
+    belongs.
+
+    The gate is on the *choice*, not on standing up a cloud vault. The encrypted
+    database is one of the four answers, the on-screen copy says what that means
+    for backups, and a town whose cloud procurement is unfinished is not dead-
+    ended. What must not happen is a town landing there without being asked.
+    """
+    from app.services.secret_manager import SECRET_STORES, store_chosen
+
+    if store_chosen():
+        return
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "Choose where this town's credentials are kept before entering any. "
+            "Until that is answered a credential is written to the encrypted "
+            "database, and any backup taken before it is moved keeps a copy that "
+            "moving it cannot reach. Pick a store in Setup Instructions — the "
+            "encrypted database is one of the answers."
+        ),
+        headers={"X-Pinpoint-Secret-Stores": ",".join(SECRET_STORES)},
+    )
+
+
+# Settings that record where credentials go, rather than being one.
+#
+# The gate above cannot apply to these or nothing could ever get through it, and
+# `SECRETS_PROVIDER` in particular must never be written into the store it
+# names: that is circular, and a town whose store became unreadable would have
+# no way to find out which store it was.
+_STORE_CHOICE_KEYS = {"SECRETS_PROVIDER"}
+
+
 async def _persist_secret(db: AsyncSession, key_name: str, value: str) -> bool:
     """Write a secret to the configured store and keep an encrypted DB copy.
 
@@ -875,9 +949,12 @@ async def _persist_secret(db: AsyncSession, key_name: str, value: str) -> bool:
     # Stripping here rather than at each reader, because a value that differs
     # depending on who asks is the thing that made this hard to see.
     value = (value or "").strip()
-    # These two are deliberately database-only: they are what makes the secret
-    # store reachable in the first place, so storing them in it is circular.
-    bootstrap_keys = {"GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT"}
+    # Deliberately database-only: these are what makes the secret store
+    # reachable in the first place, or say which store it is, so putting them in
+    # it is circular. `SECRETS_PROVIDER` was going through the normal path and
+    # relying on DB_REQUIRED_KEYS to keep its database copy from being scrubbed
+    # -- which worked, and still wrote the name of the store into the store.
+    bootstrap_keys = {"GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT"} | _STORE_CHOICE_KEYS
     stored_externally = key_name in bootstrap_keys
     if value and key_name not in bootstrap_keys:
         try:
@@ -949,6 +1026,11 @@ async def save_provider(
             "new store's credentials first, let the hourly migration copy them across, and "
             "change the store after that."
         ))
+    # Before anything is written, and before the provider selection too: a save
+    # that recorded "we have decided on Twilio" and then refused the account SID
+    # would leave the card describing a decision with no credentials behind it.
+    if body.settings:
+        _require_a_secret_store()
     catalog = _capability_catalog(capability)
     provider_id = (body.provider or "").strip().lower()
     if provider_id not in catalog:
@@ -1651,17 +1733,11 @@ async def _test_delivery(capability: str) -> dict:
             "Azure Communication Services has no check that avoids sending a real "
             "message. Save, then send yourself a test from a request.")
 
-    from app.services.delivery_providers import switched_off
-
+    # The "texting is switched off" branch that used to be here has moved up to
+    # `test_provider`, which is the only caller and now answers it for all eight
+    # capabilities rather than for the one that happened to have a flag. This
+    # function is what its docstring says again: does this provider work.
     provider = (await get_secret("SMS_PROVIDER")) or "none"
-    if switched_off(await get_secret("SMS_ENABLED")):
-        # Reported before the provider, because it overrides it. A card that
-        # tested Twilio and reported it working while SMS_ENABLED was false
-        # would be describing a send that cannot happen.
-        return {"ok": True, "detail": (
-            "Text messages are switched off (SMS_ENABLED is false), so nothing is sent "
-            "whatever provider is selected."
-        )}
     if provider == "none":
         return {"ok": True, "detail": "Text messages are switched off, as configured."}
 
@@ -1988,6 +2064,32 @@ async def test_provider(
             pass
         return outcome
 
+    # A capability the town switched off is not tested, and the result is not
+    # recorded either way.
+    #
+    # Before the switch existed there was nothing to check here, and the two
+    # capabilities that did have an off flag checked it inside their own test
+    # function -- so the other six would happily make a live paid API call
+    # against an integration nobody uses, and write a red badge when it failed.
+    # A failure on something deliberately switched off is the noise that teaches
+    # people to ignore badges.
+    from app.services import capability_switches
+
+    if not await capability_switches.enabled(capability):
+        return {
+            "ok": True,
+            "detail": (
+                "This is switched off, so nothing runs through it. Its credentials "
+                "are still saved — switch it back on in Setup Instructions and they "
+                "will be used as they were."
+            ),
+            # Neither a pass nor a fail: there was no check. `configured: False`
+            # keeps `_remember` and the unverifiable path from writing anything.
+            "recorded": False,
+            "configured": False,
+            "off": True,
+        }
+
     check = _CAPABILITY_TESTS.get(capability)
     if check is None:
         # Cannot happen while the accept-list is derived from this table, and
@@ -2110,6 +2212,9 @@ async def get_provider_status(_: User = Depends(get_current_admin)):
     the moment a town configured email.
     """
     from app.core.sanitize import sanitize_for_log
+    from app.services import capability_switches
+
+    switches = await capability_switches.all_enabled()
 
     out: Dict[str, Any] = {}
     for capability in _PROVIDER_SELECT_KEY:
@@ -2118,15 +2223,28 @@ async def get_provider_status(_: User = Depends(get_current_admin)):
             providers = await providers_for(capability)
             current = await effective_provider_for(capability)
             configured = await _configured_map(providers)
+            wanted = switches.get(capability, True)
             out[capability] = {
                 "current_provider": current,
                 "configured": configured,
+                # The third fact, and the one the page could not previously get
+                # from anywhere.
+                #
+                # Deliberately not folded into `current_provider` or into
+                # `configured`. "Switched off" and "not set up" were
+                # indistinguishable, so a town that saved an AI key and then
+                # decided not to use AI got a card that said it had never been
+                # configured -- and the obvious response to that is to paste the
+                # key in again. Reported alongside `configured` rather than
+                # instead of it, so the card can say switched off *and* that the
+                # credentials are still there.
+                "enabled": wanted,
                 # Off is not unfinished. A town that has deliberately switched
                 # text messages off has answered the question, and a checklist
                 # that keeps asking is one people learn to ignore -- but it is
                 # not set up either, so this is False and the page says
                 # "switched off" rather than ticking it.
-                "ready": bool(current) and configured.get(current, False),
+                "ready": wanted and bool(current) and configured.get(current, False),
             }
         except Exception as exc:
             # One capability failing to report must not blank the other seven.
@@ -2135,7 +2253,188 @@ async def get_provider_status(_: User = Depends(get_current_admin)):
             # something already done rather than skipping something that isn't.
             logger.warning("provider status failed for %s: %s",
                            sanitize_for_log(capability), sanitize_for_log(str(exc)))
+
+    # The two switchable things with no provider catalog behind them. They have
+    # no entry above because there is no vendor to pick, and leaving them out
+    # would mean the page had to hold their answer somewhere else -- which is
+    # what it was doing, in React state that never reached the server.
+    for extra in ("backups", "errors"):
+        out[extra] = {"enabled": switches.get(extra, True)}
     return out
+
+
+@router.get("/setup/state")
+async def get_setup_state(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Whether anybody has said this town is set up.
+
+    Nothing answered this. The setup guide opened itself when sign-in or maps
+    happened to be unconfigured, which is "is everything set up" wearing a
+    disguise -- and a town that deliberately switches most things off never
+    satisfies that, so the guide would greet it on every login forever. A banner
+    that never goes away is one people stop reading.
+    """
+    row = (await db.execute(
+        select(SystemSettings).order_by(SystemSettings.id).limit(1)
+    )).scalar_one_or_none()
+    when = getattr(row, "setup_completed_at", None) if row else None
+    return {"completed": when is not None, "completed_at": when.isoformat() if when else None}
+
+
+@router.post("/setup/state")
+async def mark_setup_complete(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """"I am done here." Said by a person, because nothing else can say it.
+
+    Deliberately not gated on anything being configured. Two things are actually
+    required before a town can take a report -- staff sign-in and a map -- and
+    the page already says so and shows what is outstanding. Refusing to let
+    somebody close the guide until a checklist is green would make the guide the
+    thing standing between them and the console, which is the opposite of what
+    it is for.
+    """
+    from datetime import datetime, timezone
+
+    row = (await db.execute(
+        select(SystemSettings).order_by(SystemSettings.id).limit(1)
+    )).scalar_one_or_none()
+    if row is None:
+        row = SystemSettings()
+        db.add(row)
+        await db.flush()
+    # Kept if it is already there. Re-marking would rewrite the date somebody
+    # may later want to point at, and the guide is reopenable from the tab
+    # regardless -- this flag only decides what happens on sign-in.
+    if row.setup_completed_at is None:
+        row.setup_completed_at = datetime.now(timezone.utc)
+        await db.commit()
+
+    from app.services.admin_audit import record_admin_action
+
+    await record_admin_action(db, event_type="setup.complete", actor=admin)
+    return await get_setup_state(db, admin)
+
+
+class SecretStoreChoice(BaseModel):
+    store: str
+
+
+@router.get("/secrets/store")
+async def get_secret_store_choice(_: User = Depends(get_current_admin)):
+    """Where this town's credentials are kept, and whether anyone said so.
+
+    `chosen: false` is the state the setup gate holds open. It used to be
+    unreachable, because `_secrets_provider()` answered "google" for a town that
+    had never been asked -- so the page could not tell a deliberate choice of
+    Google Secret Manager from silence, and neither could the code.
+    """
+    from app.services.secret_manager import SECRET_STORES, _secrets_provider, store_chosen
+    from app.services.storage_maintenance import store_reachable
+
+    chosen = store_chosen()
+    return {
+        "chosen": chosen,
+        "store": _secrets_provider() or None,
+        "options": list(SECRET_STORES),
+        # Whether the store the town picked can actually be contacted. Not the
+        # same question, and not a blocker: choosing a vault whose credentials
+        # have not arrived yet is a real state, and the credentials that make it
+        # reachable are entered on this same page.
+        "reachable": store_reachable(),
+    }
+
+
+@router.post("/secrets/store")
+async def choose_secret_store(
+    body: SecretStoreChoice,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """Record where this town's credentials go. Once, deliberately.
+
+    Set-once, and the refusal to change it is the same reasoning that makes the
+    secret store card read-only: every credential the town has is in the current
+    store, and repointing this setting does not move them. A second choice here
+    would be one click that makes every other card unreadable. Moving stores is
+    the cloud-profile flow, which migrates first.
+
+    `database` is accepted like the other three. The encrypted database is a
+    supported store, and a town whose cloud procurement is unfinished must be
+    able to get on with setup -- the gate is about consent, not capability. What
+    it must not be is where a town arrives without being asked, which is what it
+    was.
+    """
+    from app.services.secret_manager import SECRET_STORES, _secrets_provider, store_chosen
+
+    store = (body.store or "").strip().lower()
+    if store not in SECRET_STORES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown secret store: {body.store}. Expected one of: {', '.join(SECRET_STORES)}.",
+        )
+
+    current = _secrets_provider()
+    if store_chosen() and current != store:
+        raise HTTPException(status_code=409, detail=(
+            f"This town's credentials are in {current}. Repointing this setting does not "
+            f"move them, so every card would stop being able to read its own key. Set up "
+            f"the new store's credentials, let the migration copy them across, and change "
+            f"the store after that."
+        ))
+
+    if os.getenv("SECRETS_PROVIDER"):
+        # The host pinned it. Saying so beats accepting a write that the reader
+        # will go on ignoring, which is the shape of every bug in this area.
+        raise HTTPException(status_code=409, detail=(
+            "The secret store is pinned by this deployment's SECRETS_PROVIDER environment "
+            "variable, so it cannot be changed from here."
+        ))
+
+    await _persist_secret(db, "SECRETS_PROVIDER", store)
+
+    # Recorded, because "we knowingly chose the encrypted database" is exactly
+    # the kind of decision somebody will need to point at later -- and because
+    # the whole reason for the gate is that nobody could tell a choice from a
+    # default.
+    from app.services.admin_audit import record_admin_action
+
+    await record_admin_action(
+        db, event_type="secret_store.choose", actor=admin, details={"store": store},
+    )
+    return await get_secret_store_choice(admin)
+
+
+class CapabilitySwitchRequest(BaseModel):
+    """A partial map: only the switches the caller is changing.
+
+    Partial on purpose. The questionnaire posts the one chip that was clicked,
+    and a town that has never been asked about photo redaction must not acquire
+    an answer to it because somebody unticked backups.
+    """
+
+    switches: Dict[str, bool]
+
+
+@router.put("/capabilities")
+async def set_capability_switches(
+    body: CapabilitySwitchRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Record which integrations the town wants, credentials aside.
+
+    There was no endpoint for this because there was no such fact. The setup
+    page held the answer in a `Set<string>` initialised to every feature, so
+    unticking one hid part of the guide, survived nothing, and switched nothing
+    off -- while the page's own copy said "untick to remove it".
+    """
+    from app.services import capability_switches
+
+    return {"switches": await capability_switches.set_enabled(db, body.switches)}
 
 
 @router.get("/providers/cloud-identity")
@@ -2474,6 +2773,12 @@ async def create_or_update_secret(
     from app.services.secret_manager import set_secret, clear_cache
 
     reject_platform_key_writes(secret_data.key_name)
+    # The other door into the secret table. Gating only the provider cards would
+    # leave the plain credential fields -- backups, crash reporting, the Google
+    # account -- writing into the encrypted database with nobody having chosen
+    # it, which is the case the gate exists for.
+    if secret_data.key_name not in _STORE_CHOICE_KEYS:
+        _require_a_secret_store()
 
     # Same reason as `_persist_secret`: surrounding whitespace is never part of
     # a credential, and this is the endpoint the plain secret fields on the

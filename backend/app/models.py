@@ -489,7 +489,31 @@ class SystemSettings(Base):
     hero_text = Column(String(500), default="How can we help?")
     primary_color = Column(String(7), default="#6366f1")
     custom_domain = Column(String(255))  # For custom domain configuration
-    modules = Column(JSON, default={"ai_analysis": False, "sms_alerts": False, "email_notifications": True, "unlisted_reports": False})
+    # Product features with nothing to configure: no provider, no credentials,
+    # no card on the setup page. Anything that *does* have a provider behind it
+    # lives in `capability_switches` below -- see capability_switches.py for why
+    # the two are separate and which belongs where.
+    #
+    # `ai_analysis`, `sms_alerts` and `email_notifications` used to be here as
+    # well, duplicating a decision the setup page also owned.
+    modules = Column(JSON, default={"unlisted_reports": False, "research_portal": False})
+    # Which integrations the town wants, independent of whether they are set up.
+    #
+    # The third fact about a capability, and the one that had nowhere to live:
+    # credentials being stored and the town intending to use them are different
+    # claims, and without this an admin could only stop a configured integration
+    # by deleting the credential. {} means "never answered", which reads as the
+    # behaviour that shipped before the switch existed rather than as "off".
+    capability_switches = Column(JSON, default=dict)
+    # When somebody said they were finished setting this town up. NULL means
+    # nobody has, which is what opens the setup guide on sign-in.
+    #
+    # A marker rather than a derived answer. "Is everything configured" is the
+    # obvious proxy and it is wrong in the direction that matters: a town that
+    # deliberately switches most things off never satisfies it, so the guide
+    # would greet it on every login forever -- and a banner that never goes away
+    # is one people stop reading. Being finished is a thing a person says.
+    setup_completed_at = Column(DateTime(timezone=True))
     township_boundary = Column(JSON)  # GeoJSON boundary from OpenStreetMap
     
     # Multi-language support

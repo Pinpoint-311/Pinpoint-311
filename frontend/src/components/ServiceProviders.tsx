@@ -148,6 +148,18 @@ export interface CapStatus {
     /** Whether the in-use provider has its credentials stored. undefined means
      *  the endpoint did not say, which is not the same as no. */
     configured?: boolean;
+    /** Whether the town wants this capability at all.
+     *
+     *  Independent of `configured`, and that independence is the point. A town
+     *  can save an email or an AI key and decide not to use it; the credential
+     *  stays stored and readable and nothing dispatches through it. Before this
+     *  existed the only way to stop a configured capability was to delete the
+     *  credential, so "we are not using this" and "this was never set up" were
+     *  the same state on screen and in the database.
+     *
+     *  undefined means the endpoint did not say, which reads as on -- an absent
+     *  answer must not switch a town's email off. */
+    enabled?: boolean;
 }
 
 /** What the last live check found, as one word the rest of the page can sort on.
@@ -181,6 +193,17 @@ export function healthIsAboutCurrentProvider(
 
 export function capabilityState(s: CapStatus | undefined, health?: ConnectorHealth): CapabilityState | null {
     if (!s) return null;                      // catalog still loading
+    /* First, and ahead of `configured`, because it overrides it in both
+     * directions.
+     *
+     * Switched off with credentials saved is not "working" -- nothing runs
+     * through it -- and switched off with nothing saved is still not "not set
+     * up", because the town has answered the question. Either way there is
+     * nothing here for anyone to do, which is what separates this from every
+     * other state on this list. Health is not consulted at all: a stored
+     * verdict about a capability nobody is using describes a call that no
+     * longer happens. */
+    if (s.enabled === false) return 'off';
     if (!s.configured) return 'unset';
     // Anything the current provider did not produce says nothing about it.
     if (!healthIsAboutCurrentProvider(s, health)) health = undefined;
@@ -344,7 +367,14 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 setResult({ ok: cat.last_result.ok, detail: cat.last_result.detail });
             }
             onStatus(cap, {
-                providerName: providerLabel(cat, cat.current_provider),
+                // `providerLabel` answers "the previous provider" for an absent
+                // selection, which reads correctly in the "switched from X"
+                // sentence it was written for and not at all here. A capability
+                // can now genuinely have nothing selected -- the secret store,
+                // until the town picks one -- so say that instead.
+                providerName: cat.current_provider
+                    ? providerLabel(cat, cat.current_provider)
+                    : 'Not chosen yet',
                 // So the badge can tell a verdict about this provider from one
                 // left behind by the last.
                 provider: cat.current_provider,
@@ -1157,7 +1187,7 @@ export interface PlainSecretsBridge {
     onSaved: () => void;
 }
 
-export default function ServiceProviders({ show, extras, footer, extraOff = [], plainSettings = [], plainSecrets, refreshToken = 0, onChanged, publicOrigin = null }: {
+export default function ServiceProviders({ show, statusMap, extras, footer, extraOff = [], plainSettings = [], plainSecrets, refreshToken = 0, onChanged, publicOrigin = null }: {
     /* Which capabilities the town said it wants, from the setup questions.
      * Undefined means "no answer yet", which shows everything -- an absent
      * answer must not read as "wanted nothing", the same distinction the
@@ -1167,6 +1197,15 @@ export default function ServiceProviders({ show, extras, footer, extraOff = [], 
      * them, so hiding them behind a question would let someone opt out of
      * having a working system. */
     show?: Set<Capability>;
+    /* What the server says about each capability, for the ones no card is
+     * drawn for.
+     *
+     * A switched-off capability has no card, so nothing fetches its catalog and
+     * this section cannot otherwise tell "switched off, key still saved" from
+     * "switched off, never configured". Those need different sentences: the
+     * first has to say the credentials are still there, or the obvious reading
+     * of a greyed-out tile is that switching it back on means starting over. */
+    statusMap?: import('../services/api').ProviderStatusMap | null;
     /* The settings that are not a provider choice -- the Google Cloud
      * credentials, error reporting, database backups. They lived in a second
      * collapsible section beside this one, which meant two places to look for
@@ -1279,6 +1318,19 @@ export default function ServiceProviders({ show, extras, footer, extraOff = [], 
      * Listed, not offered. Turning one on means going through its setup, and a
      * toggle here that quietly enabled a capability with no credentials behind
      * it would be a switch that appears to work and does nothing. */
+    /* Whether the credentials for a switched-off capability are still stored.
+     *
+     * The requirement in the reporter's own words: "I can for example save an
+     * email or AI key but not use it and then this is reflected in the service
+     * provider card but things are still saved." A tile that only says "not
+     * switched on" leaves the second half unanswered, and the safe assumption
+     * from a greyed-out card is that whatever was entered has gone. */
+    const stillSaved = (id: string): boolean => {
+        const entry = statusMap?.[id];
+        const provider = entry?.current_provider;
+        return !!provider && entry?.configured?.[provider] === true;
+    };
+
     const notChosen = [
         ...(show ? CAPS.filter(c => !ALWAYS.has(c.key) && !show.has(c.key)) : []).map(c => ({
             id: c.key as string, title: c.title, blurb: c.blurb, icon: c.icon,
@@ -1319,7 +1371,14 @@ export default function ServiceProviders({ show, extras, footer, extraOff = [], 
      * behaviour, and giving them a second piece of open-state would let two
      * cards be open at once. */
     const [openCap, setOpenCap] = useState<string | null>(null);
-    const capState = (cap: Capability) => capabilityState(statuses[cap], health[cap]);
+    /* `show` is the town's answer to "do you want this", so it is also the
+     * `enabled` the state machine needs -- derived here rather than passed in
+     * again, because two props carrying the same fact is how the page ended up
+     * with a questionnaire and a set of cards that could disagree. */
+    const capState = (cap: Capability) => capabilityState(
+        { ...statuses[cap], enabled: !show || ALWAYS.has(cap) || show.has(cap) },
+        health[cap],
+    );
 
     /* Rendered above the cards. A town whose health table cannot be read
      * should be told that, rather than shown ten badges that all say "not
@@ -1459,10 +1518,25 @@ export default function ServiceProviders({ show, extras, footer, extraOff = [], 
                                     </span>
                                     <div className="min-w-0 flex-1">
                                         <p className="font-semibold text-white/75 text-sm truncate">{c.title}</p>
-                                        <p className="text-[11px] text-white/50">Not switched on</p>
+                                        <p className="text-[11px] text-white/50">
+                                            {stillSaved(c.id)
+                                                ? 'Switched off — credentials still saved'
+                                                : 'Not switched on'}
+                                        </p>
                                     </div>
                                 </div>
                                 <p className="text-[11px] text-white/55 mt-2.5 leading-relaxed line-clamp-2">{c.blurb}</p>
+                                {stillSaved(c.id) && (
+                                    /* Said on the tile, not in the paragraph at
+                                       the foot of the section. Whether *this*
+                                       one still has its key is a fact about
+                                       this capability, and a clerk deciding
+                                       whether to switch it back on is looking
+                                       at the tile. */
+                                    <p className="text-[11px] text-emerald-200/60 mt-1.5">
+                                        Nothing was deleted. Switch it back on and it works as it did.
+                                    </p>
+                                )}
                             </div>
                         ))}
                     </div>
