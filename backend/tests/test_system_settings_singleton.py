@@ -16,7 +16,7 @@ class Row:
         return f"Row({self.id})"
 
 
-COLUMNS = ("retention_state_code", "retention_mode", "retention_days_override", "public_origin")
+COLUMNS = ("retention_days", "retention_mode", "retention_scrub_fields", "public_origin")
 
 
 def row(id, **kw):
@@ -44,7 +44,7 @@ def test_the_oldest_row_wins_not_the_newest():
     so it holds what the town configured. A duplicate created later by a racing
     request holds defaults, and preferring it would swap real configuration for
     an empty row."""
-    configured = row(1, retention_state_code="NJ", retention_mode="delete")
+    configured = row(1, retention_days=1825, retention_mode="delete")
     empty = row(2)
     assert pick_canonical([empty, configured]) is configured
 
@@ -52,11 +52,11 @@ def test_the_oldest_row_wins_not_the_newest():
 def test_merging_keeps_every_value_somebody_typed():
     """Deleting duplicates without folding them in would discard configuration
     that is, from the town's point of view, simply saved."""
-    canonical = row(1, retention_state_code="NJ")
+    canonical = row(1, retention_days=1825)
     stray = row(2, retention_mode="delete", public_origin="https://town.gov")
     winner, spare = merge_into_canonical([canonical, stray], COLUMNS)
     assert winner is canonical
-    assert winner.retention_state_code == "NJ"
+    assert winner.retention_days == 1825
     assert winner.retention_mode == "delete"
     assert winner.public_origin == "https://town.gov"
     assert [r.id for r in spare] == [2]
@@ -79,7 +79,7 @@ def test_the_earlier_duplicate_wins_a_tie():
 
 
 def test_a_single_row_merges_to_itself_with_nothing_spare():
-    only = row(1, retention_state_code="NY")
+    only = row(1, retention_days=2190)
     winner, spare = merge_into_canonical([only], COLUMNS)
     assert winner is only and spare == []
 

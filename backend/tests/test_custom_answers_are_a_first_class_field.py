@@ -15,16 +15,24 @@ place where not knowing is a compliance problem rather than a missing feature:
   other identifying field had already been cleared -- and the town believed it
   had honoured its own retention schedule.
 
-* **OPRA export.** A public-records response omitted the answers entirely. The
-  town was replying to a records request with an incomplete record and no
-  indication anything was missing.
+* **The records export.** A public-records response omitted the answers
+  entirely. The town was replying to a records request with an incomplete
+  record and no indication anything was missing.
+
+The retention half of this file has been rewritten once since. It used to
+assert that `custom_fields` was selectable but *not* in the default scrub list,
+which was the right call at the time and is now moot: there is no default scrub
+list. Nothing is pre-ticked, because the list decides what a town destroys
+permanently. What still needs pinning is that a town can name this field at
+all -- being absent from the catalog was the original bug, and it is a
+different bug from being unticked in it.
 """
 
 import pytest
 
 pytest.importorskip("cryptography")
 
-from app.services import opra_export as ox
+from app.services import records_export as ox
 from app.services import retention_scrub as rs
 
 
@@ -60,43 +68,36 @@ def test_custom_answers_can_be_scrubbed_at_all():
 
 
 def test_custom_answers_are_not_scrubbed_until_a_town_asks():
-    """Selectable, deliberately not default. This test used to assert the
-    opposite, and was wrong.
+    """Selectable, and chosen for nobody.
 
-    Being absent from the catalog was the bug -- retention could not clear these
-    answers even when asked. Being a *default* is a different act: it changes
-    what happens to towns that never chose anything, and what happens is
-    irreversible deletion. A town that had been keeping these answers would start
-    destroying them on its next run with nobody having decided that, which is
-    what `test_never_configured_means_what_it_did_before` in
-    test_retention_scrubs_ai.py exists to forbid.
-
-    Two of those assertions failed for exactly this reason and were right to."""
+    This assertion has been through two revisions and the reason has not
+    changed. It first read that `custom_fields` *was* a default and was wrong:
+    a town that had been keeping these answers would have started destroying
+    them on its next run with nobody having decided that. It then read that it
+    was selectable but not default. Now nothing is default, so the second
+    clause is a statement about the whole catalog.
+    """
     assert "custom_fields" in rs.FIELD_IDS, "a town must be able to choose it"
-    assert "custom_fields" not in rs.DEFAULT_FIELDS, "but not have it chosen for them"
+    assert not any(f.get("default") for f in rs.SCRUB_FIELDS), (
+        "but nothing here is chosen for them"
+    )
 
 
-def test_the_upgrade_promise_still_holds():
-    """The defaults are what they were before this field existed, so an existing
-    town's next retention run clears exactly what yesterday's would have."""
-    assert set(rs.DEFAULT_FIELDS) == {
-        "name", "email", "phone", "description", "staff_notes", "media", "ai_analysis",
-    }
+def test_an_unconfigured_town_destroys_none_of_them():
+    """The upgrade promise, in the form it takes now: arriving at this feature
+    changes nothing about what a town's next run removes, because without a
+    stored selection a run removes nothing and does not start."""
+    record = _Record()
+    assert rs.apply_scrub(record, rs.normalise_fields(None)) == []
+    assert record.custom_fields["Is it a stop sign?"] == "Yes"
 
 
 def test_scrubbing_actually_empties_them_when_selected():
     record = _Record()
-    # Explicitly selected, which is the only way it happens now.
-    cleared = rs.apply_scrub(record, list(rs.DEFAULT_FIELDS) + ["custom_fields"])
+    # Explicitly selected, which is the only way it happens.
+    cleared = rs.apply_scrub(record, ["description", "custom_fields"])
     assert "custom_fields" in cleared
     assert record.custom_fields == {}
-
-
-def test_the_defaults_alone_leave_them_alone():
-    record = _Record()
-    cleared = rs.apply_scrub(record, rs.DEFAULT_FIELDS)
-    assert "custom_fields" not in cleared
-    assert record.custom_fields["Is it a stop sign?"] == "Yes"
 
 
 def test_scrubbing_leaves_them_alone_when_not_selected():
@@ -109,11 +110,16 @@ def test_scrubbing_leaves_them_alone_when_not_selected():
 
 
 def test_the_settings_screen_offers_them():
-    ids = [f["id"] for f in rs.describe_selection(rs.DEFAULT_FIELDS)]
+    ids = [f["id"] for f in rs.describe_selection(None)]
     assert "custom_fields" in ids
 
 
-# --- OPRA export ------------------------------------------------------------
+# --- the records export -----------------------------------------------------
+#
+# The export keeps a default set, and that is not the inconsistency it looks
+# like. Its defaults decide what a custodian *discloses*, which they review on
+# screen and can undo; the retention defaults decided what a town *destroys*,
+# which nobody reviews and nobody can undo.
 
 def test_a_records_request_includes_the_answers():
     assert "custom_fields" in ox.DEFAULT_FIELDS, (

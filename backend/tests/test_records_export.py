@@ -15,13 +15,21 @@ So the reporter fields are opt-in by name, the file records which fields were
 left out, and every export is written to the audit trail -- not only the ones
 carrying PII, because "which records left this building, when, and who took
 them" is the first question an audit of a records process asks.
+
+The file used to headline a statute as well. The name came from a table of
+public-records laws the product had assembled for all 51 US jurisdictions and
+never verified, defaulting to "Federal FOIA" -- so a town in Texas released
+files headed "OPRA EXPORT / State: New Jersey (NJ)". That is a legal claim, on
+a document that leaves the building and is filed by whoever asked for it. The
+preamble states only what this system actually knows, which is not which law
+the request was made under.
 """
 
 from datetime import datetime, timezone
 
 import pytest
 
-from app.services.opra_export import (
+from app.services.records_export import (
     DEFAULT_FIELDS, FIELD_IDS, SENSITIVE_FIELDS, UnknownField,
     build_row, describe_fields, headers, normalise_fields, parse_boundary,
     preamble, sensitive_selected,
@@ -197,7 +205,6 @@ def test_the_preamble_names_what_was_left_out():
     """A custodian producing this months later, to a requester saying it is
     incomplete, needs the file itself to say what was excluded."""
     text = "\n".join(preamble(
-        law="OPRA (N.J.S.A. 47:1A-1)", state_name="New Jersey", state_code="NJ",
         total=12, exported_by="clerk", fields=normalise_fields(["service_request_id"]),
         filters={"start_date": "2024-01-01"},
         generated=datetime(2026, 8, 2, tzinfo=timezone.utc),
@@ -210,8 +217,7 @@ def test_the_preamble_says_when_nothing_was_filtered():
     """"Every record the town holds" should not be the thing nobody realises
     they produced."""
     text = "\n".join(preamble(
-        law="OPRA", state_name="New Jersey", state_code="NJ", total=9000,
-        exported_by="clerk", fields=list(DEFAULT_FIELDS), filters={},
+        total=9000, exported_by="clerk", fields=list(DEFAULT_FIELDS), filters={},
         generated=datetime(2026, 8, 2, tzinfo=timezone.utc),
     ))
     assert "this is every non-deleted record" in text
@@ -219,8 +225,7 @@ def test_the_preamble_says_when_nothing_was_filtered():
 
 def test_the_preamble_records_the_filters_that_were_used():
     text = "\n".join(preamble(
-        law="OPRA", state_name="New Jersey", state_code="NJ", total=3,
-        exported_by="clerk", fields=list(DEFAULT_FIELDS),
+        total=3, exported_by="clerk", fields=list(DEFAULT_FIELDS),
         filters={"start_date": "2024-01-01", "statuses": ["closed"],
                  "service_codes": ["POTHOLE"]},
         generated=datetime(2026, 8, 2, tzinfo=timezone.utc),
@@ -263,3 +268,28 @@ def test_an_archived_record_says_so_rather_than_being_blank():
     counts. A row of blanks reads as a broken export."""
     endpoint = _endpoint()
     assert "[Content cleared per retention policy]" in endpoint
+
+
+def test_the_preamble_names_no_statute():
+    """It cited one on every deployment, from a table nobody had verified. A
+    wrong citation on a document a requester keeps is worse than none, and the
+    custodian producing it knows which law they are answering under."""
+    text = "\n".join(preamble(
+        total=1, exported_by="clerk", fields=list(DEFAULT_FIELDS), filters={},
+        generated=datetime(2026, 8, 4, tzinfo=timezone.utc),
+    ))
+    for invented in ("OPRA", "FOIA", "CPRA", "FOIL", "State:", "New Jersey"):
+        assert invented not in text, f"the export is citing {invented} again"
+    # Still says what it is, so the file is not anonymous on arrival.
+    assert "RECORDS EXPORT" in text
+    assert "Exported by: clerk" in text
+
+
+def test_the_preamble_takes_no_statute_to_name():
+    """Not merely unused -- absent, so nothing downstream can start passing one
+    again by inventing a value for an accepted keyword."""
+    import inspect
+
+    params = inspect.signature(preamble).parameters
+    for gone in ("law", "state_name", "state_code"):
+        assert gone not in params, f"preamble still accepts {gone}"

@@ -17,10 +17,18 @@ computed its cutoff as
     retention_days = override_days if override_days else policy_days
 
 taking the override whatever it was, while `calculate_retention_date` honoured
-it only when it was *longer* than the state minimum. An override of 30 days in
-a state with a seven-year schedule therefore selected seven years of records
-for scrubbing. Nothing would have said so: the run reports how many records it
-archived, and that number is equally plausible either way.
+it only when it was *longer* than a state "minimum" the product had invented.
+An override of 30 days therefore selected seven years of records for scrubbing
+in one function and thirty days in the other. Nothing would have said so: the
+run reports how many records it archived, and that number is equally plausible
+either way.
+
+Both inputs are gone with the state table. There is one number now -- the
+period the municipality configured -- so the arithmetic those tests policed no
+longer exists to get wrong. What is still worth policing is the thing that
+motivated it: the preview and the sweep must compute their list the same way,
+from the same function, or the confirmation is against a list that is not the
+list.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -28,10 +36,11 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.services.retention_window import (
-    as_utc, describe_record, effective_retention_days, retention_cutoff, summarise,
+    as_utc, describe_record, retention_cutoff, summarise,
 )
 
 NOW = datetime(2026, 8, 2, 12, 0, tzinfo=timezone.utc)
+# A period a town might well set. Nothing in the product supplies it.
 SEVEN_YEARS = 2555
 
 
@@ -43,44 +52,35 @@ class Record:
         self.address = address
 
 
-# ---- the floor ----
+# ---- one period, no arithmetic ----
 
-def test_an_override_can_lengthen_retention():
-    """A town keeping records longer than the state requires is its own
-    business."""
-    assert effective_retention_days(SEVEN_YEARS, SEVEN_YEARS + 365) == SEVEN_YEARS + 365
-
-
-def test_an_override_cannot_shorten_it_below_the_state_minimum():
-    """The bug. The minimum is a legal floor, not a default -- keeping records
-    for less than the schedule is not a setting, it is a violation, and the
-    place to stop it is here rather than in a form validator that a PUT can
-    bypass."""
-    assert effective_retention_days(SEVEN_YEARS, 30) == SEVEN_YEARS
-    assert effective_retention_days(SEVEN_YEARS, 1) == SEVEN_YEARS
+def test_the_cutoff_is_the_period_the_town_set():
+    assert retention_cutoff(SEVEN_YEARS, NOW) == NOW - timedelta(days=SEVEN_YEARS)
+    assert retention_cutoff(30, NOW) == NOW - timedelta(days=30)
 
 
-def test_no_override_uses_the_state_schedule():
-    assert effective_retention_days(SEVEN_YEARS, None) == SEVEN_YEARS
-    assert effective_retention_days(SEVEN_YEARS, 0) == SEVEN_YEARS
+def test_there_is_no_second_period_to_reconcile():
+    """`effective_retention_days` combined a state minimum with a town
+    override, and the two call sites combined them differently. Both inputs
+    were the product's own invention; removing them removes the class of bug
+    rather than fixing one instance of it."""
+    from app.services import retention_window
+
+    assert not hasattr(retention_window, "effective_retention_days")
 
 
-def test_the_cutoff_follows_the_effective_period():
-    assert retention_cutoff(SEVEN_YEARS, 30, NOW) == NOW - timedelta(days=SEVEN_YEARS)
-    assert retention_cutoff(SEVEN_YEARS, SEVEN_YEARS + 10, NOW) == NOW - timedelta(days=SEVEN_YEARS + 10)
-
-
-def test_the_eligibility_query_and_the_date_calculator_agree():
-    """The two answers that disagreed. Both now route through the same
-    function, so the query cannot select a record the calculator says is not
-    due yet."""
+def test_the_eligibility_query_computes_its_cutoff_in_one_place():
+    """So the query cannot select a record the preview says is not due yet."""
     from pathlib import Path
 
     source = (Path(__file__).resolve().parents[1] / "app/services/retention_service.py").read_text()
     assert "override_days if override_days else" not in source, (
         "the eligibility cutoff is being computed separately again"
     )
-    assert source.count("effective_retention_days(") >= 2
+    assert "timedelta(days=" not in source, (
+        "a second cutoff calculation has grown back outside retention_window"
+    )
+    assert source.count("retention_cutoff(") >= 2
 
 
 # ---- what a row says ----
@@ -90,7 +90,7 @@ def test_a_row_carries_the_age_and_how_far_past_due_it_is():
     completely different to a person: the second says the policy has never
     actually run and this press will catch up on a decade at once."""
     closed = NOW - timedelta(days=SEVEN_YEARS + 400)
-    row = describe_record(Record(closed), cutoff=retention_cutoff(SEVEN_YEARS, None, NOW), now=NOW)
+    row = describe_record(Record(closed), cutoff=retention_cutoff(SEVEN_YEARS, NOW), now=NOW)
 
     assert row["age_days"] == SEVEN_YEARS + 400
     assert row["days_past_retention"] == 400
@@ -173,7 +173,7 @@ def test_the_preview_uses_the_same_selection_as_the_run():
     # The *call*, not the import. An earlier version of this assertion looked
     # for the name anywhere in the block and passed with the call replaced by
     # an empty list, because the import line still mentioned it.
-    assert "await get_records_for_archival(db, state_code, override_days" in endpoint, (
+    assert "await get_records_for_archival(db, retention_days" in endpoint, (
         "the preview is not calling the function the sweep calls"
     )
 

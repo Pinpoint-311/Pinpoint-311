@@ -8,7 +8,10 @@ remove -- where a resident put a name or a phone number in the description, the
 model repeated it.
 
 The list of what gets removed was fixed in code, deciding for every town what
-its own counsel and its state's records law are supposed to decide.
+its own counsel and its records retention schedule are supposed to decide. It
+is a catalog the town picks from now, and nothing in it is pre-ticked -- see
+`test_there_is_no_default_selection_at_all` for why a pre-ticked box is not the
+same kind of default as a pre-filled text field.
 
 And it was called anonymisation. Anonymising means removing what ties data to a
 person; blanking the description of a pothole report is redaction. They are not
@@ -87,20 +90,33 @@ class TestTheTownChooses:
         assert r.first_name == "John"
         assert r.address == "12 Elm St"
 
-    def test_never_configured_means_what_it_did_before(self):
-        """A town upgrading into this feature must not have its next run start
-        removing more, or less, than yesterday's."""
-        r = Rec(ai_analysis=dict(REAL_ANALYSIS))
-        done = S.apply_scrub(r, None)
-        assert set(done) == {"name", "email", "phone", "description", "staff_notes",
-                             "media", "ai_analysis"}
-        assert r.address == "12 Elm St"
-        assert r.lat == 40.8
+    def test_never_configured_removes_nothing(self):
+        """This assertion has been inverted, deliberately, and the promise
+        behind it is the same one.
 
-    def test_an_empty_choice_is_honoured_rather_than_defaulted(self):
-        """Deliberately empty is a real answer -- it goes with a delete-mode
-        policy -- and quietly substituting the defaults would destroy data
-        somebody had chosen to keep."""
+        It used to read: a town upgrading into this feature must not have its
+        next run start removing more, or less, than yesterday's -- so `None`
+        returned the seven fields the old hard-coded list destroyed, and the
+        upgrade was a no-op.
+
+        That promise held only while the seven were the status quo. They are
+        not any more: they are gone, along with the invented per-state schedule
+        that decided when they were destroyed, and nothing replaces them. The
+        rule underneath is what survives -- a town's next run must never start
+        removing something nobody chose -- and with no stored selection there is
+        nothing anybody chose, so the honest answer is that a run removes
+        nothing at all. Retention declines to run in that state rather than
+        archiving records untouched; see test_retention_is_the_towns_own.py.
+        """
+        r = Rec(ai_analysis=dict(REAL_ANALYSIS))
+        assert S.apply_scrub(r, None) == []
+        assert r.first_name == "John"
+        assert r.description.startswith("Pothole")
+        assert r.ai_analysis["priority_justification"]
+
+    def test_an_empty_choice_is_not_quietly_refilled(self):
+        """The same guarantee from the other direction: nothing substitutes a
+        list for a town that supplied none."""
         r = Rec()
         assert S.apply_scrub(r, []) == []
         assert r.first_name == "John"
@@ -134,9 +150,19 @@ class TestTheTownChooses:
             r = Rec(ai_analysis=dict(REAL_ANALYSIS))
             assert S.apply_scrub(r, [field["id"]]) == [field["id"]], field["id"]
 
-    def test_the_defaults_are_what_the_fixed_list_used_to_be(self):
-        assert set(S.DEFAULT_FIELDS) == {"name", "email", "phone", "description",
-                                         "staff_notes", "media", "ai_analysis"}
+    def test_there_is_no_default_selection_at_all(self):
+        """`DEFAULT_FIELDS` held the seven the old hard-coded list destroyed, so
+        they arrived pre-ticked at every town. Inherited that way they were
+        never anybody's decision, and the decision they stood in for is which of
+        a resident's details this town destroys permanently. A default that
+        destroys is not a convenience."""
+        assert not hasattr(S, "DEFAULT_FIELDS")
+        assert not any(f.get("default") for f in S.SCRUB_FIELDS), (
+            "a pre-ticked box here is a destruction policy nobody wrote"
+        )
+
+    def test_the_screen_opens_with_every_box_clear(self):
+        assert not [f["id"] for f in S.describe_selection(None) if f["selected"]]
 
 
 class TestHardDeleteIsGone:
