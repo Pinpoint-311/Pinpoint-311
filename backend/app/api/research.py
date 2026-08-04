@@ -444,11 +444,13 @@ async def get_census_tract_geoid(lat: float, lng: float) -> Optional[str]:
     
     Results are cached to avoid repeated API calls for same location.
     """
-    # NOTE: demo mode previously returned a synthetic FIPS code derived from the
-    # coordinates. That fake tract then drove the income/SVI/tenure lookups, so a
-    # demo export looked like real Census-linked data. Demo mode now resolves the
-    # real tract like any other deployment (the geocoder is free and keyless);
-    # if it can't be resolved the fields are simply empty.
+    # NOTE: this used to return a synthetic FIPS code derived from the
+    # coordinates whenever demo mode was on. That fake tract then drove the
+    # income/SVI/tenure lookups, so the export looked like real Census-linked
+    # data. Demo mode is gone and there is no synthetic path: every deployment
+    # resolves the real tract (the geocoder is free and keyless), and if it
+    # can't be resolved the fields are simply empty. Never substitute a
+    # plausible-looking tract for one that failed to resolve.
     if lat is None or lng is None:
         return None
     

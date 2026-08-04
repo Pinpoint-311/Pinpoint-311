@@ -75,25 +75,6 @@ export default function ResidentPortal() {
     const [submittedId, setSubmittedId] = useState<string | null>(null);
     const contentRef = useRef<HTMLDivElement>(null);
 
-    // Demo mode - show tooltip pointing to Staff Login
-    const [showDemoTooltip, setShowDemoTooltip] = useState(false);
-
-    useEffect(() => {
-        fetch('/api/demo/info').then(r => r.ok ? r.json() : null).then(data => {
-            if (data?.demo_mode) {
-                // Show tooltip if not previously dismissed
-                if (!localStorage.getItem('demo_tooltip_dismissed')) {
-                    setShowDemoTooltip(true);
-                }
-            }
-        }).catch(() => {});
-    }, []);
-
-    const dismissDemoTooltip = () => {
-        setShowDemoTooltip(false);
-        localStorage.setItem('demo_tooltip_dismissed', '1');
-    };
-
     // Non-emergency disclaimer modal state
     const [showDisclaimerModal, setShowDisclaimerModal] = useState(false);
     const [disclaimerChecked, setDisclaimerChecked] = useState(false);
@@ -543,44 +524,6 @@ export default function ResidentPortal() {
                             >
                                 Staff Login
                             </Link>
-                            {/* Demo-only tooltip pointing to Staff Login */}
-                            {showDemoTooltip && (
-                                <div
-                                    className="absolute top-full right-0 mt-3 z-50 w-72 sm:w-80"
-                                >
-                                    {/* Arrow pointing up */}
-                                    <div
-                                        className="absolute -top-2 right-4"
-                                        style={{
-                                            width: 0, height: 0,
-                                            borderLeft: '8px solid transparent',
-                                            borderRight: '8px solid transparent',
-                                            borderBottom: '8px solid rgb(49, 46, 129)',
-                                        }}
-                                    />
-                                    <div
-                                        className="rounded-xl p-3.5 border border-primary-400/50 shadow-xl shadow-black/40"
-                                        style={{
-                                            background: 'rgb(30, 27, 75)',
-                                            animation: 'demoTooltipBounce 2s ease-in-out infinite',
-                                        }}
-                                    >
-                                        <div className="flex items-start gap-2">
-                                            <div className="flex-1">
-                                                <p className="text-xs font-bold text-primary-300 uppercase tracking-wider mb-1">Demo Tip</p>
-                                                <p className="text-sm text-white leading-relaxed">Click <strong className="text-primary-200">Staff Login</strong> to explore the staff dashboard & admin console.</p>
-                                            </div>
-                                            <button
-                                                onClick={dismissDemoTooltip}
-                                                className="text-white/40 hover:text-white text-lg leading-none mt-0.5 flex-shrink-0"
-                                                aria-label="Dismiss"
-                                            >
-                                                &times;
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
                         </div>
                     </div>
                 </nav>
