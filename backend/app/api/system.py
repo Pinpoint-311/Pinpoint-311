@@ -2255,6 +2255,62 @@ async def get_provider_status(_: User = Depends(get_current_admin)):
     return out
 
 
+@router.get("/setup/state")
+async def get_setup_state(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Whether anybody has said this town is set up.
+
+    Nothing answered this. The setup guide opened itself when sign-in or maps
+    happened to be unconfigured, which is "is everything set up" wearing a
+    disguise -- and a town that deliberately switches most things off never
+    satisfies that, so the guide would greet it on every login forever. A banner
+    that never goes away is one people stop reading.
+    """
+    row = (await db.execute(
+        select(SystemSettings).order_by(SystemSettings.id).limit(1)
+    )).scalar_one_or_none()
+    when = getattr(row, "setup_completed_at", None) if row else None
+    return {"completed": when is not None, "completed_at": when.isoformat() if when else None}
+
+
+@router.post("/setup/state")
+async def mark_setup_complete(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """"I am done here." Said by a person, because nothing else can say it.
+
+    Deliberately not gated on anything being configured. Two things are actually
+    required before a town can take a report -- staff sign-in and a map -- and
+    the page already says so and shows what is outstanding. Refusing to let
+    somebody close the guide until a checklist is green would make the guide the
+    thing standing between them and the console, which is the opposite of what
+    it is for.
+    """
+    from datetime import datetime, timezone
+
+    row = (await db.execute(
+        select(SystemSettings).order_by(SystemSettings.id).limit(1)
+    )).scalar_one_or_none()
+    if row is None:
+        row = SystemSettings()
+        db.add(row)
+        await db.flush()
+    # Kept if it is already there. Re-marking would rewrite the date somebody
+    # may later want to point at, and the guide is reopenable from the tab
+    # regardless -- this flag only decides what happens on sign-in.
+    if row.setup_completed_at is None:
+        row.setup_completed_at = datetime.now(timezone.utc)
+        await db.commit()
+
+    from app.services.admin_audit import record_admin_action
+
+    await record_admin_action(db, event_type="setup.complete", actor=admin)
+    return await get_setup_state(db, admin)
+
+
 class SecretStoreChoice(BaseModel):
     store: str
 

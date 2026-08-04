@@ -735,6 +735,21 @@ class ApiClient {
         return this.request(`/system/providers/${capability}/test`, { method: 'POST' });
     }
 
+    /** Whether anybody has said this town is set up.
+     *
+     *  A marker rather than a derived answer. "Is everything configured" is the
+     *  obvious proxy and it never goes true for a town that deliberately
+     *  switches most things off, so the guide would greet it on every login
+     *  forever. */
+    async getSetupState(): Promise<{ completed: boolean; completed_at: string | null }> {
+        return this.request('/system/setup/state');
+    }
+
+    /** "I am done here." */
+    async markSetupComplete(): Promise<{ completed: boolean; completed_at: string | null }> {
+        return this.request('/system/setup/state', { method: 'POST' });
+    }
+
     /** Where this town's credentials are kept, and whether anyone said so.
      *
      *  `chosen: false` used to be unreachable: the backend answered "google"

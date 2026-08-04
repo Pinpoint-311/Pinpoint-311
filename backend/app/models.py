@@ -505,6 +505,15 @@ class SystemSettings(Base):
     # by deleting the credential. {} means "never answered", which reads as the
     # behaviour that shipped before the switch existed rather than as "off".
     capability_switches = Column(JSON, default=dict)
+    # When somebody said they were finished setting this town up. NULL means
+    # nobody has, which is what opens the setup guide on sign-in.
+    #
+    # A marker rather than a derived answer. "Is everything configured" is the
+    # obvious proxy and it is wrong in the direction that matters: a town that
+    # deliberately switches most things off never satisfies it, so the guide
+    # would greet it on every login forever -- and a banner that never goes away
+    # is one people stop reading. Being finished is a thing a person says.
+    setup_completed_at = Column(DateTime(timezone=True))
     township_boundary = Column(JSON)  # GeoJSON boundary from OpenStreetMap
     
     # Multi-language support

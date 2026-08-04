@@ -27,6 +27,41 @@ let statusResponse: Record<string, unknown> = {};
  * method reads instead. */
 let refuseWith: string | null = null;
 
+/* framer-motion, reduced to plain elements.
+ *
+ * The setup guide's body lives inside an `AnimatePresence`, and in jsdom no
+ * animation ever completes -- so the subtree it is holding stops reflecting
+ * state and every assertion after a click reads a frozen snapshot. That is an
+ * artifact of the animation library in a headless DOM, not behaviour worth
+ * testing, and leaving it in place makes these tests pass for the wrong reason:
+ * a chip that never changes looks exactly like a chip that correctly rolled
+ * back. */
+vi.mock('framer-motion', async () => {
+    const React = await import('react');
+    const passthrough = (tag: string) => ({ children, ...props }: any) => {
+        const {
+            initial, animate, exit, transition, variants, whileHover, whileTap,
+            whileInView, layout, layoutId, drag, onAnimationComplete, ...rest
+        } = props;
+        return React.createElement(tag, rest, children);
+    };
+    /* Cached per tag. A Proxy that builds a fresh component on every access
+     * hands React a new element *type* on every render, which remounts the
+     * subtree every time -- an infinite loop, not a passthrough. */
+    const cache = new Map<string, any>();
+    const motion: any = new Proxy({}, {
+        get: (_t, tag: string) => {
+            if (!cache.has(tag)) cache.set(tag, passthrough(tag));
+            return cache.get(tag);
+        },
+    });
+    return {
+        motion,
+        AnimatePresence: ({ children }: any) => React.createElement(React.Fragment, null, children),
+        useReducedMotion: () => true,
+    };
+});
+
 vi.mock('../services/api', () => {
     const shapes: Record<string, unknown> = {
         getConfig: { public_origin: 'https://town.gov' },
@@ -72,8 +107,13 @@ const props: any = {
 async function mount() {
     const { default: Page } = await import('./SetupIntegrationsPage');
     await act(async () => { root.render(React.createElement(Page, props)); });
-    // The guide is collapsed until something asks for it; the chips live inside.
-    await click('Setup Instructions');
+    await settle(2);
+    /* The chips live inside the guide. It opens itself on a town that has not
+     * said setup is finished -- which this one has not, because `getSetupState`
+     * is unmocked here -- so clicking unconditionally would close it. */
+    if (!/What do you want to switch on/.test(host.textContent || '')) {
+        await click('Setup Instructions');
+    }
 }
 
 function findByText(pattern: RegExp): HTMLElement | undefined {
@@ -85,6 +125,27 @@ async function click(text: string | RegExp) {
     const el = findByText(typeof text === 'string' ? new RegExp(`^\\s*(✓ )?${text}\\s*$`) : text);
     if (!el) throw new Error(`no clickable element matching ${text}`);
     await act(async () => { el.click(); });
+    await settle();
+}
+
+/* The click handler is async and act does not await it, so the state update on
+ * the far side of the round trip lands after act returns -- and React may
+ * schedule the render itself a task later again. One tick is not reliably
+ * enough: the refusal case passed alone and failed in a full run, which is the
+ * worst kind of green. */
+async function settle(ticks = 3) {
+    for (let i = 0; i < ticks; i++) {
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    }
+}
+
+/** Wait for the DOM to say something, rather than guessing how many ticks. */
+async function waitForText(pattern: RegExp, tries = 20) {
+    for (let i = 0; i < tries; i++) {
+        if (pattern.test(host.textContent || '')) return;
+        await settle(1);
+    }
+    throw new Error(`never rendered ${pattern}. Text was: ${(host.textContent || '').slice(0, 400)}`);
 }
 
 beforeEach(() => {
@@ -164,8 +225,8 @@ describe('the feature ticks', () => {
         refuseWith = 'nope';
         await click('AI triage');
 
+        await waitForText(/nope/);
         expect(findByText(/^\s*(✓ )?AI triage\s*$/)?.getAttribute('aria-pressed')).toBe('true');
-        expect(host.textContent).toContain('nope');
     });
 
     it('says that switching one off does not delete what was entered', async () => {

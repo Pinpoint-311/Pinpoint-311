@@ -65,6 +65,10 @@ DEDICATED = {
     # switch capabilities on and off as a side effect of renaming the township.
     # The dedicated PUT takes a partial map and touches only what changed.
     "capability_switches":     ("PUT /system/capabilities", "GET /system/providers/status"),
+    # Whether anybody has said this town is set up. Its own endpoint because it
+    # is written by one deliberate act -- closing the setup guide -- and read on
+    # every admin sign-in to decide whether to open it.
+    "setup_completed_at":      ("POST /system/setup/state", "GET /system/setup/state"),
 }
 
 # Written and read by the platform itself, never by a person. Not settings.

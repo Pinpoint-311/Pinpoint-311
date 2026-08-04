@@ -349,14 +349,24 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [backupKey, setBackupKey] = useState<string | null>(null);
     const [backupKeyAcknowledged, setBackupKeyAcknowledged] = useState(false);
 
-    /* The guide starts open on a fresh install and closed once the required
-     * integrations are in. It is a first-run document: hidden behind a click it
-     * is missed by the person who needs it most, and left open forever it pushes
-     * the actual controls off the screen for everyone else.
+    /* The guide starts open until somebody says setup is finished, and closed
+     * after that. It is a first-run document: hidden behind a click it is missed
+     * by the person who needs it most, and left open forever it pushes the
+     * actual controls off the screen for everyone else.
+     *
+     * It used to open on `!signInConfigured || !mapsConfigured`, which is "is
+     * everything set up" wearing a disguise. That never goes true for a town
+     * that deliberately switches most things off, and a guide that greets you on
+     * every login forever is one people stop reading. Being finished is a thing
+     * a person says; `setupDone` is where they said it.
      *
      * null means "not decided yet" so the effect below can set it once the
      * config has loaded, without overriding a deliberate click afterwards. */
     const [expandedGuide, setExpandedGuide] = useState<string | null>(null);
+    /* undefined until the server answers. Deciding before then would throw the
+     * guide open at a town that finished setup a year ago. */
+    const [setupDone, setSetupDone] = useState<boolean | undefined>(undefined);
+    const [finishing, setFinishing] = useState(false);
     const guideAutoSet = useRef(false);
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
@@ -695,14 +705,34 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const completedCount = setupSteps.filter(s => s.done).length;
 
     useEffect(() => {
-        // secrets arrives as a prop; an empty array means it has not loaded yet.
-        // Provider status likewise: this fires once, so deciding before the
-        // answer arrives would throw the guide open at a town that has
-        // everything set up, and never reconsider.
-        if (guideAutoSet.current || secrets.length === 0 || !providerStatus) return;
+        api.getSetupState()
+            .then(s => setSetupDone(!!s.completed))
+            /* Unknown is not "unfinished". A failed request must not throw the
+             * guide open over the top of a console somebody is trying to use. */
+            .catch(() => setSetupDone(true));
+    }, []);
+
+    useEffect(() => {
+        // Fires once, and only once the server has said. Deciding earlier would
+        // open the guide at a town that finished setup long ago and then never
+        // reconsider, because this does not run again.
+        if (guideAutoSet.current || setupDone === undefined) return;
         guideAutoSet.current = true;
-        if (!signInConfigured || !mapsConfigured) setExpandedGuide('master');
-    }, [secrets.length, providerStatus, signInConfigured, mapsConfigured]);
+        if (!setupDone) setExpandedGuide('master');
+    }, [setupDone]);
+
+    const finishSetup = async () => {
+        setFinishing(true);
+        try {
+            await api.markSetupComplete();
+            setSetupDone(true);
+            setExpandedGuide(null);
+        } catch (err: any) {
+            setSaveMessage(`❌ ${err?.message || 'That could not be saved'}`);
+        } finally {
+            setFinishing(false);
+        }
+    };
 
     // Toggle helper for collapsible instruction panels
     const toggleGuide = (id: string) => setExpandedGuide(prev => prev === id ? null : id);
@@ -1098,7 +1128,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                         )}
                                         <p className="text-[11px] text-white/45 mt-2">
                                             Unticking one switches it off and stops it running. Anything you
-                                            have already entered stays saved \u2014 switch it back on and it works
+                                            have already entered stays saved — switch it back on and it works
                                             as it did.
                                         </p>
                                     </Ask>
@@ -1198,6 +1228,42 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     publicOrigin={publicOrigin}
                                     renderFoundation={renderFoundation}
                                 />
+
+                                {/* The only way the guide stops opening itself.
+                                  *
+                                  * Not gated on the checklist being green, and
+                                  * not hidden until it is. Two things are
+                                  * actually required before a town can take a
+                                  * report and the panel above says which; a
+                                  * town that has deliberately switched
+                                  * everything else off is finished, and a guide
+                                  * that will not let go until a count reaches
+                                  * zero is the thing standing between somebody
+                                  * and their console.
+                                  *
+                                  * The tab is still here afterwards, and this
+                                  * panel still opens on a click. All this
+                                  * settles is what happens on sign-in. */}
+                                {setupDone === false && (
+                                    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 flex flex-wrap items-center gap-3">
+                                        <div className="min-w-0 flex-1">
+                                            <p className="text-sm font-semibold text-white">Finished for now?</p>
+                                            <p className="text-white/50 text-xs mt-0.5">
+                                                This guide opens by itself every time you sign in until you say so. You can
+                                                come back to it from this tab whenever you like, and anything still
+                                                outstanding stays listed on the cards below.
+                                            </p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={finishSetup}
+                                            disabled={finishing}
+                                            className="inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-semibold text-white bg-primary-500 hover:bg-primary-400 border border-primary-400/50 transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                                        >
+                                            {finishing ? 'Saving…' : "I'm done with setup"}
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         </motion.div>
                     )}
