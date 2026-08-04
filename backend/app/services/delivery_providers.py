@@ -141,9 +141,40 @@ SMS_CATALOG: Dict[str, Dict[str, Any]] = {
         "credential_fields": [
             {"key": "SMS_HTTP_API_URL", "label": "POST URL", "required": True},
             {"key": "SMS_HTTP_API_KEY", "label": "API key", "secret": True, "required": False},
+            # The only card on this page that cannot be checked without doing
+            # the thing it exists to do. Every other provider has some read-only
+            # call; "any gateway that accepts a POST" has, by definition, no
+            # agreed one -- so the town supplies it, if their gateway offers it.
+            # Without this the card could never go green, and a badge that can
+            # never go green is one people learn to ignore.
+            {"key": "SMS_HTTP_TEST_URL", "label": "Status URL to check the key (optional)", "required": False},
         ],
+        "field_help": {
+            "SMS_HTTP_TEST_URL": (
+                "A URL we can GET to confirm the key is live, if your gateway publishes one — "
+                "a balance or quota endpoint, for example. Leave blank and the card will say it "
+                "cannot be checked from here rather than guessing."
+            ),
+        },
     },
 }
+
+
+# `SMS_ENABLED` was read nowhere. Setting it did nothing, which is worse than
+# not offering it: somebody switched texting "off" and every text kept going.
+#
+# Wired as a kill switch rather than as an enable switch, unlike `EMAIL_ENABLED`
+# which a town must set to "true". SMS already has an off state -- provider
+# `none` -- so requiring an extra yes would silently stop texts for every town
+# that had configured Twilio and never heard of this key. This way an unset
+# value means what it has always meant, and the only thing that changes is that
+# setting it false now does what it says.
+_OFF_WORDS = ("false", "0", "no", "off", "disabled")
+
+
+def switched_off(value: Optional[str]) -> bool:
+    """Whether an ENABLED-style flag is explicitly saying no."""
+    return (value or "").strip().lower() in _OFF_WORDS
 
 
 # ---- PII encryption ----------------------------------------------------------
@@ -157,10 +188,26 @@ KMS_CATALOG: Dict[str, Dict[str, Any]] = {
         "name": "Google Cloud KMS",
         "description": "Wraps the key that encrypts resident personal information. Uses your existing Google Cloud service account.",
         "boundary": "Google Cloud — Assured Workloads / FedRAMP High",
+        # The three KMS_* fields only *name* a key; none of them is what makes
+        # this provider work. `encryption._is_kms_available()` returns False
+        # without a project id and `_wrap_dek` then falls straight through to
+        # the local SECRET_KEY wrap -- silently, because falling back is the
+        # supported behaviour. So with only the optional three declared, a town
+        # with no Google account at all saw "Google Cloud KMS — configured"
+        # while its resident PII was wrapped by the application key.
         "credential_fields": [
             {"key": "KMS_LOCATION", "label": "Key location (optional, defaults to us-central1)", "required": False},
             {"key": "KMS_KEY_RING", "label": "Key ring (optional, defaults to pinpoint311-keyring)", "required": False},
             {"key": "KMS_KEY_ID", "label": "Key name (optional, defaults to pii-encryption-key)", "required": False},
+        ],
+        # Not offered as boxes: both are bootstrap credentials the first-run
+        # setup collects, and they are deliberately database-only because they
+        # are what makes the secret store readable in the first place. Naming
+        # them here so the badge can see them, without opening a second write
+        # path to them from a provider card.
+        "requires": [
+            {"key": "GOOGLE_CLOUD_PROJECT", "label": "Google Cloud project", "where": "Setup"},
+            {"key": "GCP_SERVICE_ACCOUNT_JSON", "label": "Google service account", "where": "Setup"},
         ],
         "field_help": {
             "KMS_LOCATION": "The project comes from your Google Cloud credentials; these three only name the key within it.",
@@ -221,12 +268,34 @@ _REDACTION_TOGGLES = [
     {"key": "REDACT_PLATES", "label": "Blur licence plates (true/false)", "required": False},
 ]
 
+# Every entry below used to declare the two toggles and nothing else, and every
+# toggle is optional -- so `_configured_map`, which asks "are all the required
+# fields stored", found nothing required and answered True for all four. A
+# deployment with no AWS account and no Azure account had its cards reading
+# "Amazon Rekognition — configured" and "Azure AI Vision — configured".
+#
+# That is the exact inverse of the false negative `_configured_map` was written
+# to prevent, and it is the worse direction: a false negative sends a clerk to
+# re-paste a credential that was already fine, but a false positive tells them
+# the photo detector they picked is ready when selecting it degrades silently to
+# OpenCV.
+#
+# Google and AWS still do not offer a box for the credential they reuse -- two
+# boxes writing one secret is its own bug. They declare it in `requires`
+# instead: a credential this provider cannot work without, collected on another
+# card. The badge reads it; the form does not draw it. Between them,
+# `requires` and `requires_any` now say what `_usable()` says.
+
 REDACTION_CATALOG: Dict[str, Dict[str, Any]] = {
     "google": {
         "name": "Google Cloud Vision",
         "description": "Finds faces and plates in resident photos and blurs them before the photo is stored. Uses your existing Google Cloud credentials.",
         "boundary": "Google Cloud — Assured Workloads / FedRAMP High",
         "credential_fields": list(_REDACTION_TOGGLES),
+        "requires": [
+            {"key": "VERTEX_AI_SERVICE_ACCOUNT_KEY", "label": "Google service account",
+             "where": "the AI card"},
+        ],
         "field_help": {
             "REDACT_PLATES": "On by default. Detection guesses, so it occasionally blurs a house number — switch it off if your crews rely on those.",
         },
@@ -236,6 +305,13 @@ REDACTION_CATALOG: Dict[str, Dict[str, Any]] = {
         "description": "Amazon's detector, using the AWS credentials already entered elsewhere.",
         "boundary": "AWS — GovCloud available",
         "credential_fields": list(_REDACTION_TOGGLES),
+        # Region is the make-or-break one: `_aws_kwargs` returns None without it
+        # and Rekognition is never called. The key pair is genuinely optional,
+        # because an EC2 instance role supplies it.
+        "requires": [
+            {"key": "AWS_REGION", "label": "AWS Region",
+             "where": "any AWS card — email, text messages or encryption"},
+        ],
     },
     "azure": {
         "name": "Azure AI Vision",
@@ -260,6 +336,17 @@ REDACTION_CATALOG: Dict[str, Dict[str, Any]] = {
             {"key": "AZURE_VISION_ENDPOINT", "label": "Vision endpoint", "required": False},
             {"key": "AZURE_VISION_KEY", "label": "Vision key", "required": False, "secret": True},
         ],
+        # None of the four is individually required and all four together are
+        # too many, so neither flag can say what this provider needs. `_usable`
+        # calls Azure when *either* pair is complete, deliberately: a town may
+        # have only Vision because Microsoft's Limited Access review has not
+        # cleared Face. Marking all four required would report a working
+        # plates-only setup as unconfigured; leaving all four optional is what
+        # made an Azure card with nothing in it read as ready.
+        "requires_any": [
+            ["AZURE_FACE_ENDPOINT", "AZURE_FACE_KEY"],
+            ["AZURE_VISION_ENDPOINT", "AZURE_VISION_KEY"],
+        ],
         "field_help": {
             "AZURE_FACE_ENDPOINT": "Only needed if you are blurring faces. Microsoft gates the Face API behind a Limited Access review — detection is the least restricted operation, but the subscription still has to be approved before it will serve traffic.",
             "AZURE_VISION_ENDPOINT": "Only needed if you are blurring plates. Plates are found by reading text in the photo.",
@@ -278,17 +365,81 @@ REDACTION_CATALOG: Dict[str, Dict[str, Any]] = {
 }
 
 
+# ---- where the credentials themselves live -----------------------------------
+# Branches: secret_manager._secrets_provider() returns "azure", "aws" or
+# "google", and every write falls back to the encrypted database when the
+# selected store is unreachable -- which is a supported state for a small
+# self-hosted town, so "database" is listed rather than hidden.
+#
+# This catalog exists to be *reported*, not chosen. Switching stores does not
+# move the credentials that are already in the old one, so the setting is owned
+# by the cloud-profile flow, which does move them; `_READ_ONLY_SELECTION` in the
+# API refuses a save. What it buys is the same badge, the same daily sweep and
+# the same Test button every other capability has -- and this is the capability
+# every other one depends on, so it was the worst one to have no check at all.
+
+SECRETS_PROVIDER_KEY = "SECRETS_PROVIDER"
+DEFAULT_SECRETS_PROVIDER = "google"
+
+SECRETS_CATALOG: Dict[str, Dict[str, Any]] = {
+    "google": {
+        "name": "Google Secret Manager",
+        "description": "Keeps every credential this town enters. Uses your existing Google Cloud service account.",
+        "boundary": "Google Cloud — Assured Workloads / FedRAMP High",
+        "credential_fields": [],
+        "requires": [
+            {"key": "GOOGLE_CLOUD_PROJECT", "label": "Google Cloud project", "where": "Setup"},
+            {"key": "GCP_SERVICE_ACCOUNT_JSON", "label": "Google service account", "where": "Setup"},
+        ],
+    },
+    "azure": {
+        "name": "Azure Key Vault",
+        "description": "Keeps every credential this town enters, in the vault that also wraps the PII key if you use it for that.",
+        "boundary": "Azure Government / GCC High",
+        "credential_fields": [],
+        "requires": [
+            {"key": "AZURE_KEYVAULT_URL", "label": "Key Vault URL", "where": "the PII Encryption card"},
+            {"key": "AZURE_TENANT_ID", "label": "Directory (tenant) ID", "where": "the PII Encryption card"},
+            {"key": "AZURE_KEYVAULT_CLIENT_ID", "label": "Application (client) ID", "where": "the PII Encryption card"},
+            {"key": "AZURE_KEYVAULT_CLIENT_SECRET", "label": "Client secret", "where": "the PII Encryption card"},
+        ],
+    },
+    "aws": {
+        "name": "AWS Secrets Manager",
+        "description": "Keeps every credential this town enters, using your existing AWS credentials.",
+        "boundary": "AWS — GovCloud available",
+        "credential_fields": [],
+        "requires": [
+            {"key": "AWS_REGION", "label": "AWS Region",
+             "where": "any AWS card — email, text messages or encryption"},
+        ],
+    },
+    "database": {
+        "name": "This server's database (no cloud store)",
+        "description": (
+            "Credentials stay in this application's own database, encrypted with its key. "
+            "Supported, and the normal state of a small self-hosted install — but a cloud "
+            "store is the stronger choice where one is available."
+        ),
+        "boundary": "Self-hosted",
+        "credential_fields": [],
+    },
+}
+
+
 _CATALOGS = {
     "email": EMAIL_CATALOG,
     "sms": SMS_CATALOG,
     "kms": KMS_CATALOG,
     "redaction": REDACTION_CATALOG,
+    "secrets": SECRETS_CATALOG,
 }
 _DEFAULTS = {
     "email": DEFAULT_EMAIL_PROVIDER,
     "sms": DEFAULT_SMS_PROVIDER,
     "kms": DEFAULT_KMS_PROVIDER,
     "redaction": DEFAULT_REDACTION_PROVIDER,
+    "secrets": DEFAULT_SECRETS_PROVIDER,
 }
 
 
@@ -302,6 +453,11 @@ def catalog_for_api(capability: str) -> List[Dict[str, Any]]:
             "boundary": spec.get("boundary", ""),
             "credential_fields": spec["credential_fields"],
             "field_help": spec.get("field_help", {}),
+            # Carried through rather than dropped: `_configured_map` reads the
+            # catalog in this shape, so a rule left behind here is a rule the
+            # badge cannot see.
+            "requires": spec.get("requires", []),
+            "requires_any": spec.get("requires_any", []),
         }
         for provider_id, spec in _CATALOGS[capability].items()
     ]

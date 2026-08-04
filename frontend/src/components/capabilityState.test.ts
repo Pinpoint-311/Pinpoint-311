@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
-import { capabilityState } from './ServiceProviders';
+import { capabilityState, healthIsAboutCurrentProvider, providerLabel } from './ServiceProviders';
+import type { ProviderCatalog, ProviderInfo } from '../services/api';
 
 /**
  * Which of the two questions a badge is answering.
@@ -110,5 +111,166 @@ describe('a check result outlives the session that ran it', () => {
     it('treats an absent flag as unknown rather than as unverifiable', () => {
         // Rows written before the column existed have neither value.
         expect(capabilityState({ configured: true }, health('unknown'))).toBe('unchecked');
+    });
+});
+
+describe('a verdict belongs to the provider that produced it', () => {
+    /* `connector_health` has always carried the provider a result was recorded
+     * against and nothing compared it. Live, the text messages card read "There
+     * is no way to check http without sending a real text" while SMS_PROVIDER
+     * was 'acs' -- a true sentence about the gateway the town had switched away
+     * from, shown as the state of the one it is on. The green direction is the
+     * same bug and nobody notices it: a passing check on the old provider would
+     * have kept the card green for a vendor that had never been tested. */
+
+    it('ignores a stored result recorded against a different provider', () => {
+        expect(capabilityState(
+            { configured: true, provider: 'acs' },
+            health('working', { provider: 'http' }),
+        )).toBe('unchecked');
+    });
+
+    it('does not carry "cannot be tested" across a provider change', () => {
+        // The live case. Azure Communication Services has an endpoint that can
+        // be checked; the generic HTTP gateway does not, and its verdict was
+        // being shown on the ACS card.
+        expect(capabilityState(
+            { configured: true, provider: 'acs' },
+            health('unknown', { provider: 'http', verifiable: false }),
+        )).toBe('unchecked');
+    });
+
+    it('does not carry a failure across a provider change either', () => {
+        // Switching provider because the old one was broken must not leave the
+        // new one red before anything has tried it.
+        expect(capabilityState(
+            { configured: true, provider: 'twilio' },
+            health('down', { provider: 'http' }),
+        )).toBe('unchecked');
+    });
+
+    it('uses a stored result recorded against the provider in use', () => {
+        expect(capabilityState(
+            { configured: true, provider: 'twilio' },
+            health('working', { provider: 'twilio' }),
+        )).toBe('working');
+    });
+
+    it('keeps a row that names no provider', () => {
+        // Every row written before the column was filled looks like this.
+        // Discarding a real verdict is the more expensive of the two mistakes.
+        expect(capabilityState(
+            { configured: true, provider: 'twilio' },
+            health('working'),
+        )).toBe('working');
+    });
+
+    it('keeps a row when the catalog has not said which provider is current', () => {
+        expect(capabilityState(
+            { configured: true },
+            health('failing', { provider: 'http' }),
+        )).toBe('failing');
+    });
+});
+
+describe('healthIsAboutCurrentProvider', () => {
+    it('is false when there is no health row at all', () => {
+        expect(healthIsAboutCurrentProvider({ configured: true, provider: 'acs' }, undefined))
+            .toBe(false);
+    });
+
+    it('is true when both name the same provider', () => {
+        expect(healthIsAboutCurrentProvider(
+            { provider: 'acs' }, health('working', { provider: 'acs' }),
+        )).toBe(true);
+    });
+
+    it('is false when they disagree', () => {
+        expect(healthIsAboutCurrentProvider(
+            { provider: 'acs' }, health('working', { provider: 'http' }),
+        )).toBe(false);
+    });
+});
+
+describe('providerLabel', () => {
+    it('uses the vendor name the catalog gives', () => {
+        // "acs" is our word for it; "Azure Communication Services" is theirs.
+        expect(providerLabel(
+            { providers: [{ provider: 'acs', name: 'Azure Communication Services' }] }, 'acs',
+        )).toBe('Azure Communication Services');
+    });
+
+    it('falls back to the id rather than showing nothing', () => {
+        expect(providerLabel({ providers: [] }, 'http')).toBe('http');
+    });
+
+    it('has something to say when no provider was recorded', () => {
+        expect(providerLabel(null, null)).toBe('the previous provider');
+    });
+});
+
+describe('what a card says it needs but does not ask for', () => {
+    /* The backend declares two things no per-field flag can say -- `requires`
+     * (a credential collected on another card) and `requires_any` (alternative
+     * sets, any one of which is enough) -- and the frontend types modelled
+     * neither, so both were dropped on arrival.
+     *
+     * The visible consequence: photo redaction on Google shows two blur
+     * toggles, both optional, and a badge saying "Not set up", because the
+     * service account it needs is entered on the AI card. A finished-looking
+     * form and an unfinished badge, with nothing on screen connecting them. */
+
+    it('carries the borrowed credential through the type', () => {
+        const info: ProviderInfo = {
+            provider: 'google', name: 'Google Cloud Vision', credential_fields: [],
+            requires: [{ key: 'VERTEX_AI_SERVICE_ACCOUNT_KEY', label: 'Google service account', where: 'the AI card' }],
+        };
+        expect(info.requires?.[0].where).toBe('the AI card');
+    });
+
+    it('carries the alternative sets through the type', () => {
+        const info: ProviderInfo = {
+            provider: 'azure', name: 'Azure AI Vision', credential_fields: [],
+            requires_any: [['AZURE_FACE_ENDPOINT', 'AZURE_FACE_KEY'], ['AZURE_VISION_ENDPOINT', 'AZURE_VISION_KEY']],
+        };
+        expect(info.requires_any).toHaveLength(2);
+    });
+
+    it('models which fields are required, which the form draws a marker from', () => {
+        // Sent on every field all along and not modelled, so a box the provider
+        // cannot work without and a genuinely optional one looked identical.
+        const info: ProviderInfo = {
+            provider: 'smtp', name: 'SMTP',
+            credential_fields: [
+                { key: 'SMTP_HOST', label: 'SMTP host', required: true },
+                { key: 'SMTP_PORT', label: 'Port', required: false },
+            ],
+        };
+        expect(info.credential_fields.filter(f => f.required)).toHaveLength(1);
+    });
+});
+
+describe('the "Saved" hint is per box, not per provider', () => {
+    /* It read a single provider-level flag, so once a provider counted as
+     * configured every one of its boxes claimed to be saved -- including an
+     * optional one nobody had ever filled in. The hint exists to say that
+     * leaving a box empty keeps the stored value rather than clearing it, and
+     * that promise is false where there is nothing stored. */
+
+    it('models presence per credential key', () => {
+        const catalog: Pick<ProviderCatalog, 'stored_fields'> = {
+            stored_fields: { GOOGLE_MAPS_API_KEY: true, GOOGLE_MAPS_MAP_ID: false },
+        };
+        expect(catalog.stored_fields?.GOOGLE_MAPS_API_KEY).toBe(true);
+        // The optional one nobody filled in. Previously this was also "Saved".
+        expect(catalog.stored_fields?.GOOGLE_MAPS_MAP_ID).toBe(false);
+    });
+
+    it('treats an absent map as nothing stored rather than everything', () => {
+        // An older backend, or a catalog that failed to report. Hinting nothing
+        // is the safe direction: the worst case is a clerk retyping a value
+        // that was already there, rather than clearing one they meant to keep.
+        const catalog: Pick<ProviderCatalog, 'stored_fields'> = {};
+        expect(catalog.stored_fields?.ANYTHING ?? false).toBe(false);
     });
 });

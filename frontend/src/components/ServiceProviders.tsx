@@ -49,6 +49,13 @@ const CAPS: { key: Capability; title: string; blurb: string; icon: typeof Sparkl
     { key: 'sms', title: 'Text Messages', blurb: 'Optional text alerts. Residents who give a mobile number get updates without checking email.', icon: MessageSquare },
     { key: 'kms', title: 'PII Encryption (KMS)', blurb: 'Which key service wraps the key that encrypts resident personal information. Cloud KMS is stronger than the application key.', icon: Lock },
     { key: 'redaction', title: 'Photo Redaction', blurb: 'Blurs faces and licence plates in resident photos before they are stored, so a municipal site never publishes them.', icon: ImageIcon },
+    // The capability every card above depends on, and the last to get a check.
+    // A credential saved while the store is unreachable stays in the encrypted
+    // database and the card that saved it still shows a tick, so the failure
+    // was invisible from here. No provider to pick: switching stores does not
+    // move what is already in the old one, so that belongs to the cloud
+    // profile. This says which store is in use and offers the round trip.
+    { key: 'secrets', title: 'Secret Storage', blurb: 'Where every credential on this page is kept. The check writes a throwaway key, reads it back and removes it.', icon: ShieldCheck },
 ];
 
 /** A numbered section heading inside a provider card.
@@ -102,6 +109,19 @@ function LiveState({ health }: { health?: ConnectorHealth }) {
     );
 }
 
+/** The provider's own name where the catalog knows it, its id otherwise.
+ *
+ * Used to say which provider a stored result was about. The id is a fallback
+ * rather than the answer: "acs" is our word for it and "Azure Communication
+ * Services" is the town's. */
+export function providerLabel(
+    catalog: { providers?: { provider: string; name: string }[] } | null | undefined,
+    provider: string | null | undefined,
+): string {
+    if (!provider) return 'the previous provider';
+    return catalog?.providers?.find(p => p.provider === provider)?.name || provider;
+}
+
 /** "6 hours ago" from an ISO timestamp. */
 function relativeTime(iso: string): string {
     const then = Date.parse(iso);
@@ -116,6 +136,9 @@ function relativeTime(iso: string): string {
 
 export interface CapStatus {
     providerName?: string;
+    /** The provider id in use, so a stored health row can be checked against
+     *  it. A verdict is only true of the provider that produced it. */
+    provider?: string;
     onDefault?: boolean;
     verified?: boolean | null;
     /** False when the provider cannot be checked from here at all. Distinct
@@ -134,9 +157,33 @@ export interface CapStatus {
  * key being revoked; it is the reason this page could show eight green ticks on
  * a town whose AI had been failing for a fortnight.
  */
+/** Whether a stored health row is a verdict about the provider in use.
+ *
+ * A result belongs to the provider that produced it. The row carries the
+ * provider it was recorded against, and until now nothing compared them: the
+ * SMS card was showing "There is no way to check http without sending a real
+ * text" while SMS_PROVIDER read `acs` -- a true statement about a gateway the
+ * town had switched away from, presented as the state of the one it is on. In
+ * the other direction the same row would have shown green for a provider that
+ * had never been tested.
+ *
+ * A row with no provider recorded is accepted rather than discarded: every row
+ * written before this was stored that way, and throwing away a real verdict is
+ * the more expensive mistake of the two.
+ */
+export function healthIsAboutCurrentProvider(
+    s: CapStatus | undefined, health?: ConnectorHealth,
+): boolean {
+    if (!health) return false;
+    if (!health.provider || !s?.provider) return true;
+    return health.provider === s.provider;
+}
+
 export function capabilityState(s: CapStatus | undefined, health?: ConnectorHealth): CapabilityState | null {
     if (!s) return null;                      // catalog still loading
     if (!s.configured) return 'unset';
+    // Anything the current provider did not produce says nothing about it.
+    if (!healthIsAboutCurrentProvider(s, health)) health = undefined;
     /* The session's answer when there is one, the stored one otherwise.
      *
      * Not an `||` of the two: a town that swapped an HTTP gateway for Twilio
@@ -191,7 +238,12 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const [model, setModel] = useState<string>('');
     const [values, setValues] = useState<Record<string, string>>({});
     const [busy, setBusy] = useState<'save' | 'test' | null>(null);
-    const [result, setResult] = useState<{ ok: boolean; detail: string } | null>(null);
+    /* `recorded === false` rides along, because "we cannot check this from
+     * here" is a third answer and the box only had two. It was drawn in the
+     * same amber as a failure, so a generic HTTP gateway -- which by definition
+     * has no read-only call to make -- carried a permanent warning about a
+     * gateway that might be working perfectly. */
+    const [result, setResult] = useState<{ ok: boolean; detail: string; recorded?: boolean } | null>(null);
 
     /* What to show in the result box: this session's test, or the last one
      * recorded, whichever is fresher.
@@ -207,14 +259,33 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
      * the health row -- a second copy could put a green message under a red
      * badge.
      */
-    const shownResult = result ?? (health?.last_result
+    /* The stored row only counts if it is about the provider now selected.
+     *
+     * `connector_health` has always carried the provider a result was recorded
+     * against and nothing compared it. Live, the SMS card read "There is no way
+     * to check http without sending a real text" while SMS_PROVIDER was `acs`:
+     * a true sentence about the previous gateway, shown as the state of the
+     * current one. Had `http` passed instead, the card would have been green
+     * for a provider the town no longer uses -- the same bug, in the direction
+     * nobody notices. */
+    const staleHealth = !!health?.provider && !!catalog?.current_provider
+        && health.provider !== catalog.current_provider;
+    const currentHealth = staleHealth ? undefined : health;
+
+    const shownResult = result ?? (currentHealth?.last_result
         ? {
             // `verifiable === false` is "we tried and cannot check this from
             // here", which is not a pass and must not render as one.
-            ok: health.verifiable !== false && health.status === 'working',
-            detail: health.last_result,
+            ok: currentHealth.verifiable !== false && currentHealth.status === 'working',
+            detail: currentHealth.last_result,
+            recorded: currentHealth.verifiable !== false,
         }
         : null);
+    /* Neither a pass nor a failure. Drawn plainly rather than in the amber a
+     * real failure gets: nothing here is wrong, and a warning that no action
+     * can ever clear is how a page teaches people to stop reading it. */
+    const resultUncheckable = !!shownResult && shownResult.ok === false
+        && shownResult.recorded === false;
     const [error, setError] = useState<string | null>(null);
     // Live model discovery (AI only)
     // Copy targets inside steps: a callback URL retyped by hand is the single
@@ -273,7 +344,10 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 setResult({ ok: cat.last_result.ok, detail: cat.last_result.detail });
             }
             onStatus(cap, {
-                providerName: cat.providers.find(p => p.provider === cat.current_provider)?.name || cat.current_provider,
+                providerName: providerLabel(cat, cat.current_provider),
+                // So the badge can tell a verdict about this provider from one
+                // left behind by the last.
+                provider: cat.current_provider,
                 onDefault: !cat.default_provider || cat.current_provider === cat.default_provider,
                 // The summary above the cards needs this: "which provider is
                 // picked" is not what an admin is trying to find out, "which
@@ -452,12 +526,20 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
      * promotes it to the wide treatment, so the fields never appear inside a
      * third of a column. */
     const compact = variant === 'bubble' && !isOpen;
-    const lastChecked = health?.status === 'working' ? health.last_success_at : health?.last_error_at;
-    const checkedLine = lastChecked ? `Checked ${relativeTime(lastChecked)}` : 'Not checked yet';
+    const lastChecked = currentHealth?.status === 'working'
+        ? currentHealth.last_success_at : currentHealth?.last_error_at;
+    /* Named, when the only check on file was of something else. "Not checked
+     * yet" would be true and unhelpful -- it hides that there IS an answer and
+     * that it is about a provider this town has moved off. */
+    const checkedLine = lastChecked
+        ? `Checked ${relativeTime(lastChecked)}`
+        : staleHealth
+            ? `Not checked since switching from ${providerLabel(catalog, health?.provider)}`
+            : 'Not checked yet';
     /* The provider's own words when there are any. A clerk searching the web
      * for their error needs the actual string, not our paraphrase of it. */
     const spotlightDetail = bad
-        ? (health?.last_error || health?.last_result || health?.summary || 'The last check failed.')
+        ? (currentHealth?.last_error || currentHealth?.last_result || currentHealth?.summary || 'The last check failed.')
         : shown === 'unchecked'
             ? 'Nothing has used this yet, so we cannot say whether it works.'
             : blurb;
@@ -583,7 +665,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                         {configured ? (
                             <span className="block text-[11px] text-white/45 mt-2.5">
                                 {shown === 'unverifiable'
-                                    ? (health?.last_result || 'Set up. There is no way to test this one from here.')
+                                    ? (currentHealth?.last_result || 'Set up. There is no way to test this one from here.')
                                     : checkedLine}
                             </span>
                         ) : (
@@ -691,7 +773,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                     ? <>
                                         {currentName}
                                         {cap === 'ai' && catalog.current_model ? ` · ${catalog.current_model}` : ''}
-                                        {' · '}<LiveState health={health} />
+                                        {' · '}<LiveState health={currentHealth} />
                                       </>
                                     : 'Not set up yet'}
                             </p>
@@ -733,9 +815,15 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                     initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
                     className={`mt-3 rounded-xl px-3 py-2.5 text-xs border flex items-start gap-2 ${shownResult.ok
                         ? 'bg-emerald-500/10 border-emerald-400/30 text-emerald-200'
-                        : 'bg-amber-500/10 border-amber-400/30 text-amber-200'}`}
+                        : resultUncheckable
+                            ? 'bg-white/[0.05] border-white/15 text-white/70'
+                            : 'bg-amber-500/10 border-amber-400/30 text-amber-200'}`}
                 >
-                    {shownResult.ok ? <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
+                    {shownResult.ok
+                        ? <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                        : resultUncheckable
+                            ? <HelpCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                            : <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
                     <span>{shownResult.detail}</span>
                 </motion.div>
             )}
@@ -887,7 +975,14 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 })()}
 
                 {/* Credential/config fields */}
-                {active && (active?.credential_fields || []).length > 0 && (() => {
+                {/* Also when the provider collects nothing but needs something.
+                    Gating on credential_fields alone meant a provider whose
+                    credentials all live on another card -- the secret store,
+                    every one of whose providers collects nothing -- skipped this
+                    block entirely, so "Not set up" appeared with no box and no
+                    reason. */}
+                {active && ((active?.credential_fields || []).length > 0
+                    || (active?.requires || []).length > 0) && (() => {
                     const alreadySet = !!(catalog.configured?.[selected] && selected === catalog.current_provider);
 
                     /* Steps own the boxes they produce, so each instruction is
@@ -913,6 +1008,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                 onChange={(key, value) => setValues(p => ({ ...p, [key]: value }))}
                                 ctx={stepCtx}
                                 identity={identity}
+                                storedFields={catalog.stored_fields}
                                 alreadySet={alreadySet}
                             />
                         </div>
@@ -920,9 +1016,16 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 })()}
 
                 <div className="flex flex-wrap items-center gap-2.5 pt-1 border-t border-white/5 mt-1">
-                    <Action variant="primary" onClick={handleSave} busy={busy === 'save'} disabled={busy !== null}>
-                        {busy === 'save' ? 'Saving…' : 'Save & Test'}
-                    </Action>
+                    {/* No Save where there is nothing this card may change. The
+                        secret store is repointed by the cloud-profile flow,
+                        which moves the existing credentials across; a Save
+                        button here would post a selection the API refuses, and
+                        a button that always errors is worse than no button. */}
+                    {catalog.selectable !== false && (
+                        <Action variant="primary" onClick={handleSave} busy={busy === 'save'} disabled={busy !== null}>
+                            {busy === 'save' ? 'Saving…' : 'Save & Test'}
+                        </Action>
+                    )}
                     <Action onClick={handleTest} busy={busy === 'test'} disabled={busy !== null}>
                         {busy === 'test' ? 'Testing…' : 'Test connection'}
                     </Action>
@@ -1160,7 +1263,10 @@ export default function ServiceProviders({ show, extras, footer, extraOff = [], 
         setStatuses(prev => ({ ...prev, [cap]: { ...prev[cap], ...s } }));
     }, []);
 
-    const ALWAYS = new Set<Capability>(['identity', 'maps']);
+    /* Not optional, so never filed under "switched off". Staff have to sign in
+     * and residents have to drop a pin -- and every credential either of those
+     * needs is kept by the secret store, which is not a feature a town ticks. */
+    const ALWAYS = new Set<Capability>(['identity', 'maps', 'secrets']);
     const visible = CAPS.filter(c => !show || ALWAYS.has(c.key) || show.has(c.key));
     /* The other half of the answer.
      *
