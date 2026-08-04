@@ -101,7 +101,21 @@ SCRUB_FIELDS: List[Dict[str, Any]] = [
                   "numbers and neighbours' details the description does -- and "
                   "unlike the description it was invisible to retention "
                   "entirely, so it outlived every other field on the record.",
-        "default": True,
+        # Selectable but NOT a default, and the distinction matters more than it
+        # looks. Being absent from this catalog was the bug: retention could not
+        # clear these answers even if a town asked it to. Being a *default* is a
+        # different act -- it changes what happens to towns that never chose
+        # anything, and what happens is irreversible deletion. A town that has
+        # been keeping these answers would start destroying them on its next run
+        # with nobody having decided that, which is the one thing
+        # `test_never_configured_means_what_it_did_before` exists to forbid:
+        # "a town upgrading into this feature must not have its next run start
+        # removing more, or less, than yesterday's."
+        #
+        # So the blindness is fixed and the choice is left to the town. New
+        # installs are unaffected either way: they have no stored selection and
+        # pick their fields on the way in.
+        "default": False,
     },
     {
         "id": "staff_notes",

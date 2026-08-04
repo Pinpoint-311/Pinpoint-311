@@ -59,18 +59,44 @@ def test_custom_answers_can_be_scrubbed_at_all():
     )
 
 
-def test_custom_answers_are_scrubbed_by_default():
-    """They are resident-written free text, exactly like the description, which
-    is also a default. A town that never opens the settings screen should not be
-    the one town still holding this."""
-    assert "custom_fields" in rs.DEFAULT_FIELDS
+def test_custom_answers_are_not_scrubbed_until_a_town_asks():
+    """Selectable, deliberately not default. This test used to assert the
+    opposite, and was wrong.
+
+    Being absent from the catalog was the bug -- retention could not clear these
+    answers even when asked. Being a *default* is a different act: it changes
+    what happens to towns that never chose anything, and what happens is
+    irreversible deletion. A town that had been keeping these answers would start
+    destroying them on its next run with nobody having decided that, which is
+    what `test_never_configured_means_what_it_did_before` in
+    test_retention_scrubs_ai.py exists to forbid.
+
+    Two of those assertions failed for exactly this reason and were right to."""
+    assert "custom_fields" in rs.FIELD_IDS, "a town must be able to choose it"
+    assert "custom_fields" not in rs.DEFAULT_FIELDS, "but not have it chosen for them"
 
 
-def test_scrubbing_actually_empties_them():
+def test_the_upgrade_promise_still_holds():
+    """The defaults are what they were before this field existed, so an existing
+    town's next retention run clears exactly what yesterday's would have."""
+    assert set(rs.DEFAULT_FIELDS) == {
+        "name", "email", "phone", "description", "staff_notes", "media", "ai_analysis",
+    }
+
+
+def test_scrubbing_actually_empties_them_when_selected():
     record = _Record()
-    cleared = rs.apply_scrub(record, rs.DEFAULT_FIELDS)
+    # Explicitly selected, which is the only way it happens now.
+    cleared = rs.apply_scrub(record, list(rs.DEFAULT_FIELDS) + ["custom_fields"])
     assert "custom_fields" in cleared
     assert record.custom_fields == {}
+
+
+def test_the_defaults_alone_leave_them_alone():
+    record = _Record()
+    cleared = rs.apply_scrub(record, rs.DEFAULT_FIELDS)
+    assert "custom_fields" not in cleared
+    assert record.custom_fields["Is it a stop sign?"] == "Yes"
 
 
 def test_scrubbing_leaves_them_alone_when_not_selected():
