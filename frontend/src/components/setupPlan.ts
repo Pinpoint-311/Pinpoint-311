@@ -186,10 +186,16 @@ export function buildPlan(input: PlanInput): PlanTask[] {
         });
     }
 
-    if (want('secrets')) {
+    if (want('kms')) {
         add(cloud, {
             id: 'kms',
-            title: 'Key management and secret storage',
+            /* Key management, and only key management. The title claimed secret
+             * storage too, while the item's `cap` is `kms` and its done-check
+             * therefore asks only about the encryption key -- so a town could
+             * tick this off with its credentials sitting in the database. The
+             * secret store is a capability of its own now, with its own card and
+             * its own check; this task stops speaking for it. */
+            title: 'Key management',
             blurb: 'Keeps resident names, emails and phone numbers encrypted, using a key your cloud looks after.',
             cap: 'kms', provider: cloud,
         });

@@ -103,6 +103,22 @@ export interface ProviderFieldSpec {
     key: string;
     label: string;
     secret?: boolean;
+    /** Whether the provider cannot work without it. The backend has sent this
+     *  on every field all along and the type did not model it, so the form drew
+     *  a required box and an optional one identically — the only hint a clerk
+     *  got was prose inside the label. */
+    required?: boolean;
+}
+
+/** A credential this provider needs but does not collect, because another card
+ *  already does. Photo redaction on Google and AWS runs on the service account
+ *  and access keys entered elsewhere; asking twice would be two boxes writing
+ *  one secret. `where` names the card to go to — without it the card says "not
+ *  set up" and offers nothing to do about it. */
+export interface BorrowedRequirement {
+    key: string;
+    label: string;
+    where?: string;
 }
 
 export interface ProviderModelSpec {
@@ -120,6 +136,13 @@ export interface ProviderInfo {
     default_model?: string;
     credential_fields: ProviderFieldSpec[];
     field_help?: Record<string, string>;
+    /** Credentials needed but collected on another card. */
+    requires?: BorrowedRequirement[];
+    /** Alternative sets of `credential_fields`, any one of which is enough.
+     *  Azure photo redaction needs an AI Face resource for faces or an AI
+     *  Vision resource for plates, and either alone is a working setup — which
+     *  no per-field flag can say. */
+    requires_any?: string[][];
     models_source?: 'live' | 'curated';
     models_fetched_at?: number | null;  // epoch seconds
 }
@@ -139,6 +162,16 @@ export interface ProviderCatalog {
         status?: string;
         verifiable?: boolean | null;
     } | null;
+    /** Which individual credential boxes have something stored against them.
+     *  The form's "Saved" hint was per provider, so once a provider counted as
+     *  configured every one of its boxes claimed to be saved -- including an
+     *  optional one nobody had filled in. Presence only; no values. */
+    stored_fields?: Record<string, boolean>;
+    /** Whether this card may change the provider. False for the secret store:
+     *  every credential the town has is in the current one and repointing the
+     *  setting does not move them, so the switch belongs to the cloud-profile
+     *  flow, which does. Absent means yes. */
+    selectable?: boolean;
 }
 
 export interface AIModelRefreshResult {
@@ -156,51 +189,14 @@ export interface ProviderSave {
     settings?: Record<string, string>;
 }
 
-export interface CloudProfileOption {
-    id: string;
-    label: string;
-    boundary: string;
-    ai: string;
-    translation: string;
-    secrets: string;
-    kms: string;
-    email: string;
-    sms: string;
-    identity_recommended: string;
-}
-
-export interface CloudProfileComponents {
-    ai: string;
-    translation: string;
-    secrets: string;
-    kms: string;
-    identity: string;
-    email: string;
-    sms: string;
-}
-
-export interface CloudProfileState {
-    profile: 'google' | 'azure' | 'aws' | 'mixed';
-    managed: boolean;
-    components: CloudProfileComponents;
-    maps: { provider: string; locked: boolean; label: string };
-    profiles: CloudProfileOption[];
-}
-
-export interface CloudProfileResult {
-    ok: boolean;
-    profile: string;
-    components: { ai: string; translation: string; secrets: string; kms: string; email: string; sms: string };
-    identity_recommended: string;
-    identity_applied: boolean;
-    warnings: string[];
-}
-
 /** Every capability with a provider catalog. The last four were already
  *  switchable in the backend and had no catalog, so nothing surfaced them. */
 export type Capability =
     | 'ai' | 'translation' | 'identity' | 'maps'
-    | 'email' | 'sms' | 'kms' | 'redaction';
+    | 'email' | 'sms' | 'kms' | 'redaction'
+    /** Where the credentials for all of the above are kept. Reported and
+     *  tested here; switched by the cloud-profile flow, which moves them. */
+    | 'secrets';
 
 export interface RetentionPreviewRecord {
     service_request_id: string | null;
@@ -755,16 +751,23 @@ class ApiClient {
         return this.request<CloudIdentity>('/system/providers/cloud-identity');
     }
 
-    async getCloudProfile(): Promise<CloudProfileState> {
-        return this.request<CloudProfileState>('/system/providers/cloud-profile');
-    }
-
-    async setCloudProfile(profile: string, applyIdentity = false): Promise<CloudProfileResult> {
-        return this.request<CloudProfileResult>('/system/providers/cloud-profile', {
-            method: 'POST',
-            body: JSON.stringify({ profile, apply_identity: applyIdentity }),
-        });
-    }
+    /* No cloud-profile methods here on purpose.
+     *
+     * POST /system/providers/cloud-profile applies a whole environment in one
+     * choice, and part of what it sets is SECRETS_PROVIDER -- which it repoints
+     * without moving anything. Every credential the town has already entered is
+     * in the old store, and most have had their encrypted database copy
+     * scrubbed after being verified there, so the pointer moving is enough to
+     * make the mail relay, the map key and the identity provider all read as
+     * absent.
+     *
+     * The endpoint is a deliberate operator action and stays. A button for it
+     * on the setup page would be one click between a working town and an
+     * apparently empty one, so it does not get a client method until the switch
+     * migrates the secrets first. The page reads /providers/status instead,
+     * which answers the same question -- which cloud is this town on -- from
+     * what is actually in use.
+     */
 
     // Statistics
     async getStatistics(): Promise<Statistics> {
@@ -1751,10 +1754,21 @@ export interface HealthSummary {
 /** An identity attached to the compute by the cloud itself. When present, the
  *  listed keys need no value — and leaving them empty is the better answer, not
  *  merely an allowed one. */
-/** Per capability: the provider in use, and which providers are set up. */
+/** Per capability: the provider in use, and which providers are set up.
+ *
+ *  `current_provider` is what dispatch resolves, not what is stored — photo
+ *  redaction infers its detector from the moderation and AI settings, so a
+ *  blank secret there does not mean no detector.
+ *
+ *  `ready` is the whole question the setup checklist asks: does the provider
+ *  this capability is actually on have what it needs. Computed on the server so
+ *  there is one answer. The page used to work it out from hard-coded secret
+ *  names ORed across providers and disagreed with this endpoint in both
+ *  directions. */
 export type ProviderStatusMap = Record<string, {
     current_provider: string | null;
     configured: Record<string, boolean>;
+    ready: boolean;
 }>;
 
 export interface CloudIdentity {
