@@ -44,15 +44,17 @@ async def configure_notifications(db):
     sms_provider = await get_secret(db, "SMS_PROVIDER")
     logger.info(f"[SMS Config] SMS_PROVIDER: {'set' if sms_provider else 'empty'}")
 
-    # SMS_ENABLED used to be read nowhere at all. A town could set it to false
-    # and every text kept going out -- a switch that does nothing is worse than
-    # no switch, because somebody believes it. Honoured here, where email's
-    # equivalent already was, so the two capabilities behave the same way.
-    from app.services.delivery_providers import switched_off
-    if switched_off(await get_secret(db, "SMS_ENABLED")):
+    # One switch, asked of the one module that owns it.
+    #
+    # This read `SMS_ENABLED` directly, and two other places read
+    # `modules.sms_alerts`, and both had to be on. Three sources for one answer
+    # is how a town ended up able to switch texting "off" in the admin console
+    # and have it stay on -- capability_switches.py has the reconciliation.
+    from app.services import capability_switches
+    if not await capability_switches.enabled("sms"):
         notification_service._sms_provider = None
         notification_service._sms_provider_name = None
-        logger.info("[SMS Config] SMS_ENABLED is false — text messages are switched off")
+        logger.info("[SMS Config] text messages are switched off for this town")
         sms_provider = "none"
 
     if sms_provider == "twilio":
@@ -98,15 +100,13 @@ async def configure_notifications(db):
         logger.warning("[SMS Config] Unknown or empty SMS_PROVIDER - SMS will not work")
 
     # Configure Email provider
-    email_enabled = await get_secret(db, "EMAIL_ENABLED")
-    if email_enabled.lower() != "true":
-        # Same reason as the SMS branch above. Setting EMAIL_ENABLED to false
-        # skipped the configure call and left the sender built by the previous
-        # one in place, so a town that switched resident email off carried on
-        # emailing residents until the worker happened to restart.
+    if not await capability_switches.enabled("email"):
+        # Cleared, not just skipped. Skipping left the sender built by the
+        # previous call in place, so a town that switched resident email off
+        # carried on emailing residents until the worker happened to restart.
         notification_service._email_provider = None
         notification_service._email_provider_name = None
-        logger.info("[Email Config] EMAIL_ENABLED is not true — email is switched off")
+        logger.info("[Email Config] email is switched off for this town")
     else:
         email_provider = (await get_secret(db, "EMAIL_PROVIDER") or "smtp").strip().lower()
         from_name = await get_secret(db, "SMTP_FROM_NAME") or "Township 311"
@@ -178,7 +178,8 @@ def analyze_request(self, request_id: int):
             # reports) always runs, so those facts populate even when AI is off or
             # not configured. This is what every intake path — resident portal,
             # manual/call-taker, email, and webhook — shares.
-            ai_module_on = bool(settings and settings.modules.get('ai_analysis', False))
+            from app.services import capability_switches
+            ai_module_on = await capability_switches.enabled("ai")
             ai_provider = None
             if ai_module_on:
                 from app.services.ai import get_ai_provider
@@ -418,13 +419,14 @@ def send_branded_notification(request_id: int, notification_type: str, old_statu
             logo_url = settings.logo_url if settings else None
             primary_color = settings.primary_color if settings else "#6366f1"
             
-            # Check if notifications are enabled via module toggles
-            modules = settings.modules if settings else {}
-            email_enabled = modules.get('email_notifications', True)  # Default to enabled for backwards compatibility
-            sms_enabled = modules.get('sms_alerts', False)
-            
+            # The same switch `configure_notifications` above consulted, rather
+            # than a second copy of the question read from `modules`.
+            from app.services import capability_switches
+            email_enabled = await capability_switches.enabled("email")
+            sms_enabled = await capability_switches.enabled("sms")
+
             if not email_enabled and not sms_enabled:
-                logger.info(f"[Notification] Skipping - both email and SMS notifications disabled in modules")
+                logger.info(f"[Notification] Skipping - email and text messages are both switched off")
                 return {"status": "skipped", "reason": "notifications disabled"}
             
             # Get custom domain for portal URL
@@ -627,8 +629,8 @@ def send_department_notification(request_id: int, department_email: str):
             settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
             settings = settings_result.scalar_one_or_none()
             
-            modules = settings.modules if settings else {}
-            sms_enabled_globally = modules.get('sms_alerts', False)
+            from app.services import capability_switches
+            sms_enabled_globally = await capability_switches.enabled("sms")
             
             township_name = settings.township_name if settings else "Your Township"
             custom_domain = settings.custom_domain if settings else None
@@ -800,8 +802,8 @@ def notify_staff_of_activity(request_id: int, event: str, actor: str = None):
 
             settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
             settings = settings_result.scalar_one_or_none()
-            modules = settings.modules if settings else {}
-            sms_enabled_globally = modules.get('sms_alerts', False)
+            from app.services import capability_switches
+            sms_enabled_globally = await capability_switches.enabled("sms")
             township_name = settings.township_name if settings else "Your Township"
             custom_domain = (settings.custom_domain if settings else None) or os.environ.get('DOMAIN', '')
             portal_url = f"https://{custom_domain}" if custom_domain and custom_domain != 'localhost' else "http://localhost:5173"
@@ -1135,12 +1137,22 @@ def backup_database():
     logger = logging.getLogger(__name__)
     
     async def _backup():
+        # "Automatic backups" is a tick on the setup page, and unticking it used
+        # to change nothing -- beat kept firing this and backups kept being
+        # written and shipped to S3. A town that said no to off-site copies of
+        # its database meant it.
+        from app.services import capability_switches
+        if not await capability_switches.enabled("backups"):
+            logger.info("[Backup] Skipped: the town has switched automatic backups off")
+            return {"status": "skipped", "message": "automatic backups are switched off"}
         from app.services.backup_service import create_backup
         return await create_backup()
-    
+
     try:
         logger.info("[Backup] Starting scheduled database backup...")
         result = run_async(_backup())
+        if result.get("status") == "skipped":
+            return result
         
         if result["status"] == "success":
             logger.info(f"[Backup] Completed successfully: {result['backup_name']} ({result['size_bytes']} bytes)")
@@ -1215,9 +1227,8 @@ def send_weekly_digest():
                 custom_domain = os.environ.get('DOMAIN', '')
             portal_url = f"https://{custom_domain}" if custom_domain and custom_domain != 'localhost' else "http://localhost:5173"
             
-            # Check if email notifications are enabled
-            modules = settings.modules if settings else {}
-            if not modules.get('email_notifications', True):
+            from app.services import capability_switches
+            if not await capability_switches.enabled("email"):
                 logger.info("[Weekly Digest] Skipping - email notifications disabled")
                 return {"status": "skipped", "reason": "email notifications disabled"}
             

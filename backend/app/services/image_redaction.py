@@ -669,6 +669,16 @@ async def settings() -> Tuple[Optional[str], bool, bool]:
     would rather have the house numbers can switch plates off on the Photo
     Redaction card, which is reachable now that the card exists.
     """
+    # The town's switch comes first, and it is not the same as choosing the
+    # `none` provider. `resolve_provider()` deliberately floors at on-server
+    # detection so a town cannot end up with no blurring by accident -- which
+    # means the only way to have no blurring is to say so, and until the switch
+    # existed there was nowhere to say it.
+    from app.services import capability_switches
+
+    if not await capability_switches.enabled("redaction"):
+        return (None, False, False)
+
     provider = await resolve_provider()
     if not provider:
         return (None, False, False)

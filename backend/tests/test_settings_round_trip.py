@@ -53,6 +53,16 @@ DEDICATED = {
     "retention_scrub_fields":  ("POST /system/retention/policy", "GET /system/retention/policy"),
     "legal_hold":              ("POST /system/retention/legal-hold", "GET /system/retention/policy"),
     "township_boundary":       ("POST /gis/boundaries", "GET /system/settings (maps config)"),
+    # Which integrations the town wants, credentials aside. Not on
+    # SystemSettingsBase on purpose: the general settings endpoint takes a whole
+    # object and echoes it back, and a browser posting a stale copy of it would
+    # switch capabilities on and off as a side effect of renaming the township.
+    # The dedicated PUT takes a partial map and touches only what changed.
+    "capability_switches":     ("PUT /system/capabilities", "GET /system/providers/status"),
+    # Whether anybody has said this town is set up. Its own endpoint because it
+    # is written by one deliberate act -- closing the setup guide -- and read on
+    # every admin sign-in to decide whether to open it.
+    "setup_completed_at":      ("POST /system/setup/state", "GET /system/setup/state"),
 }
 
 # Written and read by the platform itself, never by a person. Not settings.
@@ -94,14 +104,35 @@ def test_the_schema_never_promises_a_column_that_does_not_exist():
     assert not phantom, f"SystemSettingsBase declares {sorted(phantom)} with no column behind it"
 
 
+# Where a dedicated column's read and write actually live, when the endpoint
+# delegates rather than doing it inline.
+#
+# The scan below reads `app/api` because that is where every one of these was
+# implemented when it was written. That is a proxy for the real question --
+# something writes this column and something reads it back -- and it fails the
+# moment a column is given a service of its own, which is the right place for
+# one whose value is consulted from six dispatch paths. Named per column rather
+# than by widening the glob: a column written only by a nightly task would still
+# be unreachable from the UI, and that is what this file exists to catch.
+IMPLEMENTED_IN = {
+    "capability_switches": ["app/services/capability_switches.py"],
+}
+
+
 @pytest.mark.parametrize("column,endpoints", sorted(DEDICATED.items()))
 def test_a_dedicated_column_can_be_written_and_read(column, endpoints):
     """Both halves. `retention_scrub_fields` was saved by an endpoint that had
     no matching read for a while, so the boxes a clerk ticked came back
     unticked and they ticked them again."""
-    api = "\n".join(p.read_text() for p in API.glob("*.py"))
-    written = re.search(rf"(?:settings|row|s)\.{column}\s*=", api)
-    read = re.search(rf"getattr\(settings, [\"']{column}[\"']|settings\.{column}\b(?!\s*=)", api)
+    sources = list(API.glob("*.py")) + [ROOT / p for p in IMPLEMENTED_IN.get(column, [])]
+    api = "\n".join(p.read_text() for p in sources)
+    # The same set of variable names on both halves. The read pattern only
+    # accepted `settings`, so a column written through `row.` -- which the write
+    # pattern has always allowed -- and read back through `getattr(row, ...)`
+    # counted as never read.
+    holder = r"(?:settings|row|s)"
+    written = re.search(rf"{holder}\.{column}\s*=", api)
+    read = re.search(rf"getattr\({holder}, [\"']{column}[\"']|{holder}\.{column}\b(?!\s*=)", api)
     assert written, f"{column} is never written ({endpoints[0]} was expected to)"
     assert read, f"{column} is never read back ({endpoints[1]} was expected to)"
 
