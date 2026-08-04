@@ -364,7 +364,12 @@ class SystemSettingsBase(BaseModel):
     favicon_url: Optional[str] = None
     hero_text: str = "How can we help?"
     primary_color: str = "#6366f1"
-    modules: Dict[str, bool] = {"ai_analysis": False, "sms_alerts": False, "unlisted_reports": False}
+    # Product features with nothing to configure. `ai_analysis`, `sms_alerts`
+    # and `email_notifications` moved to `system_settings.capability_switches`,
+    # which is the one switch for anything with a provider behind it -- they
+    # were a second answer to a question the setup page also owned, and the two
+    # could disagree. See app/services/capability_switches.py.
+    modules: Dict[str, bool] = {"unlisted_reports": False, "research_portal": False}
     social_links: Optional[List[Dict[str, str]]] = []
     privacy_policy: Optional[str] = None  # Custom privacy policy (Markdown)
     terms_of_service: Optional[str] = None  # Custom terms of service (Markdown)

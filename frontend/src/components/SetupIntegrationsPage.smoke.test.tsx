@@ -55,8 +55,6 @@ const props: any = {
     secrets: [],
     onSaveSecret: vi.fn().mockResolvedValue(undefined),
     onRefresh: vi.fn(),
-    modules: { ai_analysis: false },
-    onUpdateModules: vi.fn().mockResolvedValue(undefined),
 };
 
 async function mount() {

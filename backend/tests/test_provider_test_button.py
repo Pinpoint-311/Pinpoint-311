@@ -27,6 +27,30 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+def _off(*capabilities):
+    """A `capability_switches.enabled` that says no to these and yes to the rest."""
+    async def enabled(capability):
+        return capability not in capabilities
+    return enabled
+
+
+@pytest.fixture
+def unlimited():
+    """`test_provider` is rate-limited, and the limiter wants a real Request.
+
+    Calling the endpoint function directly is the point of these two tests --
+    the switch guard runs before any check does, and going through the app
+    would need eight catalogs and a database to prove one branch. The cost
+    limiter is about a live paid API call, and the switch is the reason no call
+    happens, so turning it off here removes nothing under test.
+    """
+    system._cost_limiter.enabled = False
+    try:
+        yield
+    finally:
+        system._cost_limiter.enabled = True
+
+
 # ---------------------------------------------------------------------------
 # The drift that caused it
 # ---------------------------------------------------------------------------
@@ -492,33 +516,72 @@ def test_a_gateway_with_nothing_to_check_is_not_recorded_as_broken(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# SMS_ENABLED
+# Switched off
 # ---------------------------------------------------------------------------
 #
-# It was read nowhere in the backend. Setting it did nothing, which is worse
-# than not offering it, because somebody believed it. Email was already gated on
-# EMAIL_ENABLED, so the two capabilities disagreed about whether such a switch
-# means anything.
+# `SMS_ENABLED` was read nowhere in the backend. Setting it did nothing, which
+# is worse than not offering it, because somebody believed it. Email was gated
+# on `EMAIL_ENABLED`, so the two capabilities disagreed about whether such a
+# switch means anything, and the other six had no switch at all -- a town could
+# save an AI key, decide not to use AI, and have no way to say so.
+#
+# Both flags are now one switch, per capability, in
+# `capability_switches`. These tests moved with it: the question is no longer
+# "does the SMS check read its flag" but "does a switched-off capability get
+# tested at all", which is asked once for all eight.
 
-def test_switched_off_beats_the_selected_provider(monkeypatch):
-    """A card reporting Twilio as working while SMS_ENABLED is false describes a
-    send that cannot happen."""
-    from app.services import secret_manager
-    monkeypatch.setattr(secret_manager, "get_secret",
-                        _secrets(SMS_PROVIDER="twilio", SMS_ENABLED="false",
-                                 TWILIO_ACCOUNT_SID="AC", TWILIO_AUTH_TOKEN="t",
-                                 TWILIO_PHONE_NUMBER="+15005550006"))
+def test_a_switched_off_capability_is_not_tested_at_all(monkeypatch, unlimited):
+    """A card reporting Twilio as working while texting is switched off would be
+    describing a send that cannot happen -- and getting there costs a live paid
+    API call against an integration nobody uses.
 
-    result = _run(system._test_delivery("sms"))
-    assert result["ok"] is True
+    Asked at the endpoint rather than inside each check, because the previous
+    arrangement gated the two capabilities that happened to have a flag and let
+    the other six run.
+    """
+    from app.services import capability_switches
+
+    async def run():
+        monkeypatch.setattr(capability_switches, "enabled", _off("sms"))
+        called = []
+        monkeypatch.setitem(system._CAPABILITY_TESTS, "sms",
+                            lambda db=None: called.append("ran") or {"ok": True, "detail": ""})
+        result = await system.test_provider(None, "sms", db=None)
+        assert called == [], "the check ran against something the town switched off"
+        return result
+
+    result = _run(run())
+    assert result["off"] is True
     assert "switched off" in result["detail"]
+    # Neither a pass nor a failure: there was no check, so nothing is recorded
+    # and no badge changes colour.
+    assert result["recorded"] is False
+
+
+def test_a_switched_off_capability_says_its_credentials_are_still_there(unlimited):
+    """The whole point of the switch. "I can save an email or AI key but not use
+    it and then this is reflected in the service provider card but things are
+    still saved" -- so the message must not read like the key has gone."""
+    from app.services import capability_switches
+
+    async def run():
+        original = capability_switches.enabled
+        capability_switches.enabled = _off("ai")
+        try:
+            return await system.test_provider(None, "ai", db=None)
+        finally:
+            capability_switches.enabled = original
+
+    detail = _run(run())["detail"]
+    assert "still saved" in detail
+    assert "Setup Instructions" in detail
 
 
 def test_an_unset_flag_does_not_switch_texting_off(monkeypatch):
-    """Unlike EMAIL_ENABLED, which a town must set to "true". SMS already has an
-    off state -- provider `none` -- so requiring an extra yes would silently
-    stop texts for every town that configured Twilio and never heard of this
-    key."""
+    """Unlike email, which a town had to opt into with EMAIL_ENABLED=true. SMS
+    already has an off state -- provider `none` -- so requiring an extra yes
+    would silently stop texts for every town that configured Twilio and never
+    heard of the key. The legacy fallback keeps both senses."""
     from app.services import secret_manager
     monkeypatch.setattr(secret_manager, "get_secret", _secrets(SMS_PROVIDER="twilio"))
 
@@ -528,33 +591,44 @@ def test_an_unset_flag_does_not_switch_texting_off(monkeypatch):
     assert "switched off" not in result["detail"]
 
 
-def test_the_dispatch_code_honours_it_too():
+def test_the_dispatch_code_honours_the_same_switch():
     """The check and the sender have to agree, or the card is describing
-    something the worker does not do."""
+    something the worker does not do.
+
+    Asserted as "both reach the same function" rather than as "both mention
+    SMS_ENABLED", which is what it used to say -- a string search that would
+    have passed against a sender reading the flag and ignoring it."""
     import inspect
 
     from app.tasks import service_requests
 
     src = inspect.getsource(service_requests.configure_notifications)
-    assert "SMS_ENABLED" in src
-    assert "switched_off" in src
+    assert "capability_switches.enabled(\"sms\")" in src
+    assert "capability_switches.enabled(\"email\")" in src
 
 
-def test_switched_off_is_reported_as_no_provider():
-    """`effective_provider_for` is what the badge and the daily sweep read."""
+def test_the_provider_is_still_reported_when_the_capability_is_off():
+    """`effective_provider_for` used to fold the flag in and answer None.
+
+    That is the conflation this pass removed. A card that is told "no provider"
+    cannot tell "switched off with the key still saved" from "never set up", so
+    it showed a town that had deliberately turned texting off the same thing it
+    shows a town that has not started -- and the obvious response to that is to
+    paste the credentials in again. The switch is reported beside `configured`
+    now, by `/providers/status`, and every dispatch path asks it directly."""
     import asyncio as _asyncio
 
     from app.services import secret_manager
 
     async def run():
         original = secret_manager.get_secret
-        secret_manager.get_secret = _secrets(SMS_PROVIDER="twilio", SMS_ENABLED="false")
+        secret_manager.get_secret = _secrets(SMS_PROVIDER="twilio")
         try:
             return await system.effective_provider_for("sms")
         finally:
             secret_manager.get_secret = original
 
-    assert _asyncio.run(run()) is None
+    assert _asyncio.run(run()) == "twilio"
 
 
 def test_the_email_check_offers_the_envelope_as_well_as_signing_in():

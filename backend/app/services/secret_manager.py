@@ -126,18 +126,56 @@ def _get_sm_client():
 
 
 
+# The four places a town's credentials can knowingly be kept.
+#
+# `database` is on this list on purpose. The encrypted database is a supported
+# store -- it is the normal state of a small self-hosted install, and
+# test_secret_store_ordering has said so for a while -- so a town whose cloud
+# procurement is unfinished must be able to choose it and get on with setup. The
+# gate this list exists for is about consent, not capability.
+SECRET_STORES = ("google", "azure", "aws", "database")
+
+
 def _secrets_provider() -> str:
-    """Which secret store to use: 'google' (default, GCP Secret Manager),
-    'azure' (Azure Key Vault) or 'aws' (AWS Secrets Manager). All keep an
-    encrypted DB copy as fallback."""
+    """Which secret store this town chose, or "" if it has not chosen one.
+
+    Unset used to mean "google", and that default is the shape of accidental
+    behaviour this codebase has been removing elsewhere: a town that never
+    answered the question got Google Secret Manager as an answer, and if Google
+    was not actually reachable every credential fell through to the encrypted
+    database instead, silently.
+
+    Which is the reason "" now means "". A credential saved before a store is
+    chosen lands in the database, `vault_secrets` later sweeps it into the store
+    and scrubs the database copy, and the live row heals -- but a *backup* taken
+    inside that window keeps the secret forever, and backups go off-site. A
+    pg_dump of this instance contains `COPY public.system_secrets (id, key_name,
+    key_value, ...)`. Sweeping the live row does not reach a dump already taken.
+    So the setup page refuses credentials until this answers something, and the
+    town decides where its keys go before it has any.
+
+    Callers that need the *effective* behaviour of an unanswered town -- reading
+    a secret written before this existed -- treat "" as the historical
+    fall-through, which is Google when a project is configured and the database
+    otherwise. Callers deciding whether a choice has been made use
+    `store_chosen()`.
+    """
     val = os.getenv("SECRETS_PROVIDER")
     if val:
         return val.strip().lower()
     try:
         from app.core.encryption import _get_config_sync
-        return (_get_config_sync("SECRETS_PROVIDER") or "google").strip().lower()
+        return (_get_config_sync("SECRETS_PROVIDER") or "").strip().lower()
     except Exception:
-        return "google"
+        # Unreadable is not the same as unchosen, but this is the safe
+        # direction: it refuses credentials rather than filing them somewhere
+        # nobody picked.
+        return ""
+
+
+def store_chosen() -> bool:
+    """Whether a human has said where this town's credentials are kept."""
+    return _secrets_provider() in SECRET_STORES
 
 
 def _is_gcp_available() -> bool:
@@ -303,6 +341,16 @@ async def get_secret(key_name: str) -> Optional[str]:
     - BACKUP_* -> secret-backup bundle
     - Others -> secret-config bundle
     """
+    # The encrypted database, chosen on purpose.
+    #
+    # Reached before the Google branch rather than falling through to it: a town
+    # that picked the database may well have Google Cloud credentials on file
+    # for AI or maps, and `_is_gcp_available()` would then quietly start reading
+    # its keys out of Secret Manager -- which is a different store from the one
+    # it chose, and the one whose contents nobody put there.
+    if _secrets_provider() == "database":
+        return await _get_secret_from_db(key_name)
+
     # Azure Key Vault backend (host-selected via SECRETS_PROVIDER=azure)
     if _secrets_provider() == "azure":
         try:
@@ -389,7 +437,10 @@ async def get_secrets_bundle(prefix: str) -> Dict[str, str]:
     """
     result = {}
 
-    if _secrets_provider() == "google" and _is_gcp_available():
+    # "" is included because it is what an unanswered town reads as, and this
+    # function's job is reading back what is already there. Refusing to look in
+    # the bundle would hide credentials a town saved before the choice existed.
+    if _secrets_provider() in ("", "google") and _is_gcp_available():
         # Map prefix to bundle name
         if prefix.startswith("AUTH0"):
             bundle = _get_secret_from_gcp("secret-auth")
@@ -578,6 +629,12 @@ def set_secret_sync(key_name: str, value: str) -> bool:
     Secrets are bundled into JSON objects to stay within free tier limits.
     Returns True if successful, False otherwise.
     """
+    # The encrypted database, chosen on purpose. There is no external store to
+    # write to, and False is exactly what the caller needs to hear: it means
+    # "this is in the database", which is where the town asked for it.
+    if _secrets_provider() == "database":
+        return False
+
     # Azure Key Vault backend
     if _secrets_provider() == "azure":
         try:
@@ -674,6 +731,11 @@ def delete_secret_sync(key_name: str) -> bool:
     key is its own secret and is deleted outright.
     """
     provider = _secrets_provider()
+
+    if provider == "database":
+        # Nothing outside the database holds it, so there is nothing here to
+        # take back. The row itself is the caller's business.
+        return False
 
     if provider == "azure":
         try:

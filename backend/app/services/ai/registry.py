@@ -135,8 +135,19 @@ def build_ai_provider(provider: str, model: Optional[str], creds: Dict[str, str]
 
 async def get_ai_provider(db=None):
     """Read config from the secret store and return a ready AIProvider, or None
-    if AI is not configured for this instance (triage then skips, as today)."""
+    if AI is not configured for this instance (triage then skips, as today).
+
+    Also None when the town has switched AI off. That is a different thing from
+    having no key, and it is the state that had nowhere to be expressed: a town
+    could store a Vertex key and decide not to use it, and the only way to stop
+    the analyser was to delete the key it had just been asked to paste in. The
+    credential stays readable; this simply does not build a client from it.
+    """
+    from app.services import capability_switches
     from app.services.secret_manager import get_secret
+
+    if not await capability_switches.enabled("ai"):
+        return None
 
     provider = (await get_secret(AI_PROVIDER_KEY)) or "vertex"
     provider = provider.strip().lower()

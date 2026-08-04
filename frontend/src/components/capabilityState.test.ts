@@ -31,6 +31,46 @@ describe('capabilityState', () => {
         expect(capabilityState({ configured: false }, health('working'))).toBe('unset');
     });
 
+    /* Switched off is its own answer, and the one the page could not give.
+     *
+     * "I do not want this" and "I have not set this up" were the same badge.
+     * The reported case: "I can for example save an email or AI key but not use
+     * it and then this is reflected in the service provider card but things are
+     * still saved" -- which needs a state that is neither `unset` nor a
+     * failure, because there is nothing here for anyone to do. */
+    describe('switched off', () => {
+        it('reads as off with the credentials still stored', () => {
+            expect(capabilityState({ configured: true, enabled: false }, health('working')))
+                .toBe('off');
+        });
+
+        it('beats a stored failure, because nothing runs through it', () => {
+            // A red badge on something deliberately switched off is the noise
+            // that teaches people to ignore badges, and no action clears it.
+            expect(capabilityState({ configured: true, enabled: false }, health('down')))
+                .toBe('off');
+            expect(capabilityState({ configured: true, enabled: false, verified: false }, undefined))
+                .toBe('off');
+        });
+
+        it('is still off when nothing was ever configured', () => {
+            // The town has answered the question. "Not set up" would be asking
+            // it again.
+            expect(capabilityState({ configured: false, enabled: false }, undefined)).toBe('off');
+        });
+
+        it('leaves a genuinely unconfigured capability as unset', () => {
+            expect(capabilityState({ configured: false, enabled: true }, undefined)).toBe('unset');
+        });
+
+        it('treats a missing answer as on, not as off', () => {
+            // `enabled` absent means the endpoint did not say. Reading that as
+            // "the town switched this off" would silence a working integration
+            // on any response that arrived incomplete.
+            expect(capabilityState({ configured: true }, health('working'))).toBe('working');
+        });
+    });
+
     it('is unchecked when credentials exist but nothing has exercised them', () => {
         expect(capabilityState({ configured: true }, undefined)).toBe('unchecked');
         expect(capabilityState({ configured: true }, health('unknown'))).toBe('unchecked');

@@ -46,7 +46,15 @@ BIAS_PAD_DEGREES = 0.05
 
 
 async def _selected(db) -> Tuple[str, Dict[str, Optional[str]]]:
-    """The town's geocoding provider, and only that provider's credentials."""
+    """The town's geocoding provider, and only that provider's credentials.
+
+    No capability switch is consulted, and that is the answer rather than an
+    omission. Maps is in `capability_switches.ALWAYS_ON`: a resident cannot file
+    a report without dropping a pin, so an off switch here would be an offer to
+    break intake from the setup page. Every other dispatch path in this codebase
+    does check -- see capability_switches.py -- and this one is listed there as
+    the exception so that "was geocoding covered" has an answer.
+    """
     from app.services import map_provider as mp
     from app.services.secret_manager import get_secret
 

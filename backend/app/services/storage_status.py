@@ -43,7 +43,9 @@ async def secrets_outside_the_store(db) -> Dict[str, Any]:
         from app.services.secret_manager import DB_REQUIRED_KEYS, _secrets_provider
         from app.services.storage_maintenance import store_reachable
 
-        result["store"] = _secrets_provider()
+        # None rather than "", so the panel can say "not chosen yet" instead of
+        # rendering an empty store name.
+        result["store"] = _secrets_provider() or None
         # The same check the migration gates on, so the page cannot say work is
         # pending that the scheduled job has already decided it cannot do.
         result["reachable"] = store_reachable()
