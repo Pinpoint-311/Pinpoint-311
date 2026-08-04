@@ -11,9 +11,10 @@ install where those two happen to be pre-seeded gets no guide at all.
 Being finished is a thing a person says. NULL means nobody has said it.
 
 Backfilled for towns that are plainly past setup, so this does not open a guide
-at a deployment that has been running for a year: a settings row older than a
-day with any credential stored is not a fresh install. A town in its first day
-gets the guide, which is what it is for.
+at a deployment that has been running for a year. The evidence is that somebody
+has already used the thing: a stored credential, or a report taken. A fresh
+install has neither -- `init_db` seeds every secret row with
+`is_configured=False`, so a configured one is always something a person entered.
 
 Revision ID: a2b3c4d5e6f7
 Revises: f1a2b3c4d5e6
@@ -36,14 +37,20 @@ def upgrade() -> None:
     )
 
     conn = op.get_bind()
-    # `updated_at` is the only age this table carries. A row that has never been
-    # written since creation has NULL there, which reads as "new" -- the safe
-    # direction, because the cost of being wrong is a guide somebody dismisses.
+    # Not the row's age. `updated_at` was the first thing tried here and it
+    # measures the wrong thing -- it moves whenever anything on the settings row
+    # changes, so a town that has been running for a year and adjusted a setting
+    # this morning reads as brand new. Tested against a copy of a live database,
+    # where it did exactly that.
+    #
+    # Evidence that somebody has used this deployment, then: a credential
+    # entered, or a report taken. Timestamped from `updated_at` where there is
+    # one, because a real date beats NOW() for a thing that happened earlier.
     conn.execute(sa.text("""
         UPDATE system_settings
            SET setup_completed_at = COALESCE(updated_at, NOW())
-         WHERE updated_at < NOW() - INTERVAL '1 day'
-           AND EXISTS (SELECT 1 FROM system_secrets WHERE is_configured IS TRUE)
+         WHERE EXISTS (SELECT 1 FROM system_secrets WHERE is_configured IS TRUE)
+            OR EXISTS (SELECT 1 FROM service_requests)
     """))
 
 

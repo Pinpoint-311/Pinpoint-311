@@ -22,13 +22,21 @@ features with no provider, no credentials and nothing to configure. See
 app/services/capability_switches.py for the rule.
 
 Revision ID: f1a2b3c4d5e6
-Revises: d6e7f8a9b0c1
+Revises: c5d6e7f8a9b0
 
-Parented on the retention branch's migration rather than on
-`c5d6e7f8a9b0`, which both were originally written against. Two sessions
-picked the same generated revision id off the same parent; that one is
-already applied to the running deployment, so this chain sits after it and
-the history stays linear. This branch therefore has to merge after that one.
+Re-keyed from `d6e7f8a9b0c1`. Two sessions generated a migration off
+`c5d6e7f8a9b0` on the same day and were handed the same id, and the other
+one is already applied to the running deployment -- so this file's id had
+to change or applying it would have been a silent no-op against an
+`alembic_version` that already held the number.
+
+Left as a sibling of that migration rather than parented on it. Chaining
+onto a revision that is not in this branch would make the branch unable to
+migrate at all on its own -- `alembic upgrade head` cannot resolve a
+down_revision it does not have -- which breaks CI and any fresh install
+from here. So the two land as separate heads and whichever merges second
+adds a merge revision; they touch different columns and can be applied in
+either order.
 """
 import json
 from typing import Sequence, Union
@@ -37,7 +45,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "f1a2b3c4d5e6"
-down_revision: Union[str, None] = "d6e7f8a9b0c1"
+down_revision: Union[str, None] = "c5d6e7f8a9b0"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
