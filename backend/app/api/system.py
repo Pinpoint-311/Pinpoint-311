@@ -729,9 +729,11 @@ async def get_capability_catalog(
     # "on this server (no cloud)" for photo redaction on a deployment where
     # `resolve_provider()` had settled on Google Cloud Vision and was using it
     # -- the card named one detector and a different one did the work.
-    current = await effective_provider_for(capability) or normalize_provider(
-        capability, await get_secret(_PROVIDER_SELECT_KEY[capability])
-    )
+    current = await effective_provider_for(capability)
+    if current is None and capability != "secrets":
+        current = normalize_provider(
+            capability, await get_secret(_PROVIDER_SELECT_KEY[capability])
+        )
     providers = catalog_for_api(capability)
     health_map = await connector_health.snapshot(db)
     h = health_map.get(capability)
@@ -757,7 +759,13 @@ async def get_capability_catalog(
 
     return {
         "current_provider": current,
-        "default_provider": _DEFAULTS[capability],
+        # No default for the secret store, because having one is the bug the
+        # setup gate exists to close. `_DEFAULTS["secrets"]` is still "google",
+        # and reporting it here made the card draw Google Secret Manager as the
+        # selected store on a town that had chosen nothing -- while the gate
+        # beside it asked where credentials should go and every save returned
+        # 409. Two answers to one question, and the confident one was wrong.
+        "default_provider": None if capability == "secrets" else _DEFAULTS[capability],
         "providers": providers,
         "configured": await _configured_map(providers),
         # Which individual boxes have something in them, so the form's

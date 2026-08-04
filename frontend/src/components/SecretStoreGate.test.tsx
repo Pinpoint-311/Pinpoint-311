@@ -45,9 +45,9 @@ const UNCHOSEN = {
 let host: HTMLDivElement;
 let root: Root;
 
-async function mount() {
+async function mount(props: Record<string, unknown> = {}) {
     const { default: Gate } = await import('./SecretStoreGate');
-    await act(async () => { root.render(React.createElement(Gate)); });
+    await act(async () => { root.render(React.createElement(Gate, props)); });
     return host.textContent || '';
 }
 
@@ -152,5 +152,33 @@ describe('choosing where credentials are kept', () => {
 
         expect(host.textContent).toContain('pinned by this deployment');
         expect(host.textContent).toMatch(/where should this town/i);
+    });
+});
+
+/* The page greys out its credential fields from this. Without it the panel says
+ * "nothing below will accept a key" while everything below looks editable, and
+ * the only way to find out is to paste one and read the 409. */
+describe('telling the page whether to lock its fields', () => {
+    it('reports unchosen, so the fields can be greyed out', async () => {
+        const seen: boolean[] = [];
+        await mount({ onState: (v: boolean) => seen.push(v) });
+        expect(seen).toEqual([false]);
+    });
+
+    it('reports chosen as soon as the answer is recorded, so they unlock', async () => {
+        const seen: boolean[] = [];
+        await mount({ onState: (v: boolean) => seen.push(v) });
+        await click(/encrypted database/i);
+        await click(/Use this store/i);
+        expect(seen).toEqual([false, true]);
+    });
+
+    it('reports nothing when it cannot load, leaving the fields alone', async () => {
+        // A panel that failed to load must not be the reason a town cannot type.
+        // The backend still refuses the save, so nothing is lost by staying open.
+        response = null as any;
+        const seen: boolean[] = [];
+        await mount({ onState: (v: boolean) => seen.push(v) });
+        expect(seen).toEqual([]);
     });
 });
