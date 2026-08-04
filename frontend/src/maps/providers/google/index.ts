@@ -34,4 +34,31 @@ export const googleMapProvider: MapProviderFactory = {
     createGeocoder(_config: MapProviderConfig): GeocodingProvider {
         return createGoogleGeocoder();
     },
+
+    /**
+     * `gm_authFailure` is Google's documented way of saying "this key is not
+     * allowed from this site". It is a global the SDK *calls*: it does not
+     * throw, does not reject the loader, and does not fail map construction.
+     * The map object comes back intact and the tiles never arrive -- which is
+     * the grey map, and the reason nothing else here notices.
+     *
+     * Chained rather than replaced, and put back by `stop()`. A hook left
+     * behind would route every later failure into a check that has finished.
+     */
+    watchAuthFailure() {
+        type Host = { gm_authFailure?: (() => void) | undefined };
+        const host = window as unknown as Host;
+        const previous = host.gm_authFailure;
+        let failed = false;
+
+        host.gm_authFailure = () => {
+            failed = true;
+            try { previous?.(); } catch { /* not ours to care about */ }
+        };
+
+        return {
+            failed: () => failed,
+            stop: () => { host.gm_authFailure = previous; },
+        };
+    },
 };

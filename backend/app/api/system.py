@@ -1440,46 +1440,16 @@ async def _test_maps(db=None) -> dict:
     from app.services.map_provider import MAP_PROVIDER_KEY, normalize_provider
     from app.services.secret_manager import get_secret
 
-    async def _browser_reachability(key: str) -> dict:
-        """What a passing server-side check does and does not prove.
-
-        Everything above this point ran from the server with no Referer header.
-        A key correctly restricted to Websites *rejects* that, and the branches
-        above report it as untestable-and-correct. So arriving here means the
-        opposite: the key accepted a call from an origin it has never heard of,
-        and is therefore not restricted to this site.
-
-        That distinction is not academic, and it is why this page needs to say
-        something rather than show a green tick. A key whose Application
-        restriction is "IP addresses" passes every check this function can make
-        -- the server's own address is usually on the allow-list -- and still
-        fails in every resident's browser with RefererNotAllowedMapError,
-        because a browser's address is not on it and never can be. The map is
-        grey, the address box is dead, and the only place that says so is the
-        browser console.
-
-        Reported unverifiable rather than failed: an unrestricted key does work
-        for residents, so this is not proof of breakage. It is proof that the
-        thing which would break it cannot be ruled out from here.
-        """
-        tail = key[-6:]
-        origin = None
-        if db is not None:
-            try:
-                origin = await public_origin(db)
-            except Exception:
-                origin = None
-        target = f"{origin}/*" if origin else "https://your.site/*"
-        return _unverifiable(
-            f"Both APIs are enabled and billing is attached — a test address geocoded and "
-            f"address autocomplete answered. But this server used the key with no website "
-            f"attached and was allowed to, so the key ending …{tail} is not restricted "
-            f"to your site. If the map is grey in a browser, that is the cause: a key set to "
-            f"\"IP addresses\" instead of \"Websites\" passes this check from the server and "
-            f"fails in every resident's browser with RefererNotAllowedMapError. In Google "
-            f"Cloud open the key whose value ends …{tail} — check it is the same key you "
-            f"edited — and set Application restrictions to Websites with {target}."
-        )
+    # A server can check that the APIs are on and billing is attached. It cannot
+    # check that the key works in a resident's browser: Google enforces an HTTP
+    # referrer restriction when the map initialises, not when the script is
+    # fetched -- the bootstrap returns byte-identical JS for any Referer, so
+    # there is nothing here to inspect.
+    #
+    # That check now runs where it is answerable. The setup page loads the real
+    # SDK from the town's own origin and watches Google's `gm_authFailure` hook,
+    # which is exactly what a resident's browser does. See
+    # frontend/src/maps/browserCheck.ts. This function stopped guessing at it.
 
     # MAP_PROVIDER, not MAPS_PROVIDER. Nothing writes the plural, so this read
     # always missed and every town was tested as though it were on Google --
@@ -1527,7 +1497,11 @@ async def _test_maps(db=None) -> dict:
                       "includedPrimaryTypes": ["geocode"]},
             )
             if pr.status_code == 200:
-                return await _browser_reachability(key)
+                return {"ok": True, "detail": (
+                    "Both APIs answered: a test address geocoded and address autocomplete "
+                    "returned suggestions, so the APIs are enabled and billing is attached. "
+                    "The map in a resident's browser is checked separately, on this page."
+                )}
 
             places_error = ""
             try:
