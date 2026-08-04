@@ -80,6 +80,26 @@ SWITCHABLE = (
 # for these would be offering to break the product from the setup page.
 ALWAYS_ON = frozenset({"identity", "maps", "secrets"})
 
+# Switched off at the setup page, and deliberately not at the point of use.
+#
+# Every other switchable capability is consulted where it dispatches. This one is
+# not, and the absence is a decision rather than an oversight -- written down
+# because "is kms covered?" should have an answer in the code instead of needing
+# a grep that comes back empty and proves nothing either way.
+#
+#   kms   Switching off the key store cannot be allowed to mean "encrypt
+#         personal data with something weaker". `pii_crypto` refuses a local
+#         fallback on purpose, so honouring this at dispatch would either
+#         downgrade the cipher or break every read of an already-encrypted
+#         column. What a town switching this off actually wants is for the page
+#         to stop asking for KMS credentials and the daily sweep to stop
+#         reporting them outstanding, and `capability_is_configured` already
+#         gives it that. So the switch stops short of the cipher.
+#
+# `test_every_switch_is_enforced_somewhere` keeps this honest: a capability may
+# be missing from the dispatch paths only by being named here.
+ADVISORY_ONLY = frozenset({"kms"})
+
 # What each capability meant before this module existed, so an unwritten switch
 # behaves exactly as it did. Consulted only when the stored map says nothing.
 _LEGACY_MODULE_FLAG = {
@@ -107,6 +127,37 @@ def _off_word(value: Optional[str]) -> bool:
     return switched_off(value)
 
 
+# The last switch map this process read, for the one caller that cannot await.
+#
+# Sentry's `before_send` is a synchronous hook on the error path, and the error
+# being reported may well be "the database is unreachable" -- so it is the last
+# place to open a session and the last place to block an event loop. It reads
+# this instead.
+#
+# Refreshed by every `_stored()` call, which is every dispatch decision the app
+# makes, plus `set_enabled` so that flipping the switch takes effect immediately
+# in the process that handled the click, plus the hourly `probe_system` so a
+# worker that dispatches nothing still converges.
+_snapshot: Dict[str, bool] = {}
+
+
+def wanted_sync(capability: str, default: bool = True) -> bool:
+    """The last answer this process read, without touching the database.
+
+    `default` is what to assume before anything has been read -- which for crash
+    reporting is "send it", because a process that has not yet learned the switch
+    is off should not swallow the crash that stopped it from learning.
+    """
+    if capability in ALWAYS_ON:
+        return True
+    return bool(_snapshot.get(capability, default))
+
+
+async def refresh_snapshot() -> Dict[str, bool]:
+    """Re-read the switches so `wanted_sync` is current. For scheduled callers."""
+    return await _stored()
+
+
 async def _stored() -> Dict[str, bool]:
     """The switches a town has actually set, or {} if it has set none.
 
@@ -125,8 +176,14 @@ async def _stored() -> Dict[str, bool]:
             row = (await db.execute(
                 select(SystemSettings).order_by(SystemSettings.id).limit(1)
             )).scalar_one_or_none()
-            return dict(getattr(row, "capability_switches", None) or {})
+            stored = dict(getattr(row, "capability_switches", None) or {})
+        global _snapshot
+        _snapshot = stored
+        return dict(stored)
     except Exception as exc:
+        # The snapshot is deliberately left alone. A failed read is not evidence
+        # that anything was switched off, and clearing it here would turn a
+        # database hiccup into "start reporting crashes again".
         logger.debug("capability switches: could not be read (%s)", exc)
         return {}
 

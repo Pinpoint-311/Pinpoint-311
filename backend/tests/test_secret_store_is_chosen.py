@@ -118,6 +118,97 @@ def test_both_doors_into_the_secret_table_are_gated():
         assert "_require_a_secret_store()" in inspect.getsource(endpoint), endpoint.__name__
 
 
+# The three ways a credential reaches storage. `create_or_update_secret` uses
+# none of `_persist_secret`'s helpers -- it encrypts and adds the row itself --
+# which is why matching on one name would miss half the doors.
+_WRITE_SIGNALS = ("_persist_secret(", "set_secret(", "SystemSecret(")
+
+
+def _source_of(fn) -> str:
+    import inspect
+
+    try:
+        return inspect.getsource(fn)
+    except (OSError, TypeError):
+        return ""
+
+
+def _writes_to_secret_storage(src: str) -> bool:
+    return any(signal in src for signal in _WRITE_SIGNALS)
+
+
+# Handlers the scan finds that are deliberately not gated, and why.
+#
+# Each one either answers the question the gate asks -- gating those would leave
+# no way through it -- or does not carry a credential at all.
+_UNGATED_BY_DESIGN = {
+    # The gate's own door. POST /providers/secret-store is where the choice is
+    # recorded, so it cannot require the choice.
+    "choose_secret_store",
+    # Writes the PROVIDER selections for a cloud profile, `SECRETS_PROVIDER`
+    # among them. Selections are vendor names, not credentials -- no secret is in
+    # the body -- and this is the second way a town says which store it wants.
+    "set_cloud_profile",
+    # Seeds the placeholder rows from DEFAULT_SECRETS: key_name, description,
+    # is_configured=False. It never sets `key_value`, so there is no credential
+    # here to put in the wrong place.
+    "sync_secrets",
+}
+
+
+def test_no_new_door_into_the_secret_table_opens_ungated():
+    """Discovered rather than listed.
+
+    The test above names its two endpoints. That was true when it was written and
+    it is exactly the assertion that rots: a third credential-writing endpoint
+    added next year passes it without ever being looked at. So this one finds
+    every handler that writes to secret storage by any of the three routes, and
+    requires each to pass the gate or be named above with a reason.
+
+    Finding `sync_secrets` -- which the hand-written pair never mentioned -- is
+    the argument for doing it this way.
+    """
+    import inspect
+
+    offenders = []
+    for name, fn in vars(system).items():
+        if not inspect.isfunction(fn) or name.startswith("_"):
+            continue
+        src = _source_of(fn)
+        if not _writes_to_secret_storage(src) or name in _UNGATED_BY_DESIGN:
+            continue
+        if "_require_a_secret_store()" not in src:
+            offenders.append(name)
+
+    assert not offenders, (
+        f"these reach secret storage without asking where credentials go: "
+        f"{sorted(offenders)}. Either call _require_a_secret_store(), or -- if "
+        f"the endpoint records the choice itself or carries no credential -- add "
+        f"it to _UNGATED_BY_DESIGN with the reason."
+    )
+
+
+def test_the_discovery_actually_discovers_something():
+    """A scan whose signals have been renamed matches nothing and passes forever.
+    This pins that both known doors are still found, so `_persist_secret` or
+    `set_secret` being renamed fails loudly instead of quietly covering nothing.
+    """
+    import inspect
+
+    found = {
+        name
+        for name, fn in vars(system).items()
+        if inspect.isfunction(fn)
+        and not name.startswith("_")
+        and _writes_to_secret_storage(_source_of(fn))
+    }
+    assert {"save_provider", "create_or_update_secret"} <= found
+    assert _UNGATED_BY_DESIGN <= found, (
+        "an entry in the allowlist that the scan no longer finds is dead, and "
+        "dead entries are how a real door gets excused later by accident"
+    )
+
+
 def test_recording_the_choice_is_not_itself_gated():
     """Otherwise nothing could ever get through it."""
     assert "SECRETS_PROVIDER" in system._STORE_CHOICE_KEYS
@@ -230,3 +321,74 @@ def test_a_host_pinned_store_is_not_editable_from_the_console(monkeypatch):
 
     assert caught.value.status_code == 409
     assert "pinned" in caught.value.detail
+
+
+# ---------------------------------------------------------------------------
+# The card beside the gate has to agree with it
+# ---------------------------------------------------------------------------
+
+def test_the_card_does_not_name_a_store_the_town_never_chose(unset, monkeypatch):
+    """Two answers to one question, and the confident one was wrong.
+
+    `normalize_provider` falls back to that capability's entry in `_DEFAULTS`,
+    which for secrets is "google". So the provider card drew Google Secret
+    Manager as the selected store on a town that had chosen nothing -- beside a
+    gate asking where credentials should go, and above fields that answered every
+    save with 409. Whichever the clerk believed, the page had told them the other.
+    """
+    from app.services import connector_health
+
+    async def no_health(db):
+        return {}
+
+    async def nothing_configured(providers):
+        return {}
+
+    async def no_fields(providers):
+        return {}
+
+    async def no_secret(key):
+        return None
+
+    monkeypatch.setattr(connector_health, "snapshot", no_health)
+    monkeypatch.setattr(system, "_configured_map", nothing_configured)
+    monkeypatch.setattr(system, "_stored_fields", no_fields)
+    monkeypatch.setattr("app.services.secret_manager.get_secret", no_secret)
+
+    out = _run(system.get_capability_catalog("secrets", db=None, _=None))
+
+    assert out["current_provider"] is None, (
+        "nothing has been chosen, so the card must show nothing selected"
+    )
+    assert out["default_provider"] is None, (
+        "a default here is the accidental-Google the gate exists to remove"
+    )
+
+
+def test_the_other_capabilities_keep_their_default(unset, monkeypatch):
+    """The fix is scoped to the secret store. Email and the rest genuinely do
+    have a sensible default, and blanking those would leave their cards with no
+    selection at all."""
+    from app.services import connector_health
+
+    async def no_health(db):
+        return {}
+
+    async def nothing_configured(providers):
+        return {}
+
+    async def no_fields(providers):
+        return {}
+
+    async def no_secret(key):
+        return None
+
+    monkeypatch.setattr(connector_health, "snapshot", no_health)
+    monkeypatch.setattr(system, "_configured_map", nothing_configured)
+    monkeypatch.setattr(system, "_stored_fields", no_fields)
+    monkeypatch.setattr("app.services.secret_manager.get_secret", no_secret)
+
+    out = _run(system.get_capability_catalog("email", db=None, _=None))
+
+    assert out["default_provider"] is not None
+    assert out["current_provider"] is not None

@@ -20,7 +20,7 @@ import { buildPlan, summarise, nameList, BACKUP_SECRETS, SENTRY_SECRETS } from '
 // render them inline rather than pointing at the cards that do.
 import './setupStepsContent';
 import StorageStatusLine from './StorageStatusLine';
-import SecretStoreGate from './SecretStoreGate';
+import SecretStoreGate, { SECRET_STORE_GATE_ID } from './SecretStoreGate';
 import SecretField from './SecretField';
 import { openStayInformed } from './StayInformed';
 
@@ -340,8 +340,46 @@ onWantAi: () => Promise<void>;
 }
 
 
+/**
+ * Credential entry, greyed out until somebody has said where credentials go.
+ *
+ * A `fieldset` rather than a `disabled` prop threaded through four components.
+ * The credential surfaces on this page are `SetupWizard`, `ServiceProviders`,
+ * `InlineProviderSetup` and the page's own fields, and the browser already
+ * disables every control inside a disabled fieldset -- so this cannot be missed
+ * by a component that forgot to forward the prop, which is the failure mode a
+ * prop would have.
+ *
+ * Not the enforcement. `_require_a_secret_store` returns 409 regardless; this
+ * only stops the page from looking like it will accept a key when it will not.
+ * When there is nothing to lock the children render bare, so the ordinary case
+ * has no extra element in the tree.
+ */
+export function LockedUntilStoreChosen({ locked, children }: {
+    locked: boolean;
+    children: React.ReactNode;
+}) {
+    if (!locked) return <>{children}</>;
+    return (
+        <fieldset
+            disabled
+            aria-describedby={SECRET_STORE_GATE_ID}
+            className="m-0 p-0 border-0 min-w-0 opacity-60"
+        >
+            {children}
+        </fieldset>
+    );
+}
+
+
 export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh }: SetupIntegrationsPageProps) {
     const [secretValues, setSecretValues] = useState<Record<string, string>>({});
+    /**
+     * Null until the gate reports. Not `false`, because assuming unchosen would
+     * grey out the whole page for the half-second before the request lands --
+     * and on the towns that have already chosen, which is most of them.
+     */
+    const [storeChosen, setStoreChosen] = useState<boolean | null>(null);
     const [savingKey, setSavingKey] = useState<string | null>(null);
     // The backup passphrase is generated rather than invented, shown once, and
     // gated on someone confirming they have put a copy somewhere else. See the
@@ -1084,7 +1122,10 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     is answered, and a form that refuses a save
                                     without saying why in advance is worse than
                                     one that asks first. */}
-                                <SecretStoreGate onChosen={() => setProviderRefresh(t => t + 1)} />
+                                <SecretStoreGate
+                                    onChosen={() => setProviderRefresh(t => t + 1)}
+                                    onState={setStoreChosen}
+                                />
 
                                 <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
                                     <p className="text-sm font-semibold text-white mb-0.5">Answer a few questions and we will hide the rest</p>
@@ -1208,6 +1249,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     )}
                                 </div>
 
+                                <LockedUntilStoreChosen locked={storeChosen === false}>
                                 <SetupWizard
                                     cloud={setupCloud}
                                     idp={setupIdp}
@@ -1228,6 +1270,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     publicOrigin={publicOrigin}
                                     renderFoundation={renderFoundation}
                                 />
+                                </LockedUntilStoreChosen>
 
                                 {/* The only way the guide stops opening itself.
                                   *
@@ -1286,6 +1329,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 it once removes the steps and the inputs together rather than
                 leaving inputs for providers whose instructions are hidden. */}
             <div id="sec-providers">
+                <LockedUntilStoreChosen locked={storeChosen === false}>
                 <ServiceProviders
                     show={wantedCapabilities}
                     /* So a switched-off capability can say its credentials are
@@ -1360,6 +1404,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         </div>
                     }
                 />
+                </LockedUntilStoreChosen>
             </div>
 
 

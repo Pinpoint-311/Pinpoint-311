@@ -283,6 +283,101 @@ def test_geocoding_is_the_documented_exception():
     assert "ALWAYS_ON" in inspect.getsource(geocode_dispatch._selected)
 
 
+def test_every_switch_is_enforced_somewhere():
+    """A switch nothing consults is a lie told in a nice font.
+
+    `backups` and `errors` shipped that way: both were offered as ticks, both
+    persisted, both showed on the card -- and `backup_database` never asked, so
+    nightly dumps kept going to S3, while crash reporting was wired to a DSN read
+    from the environment once at import. Unticking either changed nothing that
+    left the building.
+
+    So the rule is mechanical rather than remembered: every switchable capability
+    is either always on, consulted at its point of use, or named in
+    `ADVISORY_ONLY` with the reason written beside it. Discovering the call sites
+    rather than listing them, because a list is the thing that goes stale.
+    """
+    from pathlib import Path
+
+    app_dir = Path(cs.__file__).resolve().parent.parent
+    sources = "\n".join(
+        p.read_text(encoding="utf-8")
+        for p in app_dir.rglob("*.py")
+        if p.name != "capability_switches.py"
+    )
+
+    must_be_enforced = set(cs.SWITCHABLE) - cs.ALWAYS_ON - cs.ADVISORY_ONLY
+    assert must_be_enforced, "the sets cannot swallow everything"
+
+    for capability in sorted(must_be_enforced):
+        # `wanted_sync` counts. It is how crash reporting is enforced -- Sentry's
+        # `before_send` is synchronous and cannot await `enabled` -- and it is a
+        # real gate, not a way around this assertion.
+        assert any(
+            f"{reader}({quote}{capability}{quote})" in sources
+            for reader in ("enabled", "wanted_sync")
+            for quote in ('"', "'")
+        ), (
+            f"nothing consults the {capability!r} switch, so switching it off "
+            f"changes nothing a town can observe. Either gate it where it "
+            f"dispatches, or add it to ADVISORY_ONLY with the reason."
+        )
+
+
+def test_advisory_only_is_not_a_place_to_hide_things():
+    """It exists for one capability with one reason. Left unbounded it becomes
+    the drawer everything unfinished gets swept into, and the test above stops
+    meaning anything."""
+    assert cs.ADVISORY_ONLY == frozenset({"kms"})
+    assert not (cs.ADVISORY_ONLY & cs.ALWAYS_ON), "a capability is one or the other"
+    assert cs.ADVISORY_ONLY <= set(cs.SWITCHABLE)
+    # The reason, in the module, next to the set.
+    import inspect
+
+    src = inspect.getsource(cs)
+    assert "pii_crypto" in src, "why kms stops short of the cipher has to be written down"
+
+
+def test_crash_reporting_answers_without_touching_the_database():
+    """`before_send` runs on the error path, and the error may be that the
+    database is unreachable. It reads the snapshot, which is why the snapshot
+    exists."""
+    import inspect
+
+    from app import main
+
+    fn = main._crash_reporting_wanted
+    # The code object rather than the source text: the docstring explains why it
+    # must not open a session, so grepping the source finds the word "SessionLocal"
+    # in the explanation and fails a function that is doing the right thing.
+    names = set(fn.__code__.co_names)
+    assert "wanted_sync" in names
+    assert "SessionLocal" not in names
+    assert not inspect.iscoroutinefunction(fn), "before_send is called synchronously"
+
+
+def test_the_snapshot_survives_a_failed_read(monkeypatch):
+    """A database hiccup is not evidence that anything was switched off. Clearing
+    the snapshot on failure would turn one into "start reporting crashes again"
+    -- or worse, into silence, depending which way the default fell."""
+    monkeypatch.setattr(cs, "_snapshot", {"errors": False})
+
+    class Boom:
+        def __call__(self, *a, **k):
+            raise RuntimeError("no database")
+
+    monkeypatch.setattr("app.db.session.SessionLocal", Boom())
+    assert _run(cs._stored()) == {}
+    assert cs.wanted_sync("errors") is False, "the last known answer still stands"
+
+
+def test_a_process_that_has_read_nothing_still_reports_crashes(monkeypatch):
+    """Swallowing the crash that stopped a process from reading its own settings
+    is the worse of the two failures."""
+    monkeypatch.setattr(cs, "_snapshot", {})
+    assert cs.wanted_sync("errors") is True
+
+
 # ---------------------------------------------------------------------------
 # What the page is told
 # ---------------------------------------------------------------------------

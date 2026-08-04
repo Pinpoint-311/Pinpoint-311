@@ -1138,12 +1138,22 @@ def backup_database():
     logger = logging.getLogger(__name__)
     
     async def _backup():
+        # "Automatic backups" is a tick on the setup page, and unticking it used
+        # to change nothing -- beat kept firing this and backups kept being
+        # written and shipped to S3. A town that said no to off-site copies of
+        # its database meant it.
+        from app.services import capability_switches
+        if not await capability_switches.enabled("backups"):
+            logger.info("[Backup] Skipped: the town has switched automatic backups off")
+            return {"status": "skipped", "message": "automatic backups are switched off"}
         from app.services.backup_service import create_backup
         return await create_backup()
-    
+
     try:
         logger.info("[Backup] Starting scheduled database backup...")
         result = run_async(_backup())
+        if result.get("status") == "skipped":
+            return result
         
         if result["status"] == "success":
             logger.info(f"[Backup] Completed successfully: {result['backup_name']} ({result['size_bytes']} bytes)")

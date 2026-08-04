@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Lock, ShieldCheck, AlertCircle } from 'lucide-react';
 
 import { api } from '../services/api';
@@ -52,22 +52,47 @@ const STORES: { id: string; name: string; blurb: string }[] = [
 
 const LABEL: Record<string, string> = Object.fromEntries(STORES.map(s => [s.id, s.name]));
 
-export default function SecretStoreGate({ onChosen }: {
+/** The id the locked credential fields point their `aria-describedby` at. */
+export const SECRET_STORE_GATE_ID = 'secret-store-gate';
+
+export default function SecretStoreGate({ onChosen, onState }: {
     /** So the page can re-enable everything it had disabled. */
     onChosen?: () => void;
+    /**
+     * Whether a store has been chosen, so the page can grey out the credential
+     * fields rather than let them look editable and fail on save.
+     *
+     * Held in a ref rather than named in `load`'s dependencies: callers pass an
+     * inline arrow, and a changing dependency here would refetch every render.
+     */
+    onState?: (chosen: boolean) => void;
 } = {}) {
     const [choice, setChoice] = useState<SecretStoreChoice | null>(null);
     const [picked, setPicked] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    const report = useRef(onState);
+    report.current = onState;
+
     const load = useCallback(() => {
         api.getSecretStore()
-            .then(setChoice)
+            .then(c => {
+                // A response that did not say is not an answer of "unchosen".
+                // Reporting one would lock every field on the page off the back
+                // of a malformed reply.
+                if (!c) return;
+                setChoice(c);
+                report.current?.(!!c.chosen);
+            })
             /* Silent, and it leaves `choice` null so nothing is rendered. The
              * backend refuses the credential regardless -- this panel explains
              * the refusal, it does not enforce it -- so a panel that cannot
-             * load its own state is better absent than guessing. */
+             * load its own state is better absent than guessing.
+             *
+             * Nothing is reported either, which leaves the fields enabled. A
+             * panel that could not load its own state must not be the reason a
+             * town cannot type, and the 409 still catches the save. */
             .catch(() => undefined);
     }, []);
     useEffect(load, [load]);
@@ -93,7 +118,7 @@ export default function SecretStoreGate({ onChosen }: {
     }
 
     return (
-        <div role="region" aria-label="Choose a secret store"
+        <div role="region" aria-label="Choose a secret store" id={SECRET_STORE_GATE_ID}
             className="rounded-xl border border-amber-400/30 bg-amber-500/[0.07] p-4">
             <div className="flex items-start gap-2.5">
                 <Lock className="w-4 h-4 text-amber-300/90 mt-0.5 shrink-0" aria-hidden="true" />
@@ -165,7 +190,9 @@ export default function SecretStoreGate({ onChosen }: {
                         if (!picked) return;
                         setSaving(true); setError(null);
                         try {
-                            setChoice(await api.chooseSecretStore(picked));
+                            const saved = await api.chooseSecretStore(picked);
+                            setChoice(saved);
+                            report.current?.(!!saved.chosen);
                             onChosen?.();
                         } catch (err: any) {
                             setError(err?.message || 'That could not be saved.');

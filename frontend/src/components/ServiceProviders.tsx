@@ -367,7 +367,14 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 setResult({ ok: cat.last_result.ok, detail: cat.last_result.detail });
             }
             onStatus(cap, {
-                providerName: providerLabel(cat, cat.current_provider),
+                // `providerLabel` answers "the previous provider" for an absent
+                // selection, which reads correctly in the "switched from X"
+                // sentence it was written for and not at all here. A capability
+                // can now genuinely have nothing selected -- the secret store,
+                // until the town picks one -- so say that instead.
+                providerName: cat.current_provider
+                    ? providerLabel(cat, cat.current_provider)
+                    : 'Not chosen yet',
                 // So the badge can tell a verdict about this provider from one
                 // left behind by the last.
                 provider: cat.current_provider,
