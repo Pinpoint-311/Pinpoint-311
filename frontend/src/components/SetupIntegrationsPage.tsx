@@ -54,6 +54,35 @@ const FEATURES = [
 
 const ALL_FEATURES: readonly string[] = FEATURES.map(([id]) => id);
 
+/* Feature id -> capability id. The one mapping between the two vocabularies.
+ *
+ * At module scope because the persistence layer needs it too: a chip is
+ * "Screening and blurring" and the thing that gets switched off is `redaction`,
+ * and the toggle handler has to translate before it can post. It was declared
+ * inside the component, where nothing outside the render could reach it.
+ *
+ * Every id on both sides is the same word where it can be. The key-management
+ * tick was `secrets`, which became ambiguous the moment the secret store
+ * became a capability of its own -- one line of this object would have read
+ * `secrets: 'kms'` next to a real `secrets` capability meaning somewhere else
+ * entirely.
+ *
+ * `backups` and `errors` are absent: they are switchable, but they have no
+ * provider catalog and no capability, so they are carried under their own ids.
+ * The secret store is absent for the opposite reason -- it is not a feature a
+ * town ticks on, because every credential entered on this page is kept
+ * somewhere.
+ *
+ * Redaction used to hang off the `moderation` tick, which was wrong in both
+ * directions: unticking "content moderation" silently hid face blurring, and
+ * there was no way to have blurring without it. They are different decisions --
+ * one screens what a resident wrote, the other blurs a bystander who never
+ * wrote anything -- so they are separate ticks. */
+const FEATURE_TO_CAPABILITY: Record<string, Capability> = {
+    ai: 'ai', translation: 'translation', email: 'email',
+    sms: 'sms', kms: 'kms', safety: 'redaction',
+};
+
 function Ask({ n, label, hint, children }: {
     n: number; label: string; hint?: string; children: React.ReactNode;
 }) {
@@ -144,20 +173,18 @@ export function seedAnswersFrom(status: ProviderStatusMap | null): SeededAnswers
     };
 }
 
-interface ModulesState {
-    ai_analysis: boolean;
-    sms_alerts: boolean;
-    email_notifications: boolean;
-    research_portal: boolean;
-    unlisted_reports: boolean;
-}
-
+/* No `modules` prop any more.
+ *
+ * This page took one so that saving a Google project could switch
+ * `modules.ai_analysis` on -- reaching across to the System Settings screen to
+ * flip one of the two switches the same capability had. It owns the only switch
+ * now, and does not need the other screen's state to use it. `modules` keeps
+ * `unlisted_reports` and `research_portal`, which have no provider, no
+ * credentials and nothing to do with this page. */
 interface SetupIntegrationsPageProps {
     secrets: SystemSecret[];
     onSaveSecret: (key: string, value: string) => Promise<void>;
     onRefresh: () => void;
-    modules?: ModulesState;
-    onUpdateModules?: (modules: ModulesState) => Promise<void>;
 }
 
 
@@ -180,15 +207,15 @@ interface SetupIntegrationsPageProps {
  * that does not exist.
  */
 function GoogleAccountFields({
-secretValues, setSecretValues, handleSave, savingKey, isConfigured, modules, onUpdateModules,
+secretValues, setSecretValues, handleSave, savingKey, isConfigured, onWantAi,
 }: {
 secretValues: Record<string, string>;
 setSecretValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 handleSave: (key: string) => Promise<void>;
 savingKey: string | null;
 isConfigured: (key: string) => boolean | undefined;
-modules: any;
-onUpdateModules?: (m: any) => Promise<void>;
+/** Switch AI on, because a town that just entered a Google project meant to. */
+onWantAi: () => Promise<void>;
 }) {
     const jsonKey = 'GCP_SERVICE_ACCOUNT_JSON';
     const [showKms, setShowKms] = useState(false);
@@ -283,10 +310,16 @@ onUpdateModules?: (m: any) => Promise<void>;
                     type="button"
                     onClick={async () => {
                         for (const k of pending) await handleSave(k);
-                        // AI cannot run without this, so having entered it
-                        // and left the module off is never what was meant.
-                        if (modules && onUpdateModules && secretValues['GOOGLE_CLOUD_PROJECT'] && !modules.ai_analysis) {
-                            await onUpdateModules({ ...modules, ai_analysis: true });
+                        /* AI cannot run without this, so having entered it and
+                           left AI switched off is never what was meant.
+
+                           This used to flip `modules.ai_analysis`, on the other
+                           screen, which was one of two switches for the same
+                           capability -- so it could turn AI on there while the
+                           tick on this very page still said the town did not
+                           want it. One switch now, and this is it. */
+                        if (secretValues['GOOGLE_CLOUD_PROJECT']) {
+                            await onWantAi();
                         }
                     }}
                     disabled={pending.length === 0 || savingKey !== null}
@@ -306,7 +339,7 @@ onUpdateModules?: (m: any) => Promise<void>;
 }
 
 
-export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh, modules, onUpdateModules }: SetupIntegrationsPageProps) {
+export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh }: SetupIntegrationsPageProps) {
     const [secretValues, setSecretValues] = useState<Record<string, string>>({});
     const [savingKey, setSavingKey] = useState<string | null>(null);
     // The backup passphrase is generated rather than invented, shown once, and
@@ -331,21 +364,50 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [setupCloud, setSetupCloud] = useState<'google' | 'azure' | 'aws'>('google');
     const [setupIdp, setSetupIdp] = useState<'auth0' | 'entra' | 'okta' | 'oidc'>('auth0');
     const [setupMaps, setSetupMaps] = useState<'google' | 'esri' | 'azure' | 'apple'>('google');
-    /* Everything on, untick to hide.
+    /* What the town wants, held here only as a mirror of what the server says.
      *
-     * This started as opt-in with three ticked, which quietly set the default
-     * for every town that never touched it: a page that asks what you want,
-     * pre-answered "not much". A town that never opens this question should end
-     * up with the whole platform switched on, not the three we happened to
-     * pre-tick -- so the list below is every feature, and a town removes what
-     * it genuinely does not want. */
+     * This used to be the whole of it: `useState(new Set(ALL_FEATURES))`, never
+     * read from anywhere and never written anywhere. So unticking a feature hid
+     * a section of the guide, survived until the next reload, and switched
+     * nothing off -- while the label directly above it read "untick to remove
+     * it". A town could not express "I saved an AI key and I am not using it",
+     * and the only way to stop a configured capability was to delete the
+     * credential it had just been asked to paste in.
+     *
+     * The initial value stays "everything", and that is a loading state rather
+     * than a default: the effect below replaces it as soon as the server
+     * answers. Erring towards showing a step nobody needs beats hiding one
+     * somebody does.
+     *
+     * Optimistic on click, corrected by the response. A tick that waits for a
+     * round trip reads as a broken button, and the failure path matters more
+     * than the latency: if the write is refused, the chip must go back rather
+     * than sit there claiming an answer the server does not have. */
     const [wantedFeatures, setWantedFeatures] = useState<Set<string>>(new Set(ALL_FEATURES));
-    const toggleFeature = (f: string) =>
+    const [switchError, setSwitchError] = useState<string | null>(null);
+    const toggleFeature = async (f: string) => {
+        const wantedNow = !wantedFeatures.has(f);
+        const before = wantedFeatures;
         setWantedFeatures(prev => {
             const next = new Set(prev);
-            next.has(f) ? next.delete(f) : next.add(f);
+            wantedNow ? next.add(f) : next.delete(f);
             return next;
         });
+        setSwitchError(null);
+        try {
+            /* Sent per capability, not per feature id, because the server keys
+             * the switch by capability -- `safety` is the question a clerk is
+             * asked and `redaction` is the thing that gets switched off.
+             * `backups` and `errors` have no capability and no card, and are
+             * carried under their own ids. */
+            const capability = FEATURE_TO_CAPABILITY[f] ?? f;
+            await api.setCapabilitySwitches({ [capability]: wantedNow });
+            setProviderRefresh(t => t + 1);
+        } catch (err: any) {
+            setWantedFeatures(before);
+            setSwitchError(err?.message || 'That could not be saved. Nothing has changed.');
+        }
+    };
     const wants = (f: string) => wantedFeatures.has(f);
 
 
@@ -381,27 +443,8 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const redactionProvider = redactionOverride ?? setupCloud;
 
 
-    /* The setup questions are asked in feature terms ("AI triage", "Secret
-     * storage + PII encryption") and the provider cards are keyed by
-     * capability. This is the one mapping between them, and every id on both
-     * sides is now the same word: the key-management tick was `secrets`, which
-     * became ambiguous the moment the secret store became a capability of its
-     * own -- one line of this object would have read `secrets: 'kms'` next to a
-     * real `secrets` capability meaning somewhere else entirely.
-     *
-     * The secret store is deliberately absent. It is not a feature a town ticks
-     * on: every credential entered on this page is kept somewhere, so its card
-     * is always shown rather than gated on a question.
-     *
-     * Redaction used to hang off the `moderation` tick, which was wrong in both
-     * directions: unticking "content moderation" silently hid face blurring,
-     * and there was no way to have blurring without it. They are different
-     * decisions -- one screens what a resident wrote, the other blurs a
-     * bystander who never wrote anything -- so they are now separate ticks. */
-    const FEATURE_TO_CAPABILITY: Record<string, Capability> = {
-        ai: 'ai', translation: 'translation', email: 'email',
-        sms: 'sms', kms: 'kms', safety: 'redaction',
-    };
+    /* Which capability cards the page shows, from the ticks above. See
+     * FEATURE_TO_CAPABILITY at the top of the file for the vocabulary. */
     const wantedCapabilities = new Set<Capability>(
         Object.entries(FEATURE_TO_CAPABILITY)
             .filter(([feature]) => wantedFeatures.has(feature))
@@ -477,6 +520,27 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         if (seed.email) setEmailOverride(seed.email);
         if (seed.sms) setSmsOverride(seed.sms);
         if (seed.redaction) setRedactionOverride(seed.redaction);
+    }, [providerStatus]);
+
+    /* The ticks, from the server, every time it answers.
+     *
+     * Not seeded once like the pickers above. Those are a plan a clerk may be
+     * making for a provider they have not moved to yet, so the answer is theirs
+     * after the first load. These are the live state of the town -- a tick here
+     * switches a capability off in the backend -- so the server's answer is the
+     * answer, and re-reading it after every save is what stops the chips and the
+     * cards below drifting apart.
+     *
+     * An absent `enabled` is treated as on. It means the endpoint did not say,
+     * which must not read as "the town switched this off". */
+    useEffect(() => {
+        if (!providerStatus) return;
+        setWantedFeatures(new Set(
+            ALL_FEATURES.filter(f => {
+                const capability = FEATURE_TO_CAPABILITY[f] ?? f;
+                return providerStatus[capability]?.enabled !== false;
+            }),
+        ));
     }, [providerStatus]);
     useEffect(() => {
         fetch('/api/system/config')
@@ -716,7 +780,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 <GoogleAccountFields
                     secretValues={secretValues} setSecretValues={setSecretValues}
                     handleSave={handleSave} savingKey={savingKey} isConfigured={isConfigured}
-                    modules={modules} onUpdateModules={onUpdateModules}
+                    onWantAi={async () => { if (!wants('ai')) await toggleFeature('ai'); }}
                 />
             </>}
             {cloud === 'azure' && <>
@@ -1015,6 +1079,20 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                                 </button>
                                             ))}
                                         </div>
+                                        {/* Said here rather than as a toast.
+                                            A chip that springs back with no
+                                            explanation is indistinguishable
+                                            from a misclick, and the answer to
+                                            "did that save" has to be beside
+                                            the thing that did not. */}
+                                        {switchError && (
+                                            <p role="alert" className="text-[11px] text-amber-200/85 mt-2">{switchError}</p>
+                                        )}
+                                        <p className="text-[11px] text-white/45 mt-2">
+                                            Unticking one switches it off and stops it running. Anything you
+                                            have already entered stays saved \u2014 switch it back on and it works
+                                            as it did.
+                                        </p>
                                     </Ask>
 
                                     <Ask
@@ -1136,6 +1214,11 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             <div id="sec-providers">
                 <ServiceProviders
                     show={wantedCapabilities}
+                    /* So a switched-off capability can say its credentials are
+                       still there. No card is drawn for one, so nothing else
+                       fetches its catalog and the section would otherwise have
+                       to guess. */
+                    statusMap={providerStatus}
                     /* Backups and crash reporting are features without a
                        provider catalog, so they are not in CAPS and could never
                        show up as switched off -- which is the pair somebody is

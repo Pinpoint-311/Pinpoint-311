@@ -260,16 +260,19 @@ async def effective_provider_for(capability: str) -> Optional[str]:
         return _secrets_provider() if store_reachable() else "database"
 
     if capability in ("email", "sms", "kms"):
-        from app.services.delivery_providers import normalize_provider, switched_off
+        from app.services.delivery_providers import normalize_provider
 
-        # The ENABLED flags are part of the answer to "which provider is this
-        # running on", because the answer is "none" when one of them says no.
-        # A card naming Twilio while SMS_ENABLED is false describes a send that
-        # will not happen.
-        enable_key = {"email": "EMAIL_ENABLED", "sms": "SMS_ENABLED"}.get(capability)
-        if enable_key and switched_off(await get_secret(enable_key)):
-            return None
-
+        # The ENABLED flags used to be folded in here, so that a switched-off
+        # capability reported no provider at all.
+        #
+        # That is the conflation this pass exists to undo. "Which provider is
+        # selected" and "does the town want this" are two facts, and answering
+        # both with one field is why a card could not tell "switched off, key
+        # still saved" from "never set up" -- it saw no provider either way, so
+        # it looked at the credentials for a provider it had not been given and
+        # concluded nothing was there. `/providers/status` now reports `enabled`
+        # beside `configured`, and every dispatch path asks
+        # `capability_switches.enabled` directly.
         resolved = normalize_provider(capability, raw)
         return None if resolved in _OFF_VALUES else resolved
 
@@ -297,6 +300,14 @@ async def capability_is_configured(capability: str) -> bool:
     secret meant photo redaction -- whose selection is inferred -- was reported
     as unconfigured on a deployment where it was blurring every photo.
     """
+    from app.services import capability_switches
+
+    # A town that switched something off has not left work outstanding, so the
+    # sweep has nothing to check. Same reasoning as the paragraph above about
+    # text messages, generalised now that every capability can be switched off
+    # rather than only the two with an ENABLED flag.
+    if not await capability_switches.enabled(capability):
+        return False
     current = await effective_provider_for(capability)
     if not current:
         return False
@@ -1651,17 +1662,11 @@ async def _test_delivery(capability: str) -> dict:
             "Azure Communication Services has no check that avoids sending a real "
             "message. Save, then send yourself a test from a request.")
 
-    from app.services.delivery_providers import switched_off
-
+    # The "texting is switched off" branch that used to be here has moved up to
+    # `test_provider`, which is the only caller and now answers it for all eight
+    # capabilities rather than for the one that happened to have a flag. This
+    # function is what its docstring says again: does this provider work.
     provider = (await get_secret("SMS_PROVIDER")) or "none"
-    if switched_off(await get_secret("SMS_ENABLED")):
-        # Reported before the provider, because it overrides it. A card that
-        # tested Twilio and reported it working while SMS_ENABLED was false
-        # would be describing a send that cannot happen.
-        return {"ok": True, "detail": (
-            "Text messages are switched off (SMS_ENABLED is false), so nothing is sent "
-            "whatever provider is selected."
-        )}
     if provider == "none":
         return {"ok": True, "detail": "Text messages are switched off, as configured."}
 
@@ -1988,6 +1993,32 @@ async def test_provider(
             pass
         return outcome
 
+    # A capability the town switched off is not tested, and the result is not
+    # recorded either way.
+    #
+    # Before the switch existed there was nothing to check here, and the two
+    # capabilities that did have an off flag checked it inside their own test
+    # function -- so the other six would happily make a live paid API call
+    # against an integration nobody uses, and write a red badge when it failed.
+    # A failure on something deliberately switched off is the noise that teaches
+    # people to ignore badges.
+    from app.services import capability_switches
+
+    if not await capability_switches.enabled(capability):
+        return {
+            "ok": True,
+            "detail": (
+                "This is switched off, so nothing runs through it. Its credentials "
+                "are still saved — switch it back on in Setup Instructions and they "
+                "will be used as they were."
+            ),
+            # Neither a pass nor a fail: there was no check. `configured: False`
+            # keeps `_remember` and the unverifiable path from writing anything.
+            "recorded": False,
+            "configured": False,
+            "off": True,
+        }
+
     check = _CAPABILITY_TESTS.get(capability)
     if check is None:
         # Cannot happen while the accept-list is derived from this table, and
@@ -2110,6 +2141,9 @@ async def get_provider_status(_: User = Depends(get_current_admin)):
     the moment a town configured email.
     """
     from app.core.sanitize import sanitize_for_log
+    from app.services import capability_switches
+
+    switches = await capability_switches.all_enabled()
 
     out: Dict[str, Any] = {}
     for capability in _PROVIDER_SELECT_KEY:
@@ -2118,15 +2152,28 @@ async def get_provider_status(_: User = Depends(get_current_admin)):
             providers = await providers_for(capability)
             current = await effective_provider_for(capability)
             configured = await _configured_map(providers)
+            wanted = switches.get(capability, True)
             out[capability] = {
                 "current_provider": current,
                 "configured": configured,
+                # The third fact, and the one the page could not previously get
+                # from anywhere.
+                #
+                # Deliberately not folded into `current_provider` or into
+                # `configured`. "Switched off" and "not set up" were
+                # indistinguishable, so a town that saved an AI key and then
+                # decided not to use AI got a card that said it had never been
+                # configured -- and the obvious response to that is to paste the
+                # key in again. Reported alongside `configured` rather than
+                # instead of it, so the card can say switched off *and* that the
+                # credentials are still there.
+                "enabled": wanted,
                 # Off is not unfinished. A town that has deliberately switched
                 # text messages off has answered the question, and a checklist
                 # that keeps asking is one people learn to ignore -- but it is
                 # not set up either, so this is False and the page says
                 # "switched off" rather than ticking it.
-                "ready": bool(current) and configured.get(current, False),
+                "ready": wanted and bool(current) and configured.get(current, False),
             }
         except Exception as exc:
             # One capability failing to report must not blank the other seven.
@@ -2135,7 +2182,43 @@ async def get_provider_status(_: User = Depends(get_current_admin)):
             # something already done rather than skipping something that isn't.
             logger.warning("provider status failed for %s: %s",
                            sanitize_for_log(capability), sanitize_for_log(str(exc)))
+
+    # The two switchable things with no provider catalog behind them. They have
+    # no entry above because there is no vendor to pick, and leaving them out
+    # would mean the page had to hold their answer somewhere else -- which is
+    # what it was doing, in React state that never reached the server.
+    for extra in ("backups", "errors"):
+        out[extra] = {"enabled": switches.get(extra, True)}
     return out
+
+
+class CapabilitySwitchRequest(BaseModel):
+    """A partial map: only the switches the caller is changing.
+
+    Partial on purpose. The questionnaire posts the one chip that was clicked,
+    and a town that has never been asked about photo redaction must not acquire
+    an answer to it because somebody unticked backups.
+    """
+
+    switches: Dict[str, bool]
+
+
+@router.put("/capabilities")
+async def set_capability_switches(
+    body: CapabilitySwitchRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Record which integrations the town wants, credentials aside.
+
+    There was no endpoint for this because there was no such fact. The setup
+    page held the answer in a `Set<string>` initialised to every feature, so
+    unticking one hid part of the guide, survived nothing, and switched nothing
+    off -- while the page's own copy said "untick to remove it".
+    """
+    from app.services import capability_switches
+
+    return {"switches": await capability_switches.set_enabled(db, body.switches)}
 
 
 @router.get("/providers/cloud-identity")
