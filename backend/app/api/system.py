@@ -252,12 +252,20 @@ async def effective_provider_for(capability: str) -> Optional[str]:
         from app.services.secret_manager import _secrets_provider
         from app.services.storage_maintenance import store_reachable
 
+        chosen = _secrets_provider()
+        # Nothing has been chosen. Not "database" -- a town that has not
+        # answered the question has not chosen the database either, and saying
+        # it had would tick the box the setup gate exists to hold open.
+        if not chosen:
+            return None
+        if chosen == "database":
+            return "database"
         # An unreachable store means credentials are in the encrypted database,
         # which is a supported place for them to be and a different provider
         # from the one that was selected. Saying "Google Secret Manager" about a
         # town whose secrets are all in Postgres is the kind of confident wrong
         # answer this pass is removing.
-        return _secrets_provider() if store_reachable() else "database"
+        return chosen if store_reachable() else "database"
 
     if capability in ("email", "sms", "kms"):
         from app.services.delivery_providers import normalize_provider
@@ -855,6 +863,53 @@ async def _vaulted_key_names() -> set:
         return set()
 
 
+def _require_a_secret_store() -> None:
+    """Refuse a credential until the town has said where credentials go.
+
+    Not tidiness. `_persist_secret` falls back to the encrypted database when
+    the external store is unreachable, and says so (`db_only`). `vault_secrets`
+    later sweeps those into the store and scrubs the database copy -- on a
+    schedule, and again after every provider save -- so the live database heals
+    itself and the whole thing looks harmless.
+
+    Database *backups* taken inside that window do not heal. They keep the
+    plaintext-equivalent row forever and they go off-site: a pg_dump of this
+    instance contains `COPY public.system_secrets (id, key_name, key_value,
+    ...)`. Sweeping the live row reaches nothing that has already been dumped.
+    So the credential has to not be written until somebody has decided where it
+    belongs.
+
+    The gate is on the *choice*, not on standing up a cloud vault. The encrypted
+    database is one of the four answers, the on-screen copy says what that means
+    for backups, and a town whose cloud procurement is unfinished is not dead-
+    ended. What must not happen is a town landing there without being asked.
+    """
+    from app.services.secret_manager import SECRET_STORES, store_chosen
+
+    if store_chosen():
+        return
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "Choose where this town's credentials are kept before entering any. "
+            "Until that is answered a credential is written to the encrypted "
+            "database, and any backup taken before it is moved keeps a copy that "
+            "moving it cannot reach. Pick a store in Setup Instructions — the "
+            "encrypted database is one of the answers."
+        ),
+        headers={"X-Pinpoint-Secret-Stores": ",".join(SECRET_STORES)},
+    )
+
+
+# Settings that record where credentials go, rather than being one.
+#
+# The gate above cannot apply to these or nothing could ever get through it, and
+# `SECRETS_PROVIDER` in particular must never be written into the store it
+# names: that is circular, and a town whose store became unreadable would have
+# no way to find out which store it was.
+_STORE_CHOICE_KEYS = {"SECRETS_PROVIDER"}
+
+
 async def _persist_secret(db: AsyncSession, key_name: str, value: str) -> bool:
     """Write a secret to the configured store and keep an encrypted DB copy.
 
@@ -886,9 +941,12 @@ async def _persist_secret(db: AsyncSession, key_name: str, value: str) -> bool:
     # Stripping here rather than at each reader, because a value that differs
     # depending on who asks is the thing that made this hard to see.
     value = (value or "").strip()
-    # These two are deliberately database-only: they are what makes the secret
-    # store reachable in the first place, so storing them in it is circular.
-    bootstrap_keys = {"GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT"}
+    # Deliberately database-only: these are what makes the secret store
+    # reachable in the first place, or say which store it is, so putting them in
+    # it is circular. `SECRETS_PROVIDER` was going through the normal path and
+    # relying on DB_REQUIRED_KEYS to keep its database copy from being scrubbed
+    # -- which worked, and still wrote the name of the store into the store.
+    bootstrap_keys = {"GCP_SERVICE_ACCOUNT_JSON", "GOOGLE_CLOUD_PROJECT"} | _STORE_CHOICE_KEYS
     stored_externally = key_name in bootstrap_keys
     if value and key_name not in bootstrap_keys:
         try:
@@ -960,6 +1018,11 @@ async def save_provider(
             "new store's credentials first, let the hourly migration copy them across, and "
             "change the store after that."
         ))
+    # Before anything is written, and before the provider selection too: a save
+    # that recorded "we have decided on Twilio" and then refused the account SID
+    # would leave the card describing a decision with no credentials behind it.
+    if body.settings:
+        _require_a_secret_store()
     catalog = _capability_catalog(capability)
     provider_id = (body.provider or "").strip().lower()
     if provider_id not in catalog:
@@ -2192,6 +2255,95 @@ async def get_provider_status(_: User = Depends(get_current_admin)):
     return out
 
 
+class SecretStoreChoice(BaseModel):
+    store: str
+
+
+@router.get("/secrets/store")
+async def get_secret_store_choice(_: User = Depends(get_current_admin)):
+    """Where this town's credentials are kept, and whether anyone said so.
+
+    `chosen: false` is the state the setup gate holds open. It used to be
+    unreachable, because `_secrets_provider()` answered "google" for a town that
+    had never been asked -- so the page could not tell a deliberate choice of
+    Google Secret Manager from silence, and neither could the code.
+    """
+    from app.services.secret_manager import SECRET_STORES, _secrets_provider, store_chosen
+    from app.services.storage_maintenance import store_reachable
+
+    chosen = store_chosen()
+    return {
+        "chosen": chosen,
+        "store": _secrets_provider() or None,
+        "options": list(SECRET_STORES),
+        # Whether the store the town picked can actually be contacted. Not the
+        # same question, and not a blocker: choosing a vault whose credentials
+        # have not arrived yet is a real state, and the credentials that make it
+        # reachable are entered on this same page.
+        "reachable": store_reachable(),
+    }
+
+
+@router.post("/secrets/store")
+async def choose_secret_store(
+    body: SecretStoreChoice,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """Record where this town's credentials go. Once, deliberately.
+
+    Set-once, and the refusal to change it is the same reasoning that makes the
+    secret store card read-only: every credential the town has is in the current
+    store, and repointing this setting does not move them. A second choice here
+    would be one click that makes every other card unreadable. Moving stores is
+    the cloud-profile flow, which migrates first.
+
+    `database` is accepted like the other three. The encrypted database is a
+    supported store, and a town whose cloud procurement is unfinished must be
+    able to get on with setup -- the gate is about consent, not capability. What
+    it must not be is where a town arrives without being asked, which is what it
+    was.
+    """
+    from app.services.secret_manager import SECRET_STORES, _secrets_provider, store_chosen
+
+    store = (body.store or "").strip().lower()
+    if store not in SECRET_STORES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown secret store: {body.store}. Expected one of: {', '.join(SECRET_STORES)}.",
+        )
+
+    current = _secrets_provider()
+    if store_chosen() and current != store:
+        raise HTTPException(status_code=409, detail=(
+            f"This town's credentials are in {current}. Repointing this setting does not "
+            f"move them, so every card would stop being able to read its own key. Set up "
+            f"the new store's credentials, let the migration copy them across, and change "
+            f"the store after that."
+        ))
+
+    if os.getenv("SECRETS_PROVIDER"):
+        # The host pinned it. Saying so beats accepting a write that the reader
+        # will go on ignoring, which is the shape of every bug in this area.
+        raise HTTPException(status_code=409, detail=(
+            "The secret store is pinned by this deployment's SECRETS_PROVIDER environment "
+            "variable, so it cannot be changed from here."
+        ))
+
+    await _persist_secret(db, "SECRETS_PROVIDER", store)
+
+    # Recorded, because "we knowingly chose the encrypted database" is exactly
+    # the kind of decision somebody will need to point at later -- and because
+    # the whole reason for the gate is that nobody could tell a choice from a
+    # default.
+    from app.services.admin_audit import record_admin_action
+
+    await record_admin_action(
+        db, event_type="secret_store.choose", actor=admin, details={"store": store},
+    )
+    return await get_secret_store_choice(admin)
+
+
 class CapabilitySwitchRequest(BaseModel):
     """A partial map: only the switches the caller is changing.
 
@@ -2557,6 +2709,12 @@ async def create_or_update_secret(
     from app.services.secret_manager import set_secret, clear_cache
 
     reject_platform_key_writes(secret_data.key_name)
+    # The other door into the secret table. Gating only the provider cards would
+    # leave the plain credential fields -- backups, crash reporting, the Google
+    # account -- writing into the encrypted database with nobody having chosen
+    # it, which is the case the gate exists for.
+    if secret_data.key_name not in _STORE_CHOICE_KEYS:
+        _require_a_secret_store()
 
     # Same reason as `_persist_secret`: surrounding whitespace is never part of
     # a credential, and this is the endpoint the plain secret fields on the

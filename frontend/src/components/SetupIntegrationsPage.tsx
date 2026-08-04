@@ -20,6 +20,7 @@ import { buildPlan, summarise, nameList, BACKUP_SECRETS, SENTRY_SECRETS } from '
 // render them inline rather than pointing at the cards that do.
 import './setupStepsContent';
 import StorageStatusLine from './StorageStatusLine';
+import SecretStoreGate from './SecretStoreGate';
 import SecretField from './SecretField';
 import { openStayInformed } from './StayInformed';
 
@@ -1047,6 +1048,13 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                         the steps say exactly where to click.
                                     </p>
                                 </div>
+
+                                {/* Above the questions, because it gates them.
+                                    Nothing below accepts a credential until it
+                                    is answered, and a form that refuses a save
+                                    without saying why in advance is worse than
+                                    one that asks first. */}
+                                <SecretStoreGate onChosen={() => setProviderRefresh(t => t + 1)} />
 
                                 <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
                                     <p className="text-sm font-semibold text-white mb-0.5">Answer a few questions and we will hide the rest</p>

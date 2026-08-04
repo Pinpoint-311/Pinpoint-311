@@ -54,11 +54,22 @@ def _pii_columns():
 
 
 def store_reachable() -> bool:
-    """Whether the configured secret store can be contacted right now."""
+    """Whether there is an external secret store to move credentials into.
+
+    False for the encrypted database, and that is not a failure. It is where the
+    credentials already are, so there is nothing for `vault_secrets` to move and
+    nothing for it to scrub -- which is the behaviour a town that chose the
+    database asked for.
+
+    False, too, when no store has been chosen. Sweeping credentials into a store
+    nobody picked is the accidental-default this pass removes.
+    """
     try:
         from app.services.secret_manager import _is_gcp_available, _secrets_provider
 
         provider = _secrets_provider()
+        if provider in ("", "database"):
+            return False
         if provider == "azure":
             from app.core import azure_keyvault
             return azure_keyvault.is_configured()
