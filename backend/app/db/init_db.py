@@ -292,8 +292,12 @@ async def seed_database():
             township_name="Your Township",
             hero_text="How can we help?",
             primary_color="#6366f1",
-            modules={"ai_analysis": False, "sms_alerts": False,
-                     "email_notifications": True, "unlisted_reports": False}
+            # Only what has no provider behind it. Anything with credentials and
+            # a card is switched in `capability_switches`, which starts empty --
+            # a fresh install has answered nothing, and an empty map reads as
+            # "not answered" rather than as "off".
+            modules={"unlisted_reports": False, "research_portal": False},
+            capability_switches={},
         )
         db.add(settings_obj)
         

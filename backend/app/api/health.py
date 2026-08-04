@@ -197,6 +197,33 @@ async def check_secret_manager(db: AsyncSession) -> Dict[str, Any]:
         from app.services.storage_maintenance import store_reachable
 
         provider = _secrets_provider()
+        if not provider:
+            # A town that has not been asked yet. Reported rather than guessed:
+            # this used to answer "Google Secret Manager accessible" about a
+            # store nobody had chosen, which is the confident wrong answer the
+            # setup gate exists to stop.
+            return {
+                "status": "not_configured",
+                "store": None,
+                "message": (
+                    "No secret store has been chosen, so no credential can be saved. "
+                    "Pick one in Setup & Integrations — the encrypted database is one "
+                    "of the answers."
+                ),
+            }
+        if provider == "database":
+            # Chosen, working, and nothing to migrate. Not "not_configured":
+            # the encrypted database is a supported store and this town said so.
+            return {
+                "status": "healthy",
+                "store": "database",
+                "message": (
+                    "Credentials are encrypted in this deployment's own database, as "
+                    "chosen. Anything that can read a database backup can read them, "
+                    "so keep backups where the town keeps its other secrets."
+                ),
+            }
+
         label = {"azure": "Azure Key Vault", "aws": "AWS Secrets Manager"}.get(
             provider, "Google Secret Manager")
 

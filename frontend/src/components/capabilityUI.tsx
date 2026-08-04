@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Check, AlertCircle, CircleDashed, HelpCircle, ChevronDown, Loader2 } from 'lucide-react';
+import { Check, AlertCircle, CircleDashed, HelpCircle, ChevronDown, Loader2, PowerOff } from 'lucide-react';
 
 /**
  * The shared vocabulary for a capability, wherever it appears.
@@ -42,7 +42,8 @@ export type CapabilityState =
     | 'failing'      // a live check failed, and we have the provider's words
     | 'unchecked'    // configured, but nothing has exercised it
     | 'unverifiable' // configured, and there is no way to check it from here
-    | 'unset'        // deliberately not set up
+    | 'off'          // the town does not want this, whatever is stored
+    | 'unset'        // nothing has been set up
     | 'done'         // setup finished (the guide's version of working)
     | 'todo';        // setup outstanding
 
@@ -76,6 +77,18 @@ const PILL: Record<CapabilityState, { cls: string; label: string; Icon: typeof C
     unverifiable: {
         cls: 'bg-white/[0.07] text-white/70 border-white/15',
         label: 'Set up · we cannot test this one', Icon: HelpCircle,
+    },
+    /* Not a fault, and not an omission.
+     *
+     * "I do not want this" and "I have not got round to this" were the same
+     * badge, which made a deliberate decision look like unfinished work -- and
+     * the obvious response to unfinished work is to go and paste the credential
+     * in again, which is exactly what a town that had just switched something
+     * off did not mean to do. Quieter than `unset` rather than louder: there is
+     * nothing here to act on. */
+    off: {
+        cls: 'bg-white/[0.04] text-white/50 border-white/10',
+        label: 'Switched off', Icon: PowerOff,
     },
     unset: {
         cls: 'bg-white/[0.05] text-white/55 border-white/12',

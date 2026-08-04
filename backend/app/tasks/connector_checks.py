@@ -51,6 +51,14 @@ def probe_system():
     async def run():
         from app.db.session import SessionLocal
         from app.services.connector_alerts import dispatch
+        from app.services import capability_switches
+
+        # Keeps `wanted_sync` current in this process. Sentry's `before_send`
+        # cannot await a database read, so it answers from the last map anything
+        # here happened to load -- and a process whose job is probing may never
+        # dispatch a notification, which is what otherwise refreshes it.
+        await capability_switches.refresh_snapshot()
+
         async with SessionLocal() as db:
             # Alerting is handed in rather than left to a second scheduled job.
             # A probe that records a full disk and does not send the email is

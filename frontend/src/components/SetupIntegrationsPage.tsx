@@ -20,6 +20,7 @@ import { buildPlan, summarise, nameList, BACKUP_SECRETS, SENTRY_SECRETS } from '
 // render them inline rather than pointing at the cards that do.
 import './setupStepsContent';
 import StorageStatusLine from './StorageStatusLine';
+import SecretStoreGate, { SECRET_STORE_GATE_ID } from './SecretStoreGate';
 import SecretField from './SecretField';
 import { openStayInformed } from './StayInformed';
 
@@ -111,6 +112,35 @@ const FEATURES = [
 
 const ALL_FEATURES: readonly string[] = FEATURES.map(([id]) => id);
 
+/* Feature id -> capability id. The one mapping between the two vocabularies.
+ *
+ * At module scope because the persistence layer needs it too: a chip is
+ * "Screening and blurring" and the thing that gets switched off is `redaction`,
+ * and the toggle handler has to translate before it can post. It was declared
+ * inside the component, where nothing outside the render could reach it.
+ *
+ * Every id on both sides is the same word where it can be. The key-management
+ * tick was `secrets`, which became ambiguous the moment the secret store
+ * became a capability of its own -- one line of this object would have read
+ * `secrets: 'kms'` next to a real `secrets` capability meaning somewhere else
+ * entirely.
+ *
+ * `backups` and `errors` are absent: they are switchable, but they have no
+ * provider catalog and no capability, so they are carried under their own ids.
+ * The secret store is absent for the opposite reason -- it is not a feature a
+ * town ticks on, because every credential entered on this page is kept
+ * somewhere.
+ *
+ * Redaction used to hang off the `moderation` tick, which was wrong in both
+ * directions: unticking "content moderation" silently hid face blurring, and
+ * there was no way to have blurring without it. They are different decisions --
+ * one screens what a resident wrote, the other blurs a bystander who never
+ * wrote anything -- so they are separate ticks. */
+const FEATURE_TO_CAPABILITY: Record<string, Capability> = {
+    ai: 'ai', translation: 'translation', email: 'email',
+    sms: 'sms', kms: 'kms', safety: 'redaction',
+};
+
 function Ask({ n, label, hint, children }: {
     n: number; label: string; hint?: string; children: React.ReactNode;
 }) {
@@ -201,20 +231,18 @@ export function seedAnswersFrom(status: ProviderStatusMap | null): SeededAnswers
     };
 }
 
-interface ModulesState {
-    ai_analysis: boolean;
-    sms_alerts: boolean;
-    email_notifications: boolean;
-    research_portal: boolean;
-    unlisted_reports: boolean;
-}
-
+/* No `modules` prop any more.
+ *
+ * This page took one so that saving a Google project could switch
+ * `modules.ai_analysis` on -- reaching across to the System Settings screen to
+ * flip one of the two switches the same capability had. It owns the only switch
+ * now, and does not need the other screen's state to use it. `modules` keeps
+ * `unlisted_reports` and `research_portal`, which have no provider, no
+ * credentials and nothing to do with this page. */
 interface SetupIntegrationsPageProps {
     secrets: SystemSecret[];
     onSaveSecret: (key: string, value: string) => Promise<void>;
     onRefresh: () => void;
-    modules?: ModulesState;
-    onUpdateModules?: (modules: ModulesState) => Promise<void>;
 }
 
 
@@ -237,15 +265,15 @@ interface SetupIntegrationsPageProps {
  * that does not exist.
  */
 function GoogleAccountFields({
-secretValues, setSecretValues, handleSave, savingKey, isConfigured, modules, onUpdateModules,
+secretValues, setSecretValues, handleSave, savingKey, isConfigured, onWantAi,
 }: {
 secretValues: Record<string, string>;
 setSecretValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 handleSave: (key: string) => Promise<void>;
 savingKey: string | null;
 isConfigured: (key: string) => boolean | undefined;
-modules: any;
-onUpdateModules?: (m: any) => Promise<void>;
+/** Switch AI on, because a town that just entered a Google project meant to. */
+onWantAi: () => Promise<void>;
 }) {
     const jsonKey = 'GCP_SERVICE_ACCOUNT_JSON';
     const [showKms, setShowKms] = useState(false);
@@ -340,10 +368,16 @@ onUpdateModules?: (m: any) => Promise<void>;
                     type="button"
                     onClick={async () => {
                         for (const k of pending) await handleSave(k);
-                        // AI cannot run without this, so having entered it
-                        // and left the module off is never what was meant.
-                        if (modules && onUpdateModules && secretValues['GOOGLE_CLOUD_PROJECT'] && !modules.ai_analysis) {
-                            await onUpdateModules({ ...modules, ai_analysis: true });
+                        /* AI cannot run without this, so having entered it and
+                           left AI switched off is never what was meant.
+
+                           This used to flip `modules.ai_analysis`, on the other
+                           screen, which was one of two switches for the same
+                           capability -- so it could turn AI on there while the
+                           tick on this very page still said the town did not
+                           want it. One switch now, and this is it. */
+                        if (secretValues['GOOGLE_CLOUD_PROJECT']) {
+                            await onWantAi();
                         }
                     }}
                     disabled={pending.length === 0 || savingKey !== null}
@@ -363,8 +397,46 @@ onUpdateModules?: (m: any) => Promise<void>;
 }
 
 
-export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh, modules, onUpdateModules }: SetupIntegrationsPageProps) {
+/**
+ * Credential entry, greyed out until somebody has said where credentials go.
+ *
+ * A `fieldset` rather than a `disabled` prop threaded through four components.
+ * The credential surfaces on this page are `SetupWizard`, `ServiceProviders`,
+ * `InlineProviderSetup` and the page's own fields, and the browser already
+ * disables every control inside a disabled fieldset -- so this cannot be missed
+ * by a component that forgot to forward the prop, which is the failure mode a
+ * prop would have.
+ *
+ * Not the enforcement. `_require_a_secret_store` returns 409 regardless; this
+ * only stops the page from looking like it will accept a key when it will not.
+ * When there is nothing to lock the children render bare, so the ordinary case
+ * has no extra element in the tree.
+ */
+export function LockedUntilStoreChosen({ locked, children }: {
+    locked: boolean;
+    children: React.ReactNode;
+}) {
+    if (!locked) return <>{children}</>;
+    return (
+        <fieldset
+            disabled
+            aria-describedby={SECRET_STORE_GATE_ID}
+            className="m-0 p-0 border-0 min-w-0 opacity-60"
+        >
+            {children}
+        </fieldset>
+    );
+}
+
+
+export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh }: SetupIntegrationsPageProps) {
     const [secretValues, setSecretValues] = useState<Record<string, string>>({});
+    /**
+     * Null until the gate reports. Not `false`, because assuming unchosen would
+     * grey out the whole page for the half-second before the request lands --
+     * and on the towns that have already chosen, which is most of them.
+     */
+    const [storeChosen, setStoreChosen] = useState<boolean | null>(null);
     const [savingKey, setSavingKey] = useState<string | null>(null);
     // The backup passphrase is generated rather than invented, shown once, and
     // gated on someone confirming they have put a copy somewhere else. See the
@@ -372,14 +444,24 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [backupKey, setBackupKey] = useState<string | null>(null);
     const [backupKeyAcknowledged, setBackupKeyAcknowledged] = useState(false);
 
-    /* The guide starts open on a fresh install and closed once the required
-     * integrations are in. It is a first-run document: hidden behind a click it
-     * is missed by the person who needs it most, and left open forever it pushes
-     * the actual controls off the screen for everyone else.
+    /* The guide starts open until somebody says setup is finished, and closed
+     * after that. It is a first-run document: hidden behind a click it is missed
+     * by the person who needs it most, and left open forever it pushes the
+     * actual controls off the screen for everyone else.
+     *
+     * It used to open on `!signInConfigured || !mapsConfigured`, which is "is
+     * everything set up" wearing a disguise. That never goes true for a town
+     * that deliberately switches most things off, and a guide that greets you on
+     * every login forever is one people stop reading. Being finished is a thing
+     * a person says; `setupDone` is where they said it.
      *
      * null means "not decided yet" so the effect below can set it once the
      * config has loaded, without overriding a deliberate click afterwards. */
     const [expandedGuide, setExpandedGuide] = useState<string | null>(null);
+    /* undefined until the server answers. Deciding before then would throw the
+     * guide open at a town that finished setup a year ago. */
+    const [setupDone, setSetupDone] = useState<boolean | undefined>(undefined);
+    const [finishing, setFinishing] = useState(false);
     const guideAutoSet = useRef(false);
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
@@ -388,21 +470,50 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [setupCloud, setSetupCloud] = useState<'google' | 'azure' | 'aws'>('google');
     const [setupIdp, setSetupIdp] = useState<'auth0' | 'entra' | 'okta' | 'oidc'>('auth0');
     const [setupMaps, setSetupMaps] = useState<'google' | 'esri' | 'azure' | 'apple'>('google');
-    /* Everything on, untick to hide.
+    /* What the town wants, held here only as a mirror of what the server says.
      *
-     * This started as opt-in with three ticked, which quietly set the default
-     * for every town that never touched it: a page that asks what you want,
-     * pre-answered "not much". A town that never opens this question should end
-     * up with the whole platform switched on, not the three we happened to
-     * pre-tick -- so the list below is every feature, and a town removes what
-     * it genuinely does not want. */
+     * This used to be the whole of it: `useState(new Set(ALL_FEATURES))`, never
+     * read from anywhere and never written anywhere. So unticking a feature hid
+     * a section of the guide, survived until the next reload, and switched
+     * nothing off -- while the label directly above it read "untick to remove
+     * it". A town could not express "I saved an AI key and I am not using it",
+     * and the only way to stop a configured capability was to delete the
+     * credential it had just been asked to paste in.
+     *
+     * The initial value stays "everything", and that is a loading state rather
+     * than a default: the effect below replaces it as soon as the server
+     * answers. Erring towards showing a step nobody needs beats hiding one
+     * somebody does.
+     *
+     * Optimistic on click, corrected by the response. A tick that waits for a
+     * round trip reads as a broken button, and the failure path matters more
+     * than the latency: if the write is refused, the chip must go back rather
+     * than sit there claiming an answer the server does not have. */
     const [wantedFeatures, setWantedFeatures] = useState<Set<string>>(new Set(ALL_FEATURES));
-    const toggleFeature = (f: string) =>
+    const [switchError, setSwitchError] = useState<string | null>(null);
+    const toggleFeature = async (f: string) => {
+        const wantedNow = !wantedFeatures.has(f);
+        const before = wantedFeatures;
         setWantedFeatures(prev => {
             const next = new Set(prev);
-            next.has(f) ? next.delete(f) : next.add(f);
+            wantedNow ? next.add(f) : next.delete(f);
             return next;
         });
+        setSwitchError(null);
+        try {
+            /* Sent per capability, not per feature id, because the server keys
+             * the switch by capability -- `safety` is the question a clerk is
+             * asked and `redaction` is the thing that gets switched off.
+             * `backups` and `errors` have no capability and no card, and are
+             * carried under their own ids. */
+            const capability = FEATURE_TO_CAPABILITY[f] ?? f;
+            await api.setCapabilitySwitches({ [capability]: wantedNow });
+            setProviderRefresh(t => t + 1);
+        } catch (err: any) {
+            setWantedFeatures(before);
+            setSwitchError(err?.message || 'That could not be saved. Nothing has changed.');
+        }
+    };
     const wants = (f: string) => wantedFeatures.has(f);
 
 
@@ -438,27 +549,8 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const redactionProvider = redactionOverride ?? setupCloud;
 
 
-    /* The setup questions are asked in feature terms ("AI triage", "Secret
-     * storage + PII encryption") and the provider cards are keyed by
-     * capability. This is the one mapping between them, and every id on both
-     * sides is now the same word: the key-management tick was `secrets`, which
-     * became ambiguous the moment the secret store became a capability of its
-     * own -- one line of this object would have read `secrets: 'kms'` next to a
-     * real `secrets` capability meaning somewhere else entirely.
-     *
-     * The secret store is deliberately absent. It is not a feature a town ticks
-     * on: every credential entered on this page is kept somewhere, so its card
-     * is always shown rather than gated on a question.
-     *
-     * Redaction used to hang off the `moderation` tick, which was wrong in both
-     * directions: unticking "content moderation" silently hid face blurring,
-     * and there was no way to have blurring without it. They are different
-     * decisions -- one screens what a resident wrote, the other blurs a
-     * bystander who never wrote anything -- so they are now separate ticks. */
-    const FEATURE_TO_CAPABILITY: Record<string, Capability> = {
-        ai: 'ai', translation: 'translation', email: 'email',
-        sms: 'sms', kms: 'kms', safety: 'redaction',
-    };
+    /* Which capability cards the page shows, from the ticks above. See
+     * FEATURE_TO_CAPABILITY at the top of the file for the vocabulary. */
     const wantedCapabilities = new Set<Capability>(
         Object.entries(FEATURE_TO_CAPABILITY)
             .filter(([feature]) => wantedFeatures.has(feature))
@@ -534,6 +626,27 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         if (seed.email) setEmailOverride(seed.email);
         if (seed.sms) setSmsOverride(seed.sms);
         if (seed.redaction) setRedactionOverride(seed.redaction);
+    }, [providerStatus]);
+
+    /* The ticks, from the server, every time it answers.
+     *
+     * Not seeded once like the pickers above. Those are a plan a clerk may be
+     * making for a provider they have not moved to yet, so the answer is theirs
+     * after the first load. These are the live state of the town -- a tick here
+     * switches a capability off in the backend -- so the server's answer is the
+     * answer, and re-reading it after every save is what stops the chips and the
+     * cards below drifting apart.
+     *
+     * An absent `enabled` is treated as on. It means the endpoint did not say,
+     * which must not read as "the town switched this off". */
+    useEffect(() => {
+        if (!providerStatus) return;
+        setWantedFeatures(new Set(
+            ALL_FEATURES.filter(f => {
+                const capability = FEATURE_TO_CAPABILITY[f] ?? f;
+                return providerStatus[capability]?.enabled !== false;
+            }),
+        ));
     }, [providerStatus]);
     useEffect(() => {
         fetch('/api/system/config')
@@ -687,14 +800,34 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const completedCount = setupSteps.filter(s => s.done).length;
 
     useEffect(() => {
-        // secrets arrives as a prop; an empty array means it has not loaded yet.
-        // Provider status likewise: this fires once, so deciding before the
-        // answer arrives would throw the guide open at a town that has
-        // everything set up, and never reconsider.
-        if (guideAutoSet.current || secrets.length === 0 || !providerStatus) return;
+        api.getSetupState()
+            .then(s => setSetupDone(!!s.completed))
+            /* Unknown is not "unfinished". A failed request must not throw the
+             * guide open over the top of a console somebody is trying to use. */
+            .catch(() => setSetupDone(true));
+    }, []);
+
+    useEffect(() => {
+        // Fires once, and only once the server has said. Deciding earlier would
+        // open the guide at a town that finished setup long ago and then never
+        // reconsider, because this does not run again.
+        if (guideAutoSet.current || setupDone === undefined) return;
         guideAutoSet.current = true;
-        if (!signInConfigured || !mapsConfigured) setExpandedGuide('master');
-    }, [secrets.length, providerStatus, signInConfigured, mapsConfigured]);
+        if (!setupDone) setExpandedGuide('master');
+    }, [setupDone]);
+
+    const finishSetup = async () => {
+        setFinishing(true);
+        try {
+            await api.markSetupComplete();
+            setSetupDone(true);
+            setExpandedGuide(null);
+        } catch (err: any) {
+            setSaveMessage(`❌ ${err?.message || 'That could not be saved'}`);
+        } finally {
+            setFinishing(false);
+        }
+    };
 
     // Toggle helper for collapsible instruction panels
     const toggleGuide = (id: string) => setExpandedGuide(prev => prev === id ? null : id);
@@ -773,7 +906,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 <GoogleAccountFields
                     secretValues={secretValues} setSecretValues={setSecretValues}
                     handleSave={handleSave} savingKey={savingKey} isConfigured={isConfigured}
-                    modules={modules} onUpdateModules={onUpdateModules}
+                    onWantAi={async () => { if (!wants('ai')) await toggleFeature('ai'); }}
                 />
             </>}
             {cloud === 'azure' && <>
@@ -1046,6 +1179,16 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     </p>
                                 </div>
 
+                                {/* Above the questions, because it gates them.
+                                    Nothing below accepts a credential until it
+                                    is answered, and a form that refuses a save
+                                    without saying why in advance is worse than
+                                    one that asks first. */}
+                                <SecretStoreGate
+                                    onChosen={() => setProviderRefresh(t => t + 1)}
+                                    onState={setStoreChosen}
+                                />
+
                                 <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
                                     <p className="text-sm font-semibold text-white mb-0.5">Answer a few questions and we will hide the rest</p>
                                     <p className="text-white/50 text-xs mb-3">Sign-in and maps are always shown — a town needs both before it can take a report.</p>
@@ -1077,6 +1220,20 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                                 </button>
                                             ))}
                                         </div>
+                                        {/* Said here rather than as a toast.
+                                            A chip that springs back with no
+                                            explanation is indistinguishable
+                                            from a misclick, and the answer to
+                                            "did that save" has to be beside
+                                            the thing that did not. */}
+                                        {switchError && (
+                                            <p role="alert" className="text-[11px] text-amber-200/85 mt-2">{switchError}</p>
+                                        )}
+                                        <p className="text-[11px] text-white/45 mt-2">
+                                            Unticking one switches it off and stops it running. Anything you
+                                            have already entered stays saved — switch it back on and it works
+                                            as it did.
+                                        </p>
                                     </Ask>
 
                                     <Ask
@@ -1154,6 +1311,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     )}
                                 </div>
 
+                                <LockedUntilStoreChosen locked={storeChosen === false}>
                                 <SetupWizard
                                     cloud={setupCloud}
                                     idp={setupIdp}
@@ -1174,6 +1332,43 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     publicOrigin={publicOrigin}
                                     renderFoundation={renderFoundation}
                                 />
+                                </LockedUntilStoreChosen>
+
+                                {/* The only way the guide stops opening itself.
+                                  *
+                                  * Not gated on the checklist being green, and
+                                  * not hidden until it is. Two things are
+                                  * actually required before a town can take a
+                                  * report and the panel above says which; a
+                                  * town that has deliberately switched
+                                  * everything else off is finished, and a guide
+                                  * that will not let go until a count reaches
+                                  * zero is the thing standing between somebody
+                                  * and their console.
+                                  *
+                                  * The tab is still here afterwards, and this
+                                  * panel still opens on a click. All this
+                                  * settles is what happens on sign-in. */}
+                                {setupDone === false && (
+                                    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 flex flex-wrap items-center gap-3">
+                                        <div className="min-w-0 flex-1">
+                                            <p className="text-sm font-semibold text-white">Finished for now?</p>
+                                            <p className="text-white/50 text-xs mt-0.5">
+                                                This guide opens by itself every time you sign in until you say so. You can
+                                                come back to it from this tab whenever you like, and anything still
+                                                outstanding stays listed on the cards below.
+                                            </p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={finishSetup}
+                                            disabled={finishing}
+                                            className="inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-semibold text-white bg-primary-500 hover:bg-primary-400 border border-primary-400/50 transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                                        >
+                                            {finishing ? 'Saving…' : "I'm done with setup"}
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         </motion.div>
                     )}
@@ -1196,8 +1391,14 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 it once removes the steps and the inputs together rather than
                 leaving inputs for providers whose instructions are hidden. */}
             <div id="sec-providers">
+                <LockedUntilStoreChosen locked={storeChosen === false}>
                 <ServiceProviders
                     show={wantedCapabilities}
+                    /* So a switched-off capability can say its credentials are
+                       still there. No card is drawn for one, so nothing else
+                       fetches its catalog and the section would otherwise have
+                       to guess. */
+                    statusMap={providerStatus}
                     /* Backups and crash reporting are features without a
                        provider catalog, so they are not in CAPS and could never
                        show up as switched off -- which is the pair somebody is
@@ -1265,6 +1466,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         </div>
                     }
                 />
+                </LockedUntilStoreChosen>
             </div>
 
 

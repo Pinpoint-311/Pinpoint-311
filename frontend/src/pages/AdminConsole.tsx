@@ -21,7 +21,6 @@ import {
     AlertTriangle,
     RotateCcw,
     Mail,
-    MessageSquare,
     Building2,
     ExternalLink,
     GitFork,
@@ -828,8 +827,17 @@ export default function AdminConsole() {
     const [secrets, setSecrets] = useState<SystemSecret[]>([]);
 
 
-    // Modules state
-    const [modules, setModules] = useState({ ai_analysis: false, sms_alerts: false, email_notifications: false, research_portal: false, unlisted_reports: false });
+    /* Modules state: product features with nothing to configure.
+     *
+     * `ai_analysis`, `sms_alerts` and `email_notifications` used to be here.
+     * They were a second answer to a question the setup page also owned -- and
+     * for email and SMS a third, because dispatch read EMAIL_ENABLED and
+     * SMS_ENABLED as well. Three switches for one capability is how a town
+     * could turn texting off in one place and have it keep sending from
+     * another. They live in `capability_switches` now, with the ticks in Setup
+     * Instructions; what is left here has no provider, no credentials and
+     * nothing to switch off at the dispatch layer. */
+    const [modules, setModules] = useState({ research_portal: false, unlisted_reports: false });
 
     // Maps tab state
     const [mapsRaw, setMapsRaw] = useState<RawMapsConfig | null>(null);
@@ -1016,9 +1024,6 @@ export default function AdminConsole() {
                 social_links: settings.social_links || [],
             });
             setModules({
-                ai_analysis: settings.modules?.ai_analysis || false,
-                sms_alerts: settings.modules?.sms_alerts || false,
-                email_notifications: settings.modules?.email_notifications || false,
                 research_portal: settings.modules?.research_portal || false,
                 unlisted_reports: settings.modules?.unlisted_reports ?? (settings.modules as any)?.private_reports ?? false,
             });
@@ -1031,6 +1036,29 @@ export default function AdminConsole() {
             setMapsRaw(mapsConfig);
             if (mapsConfig.township_boundary) setTownshipBoundary(mapsConfig.township_boundary);
         }).catch(err => console.warn("Maps config load warning:", err));
+    }, []);
+
+    /* A fresh install lands on the setup guide rather than on Branding.
+     *
+     * Nothing detected one. `SetupIntegrationsPage` opens its guide when setup
+     * has not been marked finished -- but it is a tab, and the console opens on
+     * Branding, so on a brand new deployment the guide sat behind a click
+     * nobody had a reason to make. The first thing a town needs is the thing it
+     * was least likely to find.
+     *
+     * An explicit hash wins. Somebody who typed or was sent `#compliance` asked
+     * for compliance, and a redirect over the top of that is the console
+     * ignoring a link.
+     */
+    useEffect(() => {
+        if (window.location.hash.slice(1)) return;
+        let cancelled = false;
+        api.getSetupState()
+            .then(state => { if (!cancelled && !state.completed) setCurrentTab('integration'); })
+            // Unknown is not "unfinished". A failed request must not move
+            // somebody off the tab they opened the console to use.
+            .catch(() => undefined);
+        return () => { cancelled = true; };
     }, []);
 
     useEffect(() => {
@@ -2358,12 +2386,6 @@ export default function AdminConsole() {
                                 secrets={secrets}
                                 onSaveSecret={handleSaveSecretDirect}
                                 onRefresh={loadTabData}
-                                modules={modules}
-                                onUpdateModules={async (newModules) => {
-                                    setModules(newModules);
-                                    await api.updateSettings({ modules: newModules });
-                                    await refreshSettings();
-                                }}
                             />
                         )}
 
@@ -2405,9 +2427,15 @@ export default function AdminConsole() {
                                     {/* Module Rows */}
                                     <div className="divide-y divide-white/[0.06]">
                                         {[
-                                            { key: 'ai_analysis' as const, label: 'AI Analysis', desc: 'Enable Vertex AI triage for submissions', icon: Sparkles, color: 'blue' },
-                                            { key: 'sms_alerts' as const, label: 'SMS Alerts', desc: 'Enable SMS notifications to residents', icon: MessageSquare, color: 'green' },
-                                            { key: 'email_notifications' as const, label: 'Email Notifications', desc: 'Send email updates to residents', icon: Mail, color: 'sky' },
+                                            /* AI Analysis, SMS Alerts and Email
+                                               Notifications were here. They are
+                                               integrations with credentials, a
+                                               provider and a card, and this
+                                               screen was a second place to
+                                               switch them -- one that knew
+                                               nothing about whether they were
+                                               set up. They are ticks in Setup &
+                                               Integrations now. */
                                             { key: 'research_portal' as const, label: 'Research Portal', desc: 'Enable researcher access to anonymized data exports', icon: FlaskConical, color: 'violet' },
                                             { key: 'unlisted_reports' as const, label: 'Unlisted Reports', desc: 'Let residents keep a report off the public map and feed. The tracking link still works and staff always see it', icon: EyeOff, color: 'slate' },
                                         ].map((mod, idx) => {

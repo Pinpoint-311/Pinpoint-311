@@ -300,10 +300,13 @@ export interface SystemSettings {
     favicon_url: string | null;
     hero_text: string;
     primary_color: string;
+    /* Product features with nothing to configure.
+     *
+     * `ai_analysis`, `sms_alerts` and `email_notifications` were here too, and
+     * were the second (for email and SMS, third) place the same capability
+     * could be switched. They are `capability_switches` on the server now --
+     * see backend/app/services/capability_switches.py for which belongs where. */
     modules: {
-        ai_analysis: boolean;
-        sms_alerts: boolean;
-        email_notifications?: boolean;
         research_portal?: boolean;
         unlisted_reports?: boolean;
     };
