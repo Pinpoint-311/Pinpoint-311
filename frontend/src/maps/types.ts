@@ -415,4 +415,19 @@ export interface MapProviderFactory {
     load(config: MapProviderConfig): Promise<void>;
     createRenderer(container: HTMLElement, config: MapProviderConfig, options: MapInitOptions): MapRenderer;
     createGeocoder?(config: MapProviderConfig): GeocodingProvider;
+    /**
+     * Catch an authorisation failure this SDK reports out-of-band, for the
+     * browser check in browserCheck.ts.
+     *
+     * Optional because most SDKs do not need it. Esri, Azure and MapKit all
+     * reject their load or throw from the constructor when a credential is
+     * refused, so `createMap` failing is already the answer. Google is the
+     * exception: it resolves normally, calls a global hook, and leaves a grey
+     * box where the map should be -- so without this, the one provider whose
+     * misconfiguration is most common is also the only one that passes.
+     *
+     * Implementations return a handle: `failed()` reports whether the SDK has
+     * complained yet, and `stop()` must restore whatever global it took over.
+     */
+    watchAuthFailure?(): { failed: () => boolean; stop: () => void };
 }

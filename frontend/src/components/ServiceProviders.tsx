@@ -122,6 +122,46 @@ export function providerLabel(
     return catalog?.providers?.find(p => p.provider === provider)?.name || provider;
 }
 
+/**
+ * Fold the browser's map verdict into the server's.
+ *
+ * Maps is the one capability whose real test cannot run on the server: providers
+ * enforce a site restriction when the map initialises, so "will this draw for a
+ * resident" is only answerable in a browser on the town's own origin — which is
+ * this one. See maps/browserCheck.ts for why a server cannot substitute.
+ *
+ * The two halves check different things and both are reported. The server's says
+ * the APIs are enabled, billing is attached and addresses geocode; the browser's
+ * says the map draws. A browser failure wins, because it is the half a resident
+ * sees — a green tick beside a grey map is the outcome this replaces.
+ *
+ * A check that could not conclude leaves the server's answer alone rather than
+ * downgrading it: "we could not run the browser half" is not a failure.
+ */
+async function withBrowserMapVerdict<T extends { ok: boolean; detail?: string }>(
+    server: T,
+): Promise<T> {
+    try {
+        const [{ checkMapInBrowser, resolveMapProviderConfig }, raw] = await Promise.all([
+            import('../maps'),
+            api.getMapsConfig(),
+        ]);
+        const verdict = await checkMapInBrowser(resolveMapProviderConfig(raw));
+        if (!verdict.conclusive) return server;
+        return {
+            ...server,
+            ok: server.ok && verdict.ok,
+            detail: [server.detail, verdict.detail].filter(Boolean).join(' '),
+        };
+    } catch {
+        /* The browser half is additive. If it cannot run — a provider bundle that
+         * will not import, settings that will not load — the server's verdict is
+         * still the verdict, and reporting a failure here would blame the key for
+         * a fault in this check. */
+        return server;
+    }
+}
+
 /** "6 hours ago" from an ISO timestamp. */
 function relativeTime(iso: string): string {
     const then = Date.parse(iso);
@@ -400,7 +440,8 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
 
     /* Declared here, above the early returns, and not further down with the
        other handlers.
-       
+
+
        The effect below is registered on every render -- hooks run before the
        `if (error)` / `if (!catalog)` returns -- but a render that took one of
        those returns never reached a `const handleTest` sitting after them. The
@@ -411,7 +452,17 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const handleTest = useCallback(async () => {
         setBusy('test'); setResult(null);
         try {
-            const t = await api.testProvider(cap);
+            let t = await api.testProvider(cap);
+            /* Maps is the one capability whose real test cannot run on the
+             * server. Google enforces its referrer restriction when a map
+             * initialises, so the only place the question "will this draw for a
+             * resident" has an answer is a browser on the town's own origin --
+             * which is this one. The server's verdict covers the APIs being
+             * enabled and billing being attached; this covers the map. A browser
+             * failure wins, because it is the half residents see. */
+            if (cap === 'maps') {
+                t = await withBrowserMapVerdict(t);
+            }
             setResult(t);
             // `recorded === false` is the provider saying "there is nothing to
             // test here", not "the test failed". Passing t.ok straight through

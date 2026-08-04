@@ -2943,10 +2943,7 @@ export default function AdminConsole() {
                                                     own obligation.
                                                 </p>
                                                 <p className="text-white/50 text-sm leading-relaxed">
-                                                    Your clerk has the town's records retention schedule, usually
-                                                    approved by the state archives. This product will not guess at
-                                                    it — the period it used to supply was the same number for most
-                                                    of the country, and destroying a record early cannot be undone.
+                                                    Set a retention period below to start it.
                                                 </p>
                                             </div>
                                         </div>
@@ -3015,19 +3012,10 @@ export default function AdminConsole() {
                                                 <div className="text-2xl font-bold text-green-400">{activeRetention.stats.already_archived}</div>
                                             </div>
                                         </div>
-                                        {/* Said wherever the period is shown, because the
-                                            simplification is invisible otherwise. A real records
-                                            schedule sets different periods for different classes
-                                            of record; keeping one period is a reasonable
-                                            simplification, implying it is a full schedule is not. */}
-                                        <p className="text-white/40 text-sm mt-4">
-                                            This is one period applied to every closed request. Records
-                                            schedules normally set different periods for different classes of
-                                            record — a routine pothole report and one attached to a claim are
-                                            not the same class — and this does not do that. Set the period your
-                                            schedule gives for the class you must keep longest, and handle the
-                                            exceptions with a legal hold.
-                                        </p>
+                                        {/* One period for every closed request. A real records
+                                            schedule sets different periods per class of record;
+                                            exceptions are handled with a legal hold. Kept as a
+                                            code comment rather than on-screen copy. */}
                                     </AccordionSection>
                                 )}
 
@@ -3098,17 +3086,12 @@ export default function AdminConsole() {
                                     icon={Clock}
                                     iconClassName="text-amber-400"
                                 >
-                                    {/* No state picker. It looked up a retention period in a
-                                        table of all 51 US jurisdictions that nobody had checked
-                                        — 41 of them five years, each citing that state's records
-                                        authority as its source, which is what made it look
-                                        researched. Both answers below come from the town. */}
-                                    <p className="text-white/60 mb-4">
-                                        Take these from your town's records retention schedule — your clerk
-                                        has it, usually as approved by the state archives. Nothing here is
-                                        filled in for you: a period this product invented is a date on which
-                                        it destroys records, and that cannot be undone.
-                                    </p>
+                                    {/* No state picker, and no default period. It looked up a
+                                        retention period in a table of all 51 US jurisdictions
+                                        that nobody had checked — 41 of them five years, each
+                                        citing that state's records authority as its source,
+                                        which is what made it look researched. Both answers
+                                        below come from the town. */}
 
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         <div>
