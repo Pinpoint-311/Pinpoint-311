@@ -1050,6 +1050,29 @@ export default function AdminConsole() {
         }).catch(err => console.warn("Maps config load warning:", err));
     }, []);
 
+    /* A fresh install lands on the setup guide rather than on Branding.
+     *
+     * Nothing detected one. `SetupIntegrationsPage` opens its guide when setup
+     * has not been marked finished -- but it is a tab, and the console opens on
+     * Branding, so on a brand new deployment the guide sat behind a click
+     * nobody had a reason to make. The first thing a town needs is the thing it
+     * was least likely to find.
+     *
+     * An explicit hash wins. Somebody who typed or was sent `#compliance` asked
+     * for compliance, and a redirect over the top of that is the console
+     * ignoring a link.
+     */
+    useEffect(() => {
+        if (window.location.hash.slice(1)) return;
+        let cancelled = false;
+        api.getSetupState()
+            .then(state => { if (!cancelled && !state.completed) setCurrentTab('integration'); })
+            // Unknown is not "unfinished". A failed request must not move
+            // somebody off the tab they opened the console to use.
+            .catch(() => undefined);
+        return () => { cancelled = true; };
+    }, []);
+
     useEffect(() => {
         loadTabData();
     }, [currentTab]);
