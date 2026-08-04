@@ -43,7 +43,11 @@ const FEATURES = [
     ['safety', 'Screening and blurring'],
     ['email', 'Email'],
     ['sms', 'Text messages'],
-    ['secrets', 'Key management'],
+    // 'kms', matching the capability it turns on. It was 'secrets', which
+    // is now also the id of a real capability -- where the town's
+    // credentials are kept -- so the same word named two different things
+    // one line apart in FEATURE_TO_CAPABILITY.
+    ['kms', 'Key management'],
     ['backups', 'Backups'],
     ['errors', 'Crash reporting'],
 ] as const;
@@ -379,9 +383,15 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
     /* The setup questions are asked in feature terms ("AI triage", "Secret
      * storage + PII encryption") and the provider cards are keyed by
-     * capability. This is the one mapping between them. `secrets` covers the
-     * KMS card because the same question is what a town answers about where
-     * keys and resident data are protected.
+     * capability. This is the one mapping between them, and every id on both
+     * sides is now the same word: the key-management tick was `secrets`, which
+     * became ambiguous the moment the secret store became a capability of its
+     * own -- one line of this object would have read `secrets: 'kms'` next to a
+     * real `secrets` capability meaning somewhere else entirely.
+     *
+     * The secret store is deliberately absent. It is not a feature a town ticks
+     * on: every credential entered on this page is kept somewhere, so its card
+     * is always shown rather than gated on a question.
      *
      * Redaction used to hang off the `moderation` tick, which was wrong in both
      * directions: unticking "content moderation" silently hid face blurring,
@@ -390,7 +400,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * bystander who never wrote anything -- so they are now separate ticks. */
     const FEATURE_TO_CAPABILITY: Record<string, Capability> = {
         ai: 'ai', translation: 'translation', email: 'email',
-        sms: 'sms', secrets: 'kms', safety: 'redaction',
+        sms: 'sms', kms: 'kms', safety: 'redaction',
     };
     const wantedCapabilities = new Set<Capability>(
         Object.entries(FEATURE_TO_CAPABILITY)

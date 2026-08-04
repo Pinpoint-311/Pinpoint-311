@@ -1008,6 +1008,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                 onChange={(key, value) => setValues(p => ({ ...p, [key]: value }))}
                                 ctx={stepCtx}
                                 identity={identity}
+                                storedFields={catalog.stored_fields}
                                 alreadySet={alreadySet}
                             />
                         </div>

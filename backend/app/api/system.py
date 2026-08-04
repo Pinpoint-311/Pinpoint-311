@@ -304,6 +304,36 @@ async def capability_is_configured(capability: str) -> bool:
     return (await _configured_map(providers)).get(current, False)
 
 
+async def _stored_fields(providers: List[Dict[str, Any]]) -> Dict[str, bool]:
+    """{credential key: is there a value stored for it}.
+
+    Per field, because the form's "Saved" hint was per provider: once a provider
+    counted as configured, every one of its boxes claimed to be saved --
+    including an optional one nobody had ever filled in. An empty box marked
+    "Saved" is worse than an unmarked one, because the reason the hint exists is
+    to tell a clerk that leaving a box empty will keep the stored value rather
+    than clear it, and that promise is false where there is nothing stored.
+
+    Presence only. No value ever leaves here, and the same fact is already
+    implied by `configured` -- this only says which of the fields it is made of
+    are filled.
+    """
+    from app.services.secret_manager import get_secret
+
+    keys = {
+        field["key"]
+        for provider in providers
+        for field in provider.get("credential_fields", [])
+    }
+    out: Dict[str, bool] = {}
+    for key in sorted(keys):
+        try:
+            out[key] = bool((await get_secret(key) or "").strip())
+        except Exception:
+            out[key] = False
+    return out
+
+
 async def _configured_map(providers: List[Dict[str, Any]]) -> Dict[str, bool]:
     """{provider id: are all of its required credentials stored}.
 
@@ -554,7 +584,8 @@ async def get_identity_catalog(_: User = Depends(get_current_admin)):
     current = (await get_secret(IDENTITY_PROVIDER_KEY)) or "auth0"
     providers = catalog_for_api()
     return {"current_provider": current.strip().lower(), "default_provider": "auth0",
-            "providers": providers, "configured": await _configured_map(providers)}
+            "providers": providers, "configured": await _configured_map(providers),
+            "stored_fields": await _stored_fields(providers)}
 
 
 @router.get("/translation/catalog")
@@ -565,7 +596,8 @@ async def get_translation_catalog(_: User = Depends(get_current_admin)):
     current = (await get_secret(TRANSLATION_PROVIDER_KEY)) or "google"
     providers = catalog_for_api()
     return {"current_provider": current.strip().lower(), "default_provider": "google",
-            "providers": providers, "configured": await _configured_map(providers)}
+            "providers": providers, "configured": await _configured_map(providers),
+            "stored_fields": await _stored_fields(providers)}
 
 
 @router.get("/maps/catalog")
@@ -578,7 +610,8 @@ async def get_maps_catalog(_: User = Depends(get_current_admin)):
     current = normalize_provider(await get_secret(MAP_PROVIDER_KEY))
     providers = catalog_for_api()
     return {"current_provider": current, "default_provider": "google",
-            "providers": providers, "configured": await _configured_map(providers)}
+            "providers": providers, "configured": await _configured_map(providers),
+            "stored_fields": await _stored_fields(providers)}
 
 
 @router.get("/ai/catalog")
@@ -628,6 +661,7 @@ async def get_ai_catalog(
         "current_model": resolved_model,
         "current_model_available": md.model_is_available(current_models, current_model),
         "configured": configured,
+        "stored_fields": await _stored_fields(providers),
         "providers": providers,
     }
 
@@ -707,6 +741,9 @@ async def get_capability_catalog(
         "default_provider": _DEFAULTS[capability],
         "providers": providers,
         "configured": await _configured_map(providers),
+        # Which individual boxes have something in them, so the form's
+        # "Saved" hint stops appearing on empty optional ones.
+        "stored_fields": await _stored_fields(providers),
         "last_result": last_result,
         # Whether this card may change the selection. The secret store may not:
         # every credential the town has is in the current one and repointing the
@@ -782,6 +819,29 @@ def _invalidate_process_caches(key_name: str) -> None:
         from app.core.sanitize import sanitize_for_log
 
         logger.warning("Could not clear the in-process cache for %s", sanitize_for_log(key_name))
+
+
+async def _vaulted_key_names() -> set:
+    """Keys whose only copy is in the secret store.
+
+    A migrated secret keeps its database row with `key_value` scrubbed to NULL,
+    so this is exactly the set that becomes unreadable if the store is
+    repointed. Never raises: it decides whether to add a warning, and failing to
+    warn must not fail the operation being warned about.
+    """
+    try:
+        from app.db.session import SessionLocal
+
+        async with SessionLocal() as session:
+            rows = await session.execute(
+                select(SystemSecret.key_name).where(
+                    SystemSecret.is_configured.is_(True),
+                    SystemSecret.key_value.is_(None),
+                )
+            )
+            return set(rows.scalars().all())
+    except Exception:
+        return set()
 
 
 async def _persist_secret(db: AsyncSession, key_name: str, value: str) -> bool:
@@ -884,8 +944,10 @@ async def save_provider(
         raise HTTPException(status_code=400, detail=f"Unknown capability: {capability}")
     if capability in _READ_ONLY_SELECTION:
         raise HTTPException(status_code=400, detail=(
-            "The secret store is chosen with your cloud profile, which moves the existing "
-            "credentials across. Changing it here would leave them in the old store."
+            "The secret store cannot be switched from a card: every credential this town has "
+            "is in the current one, and repointing the setting does not move them. Set up the "
+            "new store's credentials first, let the hourly migration copy them across, and "
+            "change the store after that."
         ))
     catalog = _capability_catalog(capability)
     provider_id = (body.provider or "").strip().lower()
@@ -2205,6 +2267,30 @@ async def set_cloud_profile(
             # rather than blocking the switch.
             pass
 
+    # Secret-store migration safety.
+    #
+    # This repoints SECRETS_PROVIDER and moves nothing. Every credential the
+    # town has already entered is in the old store, and most have had their
+    # encrypted database copy scrubbed after being verified there -- so the
+    # moment the pointer moves, `get_secret` starts asking somewhere that has
+    # never heard of them and each one reads as absent.
+    #
+    # The KMS half of this has carried a warning since it was written and the
+    # secret half never did, which is the more dangerous of the two: PII stays
+    # readable while the old KMS credentials are in place, whereas a repointed
+    # secret store takes the mail relay, the map key and the identity provider
+    # with it.
+    # No DB_REQUIRED_KEYS filter needed: those always keep their database copy
+    # and so never appear in this set by construction.
+    if await _vaulted_key_names():
+        warnings.append(
+            f"Credentials already saved are in your previous secret store and are not moved "
+            f"by this. They stay readable only while that store is reachable. Enter the "
+            f"{ {'azure': 'Azure Key Vault', 'aws': 'AWS Secrets Manager'}.get(p['secrets'], 'Google Secret Manager') } "
+            f"credentials, then let the hourly migration copy everything across before "
+            f"retiring the old one."
+        )
+
     # KMS migration safety: existing PII is unwrapped by the KMS tag stored in
     # each value, so it stays readable ONLY while the previous KMS credentials
     # remain in place. New PII uses the new KMS immediately.
@@ -2324,21 +2410,55 @@ async def list_secrets(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
-    """List all secrets (admin only). Non-sensitive config values are returned."""
-    # These keys can have their values exposed (they're config choices, not secrets)
-    SAFE_TO_RETURN = {'SMS_PROVIDER', 'EMAIL_ENABLED', 'SMTP_USE_TLS', 'SMTP_PORT'}
-    
+    """Every secret this town has, and whether it is really there.
+
+    `is_configured` is reported from the store of record rather than from the
+    database column of that name, and the two are not the same claim. The column
+    says "a value was written here once". `get_secret` says "there is a value
+    there now" -- which is what every other part of this console means by
+    configured, and what `_configured_map` answers for the provider cards.
+
+    They diverge exactly when it matters. A secret migrated into the vault keeps
+    `is_configured = True` in the database with its encrypted copy scrubbed, so
+    when the vault is unreachable the column still says yes about a value
+    nothing can currently read. The provider cards say "we cannot tell, so no";
+    this endpoint said yes; and the settings with no provider card -- backups,
+    crash reporting -- had only this answer, so a town whose vault was down saw
+    a tick on backups whose credentials the backup task could not load.
+
+    One definition, and it is the pessimistic one: if we cannot read it, we do
+    not claim it. Reads are bundle-cached, so this is a handful of fetches
+    rather than one per key.
+
+    No values are returned, for any key. Four were exempted as "config choices,
+    not secrets" -- SMS_PROVIDER, EMAIL_ENABLED, SMTP_USE_TLS and SMTP_PORT --
+    and the exemption returned `secret.key_value`, the *database* column. That
+    column holds ciphertext while a secret is in the database and None once it
+    has been migrated to the vault and scrubbed, which all four have been. So
+    the branch returned null for every key it existed to expose, and would have
+    returned an encrypted blob if it had not. Nothing read it either: the one
+    consumer compared the returned SMS_PROVIDER against 'none' to decide whether
+    texting was on, and now asks /providers/status, which reports what dispatch
+    resolves rather than what is stored.
+    """
+    from app.services.secret_manager import get_secret
+
     result = await db.execute(select(SystemSecret))
     secrets = result.scalars().all()
-    
+
     response = []
     for secret in secrets:
         data = SecretResponse.model_validate(secret)
-        # Only include key_value for non-sensitive config options
-        if secret.key_name in SAFE_TO_RETURN and secret.is_configured:
-            data.key_value = secret.key_value
+        data.key_value = None
+        try:
+            data.is_configured = bool((await get_secret(secret.key_name) or "").strip())
+        except Exception:
+            # An unreachable store is not the same as an unconfigured secret,
+            # and saying so is the safe direction: the cost is asking about
+            # something already done, rather than ticking something unreadable.
+            data.is_configured = False
         response.append(data)
-    
+
     return response
 
 

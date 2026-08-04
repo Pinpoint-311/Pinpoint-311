@@ -162,6 +162,11 @@ export interface ProviderCatalog {
         status?: string;
         verifiable?: boolean | null;
     } | null;
+    /** Which individual credential boxes have something stored against them.
+     *  The form's "Saved" hint was per provider, so once a provider counted as
+     *  configured every one of its boxes claimed to be saved -- including an
+     *  optional one nobody had filled in. Presence only; no values. */
+    stored_fields?: Record<string, boolean>;
     /** Whether this card may change the provider. False for the secret store:
      *  every credential the town has is in the current one and repointing the
      *  setting does not move them, so the switch belongs to the cloud-profile
@@ -182,46 +187,6 @@ export interface ProviderSave {
     provider: string;
     model?: string;
     settings?: Record<string, string>;
-}
-
-export interface CloudProfileOption {
-    id: string;
-    label: string;
-    boundary: string;
-    ai: string;
-    translation: string;
-    secrets: string;
-    kms: string;
-    email: string;
-    sms: string;
-    identity_recommended: string;
-}
-
-export interface CloudProfileComponents {
-    ai: string;
-    translation: string;
-    secrets: string;
-    kms: string;
-    identity: string;
-    email: string;
-    sms: string;
-}
-
-export interface CloudProfileState {
-    profile: 'google' | 'azure' | 'aws' | 'mixed';
-    managed: boolean;
-    components: CloudProfileComponents;
-    maps: { provider: string; locked: boolean; label: string };
-    profiles: CloudProfileOption[];
-}
-
-export interface CloudProfileResult {
-    ok: boolean;
-    profile: string;
-    components: { ai: string; translation: string; secrets: string; kms: string; email: string; sms: string };
-    identity_recommended: string;
-    identity_applied: boolean;
-    warnings: string[];
 }
 
 /** Every capability with a provider catalog. The last four were already
@@ -786,16 +751,23 @@ class ApiClient {
         return this.request<CloudIdentity>('/system/providers/cloud-identity');
     }
 
-    async getCloudProfile(): Promise<CloudProfileState> {
-        return this.request<CloudProfileState>('/system/providers/cloud-profile');
-    }
-
-    async setCloudProfile(profile: string, applyIdentity = false): Promise<CloudProfileResult> {
-        return this.request<CloudProfileResult>('/system/providers/cloud-profile', {
-            method: 'POST',
-            body: JSON.stringify({ profile, apply_identity: applyIdentity }),
-        });
-    }
+    /* No cloud-profile methods here on purpose.
+     *
+     * POST /system/providers/cloud-profile applies a whole environment in one
+     * choice, and part of what it sets is SECRETS_PROVIDER -- which it repoints
+     * without moving anything. Every credential the town has already entered is
+     * in the old store, and most have had their encrypted database copy
+     * scrubbed after being verified there, so the pointer moving is enough to
+     * make the mail relay, the map key and the identity provider all read as
+     * absent.
+     *
+     * The endpoint is a deliberate operator action and stays. A button for it
+     * on the setup page would be one click between a working town and an
+     * apparently empty one, so it does not get a client method until the switch
+     * migrates the secrets first. The page reads /providers/status instead,
+     * which answers the same question -- which cloud is this town on -- from
+     * what is actually in use.
+     */
 
     // Statistics
     async getStatistics(): Promise<Statistics> {

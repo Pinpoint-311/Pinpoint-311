@@ -234,6 +234,20 @@ def _get_secret_from_gcp(secret_name: str, force_refresh: bool = False) -> Optio
         return secret_data
     except Exception as e:
         from app.core.sanitize import sanitize_for_log
+
+        # A bundle that does not exist yet is the ordinary state of a town that
+        # has not configured that group of settings -- there is no `secret-backup`
+        # until somebody sets up backups. Cached as empty and logged at debug, so
+        # it costs one lookup per TTL rather than one per key, and does not fill
+        # the log with warnings about a feature nobody switched on.
+        #
+        # This matters more since /secrets began resolving every key through
+        # here: reporting "is it really there" means asking about the absent ones
+        # too, and the absent ones are exactly the ones with no bundle.
+        if "not found" in str(e) or "has no versions" in str(e):
+            _cache_put(secret_name, {})
+            logger.debug(f"Secret bundle {secret_name} does not exist yet")
+            return None
         logger.warning(f"Failed to get secret from GCP: {sanitize_for_log(str(e))}")
         return None
 
