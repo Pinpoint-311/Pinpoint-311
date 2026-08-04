@@ -905,35 +905,28 @@ export default function AdminConsole() {
     // SSO users don't have passwords - authentication handled by Auth0
 
     // Document Retention state
-    const [retentionStates, setRetentionStates] = useState<Array<{
-        code: string;
-        name: string;
-        retention_days: number;
-        retention_years: number;
-        source: string;
-        public_records_law: string;
-    }>>([]);
+    /* There is no list of states any more. It populated a picker that looked up
+       a retention period in a table covering all 51 US jurisdictions — 41 of
+       them five years, each citing a different state records authority as its
+       source — which nobody had verified. Every municipality has a retention
+       schedule approved by its state archives, and its clerk holds it. */
     /* The server's type, not a second copy of it. The local shape declared
        `policy` and `stats` as always present, which is exactly what stopped
-       being true: a town that has not confirmed its state has no retention
-       period and no statute, and the screen must say so rather than render
-       whatever the old NJ default filled in. */
+       being true: a town that has not set a period has no schedule at all, and
+       the screen must say so rather than render something filled in for it. */
     const [retentionPolicy, setRetentionPolicy] =
         useState<import('../services/api').RetentionPolicyConfig | null>(null);
     /* The policy when there actually is one, with the pieces the "Current
        Policy" panel needs proven present rather than assumed. The panel states
-       a statute, a period and a count of records due for destruction — none of
-       which exist until a state is confirmed, and all of which the screen used
-       to show anyway because the server filled them in from NJ. */
-    const activeRetention = (retentionPolicy?.configured && retentionPolicy.policy && retentionPolicy.stats)
+       a period and a count of records due for destruction, neither of which
+       exists until this town says so. */
+    const activeRetention = (retentionPolicy?.configured && retentionPolicy.retention_days && retentionPolicy.stats)
         ? {
             ...retentionPolicy,
-            policy: retentionPolicy.policy,
+            retention_days: retentionPolicy.retention_days,
             stats: retentionPolicy.stats,
-            effective_days: retentionPolicy.effective_days ?? retentionPolicy.policy.retention_days,
         }
         : null;
-    const [selectedStateCode, setSelectedStateCode] = useState<string>('');
     const [selectedMode, setSelectedMode] = useState<'redact' | 'purge'>('redact');
     /* The records the next run would touch. Loaded on demand: it is a real
        query and most visits to this page are not about to press the button. */
@@ -941,22 +934,28 @@ export default function AdminConsole() {
     const [previewLoading, setPreviewLoading] = useState(false);
 
     /* What a records custodian is releasing. Loaded from the server so the
-       picker, the export and the audit entry all describe one catalog. */
-    const [opraOpen, setOpraOpen] = useState(false);
-    const [opraFields, setOpraFields] = useState<import('../services/api').PublicRecordsField[]>([]);
-    const [opraChosen, setOpraChosen] = useState<Set<string>>(new Set());
-    const [opraStart, setOpraStart] = useState('');
-    const [opraEnd, setOpraEnd] = useState('');
-    const [opraStatuses, setOpraStatuses] = useState<Set<string>>(new Set());
-    const [opraIds, setOpraIds] = useState('');
-    const [opraBusy, setOpraBusy] = useState(false);
+       picker, the export and the audit entry all describe one catalog.
+       Named for what it does rather than for one state's statute: this answers
+       a records request under whatever law the town is subject to, and the
+       product does not know which one that is. */
+    const [exportOpen, setExportOpen] = useState(false);
+    const [exportFields, setExportFields] = useState<import('../services/api').PublicRecordsField[]>([]);
+    const [exportChosen, setExportChosen] = useState<Set<string>>(new Set());
+    const [exportStart, setExportStart] = useState('');
+    const [exportEnd, setExportEnd] = useState('');
+    const [exportStatuses, setExportStatuses] = useState<Set<string>>(new Set());
+    const [exportIds, setExportIds] = useState('');
+    const [exportBusy, setExportBusy] = useState(false);
     const [previewError, setPreviewError] = useState<string | null>(null);
 
     /* Which fields a retention run clears. Null until the server answers --
      * rendering the catalog from a hardcoded copy here is how the screen and
      * the thing it configures drift apart. */
     const [scrubFields, setScrubFields] = useState<import('../services/api').ScrubField[] | null>(null);
-    const [overrideDays, setOverrideDays] = useState<string>('');
+    /* How long a closed request is kept. Blank until the town types a number:
+       there is no schedule to pre-fill it from, and a pre-filled number here
+       is a destruction date nobody chose. */
+    const [retentionDays, setRetentionDays] = useState<string>('');
     const [isSavingRetention, setIsSavingRetention] = useState(false);
     const [isRunningRetention, setIsRunningRetention] = useState(false);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1096,23 +1095,14 @@ export default function AdminConsole() {
                     break;
                 case 'compliance':
                     try {
-                        const [states, policy, allRequests] = await Promise.all([
-                            api.getRetentionStates(),
+                        const [policy, allRequests] = await Promise.all([
                             api.getRetentionPolicy(),
                             api.getRequests(undefined, true) // include_deleted=true for admins
                         ]);
-                        setRetentionStates(states);
                         setRetentionPolicy(policy);
-                        /* Pre-select whatever is stored, confirmed or not. An
-                           unconfirmed state is still the best guess at the
-                           answer — the town may well be in New Jersey — and the
-                           question being asked is "is this right?", which is
-                           easier to answer with the dropdown already on it. */
-                        setSelectedStateCode(policy.state_code || policy.unconfirmed_state_code || '');
                         setSelectedMode(policy.mode === 'purge' ? 'purge' : 'redact');
                         setScrubFields(policy.scrub_fields || null);
-                        // Reflect the saved override in the input (was always blank before)
-                        setOverrideDays(policy.override_days ? String(policy.override_days) : '');
+                        setRetentionDays(policy.retention_days ? String(policy.retention_days) : '');
                         // Filter for deleted requests only
                         const deleted = allRequests.filter((r: { deleted_at?: string | null }) => r.deleted_at != null);
                         setDeletedRequests(deleted);
@@ -2919,16 +2909,22 @@ export default function AdminConsole() {
                             <div className="space-y-6">
                                 <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
                                     <h2 className="text-2xl font-bold text-white mb-2">Document Retention</h2>
-                                    <p className="text-white/60">Configure state-mandated record retention policies</p>
+                                    <p className="text-white/60">
+                                        Set how long this town keeps closed requests, and what is removed
+                                        when that period is up.
+                                    </p>
                                 </motion.div>
 
-                                {/* Nothing is running, and this is the only place that says so.
-                                    The state code used to default to New Jersey, so this tab
-                                    confidently headlined "OPRA · 7 years" at towns that had
-                                    never chosen either — and the nightly job anonymised their
-                                    records on that schedule. Retention now waits for an
-                                    answer, which is safe but silent, so the silence has to be
-                                    visible. */}
+                                {/* Nothing is running, and somebody has to keep being told.
+
+                                    This tab used to headline "OPRA · 7 years" at every town,
+                                    because the state code defaulted to New Jersey and sat in
+                                    front of a table of periods nobody had verified. Retention
+                                    waits for an answer now, which is safe but silent — and the
+                                    silence has a cost of its own: with no period, nothing is
+                                    ever deleted, so every name, phone number and description a
+                                    resident has submitted is still on the record. That is what
+                                    this says, rather than "not configured". */}
                                 {retentionPolicy && !retentionPolicy.configured && (
                                     <motion.div
                                         initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
@@ -2939,28 +2935,24 @@ export default function AdminConsole() {
                                             <AlertTriangle className="w-5 h-5 text-amber-300 flex-shrink-0 mt-0.5" aria-hidden="true" />
                                             <div className="space-y-2">
                                                 <h3 className="text-white font-semibold">
-                                                    No retention schedule is in force
+                                                    Resident personal data is being kept indefinitely
                                                 </h3>
                                                 <p className="text-white/75 text-sm leading-relaxed">
                                                     {retentionPolicy.detail}
                                                 </p>
-                                                {retentionPolicy.unconfirmed_state_code && (
-                                                    <p className="text-white/60 text-sm leading-relaxed">
-                                                        This instance was shipped set to{' '}
-                                                        <strong className="text-white/80">
-                                                            {retentionStates.find(s => s.code === retentionPolicy.unconfirmed_state_code)?.name
-                                                                || retentionPolicy.unconfirmed_state_code}
-                                                        </strong>
-                                                        , which is a default rather than a choice anyone here made.
-                                                        If it is right, confirm it below and retention resumes on that
-                                                        schedule. If it is not, pick the correct state — records were
-                                                        never archived on the wrong one, because nothing has run.
-                                                    </p>
-                                                )}
-                                                <p className="text-white/50 text-sm">
-                                                    Nothing has been deleted or redacted in the meantime. Closed
-                                                    records are all still here, including any that are past the date
-                                                    your published policy gives.
+                                                <p className="text-white/60 text-sm leading-relaxed">
+                                                    Nothing has been deleted or redacted in the meantime, so no
+                                                    record has been lost to this — closed requests are all still
+                                                    here, including any past the date your published policy gives.
+                                                    That is the safer of the two failures, and it is still a
+                                                    failure: keeping personal data longer than you need it is its
+                                                    own obligation.
+                                                </p>
+                                                <p className="text-white/50 text-sm leading-relaxed">
+                                                    Your clerk has the town's records retention schedule, usually
+                                                    approved by the state archives. This product will not guess at
+                                                    it — the period it used to supply was the same number for most
+                                                    of the country, and destroying a record early cannot be undone.
                                                 </p>
                                             </div>
                                         </div>
@@ -2970,27 +2962,22 @@ export default function AdminConsole() {
                                 {/* Current Policy Status */}
                                 {activeRetention && (
                                     <AccordionSection
-                                        title={`Current Policy: ${activeRetention.policy.public_records_law}`}
-                                        subtitle={`${activeRetention.policy.name} • ${formatYears(activeRetention.effective_days)} retention${activeRetention.override_days ? ' (custom override)' : ''} • ${activeRetention.mode === 'purge' ? 'Purge mode' : 'Redact mode'}`}
+                                        title="Current Policy"
+                                        subtitle={`${formatYears(activeRetention.retention_days)} • ${activeRetention.mode === 'purge' ? 'Purge mode' : 'Redact mode'}`}
                                         icon={Shield}
                                         iconClassName="text-green-400"
                                         badge={<Badge variant="success">Active</Badge>}
                                         defaultOpen={true}
                                     >
-                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                                            <div className="bg-white/5 rounded-lg p-4">
-                                                <div className="text-white/60 text-sm">Public Records Law</div>
-                                                <div className="text-2xl font-bold text-white">{activeRetention.policy.public_records_law}</div>
-                                                <div className="text-white/40 text-sm">{activeRetention.policy.name} ({activeRetention.state_code})</div>
-                                            </div>
+                                        {/* Two panels, not three. The third headlined the
+                                            public-records law this town was said to be complying
+                                            with, from a table the product had made up. */}
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                                             <div className="bg-white/5 rounded-lg p-4">
                                                 <div className="text-white/60 text-sm">Retention Period</div>
-                                                <div className="text-2xl font-bold text-amber-400">{formatYears(activeRetention.effective_days)}</div>
+                                                <div className="text-2xl font-bold text-amber-400">{formatYears(activeRetention.retention_days)}</div>
                                                 <div className="text-white/40 text-sm">
-                                                    {activeRetention.effective_days.toLocaleString()} days
-                                                    {activeRetention.override_days
-                                                        ? ` • custom (state minimum ${activeRetention.policy.retention_years} yrs)`
-                                                        : ' • state default'}
+                                                    {activeRetention.retention_days.toLocaleString()} days • set by this town
                                                 </div>
                                             </div>
                                             <div className="bg-white/5 rounded-lg p-4">
@@ -3034,8 +3021,18 @@ export default function AdminConsole() {
                                                 <div className="text-2xl font-bold text-green-400">{activeRetention.stats.already_archived}</div>
                                             </div>
                                         </div>
+                                        {/* Said wherever the period is shown, because the
+                                            simplification is invisible otherwise. A real records
+                                            schedule sets different periods for different classes
+                                            of record; keeping one period is a reasonable
+                                            simplification, implying it is a full schedule is not. */}
                                         <p className="text-white/40 text-sm mt-4">
-                                            Source: {activeRetention.policy.source}
+                                            This is one period applied to every closed request. Records
+                                            schedules normally set different periods for different classes of
+                                            record — a routine pothole report and one attached to a claim are
+                                            not the same class — and this does not do that. Set the period your
+                                            schedule gives for the class you must keep longest, and handle the
+                                            exceptions with a legal hold.
                                         </p>
                                     </AccordionSection>
                                 )}
@@ -3100,31 +3097,49 @@ export default function AdminConsole() {
                                     </AccordionSection>
                                 )}
 
-                                {/* State Selection */}
+                                {/* The two answers that make a policy */}
                                 <AccordionSection
                                     title="Retention Policy Configuration"
-                                    subtitle="Configure state-mandated record retention requirements"
+                                    subtitle="How long records are kept, and what is removed when that is up"
                                     icon={Clock}
                                     iconClassName="text-amber-400"
                                 >
-                                    <p className="text-white/60 mb-4">Choose your state to apply the appropriate record retention requirements.</p>
+                                    {/* No state picker. It looked up a retention period in a
+                                        table of all 51 US jurisdictions that nobody had checked
+                                        — 41 of them five years, each citing that state's records
+                                        authority as its source, which is what made it look
+                                        researched. Both answers below come from the town. */}
+                                    <p className="text-white/60 mb-4">
+                                        Take these from your town's records retention schedule — your clerk
+                                        has it, usually as approved by the state archives. Nothing here is
+                                        filled in for you: a period this product invented is a date on which
+                                        it destroys records, and that cannot be undone.
+                                    </p>
 
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         <div>
-                                            <label className="block text-sm font-medium text-white/70 mb-2">State</label>
-                                            <select
-                                                value={selectedStateCode}
-                                                onChange={(e) => setSelectedStateCode(e.target.value)}
-                                                className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-amber-400"
-                                                aria-label="Select state for retention policy"
-                                            >
-                                                <option value="">Select a state...</option>
-                                                {retentionStates.map((state) => (
-                                                    <option key={state.code} value={state.code} className="bg-slate-800">
-                                                        {state.name} ({state.retention_years} years)
-                                                    </option>
-                                                ))}
-                                            </select>
+                                            <label className="block text-sm font-medium text-white/70 mb-2" htmlFor="retention-days">
+                                                Keep closed requests for (days)
+                                            </label>
+                                            <input
+                                                id="retention-days"
+                                                type="number"
+                                                value={retentionDays}
+                                                onChange={(e) => setRetentionDays(e.target.value)}
+                                                placeholder="e.g. 2555"
+                                                min="1"
+                                                max="36500"
+                                                className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-amber-400 placeholder:text-white/40"
+                                            />
+                                            {/* Shown in years as it is typed. A schedule states
+                                                "7 years" and this field takes days, so 7 typed
+                                                here is a week — and a week is a policy that
+                                                destroys almost everything on its first run. */}
+                                            <p className="text-white/50 text-xs mt-1">
+                                                {retentionDays && parseInt(retentionDays) > 0
+                                                    ? `${formatYears(parseInt(retentionDays))} — records are cleared once they have been closed this long.`
+                                                    : 'Not set, so nothing is ever cleared. Enter the period in days: 5 years is 1825, 7 years is 2555.'}
+                                            </p>
                                         </div>
 
                                         <div>
@@ -3151,33 +3166,22 @@ export default function AdminConsole() {
                                                 <option value="purge" className="bg-slate-800">Purge — clear every field, keep the row for counting</option>
                                             </select>
                                         </div>
-
-                                        <div>
-                                            <label className="block text-sm font-medium text-white/70 mb-2">Override Days (Optional)</label>
-                                            <input
-                                                type="number"
-                                                value={overrideDays}
-                                                onChange={(e) => setOverrideDays(e.target.value)}
-                                                placeholder="Leave blank to use state default"
-                                                min="365"
-                                                className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-amber-400 placeholder:text-white/40"
-                                                aria-label="Custom retention days override"
-                                            />
-                                            <p className="text-white/40 text-xs mt-1">Min 365 days. Must be ≥ state requirement.</p>
-                                        </div>
                                     </div>
 
                                     {/* What a run actually clears.
                                         This was fixed in code -- names, email, phone, description,
-                                        staff notes and photos, always. A town's retention
-                                        obligations come from its own counsel and its state's
-                                        records law, and deciding for them was not ours to do. */}
+                                        staff notes and photos, always -- and when it became a
+                                        catalog those same seven arrived pre-ticked. Inherited that
+                                        way they were never anybody's decision, and the decision
+                                        they stood in for is which of a resident's details this
+                                        town destroys permanently. Nothing is ticked now. */}
                                     {selectedMode !== 'purge' && scrubFields && (
                                         <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
                                             <h4 className="font-semibold text-white">What gets cleared</h4>
                                             <p className="text-white/55 text-xs mt-1 mb-4">
                                                 The record stays and still counts in your statistics. Only the
-                                                fields ticked here are emptied.
+                                                fields ticked here are emptied, and nothing is ticked until you
+                                                tick it — this list is what a run destroys for good.
                                             </p>
                                             {/* auto-rows-fr plus h-full: every card in a row is
                                                 the height of the tallest, so a two-line
@@ -3213,32 +3217,53 @@ export default function AdminConsole() {
                                             </div>
                                             {!scrubFields.some(f => f.selected) && (
                                                 <p className="text-amber-300 text-xs mt-3">
-                                                    Nothing is ticked, so a run would leave every record untouched.
+                                                    Nothing is ticked, so retention will not run at all. A run that
+                                                    cleared nothing would still mark records archived, which takes
+                                                    them out of every future run — the personal data would stay on
+                                                    them permanently, with nothing left to notice.
                                                 </p>
                                             )}
                                         </div>
                                     )}
 
-                                    {/* Selected State Preview — updates live as state/override change */}
-                                    {selectedStateCode && retentionStates.find(s => s.code === selectedStateCode) && (() => {
-                                        const st = retentionStates.find(s => s.code === selectedStateCode)!;
-                                        const override = overrideDays ? parseInt(overrideDays) : 0;
-                                        const effectiveDays = override && override >= 365 ? override : st.retention_days;
+                                    {/* What the two answers add up to, in a sentence, before
+                                        anything is saved. */}
+                                    {(() => {
+                                        const days = parseInt(retentionDays) || 0;
+                                        const chosen = (scrubFields || []).filter(f => f.selected);
+                                        const willRun = days > 0 && (selectedMode === 'purge' || chosen.length > 0);
                                         return (
-                                            <div className="mt-4 p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                                            <div className={`mt-4 p-4 rounded-lg border ${willRun
+                                                ? 'bg-amber-500/10 border-amber-500/30'
+                                                : 'bg-white/[0.03] border-white/15'}`}>
                                                 <div className="flex items-start gap-3">
-                                                    <Clock className="w-5 h-5 text-amber-400 mt-0.5" />
+                                                    <Clock className={`w-5 h-5 mt-0.5 ${willRun ? 'text-amber-400' : 'text-white/40'}`} aria-hidden="true" />
                                                     <div>
-                                                        <p className="text-amber-400 font-medium">
-                                                            {st.name}: {formatYears(effectiveDays)} retention
-                                                            {override >= 365 && override !== st.retention_days
-                                                                ? ` (custom override; state minimum ${st.retention_years} yrs)`
-                                                                : ''}
-                                                        </p>
-                                                        <p className="text-white/70 text-sm mt-1">
-                                                            Governing law: <span className="font-semibold text-amber-200">{st.public_records_law}</span>
-                                                        </p>
-                                                        <p className="text-white/45 text-xs mt-0.5">Source: {st.source}</p>
+                                                        {willRun ? (
+                                                            <>
+                                                                <p className="text-amber-400 font-medium">
+                                                                    Closed requests are kept {formatYears(days)}, then{' '}
+                                                                    {selectedMode === 'purge'
+                                                                        ? 'every field on them is cleared'
+                                                                        : `${chosen.length} ${chosen.length === 1 ? 'field is' : 'fields are'} cleared`}.
+                                                                </p>
+                                                                {selectedMode !== 'purge' && (
+                                                                    <p className="text-white/70 text-sm mt-1">
+                                                                        Cleared: {chosen.map(f => f.label).join(', ')}.
+                                                                    </p>
+                                                                )}
+                                                                <p className="text-white/45 text-xs mt-1">
+                                                                    One period for every request, whatever it was about.
+                                                                    Anything you must keep longer needs a legal hold on it.
+                                                                </p>
+                                                            </>
+                                                        ) : (
+                                                            <p className="text-white/70 text-sm">
+                                                                {days > 0
+                                                                    ? 'A period is set but nothing is ticked, so retention will not run.'
+                                                                    : 'No period is set, so retention will not run and resident personal data is kept indefinitely.'}
+                                                            </p>
+                                                        )}
                                                     </div>
                                                 </div>
                                             </div>
@@ -3248,21 +3273,26 @@ export default function AdminConsole() {
                                     <div className="flex gap-4 mt-6">
                                         <Button
                                             onClick={async () => {
-                                                if (!selectedStateCode) return;
                                                 setIsSavingRetention(true);
                                                 try {
-                                                    await api.updateRetentionPolicy({
-                                                        state_code: selectedStateCode,
+                                                    const saved = await api.updateRetentionPolicy({
                                                         mode: selectedMode,
                                                         scrub_fields: (scrubFields || [])
                                                             .filter(f => f.selected).map(f => f.id),
-                                                        // 0 explicitly clears the override back to the state default;
-                                                        // omitting it would leave a previously-set override stuck.
-                                                        override_days: overrideDays ? parseInt(overrideDays) : 0
+                                                        // 0 explicitly clears the period, which stops
+                                                        // retention running. Omitting it would leave a
+                                                        // previously-set period stuck with no way to remove it.
+                                                        retention_days: retentionDays ? parseInt(retentionDays) : 0
                                                     });
                                                     await loadTabData();
-                                                    setSaveMessage('Retention policy updated successfully');
-                                                    setTimeout(() => setSaveMessage(null), 3000);
+                                                    /* The server decides whether this is a policy, and says
+                                                       so. "Updated successfully" over a save that left
+                                                       retention switched off is the quiet the warning above
+                                                       exists to break. */
+                                                    setSaveMessage(saved.configured
+                                                        ? 'Retention policy saved and now in force'
+                                                        : `Saved, but retention still will not run. ${saved.detail || ''}`);
+                                                    setTimeout(() => setSaveMessage(null), 8000);
                                                 } catch (err) {
                                                     reportError('Could not apply the retention policy', err);
                                                 } finally {
@@ -3270,10 +3300,10 @@ export default function AdminConsole() {
                                                 }
                                             }}
                                             variant="secondary"
-                                            disabled={!selectedStateCode || isSavingRetention}
+                                            disabled={isSavingRetention}
                                             className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white font-semibold border-amber-400/40 shadow-lg shadow-orange-900/30"
                                         >
-                                            {isSavingRetention ? 'Saving...' : 'Confirm & Apply Policy'}
+                                            {isSavingRetention ? 'Saving...' : 'Apply Policy'}
                                         </Button>
 
                                         <Button
@@ -3317,7 +3347,7 @@ export default function AdminConsole() {
                                                     await dialog.alert({
                                                         title: 'No retention schedule is set',
                                                         message: plan.detail
-                                                            || 'Confirm which state this town is in before running retention. Until then there is no retention period to measure records against.',
+                                                            || 'Set how long records are kept and what a run removes before running retention. Until both are set there is nothing to measure a record against.',
                                                         variant: 'warning',
                                                     });
                                                     return;
@@ -3342,7 +3372,7 @@ export default function AdminConsole() {
                                                             <p>
                                                                 <strong className="text-white">{plan.will_act_on ?? plan.eligible}</strong>{' '}
                                                                 closed {(plan.will_act_on ?? plan.eligible) === 1 ? 'record has' : 'records have'} passed
-                                                                the {plan.retention_days}-day retention period for {plan.policy_name || plan.state_code}.
+                                                                the {plan.retention_days}-day retention period this town set.
                                                             </p>
                                                             <p>
                                                                 {purging
@@ -3419,23 +3449,22 @@ export default function AdminConsole() {
                                         <Button
                                             variant="secondary"
                                             onClick={async () => {
-                                                setOpraOpen(o => !o);
-                                                if (!opraFields.length) {
+                                                setExportOpen(o => !o);
+                                                if (!exportFields.length) {
                                                     try {
                                                         const { fields } = await api.getPublicRecordsFields();
-                                                        setOpraFields(fields);
-                                                        setOpraChosen(new Set(fields.filter(f => f.selected).map(f => f.id)));
+                                                        setExportFields(fields);
+                                                        setExportChosen(new Set(fields.filter(f => f.selected).map(f => f.id)));
                                                     } catch (err) {
                                                         reportError('Could not load the export options', err);
                                                     }
                                                 }
                                             }}
                                         >
-                                            Export for {(
-                                                (selectedStateCode && retentionStates.find(s => s.code === selectedStateCode)?.public_records_law)
-                                                || retentionPolicy?.policy?.public_records_law
-                                                || 'FOIA'
-                                            ).split("(")[0].trim()}
+                                            {/* Named for the job, not for a statute. The label used
+                                                to read "Export for OPRA" everywhere, from the same
+                                                unverified table. */}
+                                            Export for a records request
                                         </Button>
                                     </div>
 
@@ -3446,17 +3475,17 @@ export default function AdminConsole() {
                                         answer to a request that did not cover it
                                         cannot be recalled, and the person whose
                                         number it was never knew it was in scope. */}
-                                    {opraOpen && (
+                                    {exportOpen && (
                                         <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
                                             <div className="grid gap-3 sm:grid-cols-2">
                                                 <label className="text-sm">
                                                     <span className="block text-white/60 mb-1">Submitted from</span>
-                                                    <input type="date" value={opraStart} onChange={e => setOpraStart(e.target.value)}
+                                                    <input type="date" value={exportStart} onChange={e => setExportStart(e.target.value)}
                                                         className="glass-input w-full" />
                                                 </label>
                                                 <label className="text-sm">
                                                     <span className="block text-white/60 mb-1">Submitted to</span>
-                                                    <input type="date" value={opraEnd} onChange={e => setOpraEnd(e.target.value)}
+                                                    <input type="date" value={exportEnd} onChange={e => setExportEnd(e.target.value)}
                                                         className="glass-input w-full" />
                                                     <span className="block text-white/40 text-xs mt-1">Includes the whole of that day.</span>
                                                 </label>
@@ -3467,8 +3496,8 @@ export default function AdminConsole() {
                                                 <div className="flex flex-wrap gap-3">
                                                     {['open', 'in_progress', 'closed'].map(v => (
                                                         <label key={v} className="flex items-center gap-2 text-sm text-white/80">
-                                                            <input type="checkbox" checked={opraStatuses.has(v)}
-                                                                onChange={e => setOpraStatuses(prev => {
+                                                            <input type="checkbox" checked={exportStatuses.has(v)}
+                                                                onChange={e => setExportStatuses(prev => {
                                                                     const next = new Set(prev);
                                                                     e.target.checked ? next.add(v) : next.delete(v);
                                                                     return next;
@@ -3483,7 +3512,7 @@ export default function AdminConsole() {
 
                                             <label className="block text-sm">
                                                 <span className="block text-white/60 mb-1">Specific request IDs (optional)</span>
-                                                <input type="text" value={opraIds} onChange={e => setOpraIds(e.target.value)}
+                                                <input type="text" value={exportIds} onChange={e => setExportIds(e.target.value)}
                                                     placeholder="REQ-20260101-AB12CD34, REQ-…"
                                                     className="glass-input w-full" />
                                             </label>
@@ -3491,10 +3520,10 @@ export default function AdminConsole() {
                                             <div>
                                                 <span className="block text-white/60 text-sm mb-2">Fields to include</span>
                                                 <div className="grid gap-2 sm:grid-cols-2">
-                                                    {opraFields.map(f => (
+                                                    {exportFields.map(f => (
                                                         <label key={f.id} className="flex items-start gap-2 text-sm">
-                                                            <input type="checkbox" checked={opraChosen.has(f.id)}
-                                                                onChange={e => setOpraChosen(prev => {
+                                                            <input type="checkbox" checked={exportChosen.has(f.id)}
+                                                                onChange={e => setExportChosen(prev => {
                                                                     const next = new Set(prev);
                                                                     e.target.checked ? next.add(f.id) : next.delete(f.id);
                                                                     return next;
@@ -3517,7 +3546,7 @@ export default function AdminConsole() {
                                             </div>
 
                                             {/* Said before the download, not after. */}
-                                            {opraFields.some(f => f.sensitive && opraChosen.has(f.id)) && (
+                                            {exportFields.some(f => f.sensitive && exportChosen.has(f.id)) && (
                                                 <p role="alert" className="text-sm text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
                                                     This export will identify the people who filed these reports. Release
                                                     it only if the request covers their details. It is recorded in the
@@ -3527,29 +3556,29 @@ export default function AdminConsole() {
 
                                             <div className="flex items-center gap-3">
                                                 <Button
-                                                    disabled={opraBusy || opraChosen.size === 0}
+                                                    disabled={exportBusy || exportChosen.size === 0}
                                                     onClick={async () => {
-                                                        setOpraBusy(true);
+                                                        setExportBusy(true);
                                                         try {
                                                             await api.exportForPublicRecords({
-                                                                startDate: opraStart || undefined,
-                                                                endDate: opraEnd || undefined,
-                                                                statuses: opraStatuses.size ? [...opraStatuses] : undefined,
-                                                                requestIds: opraIds.split(',').map(v => v.trim()).filter(Boolean) || undefined,
-                                                                fields: [...opraChosen],
+                                                                startDate: exportStart || undefined,
+                                                                endDate: exportEnd || undefined,
+                                                                statuses: exportStatuses.size ? [...exportStatuses] : undefined,
+                                                                requestIds: exportIds.split(',').map(v => v.trim()).filter(Boolean) || undefined,
+                                                                fields: [...exportChosen],
                                                             });
                                                             setSaveMessage('Export downloaded');
                                                             setTimeout(() => setSaveMessage(null), 3000);
                                                         } catch (err) {
                                                             reportError('The export failed', err);
                                                         } finally {
-                                                            setOpraBusy(false);
+                                                            setExportBusy(false);
                                                         }
                                                     }}
                                                 >
-                                                    {opraBusy ? 'Preparing…' : 'Download export'}
+                                                    {exportBusy ? 'Preparing…' : 'Download export'}
                                                 </Button>
-                                                {opraChosen.size === 0 && (
+                                                {exportChosen.size === 0 && (
                                                     <span className="text-white/50 text-sm">Choose at least one field.</span>
                                                 )}
                                             </div>
@@ -3571,11 +3600,11 @@ export default function AdminConsole() {
                                                 </p>
                                             ) : retentionPreview.blocked === 'unconfigured' ? (
                                                 /* Not "nothing is eligible". Nothing has been *measured* —
-                                                   there is no retention period until a state is confirmed,
-                                                   and every closed record is still here regardless of age. */
+                                                   there is no retention period at all, and every closed
+                                                   record is still here regardless of age. */
                                                 <p className="p-4 text-sm text-amber-200">
                                                     {retentionPreview.detail
-                                                        || 'No state is confirmed, so there is no retention period to measure records against and nothing can run.'}
+                                                        || 'No retention period is set, so there is nothing to measure records against and nothing can run.'}
                                                 </p>
                                             ) : !retentionPreview.summary || retentionPreview.summary.total === 0 ? (
                                                 <p className="p-4 text-sm text-white/70">
@@ -3651,38 +3680,12 @@ export default function AdminConsole() {
                                     )}
                                 </AccordionSection>
 
-                                {/* All States Reference */}
-                                <AccordionSection
-                                    title={`All State Policies`}
-                                    subtitle={`Reference guide for ${retentionStates.length} states with retention requirements`}
-                                    icon={FileText}
-                                    iconClassName="text-blue-400"
-                                >
-                                    <div className="overflow-x-auto">
-                                        <table className="w-full text-sm">
-                                            <thead>
-                                                <tr className="border-b border-white/10">
-                                                    <th className="text-left py-2 text-white/60">State</th>
-                                                    <th className="text-left py-2 text-white/60">Code</th>
-                                                    <th className="text-left py-2 text-white/60">Retention</th>
-                                                    <th className="text-left py-2 text-white/60">Source</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {retentionStates.map((state) => (
-                                                    <tr key={state.code} className="border-b border-white/5 hover:bg-white/5">
-                                                        <td className="py-2 text-white">{state.name}</td>
-                                                        <td className="py-2 text-white/60">{state.code}</td>
-                                                        <td className="py-2">
-                                                            <span className="text-amber-400 font-medium">{state.retention_years} years</span>
-                                                        </td>
-                                                        <td className="py-2 text-white/40 text-xs">{state.source}</td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </AccordionSection>
+                                {/* The "All State Policies" reference table is gone. It
+                                    listed a retention period and a records authority for each
+                                    of 51 jurisdictions, presented as a reference guide, and
+                                    the numbers were not researched: 41 of the 51 said five
+                                    years. A clerk checking their own schedule against it would
+                                    have been checking it against nothing. */}
 
                                 {/* Database Backups */}
                                 <AccordionSection

@@ -24,6 +24,63 @@ import SecretField from './SecretField';
 import { openStayInformed } from './StayInformed';
 
 
+/* Records retention, on the setup page rather than only on the compliance tab.
+ *
+ * Every other capability here is off until a town configures it, and off means
+ * a feature it does not have. Retention is the one where off has a cost that
+ * accrues: with no period set, nothing is ever cleared, so every name, phone
+ * number and free-text description a resident has submitted stays on the
+ * record for good. Keeping personal data no longer needed is an obligation in
+ * its own right, and the town's own published privacy policy usually says
+ * otherwise.
+ *
+ * Off by default is still the right call -- the alternative was a retention
+ * period the product had invented for all 51 US jurisdictions, and destroying
+ * a record early cannot be undone -- but it must not be quiet. So this is a
+ * standing notice with the consequence in the heading, not a grey "not
+ * configured" chip in a grid of eight.
+ *
+ * It renders nothing at all once a policy is in force. A permanent badge that
+ * can never go green is how people learn to stop reading badges.
+ */
+function RetentionNotice() {
+    const [policy, setPolicy] = useState<import('../services/api').RetentionPolicyConfig | null>(null);
+
+    useEffect(() => {
+        let live = true;
+        api.getRetentionPolicy()
+            .then(p => { if (live) setPolicy(p); })
+            // Silent on failure. A setup page that shouts about retention
+            // because one request timed out is worse than one that waits.
+            .catch(() => undefined);
+        return () => { live = false; };
+    }, []);
+
+    if (!policy || policy.configured) return null;
+
+    return (
+        <div role="status" className="rounded-2xl border border-amber-400/40 bg-amber-500/[0.09] p-5">
+            <div className="flex gap-3 items-start">
+                <AlertCircle className="w-5 h-5 text-amber-300 shrink-0 mt-0.5" aria-hidden="true" />
+                <div className="space-y-2 min-w-0">
+                    <h3 className="font-semibold text-white">
+                        Resident personal data is being kept indefinitely
+                    </h3>
+                    <p className="text-white/75 text-sm leading-relaxed">{policy.detail}</p>
+                    <p className="text-white/55 text-sm leading-relaxed">
+                        Nothing has been deleted, so no record has been lost to this. Your
+                        clerk has the town's records retention schedule; this product will
+                        not guess at it, because destroying a record early cannot be undone.
+                        Set it under <strong className="text-white/75">Compliance → Document
+                        Retention</strong>.
+                    </p>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+
 /* One question in the questionnaire.
  *
  * Declared at module scope, not inside the page's render. A component defined
@@ -825,6 +882,11 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 <h1 className="text-2xl font-bold text-white">Setup & Integrations</h1>
                 <p className="text-gray-300 mt-1">Configure authentication, notifications, and cloud services</p>
             </div>
+
+            {/* Above the progress tracker on purpose. The tracker counts
+                integrations, and retention is not one -- it is a thing already
+                happening to resident data while nobody has decided otherwise. */}
+            <RetentionNotice />
 
             {/* ── Setup Progress Tracker ── */}
             <motion.div

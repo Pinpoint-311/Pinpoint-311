@@ -213,16 +213,13 @@ export interface RetentionPreview {
     on_legal_hold: number;
     will_act_on?: number;
     mode: 'redact' | 'purge';
-    state_code?: string | null;
-    /** Stored but unconfirmed, when blocked on 'unconfigured'. */
-    unconfirmed_state_code?: string | null;
-    policy_name?: string | null;
+    /** The period this town set, in days. Null when it has not set one. */
     retention_days?: number | null;
     cutoff_date?: string | null;
     confirmation_required?: string | null;
     /** 'legal_hold' when an instance-wide hold freezes everything, or
-     *  'unconfigured' when no state has been confirmed — with no state there is
-     *  no retention period, so a run would have nothing to measure against. */
+     *  'unconfigured' when the town has not set a period and chosen what a run
+     *  removes — with no period there is nothing to measure a record against. */
     blocked?: string;
     /** Why, in words a clerk can act on. Set alongside blocked. */
     detail?: string | null;
@@ -1196,23 +1193,22 @@ class ApiClient {
 
     // ========== Document Retention ==========
 
-    async getRetentionStates(): Promise<RetentionState[]> {
-        return this.request<RetentionState[]>('/system/retention/states');
-    }
-
     async getRetentionPolicy(): Promise<RetentionPolicyConfig> {
         return this.request<RetentionPolicyConfig>('/system/retention/policy');
     }
 
     async updateRetentionPolicy(params: {
-        state_code?: string;
-        override_days?: number;
+        /** How long a closed request is kept. 0 clears it, which stops
+         *  retention running — there is no schedule to fall back to. */
+        retention_days?: number;
         mode?: 'redact' | 'purge';
         scrub_fields?: string[];
-    }): Promise<{ status: string; state_code: string; override_days: number | null; mode: string }> {
+    }): Promise<{
+        status: string; configured: boolean; reason: string | null;
+        detail: string | null; retention_days: number | null; mode: string;
+    }> {
         const queryParams = new URLSearchParams();
-        if (params.state_code) queryParams.append('state_code', params.state_code);
-        if (params.override_days !== undefined) queryParams.append('override_days', params.override_days.toString());
+        if (params.retention_days !== undefined) queryParams.append('retention_days', params.retention_days.toString());
         if (params.mode) queryParams.append('mode', params.mode);
         // Repeated key rather than a joined string: FastAPI reads a list that
         // way, and an empty selection has to survive the trip as an explicit
@@ -1607,54 +1603,40 @@ export interface MapLayer {
 }
 
 // Document Retention types
-export interface RetentionState {
-    code: string;
-    name: string;
-    retention_days: number;
-    retention_years: number;
-    source: string;
-    public_records_law: string;
-}
+//
+// There is no RetentionState any more. It described one row of a table of
+// retention periods and public-records statutes for all 51 US jurisdictions
+// that nobody had verified, and it fed a state picker. A municipality's
+// retention schedule comes from its own clerk.
 
 export interface ScrubField {
     id: string;
     label: string;
     detail: string;
-    default: boolean;
     selected: boolean;
 }
 
 export interface RetentionPolicyConfig {
-    /** Whether a state has actually been chosen and confirmed. False means no
-     *  retention period exists and nothing is being archived or deleted — the
-     *  state code used to default to NJ, so every town outside New Jersey ran
-     *  a schedule it never picked. `policy`, `effective_days` and `stats` are
-     *  all null in that case rather than filled in from a guess. */
+    /** Whether this town has set both halves: how long a closed request is
+     *  kept, and what a run removes when that expires. False means nothing is
+     *  being archived or deleted at all — and therefore that resident personal
+     *  data is being kept indefinitely, which is what `detail` says in words. */
     configured: boolean;
-    /** 'no_settings' | 'no_state' | 'unconfirmed', when not configured. */
+    /** 'no_settings' | 'no_period' | 'no_fields', when not configured. */
     reason?: string | null;
-    /** Plain-language explanation, including where to go to fix it. */
+    /** Plain-language explanation: what is not happening, what that costs, and
+     *  where to go. The only place that sentence exists. */
     detail?: string | null;
-    /** The state stored but never confirmed — what the old default left behind.
-     *  Shown so the console can pre-select it and ask whether it is right. */
-    unconfirmed_state_code?: string | null;
-    state_code: string | null;
+    /** The period the town set, in days. Present even when unconfigured, so
+     *  the screen can render the half-finished form it is asking about. */
+    retention_days: number | null;
     /** The catalog and this town's choice in one object, so the screen never
-     *  holds its own copy of what the fields are called. */
+     *  holds its own copy of what the fields are called. Nothing is selected
+     *  until the town selects it. */
     scrub_fields?: ScrubField[];
-    policy: {
-        state_code: string;
-        name: string;
-        retention_days: number;
-        retention_years: number;
-        source: string;
-        public_records_law: string;
-    } | null;
-    override_days: number | null;
-    effective_days: number | null;
     mode: 'redact' | 'purge';
     stats: {
-        retention_policy: object;
+        retention_days: number;
         cutoff_date: string;
         eligible_for_archival: number;
         under_legal_hold: number;
