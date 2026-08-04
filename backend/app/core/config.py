@@ -53,9 +53,6 @@ class Settings(BaseSettings):
     app_version: str = "dev"
     git_sha: str = "unknown"
 
-    # Demo mode - single shared demo environment
-    demo_mode: bool = False
-
     # Managed (state-hosted) mode — orchestrator-driven deployment. Every
     # managed-mode hook is additive and a no-op when this flag is off
     # (docs/ORCHESTRATOR_PLAN.md Part A).

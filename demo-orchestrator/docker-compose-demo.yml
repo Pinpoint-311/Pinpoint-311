@@ -57,7 +57,7 @@ services:
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
       GOOGLE_VERTEX_PROJECT: ${GOOGLE_VERTEX_PROJECT:-}
       GOOGLE_VERTEX_LOCATION: ${GOOGLE_VERTEX_LOCATION:-us-central1}
-      DEMO_MODE: "true"
+      RATE_LIMIT_DEFAULT: "100/minute"
     depends_on:
       db:
         condition: service_healthy
