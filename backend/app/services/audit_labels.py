@@ -15,7 +15,7 @@ now on page four.
 Two jobs, both here so both are testable without a request:
 
   1. Name the action in a sentence. "Saved the email provider" beats
-     "POST /api/system/providers/email" for the clerk being asked, at an OPRA
+     "POST /api/system/providers/email" for the clerk being asked, at a records
      hearing or an audit, what happened on the 2nd.
 
   2. Say when not to record. A great many POSTs change nothing: testing a

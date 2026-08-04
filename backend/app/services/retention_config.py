@@ -1,30 +1,36 @@
 """Whether this town has actually chosen a records-retention schedule.
 
-The state code used to default to ``NJ``, in the model and again in five
-separate ``or "NJ"`` fallbacks around the codebase. That is not a default in
-any harmless sense: it is the duration a record is kept and the statute cited
-when it is destroyed. A town in Texas inherited a seven-year OPRA schedule and
-began anonymising records four years before the Texas Public Information Act
-allows, and nothing on any screen said so -- the compliance tab confidently
-headlined "New Jersey / OPRA" to a clerk in Amarillo.
+The product used to answer that question on the town's behalf, twice over.
 
-There is no safe implicit answer here, so this module refuses to invent one.
-An unconfigured town gets ``configured=False`` and every caller declines to
-act: the nightly task archives nothing, the backup pruner deletes nothing, the
-console shows the capability as not set up. Halted retention is a problem an
-administrator can see and fix in a minute. Records destroyed on the wrong
-state's schedule cannot be brought back.
+It shipped a table of retention periods for all 51 US jurisdictions, each
+carrying the name of that state's records authority and the title of its public
+records law. Nobody verified any of it, and the periods gave it away: forty-one
+of the fifty-one were five years, and the rest were six, seven, three or ten.
+One number wearing fifty-one different citations. A clerk reading "5 years,
+source: Alabama State Records Commission" had every reason to believe somebody
+had looked it up. Towns not in the table were told they were governed by
+"Federal FOIA", which covers federal executive-branch agencies and has no
+bearing on a municipal pothole report at all.
 
-The confirmation flag is the awkward part, and it exists because the old
-default already materialised into rows. A stored ``NJ`` is genuinely ambiguous
--- it is what a town in Newark chose and also what a town in Amarillo never
-chose -- and no amount of reading the database distinguishes them. So the value
-is left alone and ``retention_state_confirmed`` records, from this point on,
-whether a human picked it. Existing rows start unconfirmed: retention pauses
-for everyone until each town says which state it is in, including the ones that
-were right all along. That is the tradeoff, and it is deliberate -- a pause is
-visible and reversible in both directions, whereas the alternative keeps
-destroying records on the wrong schedule in every town that never looked.
+The failure is asymmetric, which is why none of it survives. If a town's real
+schedule is longer than the number we invented, the town destroys records it
+was legally required to keep, and there is no undo. If retention simply does
+not run, the town keeps records longer than it meant to, which is a problem an
+administrator can see and fix.
+
+So both halves are the municipality's to state: how long a record is kept, and
+what a run removes from it. Every municipality already has a retention schedule,
+usually approved by its state archives, and its clerk has the authoritative
+document. We add nothing by guessing, and we take something away by looking as
+though we had researched it.
+
+An unconfigured town gets ``configured=False`` and every caller declines to act:
+the nightly task archives nothing, the backup pruner deletes nothing, the setup
+page and the health dashboard say so and keep saying so. That last part is not
+decoration. With no period there is no deletion, so a town that never configures
+keeps resident personal data indefinitely -- and data minimisation is its own
+obligation. Off by default is still right, because under-deletion is recoverable
+and over-deletion is not, but it must not be quiet.
 """
 
 from __future__ import annotations
@@ -38,14 +44,21 @@ from typing import Any, List, Optional
 # setup page asks of everything else, and it should be answerable the same way.
 CAPABILITY = "retention"
 
-# Why a town is unconfigured. Three different situations that a clerk needs
-# told apart: nothing saved at all, a settings row with no state, and a state
-# that is only there because it used to be the default.
+# Why a town is unconfigured. Three situations a clerk needs told apart:
+# nothing saved at all, no retention period, and a period with nothing chosen
+# to remove when it expires.
 NO_SETTINGS = "no_settings"
-NO_STATE = "no_state"
-UNCONFIRMED = "unconfirmed"
+NO_PERIOD = "no_period"
+NO_FIELDS = "no_fields"
 
 _WHERE = "Settings → Compliance → Document Retention"
+
+# The consequence of each gap, said in the terms it actually bites in. "Not
+# configured" is a status; "resident personal data is being kept indefinitely"
+# is what is happening while it stays that way.
+_KEPT_INDEFINITELY = (
+    "resident personal data on closed requests is being kept indefinitely"
+)
 
 
 @dataclass(frozen=True)
@@ -54,13 +67,12 @@ class RetentionConfig:
 
     ``configured`` is the only field a caller must check. The rest are filled
     in either way so an unconfigured town can still be *shown* what it has --
-    the console needs to display the inherited state code in order to ask about
-    it -- but ``state_code`` being populated is not permission to act on it.
+    a half-filled form is worth rendering -- but a populated ``retention_days``
+    is not on its own permission to act.
     """
 
     configured: bool
-    state_code: Optional[str] = None
-    override_days: Optional[int] = None
+    retention_days: Optional[int] = None
     mode: str = "redact"
     scrub_fields: Optional[List[str]] = None
     reason: Optional[str] = None
@@ -80,18 +92,48 @@ class RetentionConfig:
         }
 
 
-def _explain(reason: str, inherited: Optional[str]) -> str:
-    if reason == UNCONFIRMED:
+def _explain(reason: str) -> str:
+    """Say what is not happening, and what that costs, before what to click.
+
+    Each of these ends at the same place -- nothing is being deleted -- but a
+    clerk cannot act on that without knowing which half is missing, so the
+    sentence names it.
+    """
+    if reason == NO_FIELDS:
         return (
-            f"Records retention is still on the {inherited} schedule this instance "
-            f"shipped with, which nobody here has confirmed. Nothing will be archived "
-            f"or deleted until an administrator confirms the town's state in {_WHERE}."
+            "A retention period is set, but nothing has been chosen to remove when "
+            "it expires, so a run would mark records archived and leave every name, "
+            f"address and phone number on them. Nothing is being cleared and "
+            f"{_KEPT_INDEFINITELY} until an administrator chooses what a run removes "
+            f"in {_WHERE}."
+        )
+    if reason == NO_PERIOD:
+        return (
+            "No retention period has been set, so there is no date at which a closed "
+            f"request becomes eligible to be cleared. Nothing is being archived or "
+            f"deleted and {_KEPT_INDEFINITELY} until an administrator sets the period "
+            f"their town's records schedule requires, in {_WHERE}."
         )
     return (
-        "No state has been chosen for records retention, so the retention period "
-        "and the public-records law to cite are both unknown. Nothing will be "
-        f"archived or deleted until an administrator chooses a state in {_WHERE}."
+        "Records retention has never been set up: there is no period after which a "
+        "closed request is cleared, and nothing has been chosen to remove from it. "
+        f"Nothing is being archived or deleted and {_KEPT_INDEFINITELY} until an "
+        f"administrator sets both in {_WHERE}."
     )
+
+
+def _period(value: Any) -> Optional[int]:
+    """A stored retention period, or ``None`` if there isn't a usable one.
+
+    Zero and negatives are read as unset rather than as "delete everything
+    immediately". They arrive from a cleared form field, and the one reading
+    that must never be inferred is the one that destroys records today.
+    """
+    try:
+        days = int(value)
+    except (TypeError, ValueError):
+        return None
+    return days if days > 0 else None
 
 
 def read_retention_config(settings: Any) -> RetentionConfig:
@@ -105,41 +147,41 @@ def read_retention_config(settings: Any) -> RetentionConfig:
     if settings is None:
         return RetentionConfig(
             configured=False,
-            scrub_fields=normalise_fields(None),
+            scrub_fields=[],
             reason=NO_SETTINGS,
-            detail=_explain(NO_SETTINGS, None),
+            detail=_explain(NO_SETTINGS),
         )
 
-    state_code = (getattr(settings, "retention_state_code", None) or "").strip().upper() or None
-    confirmed = bool(getattr(settings, "retention_state_confirmed", False))
     # normalise_mode already reads NULL as redact; going through it here means
     # the live rows that predate the column default -- retention_mode is NULL on
     # them -- resolve the same way everywhere rather than at each call site.
     mode = normalise_mode(getattr(settings, "retention_mode", None))
     scrub_fields = normalise_fields(getattr(settings, "retention_scrub_fields", None))
-    override_days = getattr(settings, "retention_days_override", None)
+    retention_days = _period(getattr(settings, "retention_days", None))
 
-    if not state_code:
-        reason = NO_STATE
-    elif not confirmed:
-        reason = UNCONFIRMED
+    if retention_days is None:
+        reason = NO_PERIOD
+    elif not scrub_fields:
+        # An empty selection is not "redact nothing, harmlessly". A run still
+        # stamps archived_at, which takes the record out of every future run's
+        # candidate set -- so the records pass out of retention's reach with
+        # their personal data intact and nothing left to notice it.
+        reason = NO_FIELDS
     else:
         return RetentionConfig(
             configured=True,
-            state_code=state_code,
-            override_days=override_days,
+            retention_days=retention_days,
             mode=mode,
             scrub_fields=scrub_fields,
         )
 
     return RetentionConfig(
         configured=False,
-        state_code=state_code,
-        override_days=override_days,
+        retention_days=retention_days,
         mode=mode,
         scrub_fields=scrub_fields,
         reason=reason,
-        detail=_explain(reason, state_code),
+        detail=_explain(reason),
     )
 
 

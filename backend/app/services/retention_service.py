@@ -1,13 +1,18 @@
 """
 Document Retention Service
 
-Provides state-by-state record retention policies and enforcement logic
-for municipal 311 service requests. Complies with state public records laws.
+Enforces the retention schedule a municipality has told us it is on: which
+closed records have passed their period, and what a run clears from them.
+
+This module used to *supply* the schedule as well as enforce it, from a table
+of periods and statutes for all 51 US jurisdictions that nobody had verified.
+The table is gone; see app/services/retention_config.py for why, and for what
+an unconfigured town gets instead. Every function here now takes the period the
+town itself set, and there is no fallback to take if it is missing.
 
 Key features:
-- State-specific retention periods (embedded data)
 - Legal hold support (prevents destruction during litigation)
-- Automatic archival with PII anonymization
+- Archival by redacting the fields the town chose, or purging all of them
 """
 
 import logging
@@ -15,7 +20,7 @@ import logging
 from app.services.retention_scrub import (
     REDACT, apply_scrub, fields_for_mode, normalise_mode,
 )
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,228 +28,33 @@ from sqlalchemy.ext.asyncio import AsyncSession
 logger = logging.getLogger(__name__)
 
 
-# ============================================================================
-# STATE RETENTION POLICIES (All 50 States + DC)
-# ============================================================================
-# Based on research of state public records laws for municipal service requests.
-# These are minimum retention periods - townships can extend but not shorten.
-# Each state includes its public records law name (e.g., OPRA, FOIA, CPRA).
-
-STATE_RETENTION_POLICIES: Dict[str, Dict[str, Any]] = {
-    # Alabama
-    "AL": {"days": 5 * 365, "name": "Alabama", "source": "AL State Records Commission", "public_records_law": "Alabama Open Records Act"},
-    # Alaska
-    "AK": {"days": 5 * 365, "name": "Alaska", "source": "AK State Archives", "public_records_law": "Alaska Public Records Act"},
-    # Arizona
-    "AZ": {"days": 5 * 365, "name": "Arizona", "source": "AZ State Library", "public_records_law": "Arizona Public Records Law"},
-    # Arkansas
-    "AR": {"days": 5 * 365, "name": "Arkansas", "source": "AR State Archives", "public_records_law": "FOIA (Arkansas)"},
-    # California
-    "CA": {"days": 5 * 365, "name": "California", "source": "CA Secretary of State", "public_records_law": "CPRA (California Public Records Act)"},
-    # Colorado
-    "CO": {"days": 5 * 365, "name": "Colorado", "source": "CO State Archives", "public_records_law": "CORA (Colorado Open Records Act)"},
-    # Connecticut
-    "CT": {"days": 6 * 365, "name": "Connecticut", "source": "CT Public Records Administrator", "public_records_law": "FOIA (Connecticut)"},
-    # Delaware
-    "DE": {"days": 5 * 365, "name": "Delaware", "source": "DE Public Archives", "public_records_law": "FOIA (Delaware)"},
-    # District of Columbia
-    "DC": {"days": 5 * 365, "name": "District of Columbia", "source": "DC Archives", "public_records_law": "DC FOIA"},
-    # Florida
-    "FL": {"days": 5 * 365, "name": "Florida", "source": "FL Division of Library & Information Services", "public_records_law": "Florida Sunshine Law"},
-    # Georgia
-    "GA": {"days": 3 * 365, "name": "Georgia", "source": "GA Archives", "public_records_law": "Georgia Open Records Act"},
-    # Hawaii
-    "HI": {"days": 5 * 365, "name": "Hawaii", "source": "HI State Archives", "public_records_law": "UIPA (Uniform Information Practices Act)"},
-    # Idaho
-    "ID": {"days": 5 * 365, "name": "Idaho", "source": "ID State Historical Society", "public_records_law": "Idaho Public Records Law"},
-    # Illinois
-    "IL": {"days": 5 * 365, "name": "Illinois", "source": "IL Local Records Commission", "public_records_law": "FOIA (Illinois)"},
-    # Indiana
-    "IN": {"days": 5 * 365, "name": "Indiana", "source": "IN Commission on Public Records", "public_records_law": "APRA (Access to Public Records Act)"},
-    # Iowa
-    "IA": {"days": 5 * 365, "name": "Iowa", "source": "IA State Archives", "public_records_law": "Iowa Open Records Law"},
-    # Kansas
-    "KS": {"days": 5 * 365, "name": "Kansas", "source": "KS State Historical Society", "public_records_law": "KORA (Kansas Open Records Act)"},
-    # Kentucky
-    "KY": {"days": 5 * 365, "name": "Kentucky", "source": "KY Dept for Libraries & Archives", "public_records_law": "Kentucky Open Records Act"},
-    # Louisiana
-    "LA": {"days": 5 * 365, "name": "Louisiana", "source": "LA State Archives", "public_records_law": "Louisiana Public Records Act"},
-    # Maine
-    "ME": {"days": 5 * 365, "name": "Maine", "source": "ME State Archives", "public_records_law": "FOAA (Freedom of Access Act)"},
-    # Maryland
-    "MD": {"days": 5 * 365, "name": "Maryland", "source": "MD State Archives", "public_records_law": "MPIA (Maryland Public Information Act)"},
-    # Massachusetts
-    "MA": {"days": 3 * 365, "name": "Massachusetts", "source": "MA Municipal Records Schedule", "public_records_law": "Massachusetts Public Records Law"},
-    # Michigan
-    "MI": {"days": 6 * 365, "name": "Michigan", "source": "MI Archives", "public_records_law": "FOIA (Michigan)"},
-    # Minnesota
-    "MN": {"days": 5 * 365, "name": "Minnesota", "source": "MN State Archives", "public_records_law": "MGDPA (Minnesota Data Practices Act)"},
-    # Mississippi
-    "MS": {"days": 5 * 365, "name": "Mississippi", "source": "MS Dept of Archives & History", "public_records_law": "Mississippi Public Records Act"},
-    # Missouri
-    "MO": {"days": 5 * 365, "name": "Missouri", "source": "MO Secretary of State", "public_records_law": "Missouri Sunshine Law"},
-    # Montana
-    "MT": {"days": 5 * 365, "name": "Montana", "source": "MT Historical Society", "public_records_law": "Montana Constitution Article II, Sec 9"},
-    # Nebraska
-    "NE": {"days": 5 * 365, "name": "Nebraska", "source": "NE State Historical Society", "public_records_law": "Nebraska Public Records Statutes"},
-    # Nevada
-    "NV": {"days": 5 * 365, "name": "Nevada", "source": "NV State Library & Archives", "public_records_law": "Nevada Public Records Act"},
-    # New Hampshire
-    "NH": {"days": 5 * 365, "name": "New Hampshire", "source": "NH Division of Archives", "public_records_law": "Right-to-Know Law"},
-    # New Jersey
-    "NJ": {"days": 7 * 365, "name": "New Jersey", "source": "NJ Division of Archives & Records Management", "public_records_law": "OPRA (Open Public Records Act)"},
-    # New Mexico
-    "NM": {"days": 5 * 365, "name": "New Mexico", "source": "NM State Records Center", "public_records_law": "IPRA (Inspection of Public Records Act)"},
-    # New York
-    "NY": {"days": 6 * 365, "name": "New York", "source": "NY Arts & Cultural Affairs Law §57.25", "public_records_law": "FOIL (Freedom of Information Law)"},
-    # North Carolina
-    "NC": {"days": 5 * 365, "name": "North Carolina", "source": "NC DNCR", "public_records_law": "North Carolina Public Records Law"},
-    # North Dakota
-    "ND": {"days": 5 * 365, "name": "North Dakota", "source": "ND State Archives", "public_records_law": "North Dakota Open Records Law"},
-    # Ohio
-    "OH": {"days": 5 * 365, "name": "Ohio", "source": "OH Historical Society", "public_records_law": "Ohio Public Records Act"},
-    # Oklahoma
-    "OK": {"days": 5 * 365, "name": "Oklahoma", "source": "OK Dept of Libraries", "public_records_law": "Oklahoma Open Records Act"},
-    # Oregon
-    "OR": {"days": 5 * 365, "name": "Oregon", "source": "OR State Archives", "public_records_law": "Oregon Public Records Law"},
-    # Pennsylvania
-    "PA": {"days": 7 * 365, "name": "Pennsylvania", "source": "PA Municipal Records Manual", "public_records_law": "RTKL (Right-to-Know Law)"},
-    # Rhode Island
-    "RI": {"days": 5 * 365, "name": "Rhode Island", "source": "RI State Archives", "public_records_law": "APRA (Access to Public Records Act)"},
-    # South Carolina
-    "SC": {"days": 5 * 365, "name": "South Carolina", "source": "SC Dept of Archives & History", "public_records_law": "FOIA (South Carolina)"},
-    # South Dakota
-    "SD": {"days": 5 * 365, "name": "South Dakota", "source": "SD State Historical Society", "public_records_law": "South Dakota Open Records Law"},
-    # Tennessee
-    "TN": {"days": 5 * 365, "name": "Tennessee", "source": "TN State Library & Archives", "public_records_law": "Tennessee Public Records Act"},
-    # Texas
-    "TX": {"days": 10 * 365, "name": "Texas", "source": "TX State Library & Archives Commission", "public_records_law": "TPIA (Texas Public Information Act)"},
-    # Utah
-    "UT": {"days": 5 * 365, "name": "Utah", "source": "UT State Archives", "public_records_law": "GRAMA (Government Records Access and Management Act)"},
-    # Vermont
-    "VT": {"days": 5 * 365, "name": "Vermont", "source": "VT State Archives", "public_records_law": "Vermont Public Records Act"},
-    # Virginia
-    "VA": {"days": 5 * 365, "name": "Virginia", "source": "Library of Virginia", "public_records_law": "VFOIA (Virginia Freedom of Information Act)"},
-    # Washington
-    "WA": {"days": 6 * 365, "name": "Washington", "source": "WA State Archives", "public_records_law": "Washington Public Records Act"},
-    # West Virginia
-    "WV": {"days": 5 * 365, "name": "West Virginia", "source": "WV State Archives", "public_records_law": "FOIA (West Virginia)"},
-    # Wisconsin
-    "WI": {"days": 7 * 365, "name": "Wisconsin", "source": "WI Public Records Board", "public_records_law": "Wisconsin Open Records Law"},
-    # Wyoming
-    "WY": {"days": 5 * 365, "name": "Wyoming", "source": "WY State Archives", "public_records_law": "Wyoming Public Records Act"},
-    
-    # Default for unlisted jurisdictions
-    "DEFAULT": {"days": 7 * 365, "name": "Default", "source": "Conservative 7-year default", "public_records_law": "Federal FOIA"},
-}
-
-
-def get_all_states() -> List[Dict[str, Any]]:
-    """Get list of all supported states with their retention policies."""
-    states = []
-    for code, policy in STATE_RETENTION_POLICIES.items():
-        if code != "DEFAULT":
-            states.append({
-                "code": code,
-                "name": policy["name"],
-                "retention_days": policy["days"],
-                "retention_years": policy["days"] // 365,
-                "source": policy["source"],
-                "public_records_law": policy.get("public_records_law", "Public Records Act")
-            })
-    return sorted(states, key=lambda x: x["name"])
-
-
-def get_retention_policy(state_code: str) -> Dict[str, Any]:
-    """
-    Get retention policy for a specific state.
-    
-    Args:
-        state_code: Two-letter state code (e.g., "NJ", "TX")
-        
-    Returns:
-        Dict with days, name, source, years, and public_records_law
-    """
-    state_code = state_code.upper() if state_code else "DEFAULT"
-    if state_code not in STATE_RETENTION_POLICIES:
-        # Report the policy actually in effect. Echoing back an unrecognized code
-        # alongside the DEFAULT policy's name/law was internally inconsistent —
-        # the UI would show "ZZ" as if it were a configured state.
-        state_code = "DEFAULT"
-    policy = STATE_RETENTION_POLICIES[state_code]
-
-    return {
-        "state_code": state_code,
-        "name": policy["name"],
-        "retention_days": policy["days"],
-        "retention_years": policy["days"] // 365,
-        "source": policy["source"],
-        "public_records_law": policy.get("public_records_law", "Public Records Act")
-    }
-
-
 # One definition of the cutoff, shared by the eligibility query, the stats
-# panel, and the preview an administrator confirms against.
-#
-# Both call sites below used to compute it as `override_days if override_days
-# else policy_days`, which takes the override whatever it is -- while
-# calculate_retention_date() honoured it only when it was *longer* than the
-# state minimum. So an override shorter than the floor selected records the
-# state requires the town to keep, and nothing said so: the run reports how
-# many it archived, and that number is equally plausible either way.
-from app.services.retention_window import effective_retention_days, retention_cutoff
-
-
-def calculate_retention_date(
-    closed_date: datetime,
-    state_code: str,
-    override_days: Optional[int] = None
-) -> datetime:
-    """
-    Calculate the date when a record can be archived/deleted.
-    
-    Args:
-        closed_date: When the request was closed
-        state_code: State for retention rules
-        override_days: Optional override (must be >= state minimum)
-        
-    Returns:
-        Datetime when record can be archived
-    """
-    policy = get_retention_policy(state_code)
-    retention_days = policy["retention_days"]
-    
-    # Allow override only if it's longer than state minimum
-    if override_days and override_days > retention_days:
-        retention_days = override_days
-    
-    return closed_date + timedelta(days=retention_days)
+# panel, and the preview an administrator confirms against. A preview computed
+# differently from the run invites somebody to confirm against a list that is
+# not the list.
+from app.services.retention_window import retention_cutoff
 
 
 async def get_records_for_archival(
     db: AsyncSession,
-    state_code: str,
-    override_days: Optional[int] = None,
+    retention_days: int,
     limit: int = 100
 ) -> List[Any]:
     """
     Get closed records that have exceeded their retention period.
-    
+
     Args:
         db: Database session
-        state_code: State for retention rules
-        override_days: Optional custom retention period
+        retention_days: The retention period this town configured
         limit: Max records to return
-        
+
     Returns:
         List of ServiceRequest records eligible for archival
     """
     from app.models import ServiceRequest
-    
-    policy = get_retention_policy(state_code)
-    retention_days = effective_retention_days(policy["retention_days"], override_days)
-    cutoff_date = retention_cutoff(policy["retention_days"], override_days)
-    
+
+    cutoff_date = retention_cutoff(retention_days)
+
     # Query closed records older than retention period, not already archived,
     # not deleted, and not under legal hold
     query = select(ServiceRequest).where(
@@ -258,7 +68,7 @@ async def get_records_for_archival(
             ServiceRequest.flagged == False
         )
     ).limit(limit)
-    
+
     result = await db.execute(query)
     return result.scalars().all()
 
@@ -377,26 +187,22 @@ async def archive_record(
 
 async def get_retention_stats(
     db: AsyncSession,
-    state_code: str,
-    override_days: Optional[int] = None
+    retention_days: int,
 ) -> Dict[str, Any]:
     """
     Get statistics about records pending archival.
-    
+
     Args:
         db: Database session
-        state_code: State for retention rules
-        override_days: Optional custom retention period
-        
+        retention_days: The retention period this town configured
+
     Returns:
         Dict with counts and dates
     """
     from app.models import ServiceRequest
     from sqlalchemy import func
     
-    policy = get_retention_policy(state_code)
-    retention_days = effective_retention_days(policy["retention_days"], override_days)
-    cutoff_date = retention_cutoff(policy["retention_days"], override_days)
+    cutoff_date = retention_cutoff(retention_days)
     
     # Count records eligible for archival
     eligible_query = select(func.count(ServiceRequest.id)).where(
@@ -431,7 +237,7 @@ async def get_retention_stats(
     archived_count = archived_result.scalar() or 0
     
     return {
-        "retention_policy": policy,
+        "retention_days": retention_days,
         "cutoff_date": cutoff_date.isoformat(),
         "eligible_for_archival": eligible_count,
         "under_legal_hold": held_count,

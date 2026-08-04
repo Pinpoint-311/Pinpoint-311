@@ -308,8 +308,8 @@ async def set_managed_settings(
 
     if incoming.get("retention_days") is not None:
         try:
-            settings.retention_days_override = int(incoming["retention_days"])
-            applied["retention_days_override"] = settings.retention_days_override
+            settings.retention_days = int(incoming["retention_days"])
+            applied["retention_days"] = settings.retention_days
         except (TypeError, ValueError):
             pass
 

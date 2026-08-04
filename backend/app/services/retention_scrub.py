@@ -62,36 +62,38 @@ def normalise_mode(mode: Optional[str]) -> str:
 # The catalog
 # ---------------------------------------------------------------------------
 #
-# `default` reproduces exactly what the old fixed list did, so upgrading changes
-# nothing about what a town's next run removes. A retention policy that quietly
-# starts keeping or destroying more than it did yesterday is the one change this
-# module must never make on its own.
+# Nothing is pre-ticked, and that is the whole point of the list.
+#
+# Seven of these used to arrive selected, because they were what the old
+# hard-coded list removed. Inherited that way they were never anybody's
+# decision -- and the decision they stood in for is which of a resident's
+# details this town destroys, permanently, on a schedule. A default that
+# destroys is not a convenience.
+#
+# The town ticks what its own records schedule says to remove. Until it ticks
+# something, retention does not run at all; see retention_config.
 
 SCRUB_FIELDS: List[Dict[str, Any]] = [
     {
         "id": "name",
         "label": "Reporter's name",
         "detail": "First and last name are replaced with [ARCHIVED].",
-        "default": True,
     },
     {
         "id": "email",
         "label": "Reporter's email address",
         "detail": "Replaced with a placeholder that cannot receive mail.",
-        "default": True,
     },
     {
         "id": "phone",
         "label": "Reporter's phone number",
         "detail": "Removed.",
-        "default": True,
     },
     {
         "id": "description",
         "label": "What the resident wrote",
         "detail": "The free-text description. Residents often put names, phone "
                   "numbers and neighbours' details in here.",
-        "default": True,
     },
     {
         "id": "custom_fields",
@@ -99,69 +101,46 @@ SCRUB_FIELDS: List[Dict[str, Any]] = [
         "detail": "Whatever residents typed into the follow-up questions this "
                   "town added. Free text, so it holds the same names, phone "
                   "numbers and neighbours' details the description does -- and "
-                  "unlike the description it was invisible to retention "
-                  "entirely, so it outlived every other field on the record.",
-        # Selectable but NOT a default, and the distinction matters more than it
-        # looks. Being absent from this catalog was the bug: retention could not
-        # clear these answers even if a town asked it to. Being a *default* is a
-        # different act -- it changes what happens to towns that never chose
-        # anything, and what happens is irreversible deletion. A town that has
-        # been keeping these answers would start destroying them on its next run
-        # with nobody having decided that, which is the one thing
-        # `test_never_configured_means_what_it_did_before` exists to forbid:
-        # "a town upgrading into this feature must not have its next run start
-        # removing more, or less, than yesterday's."
-        #
-        # So the blindness is fixed and the choice is left to the town. New
-        # installs are unaffected either way: they have no stored selection and
-        # pick their fields on the way in.
-        "default": False,
+                  "it was invisible to retention entirely until recently, so on "
+                  "older records it outlived every other field.",
     },
     {
         "id": "staff_notes",
         "label": "Internal staff notes",
         "detail": "Notes staff added to the request.",
-        "default": True,
     },
     {
         "id": "media",
         "label": "Photos",
         "detail": "Photo links are cleared. The files themselves are removed by "
                   "the storage cleanup that follows.",
-        "default": True,
     },
     {
         "id": "ai_analysis",
         "label": "AI analysis and summary",
         "detail": "The model's writing about the report, which quotes it. The "
                   "category and priority score are kept so the record still counts.",
-        "default": True,
     },
     {
         "id": "comments",
         "label": "Comments on the request",
-        "detail": "Both resident and staff comments. Off by default because "
-                  "this was never removed before.",
-        "default": False,
+        "detail": "Both resident and staff comments.",
     },
     {
         "id": "address",
         "label": "Street address",
         "detail": "The address text. The map pin is a separate choice below.",
-        "default": False,
     },
     {
         "id": "coordinates",
         "label": "Map location",
         "detail": "Removes the pin entirely. The request disappears from maps "
                   "and from anything counted by area.",
-        "default": False,
     },
 ]
 
 FIELD_IDS: Set[str] = {f["id"] for f in SCRUB_FIELDS}
 FIELD_IDS_ORDERED: List[str] = [f["id"] for f in SCRUB_FIELDS]
-DEFAULT_FIELDS: List[str] = [f["id"] for f in SCRUB_FIELDS if f["default"]]
 
 # Keys in `ai_analysis` that hold no resident text.
 #
@@ -180,13 +159,15 @@ AI_ANALYSIS_KEEP = frozenset({
 def normalise_fields(fields: Optional[Iterable[str]]) -> List[str]:
     """Validate a stored or submitted selection.
 
-    `None` means "never configured", which is the defaults rather than nothing:
-    a town upgrading into this feature keeps the behaviour it already had. An
-    empty list is a deliberate choice and is honoured -- it means redact nothing,
-    which is a legitimate thing to want alongside a delete-mode policy.
+    `None` means "never configured" and returns nothing, because there is
+    nothing to return: the list of things a run destroys is the town's to write
+    and there is no version of it we can supply. It used to fall back to a set
+    of seven, which is how towns ended up with a destruction policy nobody
+    chose. Callers read an empty result as "not configured yet" and decline to
+    run -- see retention_config -- rather than as "redact nothing".
     """
     if fields is None:
-        return list(DEFAULT_FIELDS)
+        return []
     return [f for f in dict.fromkeys(fields) if f in FIELD_IDS]
 
 
@@ -279,6 +260,10 @@ def apply_scrub(record: Any, fields: Optional[Iterable[str]] = None) -> List[str
 
 
 def describe_selection(fields: Optional[Iterable[str]] = None) -> List[Dict[str, Any]]:
-    """The catalog with the current choice marked, for the settings screen."""
+    """The catalog with the current choice marked, for the settings screen.
+
+    A town that has chosen nothing gets every box unticked, which is the
+    accurate picture of a policy that has not been written yet.
+    """
     chosen = set(normalise_fields(fields))
     return [{**f, "selected": f["id"] in chosen} for f in SCRUB_FIELDS]

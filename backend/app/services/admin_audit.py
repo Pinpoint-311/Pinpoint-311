@@ -8,7 +8,7 @@ account, left no trace anywhere. Nor did deleting a department or a service
 category.
 
 That is a gap in something the compliance documentation describes as an
-OPRA-grade tamper-evident trail. The hash chain is real and the sign-in
+tamper-evident trail a records request can be answered from. The hash chain is real and the sign-in
 coverage is real; the chain just did not have the interesting events in it.
 
 `AuditService.log_event` already exists and already chains. This is a thin

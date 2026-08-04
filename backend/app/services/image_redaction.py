@@ -4,7 +4,7 @@ Why this is destructive, and why it happens here
 ------------------------------------------------
 The obvious design -- keep the original, blur it when it is displayed -- is the
 wrong one for a public records system. A 311 photo is a government record: it
-goes out through the Open311 API, the research export, OPRA/FOIA responses and
+goes out through the Open311 API, the research export, public-records responses and
 whatever the town's own dashboard renders, and every one of those is a separate
 place to forget to apply the blur. Worse, the unredacted face is still sitting
 in the database until retention deletes it, which is exactly the biometric

@@ -381,40 +381,45 @@ async def _cpu_check(window: float = 0.4) -> Dict[str, Any]:
 
 
 async def _retention_check(db) -> Dict[str, Any]:
-    """Has this town said which state's records schedule it is on?
+    """Has this town set a retention period, and said what a run removes?
 
-    Leading indicator in both directions, which is why it belongs here rather
-    than only on the compliance tab. Until a state is confirmed the nightly run
-    archives nothing, so the town is quietly keeping records past the date its
-    own published policy says they are gone — and the moment somebody confirms
-    the wrong state, records start being destroyed early. Neither shows up
-    anywhere a clerk looks; the retention tab is a screen nobody opens twice.
+    This belongs here rather than only on the compliance tab because the
+    unconfigured state is silent everywhere else and does not resolve itself.
+    Nothing is archived or deleted until both halves are set, which means every
+    name, phone number and free-text description a resident has ever submitted
+    is still on the record — and a town's own published privacy policy usually
+    says otherwise. Data minimisation is an obligation in its own right; the
+    absence of a policy is a live condition, not a blank field.
 
-    Warning rather than critical: nothing is being lost while this is unset,
-    and confirming the state fixes it in one click. Contrast `_kms_check`,
-    which is critical because its failure window closes on data that cannot be
-    recovered afterwards.
+    Warning rather than critical, and the distinction is about direction. Nothing
+    is being destroyed while this is unset, so it is recoverable — a town can
+    configure it tomorrow and the records are all still there. Contrast
+    `_kms_check`, which is critical because its failure window closes on data
+    that cannot be got back. But it stays a warning permanently, and says what
+    is actually happening rather than "not configured".
     """
     try:
         from app.services.retention_config import load_retention_config
 
         config = await load_retention_config(db)
         if config.configured:
-            from app.services.retention_service import get_retention_policy
-
-            policy = get_retention_policy(config.state_code)
-            years = (config.override_days or policy["retention_days"]) // 365
-            return _check("retention", "Records retention", "ok", config.state_code,
-                          f"Records are kept for {years} years under "
-                          f"{policy['public_records_law']} ({policy['name']}).")
+            days = config.retention_days
+            years = days / 365
+            period = f"{years:.1f} years".replace(".0 ", " ") if days >= 365 else f"{days} days"
+            return _check("retention", "Records retention", "ok", f"{days} days",
+                          f"Closed requests are kept for {period}, then "
+                          f"{'every field is cleared' if config.mode == 'purge' else 'the chosen fields are cleared'} "
+                          f"({len(config.scrub_fields or [])} selected). One period for all "
+                          f"records, set by this town.")
 
         return _check(
-            "retention", "Records retention", "warning", config.state_code or None,
+            "retention", "Records retention", "warning", None,
             config.detail or "No records-retention schedule is configured.",
             action=(
-                "Open Settings → Compliance → Document Retention and confirm the state "
-                "this town is in. Nothing is archived or deleted until you do, so the "
-                "records your published policy says are gone are all still here."
+                "Open Settings → Compliance → Document Retention and set how long closed "
+                "requests are kept, and what a run removes from them. Your clerk has the "
+                "town's approved records retention schedule; this product will not guess "
+                "at it. Until both are set, resident personal data is kept indefinitely."
             ),
         )
     except Exception:

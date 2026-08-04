@@ -317,14 +317,14 @@ async def delete_backup(backup_name: str) -> Dict[str, Any]:
 async def cleanup_old_backups(retention_days: int = None) -> Dict[str, Any]:
     """
     Delete backups older than the retention period.
-    Uses state-specific retention policy if none specified.
+    Uses the town's configured retention period if none is specified.
 
-    With no state confirmed there is no retention period, and this deletes
-    nothing rather than picking one. The old code fell back to NJ and then, if
-    even that failed, to a bare seven years — two guesses at how long a town
-    must be able to restore from, on the destructive side of the decision.
-    Keeping backups too long costs storage; deleting them early can cost the
-    town the only copy of records it is required to produce.
+    With no period configured this deletes nothing rather than picking one. The
+    old code fell back to an invented per-state schedule and then, if even that
+    failed, to a bare seven years — two guesses at how long a town must be able
+    to restore from, both on the destructive side of the decision. Keeping
+    backups too long costs storage; deleting them early can cost the town the
+    only copy of records it is required to produce.
     """
     config = await get_backup_config()
     if not config:
@@ -335,13 +335,12 @@ async def cleanup_old_backups(retention_days: int = None) -> Dict[str, Any]:
         try:
             from app.db.session import SessionLocal
             from app.services.retention_config import load_retention_config
-            from app.services.retention_service import get_retention_policy
 
             async with SessionLocal() as db:
                 retention = await load_retention_config(db)
 
             if not retention.configured:
-                logger.info("[Backups] No confirmed retention state (%s) — "
+                logger.info("[Backups] No retention schedule configured (%s) — "
                             "keeping every backup this run", retention.reason)
                 return {
                     "status": "skipped",
@@ -351,8 +350,7 @@ async def cleanup_old_backups(retention_days: int = None) -> Dict[str, Any]:
                     "message": retention.detail,
                 }
 
-            policy = get_retention_policy(retention.state_code)
-            retention_days = policy["retention_days"]
+            retention_days = retention.retention_days
         except Exception as e:
             # Unreadable settings are not permission to start deleting either.
             logger.warning(f"Could not get retention policy, keeping every backup: {e}")
