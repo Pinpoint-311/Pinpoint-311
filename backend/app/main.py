@@ -29,9 +29,12 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-# Tighter rate limits in demo mode to protect shared API keys
-_demo_mode = os.environ.get("DEMO_MODE", "").lower() in ("true", "1", "yes")
-_default_limit = "100/minute" if _demo_mode else "500/minute"
+# Default per-IP rate limit. This used to be keyed off DEMO_MODE ("100/minute"
+# when set, "500/minute" otherwise) purely so a publicly-reachable instance
+# sharing one set of API keys could be throttled harder. That reason survives
+# demo mode, so the limit is now a plain env var: any instance that wants a
+# tighter ceiling sets RATE_LIMIT_DEFAULT instead of opting into a feature flag.
+_default_limit = os.environ.get("RATE_LIMIT_DEFAULT") or "500/minute"
 limiter = Limiter(key_func=get_remote_address, default_limits=[_default_limit])
 
 
@@ -66,10 +69,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Content Security Policy, decided by response TYPE (not URL path): JSON
         # responses load nothing, so lock them all the way down — a reflected
         # parameter is then completely inert (defense against reflected-XSS
-        # probes). Server-rendered HTML pages (e.g. the /api/auth bootstrap and
-        # demo-login pages) legitimately use inline scripts/styles, so they get a
-        # policy that keeps working while still denying plugins, framing, and
-        # base-tag hijacking. Keying off path would have broken those HTML pages.
+        # probes). Server-rendered HTML pages (e.g. the /api/auth bootstrap
+        # pages) legitimately use inline scripts/styles, so they get a policy
+        # that keeps working while still denying plugins, framing, and base-tag
+        # hijacking. Keying off path would have broken those HTML pages.
         content_type = response.headers.get("content-type", "")
         if content_type.startswith("application/json"):
             response.headers["Content-Security-Policy"] = (
@@ -531,17 +534,6 @@ async def root():
         "message": "Township 311 API",
         "docs": "/api/docs",
         "health": "/api/health"
-    }
-
-
-@app.get("/api/demo/info")
-async def demo_info():
-    """Returns demo mode status and configuration for the frontend."""
-    from app.core.config import get_settings
-    settings = get_settings()
-    return {
-        "demo_mode": settings.demo_mode,
-        "message": "Welcome to the Pinpoint 311 demo! Explore the system freely." if settings.demo_mode else None,
     }
 
 

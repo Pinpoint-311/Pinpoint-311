@@ -26,15 +26,27 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-COMPOSE = [ROOT / "docker-compose.yml", ROOT / "docker-compose.prod.yml",
-           ROOT / "docker-compose.demo.yml"]
+# Globbed rather than listed. The list named three files and skipped any that
+# did not exist, so deleting one left a dead entry and adding one was never
+# checked at all -- demo-orchestrator/docker-compose-demo.yml, which the
+# orchestrator hands to every instance it provisions, was never in it.
+COMPOSE = sorted(ROOT.glob("docker-compose*.yml")) + sorted(ROOT.glob("*/docker-compose*.yml"))
+
+
+def test_the_compose_files_were_actually_found():
+    """A glob that matches nothing would make the next test quietly vacuous."""
+    assert len(COMPOSE) >= 2, f"expected the app's compose files under {ROOT}, found {COMPOSE}"
 
 
 def test_no_compose_file_ships_an_auto_updater():
     for path in COMPOSE:
-        if not path.exists():
-            continue
-        text = path.read_text().lower()
+        # Comments are prose, not services: one of these files opens by saying
+        # "no Watchtower", and a file documenting its own absence must not read
+        # as shipping one.
+        text = "\n".join(
+            line for line in path.read_text().lower().splitlines()
+            if not line.strip().startswith("#")
+        )
         assert "watchtower" not in text, (
             f"{path.name} ships an auto-updater. If this is deliberate it needs a "
             f"compose profile so it is genuinely opt-in, and WATCHTOWER_LABEL_ENABLE "

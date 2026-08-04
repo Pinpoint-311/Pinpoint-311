@@ -38,11 +38,10 @@ GET /api/auth/login?redirect_uri=https://your-domain.com/callback
 ```
 Returns `{ "auth_url": "https://your-auth0-domain/authorize?..." }`. Redirect the user to `auth_url`. After authentication, Auth0 redirects back with a JWT token.
 
-#### Via Demo Mode (Development)
-```
-GET /api/auth/demo-login
-```
-Only available when `DEMO_MODE=true`. Returns HTML that stores a JWT in localStorage.
+There is no credential-free login path. `GET /api/auth/demo-login`, which minted
+an admin token for whoever asked when `DEMO_MODE=true`, has been removed
+outright — see the commit that deleted it for why a single env var was not an
+acceptable defence.
 
 ### Using a Token
 
