@@ -645,6 +645,108 @@ async def set_secret(key_name: str, value: str) -> bool:
     return await loop.run_in_executor(None, set_secret_sync, key_name, value)
 
 
+def delete_secret_sync(key_name: str) -> bool:
+    """Remove one secret from wherever it is stored. Never raises.
+
+    The inverse of set_secret_sync, and it existed nowhere: disconnecting a
+    govtech integration deleted the row that referenced
+    INTEGRATION_<PLATFORM>_<FIELD> and left the value itself in the vault. A
+    vendor client secret an admin believes they revoked by pressing Disconnect
+    stayed live, and unlisted -- nothing in the UI mentioned it any more.
+
+    Returns True when the secret is gone, including when it was never there.
+    """
+    provider = _secrets_provider()
+
+    if provider == "azure":
+        try:
+            from app.core import azure_keyvault
+            if azure_keyvault.is_configured():
+                return azure_keyvault.delete_secret(key_name)
+        except Exception as e:
+            logger.error(f"Azure Key Vault secret delete failed for {key_name}: {e}")
+        return False
+
+    if provider == "aws":
+        try:
+            from app.core import aws_secretsmanager
+            if aws_secretsmanager.is_configured():
+                return aws_secretsmanager.delete_secret(key_name)
+        except Exception as e:
+            logger.error(f"AWS Secrets Manager delete failed for {key_name}: {e}")
+        return False
+
+    if not _is_gcp_available():
+        return False
+
+    try:
+        project = os.getenv("GOOGLE_CLOUD_PROJECT") or _get_project_from_db()
+        client = _get_sm_client()
+        if not client or not project:
+            return False
+
+        bundle_name = _get_bundle_name(key_name)
+        # Secrets are bundled, so removing one key means writing a new version of
+        # the bundle without it -- under the same lock and the same
+        # freshest-read-before-merge rule as a write, or a concurrent save to a
+        # sibling key would be undone by this one.
+        with _bundle_lock(bundle_name):
+            bundle = dict(_get_secret_from_gcp(bundle_name, force_refresh=True) or {})
+            if key_name not in bundle:
+                return True
+            bundle.pop(key_name, None)
+            secret_path = f"projects/{project}/secrets/{bundle_name}"
+            client.add_secret_version(request={
+                "parent": secret_path,
+                "payload": {"data": json.dumps(bundle).encode("UTF-8")},
+            })
+            _cache_put(bundle_name, bundle)
+            # The removed value lives on in the superseded versions until these
+            # are retired, which is the whole point of pruning here too.
+            _prune_versions(client, secret_path)
+        logger.info(f"Secret {key_name} removed from Secret Manager bundle {bundle_name}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to remove secret {key_name} from Secret Manager: {e}")
+        return False
+
+
+async def delete_secret(key_name: str) -> bool:
+    """Remove a secret from the vault of record and from the database fallback.
+
+    Both, unconditionally: a town that migrated to an external vault may still
+    have an encrypted copy in `system_secrets` from before the migration, and
+    deleting only the one the current provider reads would leave the other
+    readable by the next `get_secret` fallback.
+    """
+    import asyncio
+
+    loop = asyncio.get_event_loop()
+    vault = await loop.run_in_executor(None, delete_secret_sync, key_name)
+    database = await _delete_secret_from_db(key_name)
+    return vault or database
+
+
+async def _delete_secret_from_db(key_name: str) -> bool:
+    """Drop the encrypted-in-database copy of a secret. Never raises."""
+    from sqlalchemy import delete as sql_delete
+
+    from app.db.session import SessionLocal
+    from app.models import SystemSecret
+
+    try:
+        async with SessionLocal() as db:
+            result = await db.execute(
+                sql_delete(SystemSecret).where(SystemSecret.key_name == key_name)
+            )
+            await db.commit()
+            return bool(result.rowcount)
+    except Exception as e:
+        from app.core.sanitize import sanitize_for_log
+        logger.error(f"Failed to remove secret from database: {sanitize_for_log(str(e))}")
+        return False
+
+
 async def migrate_to_secret_manager() -> Dict[str, Any]:
     """
     Migrate all secrets from the database into the configured secret store.

@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_admin, get_current_staff
@@ -83,6 +84,75 @@ class WebhookRequestIn(BaseModel):
     media_urls: Optional[List[str]] = None
 
 
+def _allowed_keys(platform: str, field_list: str) -> set:
+    catalog = PLATFORM_CATALOG.get(platform, {})
+    return {f["key"] for f in catalog.get(field_list, []) if isinstance(f, dict) and f.get("key")}
+
+
+def _reject_unknown_keys(platform: str, credentials: Optional[Dict[str, Any]],
+                         config: Optional[Dict[str, Any]]) -> None:
+    """Refuse credential and config keys the platform does not declare.
+
+    `credentials` is unvalidated input that becomes a Secret Manager key name:
+    `store_credentials` writes each field to `INTEGRATION_<PLATFORM>_<FIELD>`.
+    Without an allowlist an admin could name any field they liked and write
+    arbitrary `INTEGRATION_*` entries into the town's vault of record -- next to
+    the ones the platform itself relies on, in the namespace it reads from.
+
+    The same check on `config` is about honesty rather than the vault: config is
+    merged into a JSON blob that the connectors read by key, so an unrecognised
+    key is a setting the admin believes they set and nothing will ever read.
+    """
+    for values, field_list, label in (
+        (credentials, "credential_fields", "credential"),
+        (config, "config_fields", "setting"),
+    ):
+        if not values:
+            continue
+        allowed = _allowed_keys(platform, field_list)
+        unknown = sorted(set(values) - allowed - _EXTRA_CONFIG_KEYS.get(field_list, set()))
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Unknown {label} field(s) for {platform}: {', '.join(unknown)}. "
+                        f"Accepted: {', '.join(sorted(allowed)) or 'none'}"),
+            )
+
+
+# Config keys the connectors read that the wizard does not show as fields --
+# per-vendor mappings and tuning an integrator sets deliberately. Kept as an
+# explicit list so "the catalog does not mention it" stays the default answer.
+_EXTRA_CONFIG_KEYS = {
+    "config_fields": {
+        "share_pii", "import_new_records", "service_code_map",
+        "default_local_service_code", "status_map_in", "status_map_out",
+        "field_map", "static_fields", "max_retries", "max_pull_pages",
+        "list_items_field", "next_field", "comments_path", "comments_items_field",
+        "comment_id_field", "comment_text_field", "comment_author_field",
+        "comment_created_field", "documents_path", "document_file_field",
+        "assets_path", "assets_items_field", "asset_id_field", "asset_name_field",
+        "asset_type_field", "asset_lat_field", "asset_long_field",
+        "asset_layer_id", "asset_service_codes", "assets_on_resident_portal",
+        "work_order_id_field", "priority_field", "assigned_to_field",
+        "assigned_department_field", "scheduled_date_field", "due_date_field",
+        "resolution_field", "auth_query_param", "api_base", "auth_base",
+    },
+}
+
+
+def _vaulted_state(credentials: Dict[str, Any]) -> str:
+    """Whether every stored credential is a vault reference, some, or none."""
+    from app.integrations.credentials import is_reference
+
+    values = list(credentials.values())
+    if not values:
+        return "none"
+    referenced = [v for v in values if is_reference(v)]
+    if len(referenced) == len(values):
+        return "all"
+    return "partial" if referenced else "none"
+
+
 def _serialize(integration: IntegrationConfig) -> Dict[str, Any]:
     catalog = PLATFORM_CATALOG.get(integration.platform, {})
     return {
@@ -95,13 +165,19 @@ def _serialize(integration: IntegrationConfig) -> Dict[str, Any]:
         "config": integration.config or {},
         # Never return secret values — only which keys are set
         "configured_credentials": sorted((integration.credentials or {}).keys()),
-        # True when the stored credentials are Secret Manager references (the raw
-        # secret lives only in the vault, not this database) — lets the UI show a
-        # "stored in your Secret Manager" trust signal for government deployments.
-        "credentials_vaulted": any(
-            isinstance(v, str) and v.startswith("@secret:")
-            for v in (integration.credentials or {}).values()
-        ),
+        # Whether the stored credentials are Secret Manager references (the raw
+        # secret lives only in the vault, not this database) — the UI's "stored in
+        # your Secret Manager" trust line.
+        #
+        # `all`, not `any`. A vault write that failed for one field falls back to
+        # keeping that value encrypted in this database, and `any` reported the
+        # whole set as vaulted on the strength of the fields that succeeded. A
+        # trust signal about where secrets live must not round up.
+        "credentials_vaulted": _vaulted_state(integration.credentials or {}) == "all",
+        # "all" | "partial" | "none", so the UI can say which rather than only
+        # yes-or-no. Partial is the state worth naming: it means at least one
+        # secret is in the application database after all.
+        "credentials_vaulted_state": _vaulted_state(integration.credentials or {}),
         "webhook_path": f"/api/integrations/webhook/{integration.platform}/{integration.webhook_token}",
         "last_sync_at": integration.last_sync_at.isoformat() if integration.last_sync_at else None,
         "last_sync_status": integration.last_sync_status,
@@ -146,6 +222,7 @@ async def create_integration(
 ):
     if data.platform not in PLATFORM_CATALOG:
         raise HTTPException(status_code=400, detail=f"Unknown platform: {data.platform}")
+    _reject_unknown_keys(data.platform, data.credentials, data.config)
 
     existing = (await db.execute(
         select(IntegrationConfig).where(IntegrationConfig.platform == data.platform)
@@ -167,7 +244,18 @@ async def create_integration(
     creds = {k: v for k, v in (data.credentials or {}).items() if v}
     integration.credentials = await store_credentials(data.platform, creds)
     db.add(integration)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # The SELECT above is not a lock. Two admins connecting the same vendor
+        # at once both saw "no existing row" and both inserted, giving one
+        # platform two enabled integrations -- after which every resident report
+        # was pushed to the county twice, as two records. The unique index added
+        # in d6e7f8a9b0c1 makes the second insert fail; the answer an admin
+        # should see is the same 409 the SELECT would have produced.
+        await db.rollback()
+        raise HTTPException(
+            status_code=409, detail=f"An integration for {data.platform} already exists")
     await db.refresh(integration)
     from app.core.sanitize import sanitize_for_log
     logger.info(f"[Integrations] {sanitize_for_log(current_user.username)} created integration {sanitize_for_log(data.platform)}")
@@ -182,6 +270,7 @@ async def update_integration(
     current_user: User = Depends(get_current_admin),
 ):
     integration = await _get_integration(db, integration_id)
+    _reject_unknown_keys(integration.platform, data.credentials, data.config)
 
     if data.display_name is not None:
         integration.display_name = data.display_name
@@ -219,10 +308,46 @@ async def delete_integration(
 ):
     integration = await _get_integration(db, integration_id)
     platform = integration.platform
+    # Read before the delete: after it, the row is gone and so is the only record
+    # of which vault entries belonged to it.
+    stored = dict(integration.credentials or {})
     await db.delete(integration)
     await db.commit()
+    # Disconnecting left the vendor's client secret and agency password sitting
+    # in the town's Secret Manager under INTEGRATION_<PLATFORM>_<FIELD>, with
+    # nothing left in the UI referring to them -- so a credential an admin
+    # believes they revoked by pressing Disconnect stayed live and unlisted.
+    # Best-effort: the integration is already gone, and failing the request now
+    # would tell the admin the disconnect did not happen when it did.
+    await _forget_vault_secrets(platform, stored)
     logger.info(f"[Integrations] {current_user.username} deleted integration {platform}")
     return {"message": "Integration deleted", "platform": platform}
+
+
+async def _forget_vault_secrets(platform: str, stored: Dict[str, Any]) -> None:
+    """Delete the Secret Manager entries a disconnected integration wrote."""
+    from app.core.sanitize import sanitize_for_log
+    from app.integrations.credentials import is_reference, reference_name
+
+    names = {reference_name(v) for v in stored.values() if is_reference(v)}
+    if not names:
+        return
+    try:
+        from app.services.secret_manager import clear_cache, delete_secret
+    except Exception:
+        logger.warning("[Integrations] no secret manager available to clean up "
+                       "%s credentials", sanitize_for_log(platform))
+        return
+    for name in sorted(names):
+        try:
+            await delete_secret(name)
+            clear_cache(key_name=name)
+            logger.info("[Integrations] removed vault entry %s on disconnect",
+                        sanitize_for_log(name))
+        except Exception as exc:
+            # Named, so somebody can remove it by hand. Never the value.
+            logger.warning("[Integrations] could not remove vault entry %s: %s",
+                           sanitize_for_log(name), sanitize_for_log(str(exc)))
 
 
 # ---------- Actions ----------
@@ -231,6 +356,14 @@ def _friendly_test_error(error: str) -> str:
     """Translate a technical connection error into plain language a
     non-technical admin can act on."""
     text = error.lower()
+    # Before the credential-specific advice below: the fields are not blank, and
+    # telling somebody to re-enter them here overwrites working vault references
+    # with whatever they retype.
+    if "secret manager" in text and "could not read" in text:
+        return ("The credentials are saved, but we couldn't read them from your "
+                "Secret Manager just now. Nothing here needs re-entering — check "
+                "that the vault is reachable and that this system still has "
+                "permission to read it, then try again.")
     if "http 401" in text or "http 403" in text or "unauthorized" in text or "forbidden" in text:
         return ("The platform refused the sign-in details. Double-check the key or "
                 "username/password — copy and paste them again with no extra spaces.")

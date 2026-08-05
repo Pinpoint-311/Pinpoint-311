@@ -16,10 +16,10 @@ import base64
 import hashlib
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.core.celery_app import celery_app
 from app.db.session import SessionLocal
@@ -49,6 +49,48 @@ def _flag(config: dict, key: str, default: bool = False) -> bool:
     if value is None:
         return default
     return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+# How far back a poll reaches beyond the last recorded sync.
+#
+# These timestamps are not ours and are not transactionally ordered: a vendor
+# writes `updated_at` from its own clock, at the moment it edits the row, and
+# makes it visible to a query some time later. A poll that asks for "everything
+# after the exact instant the last one started" therefore drops records whose
+# stamp falls before that instant but which only became queryable after it.
+#
+# Overlapping re-reads a few records every run, which costs nothing: every
+# record is matched to an IntegrationLink by external id and applied only if
+# something actually changed, so a replay is a no-op.
+PULL_OVERLAP = timedelta(minutes=5)
+
+
+def _pull_since(integration) -> Optional[datetime]:
+    """The window a poll should ask the vendor for."""
+    last = integration.last_sync_at
+    if last is None:
+        return None
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    return last - PULL_OVERLAP
+
+
+def _newest_change(records) -> Optional[datetime]:
+    """The most recent `updated_at` in a batch, for the sync log.
+
+    Every connector populates `ExternalRecord.updated_at` and nothing read it.
+    It is reported rather than used as the watermark on purpose: a vendor whose
+    clock runs fast would push the watermark into the future, and every change
+    between now and then would be skipped -- a worse failure than the one being
+    fixed here, and a silent one. `started_at` is a clock we own.
+    """
+    stamps = []
+    for record in records:
+        stamp = getattr(record, "updated_at", None)
+        if stamp is None:
+            continue
+        stamps.append(stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp)
+    return max(stamps) if stamps else None
 
 
 _DATA_URI_RE = re.compile(r"^data:(image/[a-zA-Z0-9.+-]+);base64,(.+)$", re.DOTALL)
@@ -227,7 +269,6 @@ async def _push_documents(db, connector, integration, link, sr):
     documents = await _decode_media(sr)
     new_docs = documents[already:]
     if not new_docs:
-        link.documents_pushed = True
         return
     pushed = 0
     try:
@@ -235,7 +276,6 @@ async def _push_documents(db, connector, integration, link, sr):
             await connector.push_document(link.external_id, filename, content, mime)
             pushed += 1
         link.documents_pushed_count = already + pushed
-        link.documents_pushed = True
         await _log(db, integration.id, "push_documents", "success",
                    f"{sr.service_request_id}: {pushed} photo(s) attached", pushed)
     except Exception as e:
@@ -384,6 +424,11 @@ def push_request_to_integrations(self, request_id: int):
                     await _push_documents(db, connector, integration, link, sr)
                     await db.commit()
                 except Exception as e:
+                    # Without this a DB-level failure leaves the session in
+                    # PendingRollbackError, so `_log`'s own commit raises too and
+                    # the remaining integrations in this loop are never tried --
+                    # one vendor's problem silently becoming every vendor's.
+                    await db.rollback()
                     await _log(db, integration.id, "push", "error",
                                f"{sr.service_request_id}: {e}")
                     logger.warning(f"[Integrations] Push to {integration.platform} failed: {e}")
@@ -414,6 +459,11 @@ def push_status_to_integrations(self, request_id: int, notes: str = None):
             )).all()
 
             for link, integration in links:
+                # Read while the session is certainly usable. After a rollback
+                # the instance is expired, and building an UPDATE from it would
+                # need to re-read the primary key -- a lazy load, which under the
+                # async engine raises rather than quietly querying.
+                link_id = link.id
                 try:
                     connector = await build_connector_for(integration)
                     if "push_status" not in connector.capabilities:
@@ -433,7 +483,17 @@ def push_status_to_integrations(self, request_id: int, notes: str = None):
                     # Attach any photos added since the last push (idempotent).
                     await _push_documents(db, connector, integration, link, sr)
                 except Exception as e:
-                    link.sync_error = str(e)[:1000]
+                    # Same reason as the create path: a poisoned session makes
+                    # `_log` raise on its commit and abandons every integration
+                    # after this one.
+                    await db.rollback()
+                    # By id rather than through the expired instance, and issued
+                    # after the rollback so it is not discarded by it.
+                    await db.execute(
+                        update(IntegrationLink)
+                        .where(IntegrationLink.id == link_id)
+                        .values(sync_error=str(e)[:1000])
+                    )
                     await _log(db, integration.id, "push_status", "error",
                                f"{sr.service_request_id}: {e}")
                     logger.warning(f"[Integrations] Status push to {integration.platform} failed: {e}")
@@ -457,11 +517,23 @@ def pull_integration_updates():
             )).scalars().all()
 
             for integration in integrations:
+                # Read while the session is certainly usable; see the error
+                # handler below for why they cannot be read from the instance
+                # after a rollback.
+                integration_id, platform = integration.id, integration.platform
                 try:
                     connector = await build_connector_for(integration)
                     if "pull" not in connector.capabilities:
                         continue
-                    records = await connector.pull_updates(since=integration.last_sync_at)
+                    # Stamped before the fetch, not after it. `last_sync_at` used
+                    # to be set to now() once the records were in hand, so
+                    # anything the vendor changed *while* we were fetching --
+                    # a poll spanning several pages of a slow API can take
+                    # tens of seconds -- fell into a window that the next run
+                    # started after. Those updates were skipped forever, and
+                    # nothing anywhere would ever have said so.
+                    started_at = datetime.now(timezone.utc)
+                    records = await connector.pull_updates(since=_pull_since(integration))
                     updated = 0
                     imported = 0
                     for record in records:
@@ -518,22 +590,36 @@ def pull_integration_updates():
                         ))
                         updated += 1
 
-                    integration.last_sync_at = datetime.now(timezone.utc)
+                    integration.last_sync_at = started_at
                     integration.last_sync_status = "success"
                     integration.last_sync_error = None
+                    newest = _newest_change(records)
                     await _log(db, integration.id, "pull", "success",
                                f"{len(records)} record(s) fetched, {updated} status change(s) applied, "
-                               f"{imported} new request(s) imported",
+                               f"{imported} new request(s) imported"
+                               + (f", newest change {newest.isoformat()}" if newest else ""),
                                len(records))
                 except Exception as e:
                     # Clear any pending-rollback state before writing the error
                     # log, so one bad record can't poison the whole beat cycle.
                     await db.rollback()
-                    integration.last_sync_at = datetime.now(timezone.utc)
-                    integration.last_sync_status = "error"
-                    integration.last_sync_error = str(e)[:1000]
-                    await _log(db, integration.id, "pull", "error", str(e))
-                    logger.warning(f"[Integrations] Pull from {integration.platform} failed: {e}")
+                    # `last_sync_at` is deliberately left where it was. It is the
+                    # watermark the next poll reads from, and moving it after a
+                    # failed fetch would step over the very window that failed --
+                    # so a vendor outage of one beat interval would permanently
+                    # lose every change made during it. The status and error
+                    # below are what tell the admin the last attempt failed.
+                    #
+                    # Written by id: after the rollback the instance is expired,
+                    # and assembling an UPDATE from it needs a lazy re-read of
+                    # the primary key, which raises under the async engine.
+                    await db.execute(
+                        update(IntegrationConfig)
+                        .where(IntegrationConfig.id == integration_id)
+                        .values(last_sync_status="error", last_sync_error=str(e)[:1000])
+                    )
+                    await _log(db, integration_id, "pull", "error", str(e))
+                    logger.warning(f"[Integrations] Pull from {platform} failed: {e}")
             await db.commit()
 
     run_async(_pull())
