@@ -95,6 +95,16 @@ class Health:
     # outage somewhere else entirely, and it takes every provider card down with
     # it because they hydrate from the same response.
     alert_muted_until: Optional[datetime] = None
+    # What was wrong when the mute was taken.
+    #
+    # The deadline alone cannot express what an administrator agreed to. Muting
+    # is consent to a *known* problem, and `connector_alerts.muted` compares the
+    # current level against this one so something acknowledged while it was
+    # failing intermittently still breaks through when it goes fully down.
+    # Without the field the comparison read `getattr(h, ..., None)` on every
+    # row, fell back to treating the mute as covering `broken`, and the
+    # documented escalation-beats-a-mute invariant quietly did not hold.
+    alert_muted_level: Optional[str] = None
 
     @property
     def ok(self) -> bool:
@@ -159,6 +169,7 @@ def to_health(row: Any, *, now: Optional[datetime] = None) -> Health:
         # run the mute migration yet degrades to "not muted" instead of 500ing
         # the whole health page.
         alert_muted_until=getattr(row, "alert_muted_until", None),
+        alert_muted_level=getattr(row, "alert_muted_level", None),
     )
 
 

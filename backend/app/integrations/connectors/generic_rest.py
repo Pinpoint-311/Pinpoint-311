@@ -175,6 +175,21 @@ class GenericRestConnector(BaseConnector):
         body.update(extra)
         return body
 
+    def _has_credential(self) -> bool:
+        """Whether this request will actually carry a credential.
+
+        `_request_kwargs` attaches auth only when the matching credential is
+        present, so an integration saved with every credential field blank sends
+        a plain anonymous GET -- and a vendor endpoint that happens to allow
+        anonymous reads then answers 200 and the check reports success. Knowing
+        whether anything was sent is the difference between "your key works" and
+        "we never used it".
+        """
+        style = self.config.get("auth_style", "bearer")
+        if style == "basic":
+            return bool(self.credentials.get("username"))
+        return bool(self.credentials.get("api_key"))
+
     async def test_connection(self) -> Dict[str, Any]:
         async with self._client(**self._request_kwargs()) as client:
             resp = await client.get(
@@ -182,7 +197,19 @@ class GenericRestConnector(BaseConnector):
                 params={**self._query_auth(), "limit": 1},
             )
             self._raise_for_status(resp, f"{self.platform} API probe")
-        return {"ok": True, "detail": f"Connected to {self.base_url}"}
+        if not self._has_credential():
+            style = self.config.get("auth_style", "bearer")
+            need = "a username and password" if style == "basic" else "an API key"
+            return {
+                "ok": True, "verified": False,
+                "detail": (f"Server at {self.base_url} answered, but no credentials are "
+                           f"saved, so none were sent. This vendor allows anonymous reads; "
+                           f"filing reports will almost certainly need {need}."),
+            }
+        return {
+            "ok": True, "verified": True,
+            "detail": f"Connected to {self.base_url} and the saved credentials were accepted",
+        }
 
     async def push_request(self, payload: Dict[str, Any]) -> ExternalRecord:
         body = self._build_create_body(payload)
