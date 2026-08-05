@@ -127,7 +127,11 @@ class AccelaConnector(BaseConnector):
                 f"{self.api_base}/v4/records", params={"limit": 1}, headers=self._headers(token)
             )
             self._raise_for_status(resp, "Accela records probe")
-        return {"ok": True, "detail": f"Authenticated with agency {self.config['agency_name']}"}
+        # `verified` is stated rather than implied: _get_token performs the OAuth2
+        # password grant, so reaching this line means the client id, secret,
+        # username and password were all accepted.
+        return {"ok": True, "verified": True,
+                "detail": f"Authenticated with agency {self.config['agency_name']}"}
 
     async def push_request(self, payload: Dict[str, Any]) -> ExternalRecord:
         record_type = self.config.get("record_type")

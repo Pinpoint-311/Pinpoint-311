@@ -270,13 +270,20 @@ async def test_integration(
     _: User = Depends(get_current_admin),
 ):
     integration = await _get_integration(db, integration_id)
-    try:
-        connector = await build_connector_for(integration)
-        result = await connector.test_connection()
-        log_status, detail = "success", result.get("detail", "OK")
-    except Exception as e:
-        result = {"ok": False, "detail": str(e), "friendly": _friendly_test_error(str(e))}
-        log_status, detail = "error", str(e)
+    from app.services.connector_verification import check_integration_now
+
+    # The check itself lives in a service so it records health and clears the
+    # breaker the same way wherever it is called from. This endpoint used to
+    # write an IntegrationSyncLog row and nothing else, so an admin could watch
+    # a test pass while the card still said "not checked yet" -- the only writer
+    # of govtech health was the resident-report push path.
+    result = await check_integration_now(db, integration)
+    if result.get("ok"):
+        log_status, detail = "success", str(result.get("detail") or "OK")
+    else:
+        detail = str(result.get("detail") or "")
+        result = {**result, "friendly": _friendly_test_error(detail)}
+        log_status = "error"
 
     db.add(IntegrationSyncLog(
         integration_id=integration.id, operation="test", status=log_status, detail=detail[:2000]
