@@ -297,3 +297,58 @@ def test_the_sweep_still_runs_without_the_api_package(sweep):
         None, checks={"maps": ok()}, is_configured=is_configured,
         health=health, alerts=FakeAlerts()))
     assert result["checked"]["maps"] == "working"
+
+
+def test_a_switched_off_connector_does_not_keep_emailing(monkeypatch):
+    """A connector switched off after it started failing keeps its failing
+    health row -- the sweep no longer runs it, so the counters never reset --
+    and that frozen row must not generate a reminder email forever. There is
+    no card for a switched-off capability, so there is no mute button either;
+    the switch itself has to be the thing that stops the mail."""
+    from types import SimpleNamespace
+
+    from app.services import capability_switches
+    from app.services.connector_verification import notify
+
+    rows = {
+        "sms": SimpleNamespace(connector="sms"),
+        "email": SimpleNamespace(connector="email"),
+    }
+
+    class SnapshotHealth(FakeHealth):
+        async def snapshot(self, db):
+            return rows
+
+    async def enabled(capability):
+        return capability != "sms"
+
+    monkeypatch.setattr(capability_switches, "enabled", enabled)
+
+    alerts = FakeAlerts()
+    asyncio.run(notify(None, health=SnapshotHealth(), alerts=alerts))
+
+    dispatched = [h.connector for h in alerts.calls[0]]
+    assert dispatched == ["email"]
+
+
+def test_a_broken_switch_lookup_still_alerts(monkeypatch):
+    """Doubt resolves toward alerting: if the switches cannot be read, every
+    row goes to dispatch rather than none of them."""
+    from types import SimpleNamespace
+
+    from app.services import capability_switches
+    from app.services.connector_verification import notify
+
+    class SnapshotHealth(FakeHealth):
+        async def snapshot(self, db):
+            return {"sms": SimpleNamespace(connector="sms")}
+
+    async def explode(capability):
+        raise RuntimeError("settings table unreadable")
+
+    monkeypatch.setattr(capability_switches, "enabled", explode)
+
+    alerts = FakeAlerts()
+    asyncio.run(notify(None, health=SnapshotHealth(), alerts=alerts))
+
+    assert [h.connector for h in alerts.calls[0]] == ["sms"]

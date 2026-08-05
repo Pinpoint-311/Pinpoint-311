@@ -507,9 +507,17 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             const r = await api.muteConnectorAlerts(cap, effectiveMute ? 0 : undefined);
             setMutedUntil(r.muted_until);
             onChanged?.();
-        } catch {
-            // Leaving the button as it was is the honest failure: claiming a
-            // mute that did not take would produce silence nobody asked for.
+        } catch (e: any) {
+            /* Said out loud. The button not changing is the honest state --
+             * claiming a mute that did not take would produce silence nobody
+             * asked for -- but a click that does nothing and says nothing
+             * reads as a broken button, and the clerk walks away believing
+             * the emails have stopped. */
+            setResult({
+                ok: false,
+                detail: `Alert emails were not ${effectiveMute ? 'resumed' : 'paused'}: `
+                    + `${e?.message || 'the request failed'}. They carry on as before.`,
+            });
         } finally {
             setMuting(false);
         }

@@ -131,6 +131,22 @@ export default function InlineProviderSetup({
     const alreadySet = catalog.configured?.[provider] === true;
     const isCurrent = catalog.current_provider === provider;
 
+    /* This session's test, or the last one recorded, whichever is fresher.
+     *
+     * The cards below rehydrate their result box from the health row; this
+     * component showed only its in-session result, so a reload mid-setup lost
+     * the verdict a clerk had just earned and the guide reopened as though
+     * nothing had been tested. Only when the catalog's answer is about the
+     * provider this section is setting up -- a verdict belongs to the provider
+     * that produced it. `verifiable === false` is "we cannot check this from
+     * here", which is worth showing and must not render as a pass. */
+    const shownResult = result ?? ((isCurrent && catalog.last_result)
+        ? {
+            ok: catalog.last_result.ok && catalog.last_result.verifiable !== false,
+            detail: catalog.last_result.detail,
+        }
+        : null);
+
     const save = async () => {
         setBusy('save'); setResult(null); setError(null);
         try {
@@ -221,7 +237,7 @@ export default function InlineProviderSetup({
                 >
                     {busy === 'save' ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving…</> : <>Save &amp; Test</>}
                 </button>
-                {alreadySet && isCurrent && !result && (
+                {alreadySet && isCurrent && !shownResult && (
                     <span className="text-[11px] text-emerald-300/80 inline-flex items-center gap-1.5">
                         <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" />
                         Already saved — leave a box blank to keep what is stored.
@@ -229,14 +245,14 @@ export default function InlineProviderSetup({
                 )}
             </div>
 
-            {result && (
-                <div className={`mt-2.5 rounded-lg px-3 py-2 text-xs flex items-start gap-2 ${result.ok
+            {shownResult && (
+                <div className={`mt-2.5 rounded-lg px-3 py-2 text-xs flex items-start gap-2 ${shownResult.ok
                     ? 'bg-emerald-500/10 border border-emerald-400/25 text-emerald-100/90'
                     : 'bg-red-500/10 border border-red-400/25 text-red-100/90'}`}>
-                    {result.ok
+                    {shownResult.ok
                         ? <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
                         : <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />}
-                    <span>{result.detail}</span>
+                    <span>{shownResult.detail}</span>
                 </div>
             )}
 

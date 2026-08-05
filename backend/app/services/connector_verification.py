@@ -143,9 +143,16 @@ async def notify(db, *, health=None, alerts=None) -> Dict[str, Any]:
             from app.services import connector_alerts as alerts
 
         snapshot = await health.snapshot(db)
+        # A connector switched off *after* it started failing keeps its red
+        # health row -- honest history -- but must not keep emailing about it.
+        # The sweep skips switched-off capabilities, so their failure counters
+        # never reset, and without this filter the digest would carry a daily
+        # reminder about a service the town has said it is not using -- with no
+        # card, and therefore no mute button, to stop it.
+        off = await _switched_off(list(snapshot.keys()))
         return await alerts.dispatch(
             db,
-            healths=list(snapshot.values()),
+            healths=[h for h in snapshot.values() if h.connector not in off],
             town=await _town_name(db),
             settings_url=await _settings_url(db),
         )
@@ -153,6 +160,28 @@ async def notify(db, *, health=None, alerts=None) -> Dict[str, Any]:
         logger.warning("[Health] could not send connector alerts: %s",
                        sanitize_for_log(str(exc)[:300]))
         return {"sent": False, "reason": "error"}
+
+
+async def _switched_off(connectors) -> set:
+    """Which of these the town has switched off. Empty on any doubt.
+
+    Doubt resolves toward alerting: a redundant email about a switched-off
+    service is noise, a swallowed email about a wanted one is the original
+    failure mode this whole subsystem exists to prevent.
+    """
+    off = set()
+    try:
+        from app.services import capability_switches
+
+        for connector in connectors:
+            if connector in capability_switches.SWITCHABLE \
+                    and not await capability_switches.enabled(connector):
+                off.add(connector)
+    except Exception as exc:
+        logger.debug("[Health] could not read capability switches: %s",
+                     sanitize_for_log(str(exc)[:200]))
+        return set()
+    return off
 
 
 async def _town_name(db) -> str:
