@@ -213,12 +213,23 @@ export function seedAnswersFrom(status: ProviderStatusMap | null): SeededAnswers
         value && (allowed as readonly string[]).includes(value) ? (value as T) : null;
 
     const CLOUDS = ['google', 'azure', 'aws'] as const;
+    /* The AI provider names its cloud too, just not by the same word. A town
+     * that keeps its secrets in the encrypted database and never opened the
+     * KMS card still tells us its cloud the moment it sets up Vertex or
+     * Bedrock -- and without this fallback that town's questionnaire opened
+     * on Google, which then drove every provider default below it. */
+    const AI_CLOUD: Record<string, (typeof CLOUDS)[number]> = {
+        vertex: 'google', azure: 'azure', bedrock: 'aws',
+    };
+    const aiProvider = at('ai');
     return {
         /* The cloud is not stored as such: it is whichever one the credentials
          * are in. The secret store answers that most directly, with key
-         * management as the fallback; "database" means no cloud has been chosen
-         * yet, so the default stands. */
-        cloud: pick(at('secrets'), CLOUDS) ?? pick(at('kms'), CLOUDS),
+         * management as the fallback and the AI provider after that;
+         * "database" means no cloud has been chosen yet, so the default
+         * stands. */
+        cloud: pick(at('secrets'), CLOUDS) ?? pick(at('kms'), CLOUDS)
+            ?? (aiProvider ? AI_CLOUD[aiProvider] ?? null : null),
         idp: pick(at('identity'), ['auth0', 'entra', 'okta', 'oidc'] as const),
         maps: pick(at('maps'), ['google', 'esri', 'azure', 'apple'] as const),
         email: pick(at('email'), ['smtp', 'ses', 'acs'] as const),
@@ -753,15 +764,18 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * count can never say something the list inside it does not. Reproducing
      * the arithmetic here instead would be a second implementation of "what is
      * left", and those drift. */
+    const plan = buildPlan({
+        cloud: setupCloud, idp: setupIdp, maps: setupMaps, aiProvider,
+        emailProvider, smsProvider, redactionProvider, wanted: wantedFeatures,
+    });
+    const planItemDone = (item: { id: string; cap?: Capability; provider?: string }) =>
+        (item.cap && item.provider)
+            ? providerStatus?.[item.cap]?.configured?.[item.provider] === true
+            : itemDone(item.id);
     const planSummary = summarise(
-        buildPlan({
-            cloud: setupCloud, idp: setupIdp, maps: setupMaps, aiProvider,
-            emailProvider, smsProvider, redactionProvider, wanted: wantedFeatures,
-        }),
+        plan,
         {
-            isDone: (item) => (item.cap && item.provider)
-                ? providerStatus?.[item.cap]?.configured?.[item.provider] === true
-                : itemDone(item.id),
+            isDone: planItemDone,
             /* Only a real failure counts. `unknown` means nobody has looked and
              * `stale` means not lately -- neither is evidence of a fault, and
              * badging them as one produces a number that never reaches zero on
@@ -774,30 +788,42 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     );
     const outstanding = planSummary.notSetUp.length + planSummary.notWorking.length;
 
-    // Setup progress calculation. In managed mode the platform-managed steps
-    // (Google Cloud, DB Backups) are excluded — the state handles them, so
-    // counting them would leave progress permanently "incomplete".
-    const setupSteps = [
-        { label: 'Staff sign-in', done: !!signInConfigured, required: false },
-        { label: 'Email', done: !!smtpConfigured, required: false },
-        ...(managedMode ? [] : [{ label: 'Google Cloud', done: !!gcpConfigured, required: false }]),
-        { label: 'Map provider', done: !!mapsConfigured, required: false },
-        { label: 'SMS Alerts', done: smsConfigured, required: false },
-        { label: 'AI triage', done: !!aiConfigured, required: false },
-        { label: 'Translation', done: !!translationConfigured, required: false },
-        { label: 'PII encryption', done: !!kmsConfigured, required: false },
-        { label: 'Photo redaction', done: !!redactionConfigured, required: false },
-        ...(managedMode ? [] : [{ label: 'DB Backups', done: !!backupConfigured, required: false }]),
-    ];
-
-    /* Required first, and counted separately.
+    /* The progress chips, from the same plan the wizard renders.
      *
-     * "5 of 6 configured" mixes two different questions: can this town take
-     * reports at all, and how much of the optional surface is switched on. A
-     * town with both required items done and nothing else is ready to go live,
-     * and a bar reading 33% told it the opposite. The headline now answers the
-     * first question and the count answers the second. */
+     * This was a second, hand-written list of ten. It never consulted the
+     * feature ticks, so a town that switched off text messages kept an
+     * unfillable grey "SMS Alerts" chip and could never reach 100% -- while
+     * the pills on the guide header, fed by buildPlan, said "All set up"
+     * directly underneath. And it carried a "Google Cloud" chip for every
+     * town, including the ones on Azure or AWS, for whom it can never go
+     * green. One source now; the two counts cannot disagree.
+     *
+     * The Google chip survives, but only on a Google town: Google is the one
+     * cloud with an account-level credential to enter (the service-account
+     * file), so it is real work the plan items do not otherwise carry. In
+     * managed mode the platform owns it, and backups, so both drop out. */
+    const seenStep = new Set<string>();
+    const setupSteps = [
+        ...(managedMode || setupCloud !== 'google'
+            ? []
+            : [{ label: 'Google Cloud', done: !!gcpConfigured, required: false }]),
+        ...plan.flatMap(t => t.items)
+            .filter(item => !seenStep.has(item.id) && (seenStep.add(item.id), true))
+            .filter(item => !(managedMode && item.id === 'backups'))
+            .map(item => ({
+                label: item.title,
+                done: planItemDone(item),
+                required: !!item.required,
+            })),
+    ];
     const completedCount = setupSteps.filter(s => s.done).length;
+
+    /* The numbers on the three conditional questions. They were literals, so
+     * a town that unticked email read 1, 2, 3, 4, 6 -- a gap that looks like
+     * a question the page is hiding from you, which on this page it was. */
+    const askEmail = 5;
+    const askSms = askEmail + (wants('email') ? 1 : 0);
+    const askSafety = askSms + (wants('sms') ? 1 : 0);
 
     useEffect(() => {
         api.getSetupState()
@@ -1278,7 +1304,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                       * so each starts on whatever suits the cloud
                                       * above and can be changed here. */}
                                     {wants('email') && (
-                                        <Ask n={5} label="Who sends your email?"
+                                        <Ask n={askEmail} label="Who sends your email?"
                                             hint="SMTP uses the mail server the town already has. Microsoft 365 and Google Workspace block plain SMTP by default, so SES or Azure Communication Services may be less work than getting an exception.">
                                             <Options
                                                 value={emailProvider}
@@ -1289,7 +1315,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     )}
 
                                     {wants('sms') && (
-                                        <Ask n={6} label="Who sends your text messages?"
+                                        <Ask n={askSms} label="Who sends your text messages?"
                                             hint="Whichever you pick, start the 10DLC carrier registration early — it is not a technical step and it is not immediate.">
                                             <Options
                                                 value={smsProvider}
@@ -1300,7 +1326,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     )}
 
                                     {wants('safety') && (
-                                        <Ask n={7} label="Where should photos be checked and blurred?"
+                                        <Ask n={askSafety} label="Where should photos be checked and blurred?"
                                             hint="On this server needs no account and no photo ever leaves the building; it finds fewer faces than the clouds do.">
                                             <Options
                                                 value={redactionProvider}

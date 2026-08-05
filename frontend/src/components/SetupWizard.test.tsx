@@ -192,27 +192,29 @@ describe('one item open at a time', () => {
         expect(expandedItems().length).toBe(1);
     });
 
-    it('opens the first unfinished item', async () => {
+    it('opens the first unfinished item — key management leads', async () => {
+        // Kms sits first inside the task: the key service and the secret
+        // store have to be reachable before the credentials they protect.
         await render({ ...AZURE_WORK, status: {} });
-        expect(openSetup()).toBe('identity:entra');
+        expect(openSetup()).toBe('kms:azure');
     });
 
     it('skips past items already set up', async () => {
         await render({
             ...AZURE_WORK,
-            status: statusFor({ identity: ['entra'], ai: ['azure'], maps: ['google'] }),
+            status: statusFor({ identity: ['entra'], ai: ['azure'], maps: ['google'], kms: ['azure'] }),
         });
         expect(openSetup()).toBe('translation:azure');
     });
 
     it('opens the next item when one is finished and verified', async () => {
         await render({ ...AZURE_WORK, status: {} });
-        expect(openSetup()).toBe('identity:entra');
+        expect(openSetup()).toBe('kms:azure');
 
         await act(async () => {
-            container.querySelector<HTMLButtonElement>('[data-pass="identity"]')!.click();
+            container.querySelector<HTMLButtonElement>('[data-pass="kms"]')!.click();
         });
-        expect(openSetup()).toBe('ai:azure');
+        expect(openSetup()).toBe('identity:entra');
     });
 
     it('does not move on when the test failed', async () => {
@@ -221,9 +223,9 @@ describe('one item open at a time', () => {
          * confirmation that it does. */
         await render({ ...AZURE_WORK, status: {} });
         await act(async () => {
-            container.querySelector<HTMLButtonElement>('[data-fail="identity"]')!.click();
+            container.querySelector<HTMLButtonElement>('[data-fail="kms"]')!.click();
         });
-        expect(openSetup()).toBe('identity:entra');
+        expect(openSetup()).toBe('kms:azure');
     });
 
     it('collapses and expands on click', async () => {
@@ -231,13 +233,13 @@ describe('one item open at a time', () => {
         const [first, second] = itemHeaders();
 
         await act(async () => { second.click(); });
-        expect(openSetup()).toBe('ai:azure');
+        expect(openSetup()).toBe('identity:entra');
 
         await act(async () => { itemHeaders()[1].click(); });   // same one again
         expect(expandedItems().length).toBe(0);
 
         await act(async () => { itemHeaders()[0].click(); });
-        expect(openSetup()).toBe('identity:entra');
+        expect(openSetup()).toBe('kms:azure');
         expect(first).toBeTruthy();
     });
 

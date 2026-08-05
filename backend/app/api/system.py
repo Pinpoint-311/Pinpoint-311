@@ -594,33 +594,76 @@ def ch_classify(row, *, now=None):
     return classify(row, now=now)
 
 
+async def _last_result_for(db, capability: str, current: Optional[str] = None) -> Optional[dict]:
+    """What the last check of this capability said, for its catalog response.
+
+    One helper for all the catalogs. The generic route grew this and the four
+    hand-written ones (ai, identity, translation, maps) did not, so their
+    result boxes came back empty on reload -- in the setup guide, where
+    nothing falls back to the health endpoint, the test message a clerk had
+    just earned simply vanished.
+
+    Only a verdict about the provider now selected is returned. A result
+    belongs to the provider that produced it, and rehydrating the box from
+    whatever was last recorded put "there is no way to check http without
+    sending a real text" on a town whose SMS provider had since changed. A row
+    with no provider recorded is kept: everything written before that column
+    was filled looks like that, and discarding a real verdict is the worse of
+    the two mistakes.
+    """
+    from app.services import connector_health
+
+    h = (await connector_health.snapshot(db)).get(capability)
+    if h and current and h.provider and h.provider != current:
+        h = None
+    if h and (h.last_result or h.last_error):
+        return {
+            "ok": h.ok,
+            "detail": h.last_result or h.last_error,
+            "status": h.status,
+            "verifiable": h.verifiable,
+        }
+    return None
+
+
 @router.get("/identity/catalog")
-async def get_identity_catalog(_: User = Depends(get_current_admin)):
+async def get_identity_catalog(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
     """Identity provider catalog for the admin UI (Auth0 / Entra / Okta / OIDC),
     plus which provider is active."""
     from app.services.identity import catalog_for_api, IDENTITY_PROVIDER_KEY
     from app.services.secret_manager import get_secret
-    current = (await get_secret(IDENTITY_PROVIDER_KEY)) or "auth0"
+    current = ((await get_secret(IDENTITY_PROVIDER_KEY)) or "auth0").strip().lower()
     providers = catalog_for_api()
-    return {"current_provider": current.strip().lower(), "default_provider": "auth0",
+    return {"current_provider": current, "default_provider": "auth0",
             "providers": providers, "configured": await _configured_map(providers),
-            "stored_fields": await _stored_fields(providers)}
+            "stored_fields": await _stored_fields(providers),
+            "last_result": await _last_result_for(db, "identity", current)}
 
 
 @router.get("/translation/catalog")
-async def get_translation_catalog(_: User = Depends(get_current_admin)):
+async def get_translation_catalog(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
     """Translation provider catalog (Google / Azure) + current selection."""
     from app.services.translation_providers import catalog_for_api, TRANSLATION_PROVIDER_KEY
     from app.services.secret_manager import get_secret
-    current = (await get_secret(TRANSLATION_PROVIDER_KEY)) or "google"
+    current = ((await get_secret(TRANSLATION_PROVIDER_KEY)) or "google").strip().lower()
     providers = catalog_for_api()
-    return {"current_provider": current.strip().lower(), "default_provider": "google",
+    return {"current_provider": current, "default_provider": "google",
             "providers": providers, "configured": await _configured_map(providers),
-            "stored_fields": await _stored_fields(providers)}
+            "stored_fields": await _stored_fields(providers),
+            "last_result": await _last_result_for(db, "translation", current)}
 
 
 @router.get("/maps/catalog")
-async def get_maps_catalog(_: User = Depends(get_current_admin)):
+async def get_maps_catalog(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
     """Map provider catalog. Maps is a capability like AI or translation, so it
     uses the same catalog/save/test endpoints and the same card in the UI --
     a town switches its map the way it switches anything else."""
@@ -630,7 +673,8 @@ async def get_maps_catalog(_: User = Depends(get_current_admin)):
     providers = catalog_for_api()
     return {"current_provider": current, "default_provider": "google",
             "providers": providers, "configured": await _configured_map(providers),
-            "stored_fields": await _stored_fields(providers)}
+            "stored_fields": await _stored_fields(providers),
+            "last_result": await _last_result_for(db, "maps", current)}
 
 
 @router.get("/ai/catalog")
@@ -682,6 +726,7 @@ async def get_ai_catalog(
         "configured": configured,
         "stored_fields": await _stored_fields(providers),
         "providers": providers,
+        "last_result": await _last_result_for(db, "ai", current_provider),
     }
 
 
@@ -723,7 +768,6 @@ async def get_capability_catalog(
         raise HTTPException(status_code=404, detail="Unknown capability")
     from app.services.secret_manager import get_secret
     from app.services.delivery_providers import _DEFAULTS
-    from app.services import connector_health
 
     # What is running, not what is stored. `normalize_provider` alone answered
     # "on this server (no cloud)" for photo redaction on a deployment where
@@ -735,27 +779,6 @@ async def get_capability_catalog(
             capability, await get_secret(_PROVIDER_SELECT_KEY[capability])
         )
     providers = catalog_for_api(capability)
-    health_map = await connector_health.snapshot(db)
-    h = health_map.get(capability)
-
-    last_result = None
-    # Only if it is a verdict about the provider now selected. A result belongs
-    # to the provider that produced it, and this card was rehydrating the box
-    # from whatever was last recorded -- so the text messages card opened
-    # saying "there is no way to check http without sending a real text" on a
-    # town whose SMS_PROVIDER had since been changed to acs. A row with no
-    # provider recorded is kept: everything written before the column was
-    # filled looks like that, and discarding a real verdict is the worse of the
-    # two mistakes.
-    if h and h.provider and h.provider != current:
-        h = None
-    if h and (h.last_result or h.last_error):
-        last_result = {
-            "ok": h.ok,
-            "detail": h.last_result or h.last_error,
-            "status": h.status,
-            "verifiable": h.verifiable,
-        }
 
     return {
         "current_provider": current,
@@ -771,7 +794,7 @@ async def get_capability_catalog(
         # Which individual boxes have something in them, so the form's
         # "Saved" hint stops appearing on empty optional ones.
         "stored_fields": await _stored_fields(providers),
-        "last_result": last_result,
+        "last_result": await _last_result_for(db, capability, current),
         # Whether this card may change the selection. The secret store may not:
         # every credential the town has is in the current one and repointing the
         # setting does not move them, so a Save button here would be one click

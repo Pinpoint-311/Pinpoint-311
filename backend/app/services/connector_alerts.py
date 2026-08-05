@@ -31,7 +31,11 @@ One digest covers all of them, so a cloud outage that takes four connectors
 down is one message and not four.
 
 *Not an alert for things that are switched off.* The sweep does not test what
-is not configured, so nothing unconfigured reaches this module.
+is not configured, and `connector_verification.notify` filters switched-off
+capabilities out of the rows handed to `dispatch` -- necessary because a
+connector switched off *after* it started failing keeps its failing health row
+(the sweep no longer runs it, so the counters never reset), and that frozen
+row would otherwise generate a reminder email forever.
 
 *Not a claim we cannot support.* "Your Azure secret expires on the 14th" would
 be more useful than anything here, and we do not know it -- expiry dates are not
