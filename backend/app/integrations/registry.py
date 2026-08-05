@@ -111,6 +111,15 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
             {"key": "id_field", "label": "Response field holding the record id", "placeholder": "id", "required": False},
             {"key": "status_field", "label": "Response field holding status", "placeholder": "status", "required": False},
             {"key": "updated_field", "label": "Response field holding the updated timestamp", "placeholder": "updated_at", "required": False},
+            # These three switch the optional endpoints on. Blank means "this
+            # vendor does not have one", which is why they have no default: the
+            # connector used to claim all three unconditionally and poll paths
+            # that were never there, writing a 404 to the sync log every fifteen
+            # minutes for a connection that was working fine.
+            {"key": "comments_path", "label": "Comments path (leave blank if the vendor has none)", "placeholder": "/requests/{id}/comments", "required": False},
+            {"key": "documents_path", "label": "Attachments path (leave blank if the vendor has none)", "placeholder": "/requests/{id}/documents", "required": False},
+            {"key": "assets_path", "label": "Asset inventory path (leave blank if the vendor has none)", "placeholder": "/assets", "required": False},
+            {"key": "sync_assets", "label": "Copy the asset list onto the map each night (true/false)", "placeholder": "false", "required": False},
         ],
         "setup_notes": (
             "Get your API base URL, key, auth style, and endpoint/field details from your vendor's "
@@ -244,6 +253,10 @@ CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
             "id_field": "The field in the vendor's response holding the record id. Default 'id'.",
             "status_field": "The field holding the record's status. Default 'status'.",
             "updated_field": "The field holding the last-updated timestamp. Default 'updated_at'.",
+            "comments_path": "Only if your vendor has a comments endpoint. Leave blank and we won't try to sync comment threads.",
+            "documents_path": "Only if your vendor accepts file uploads. Leave blank and photos stay in Pinpoint.",
+            "assets_path": "Only if your vendor publishes an asset list (hydrants, signs, lights). Leave blank to skip.",
+            "sync_assets": "Type true to copy that asset list onto the Pinpoint map each night. You can still run it once from the card without turning this on.",
         },
         "recommended_sync_direction": "bidirectional",
     },

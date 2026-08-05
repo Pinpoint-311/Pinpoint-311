@@ -503,18 +503,28 @@ def push_status_to_integrations(self, request_id: int, notes: str = None):
 
 
 @celery_app.task
-def pull_integration_updates():
-    """Beat task: poll pull-enabled platforms and mirror external status changes."""
+def pull_integration_updates(integration_id: Optional[int] = None):
+    """Poll pull-enabled platforms and mirror external status changes.
+
+    Runs on the beat over every enabled integration, or over one of them when an
+    admin presses "Check for updates" on a card. Scoping matters beyond
+    tidiness: the unscoped version meant pressing the button on a newly
+    configured connector also polled every other vendor the town uses, so a
+    broken one wrote an error row to its sync log at a moment nobody had asked
+    it to do anything -- and the admin watching a different card had no way to
+    connect the two.
+    """
     from app.integrations import build_connector_for
 
     async def _pull():
         async with SessionLocal() as db:
-            integrations = (await db.execute(
-                select(IntegrationConfig).where(
-                    IntegrationConfig.enabled == True,  # noqa: E712
-                    IntegrationConfig.sync_direction.in_(["pull", "bidirectional"]),
-                )
-            )).scalars().all()
+            query = select(IntegrationConfig).where(
+                IntegrationConfig.enabled == True,  # noqa: E712
+                IntegrationConfig.sync_direction.in_(["pull", "bidirectional"]),
+            )
+            if integration_id is not None:
+                query = query.where(IntegrationConfig.id == integration_id)
+            integrations = (await db.execute(query)).scalars().all()
 
             for integration in integrations:
                 # Read while the session is certainly usable; see the error
@@ -740,18 +750,23 @@ def push_comment_to_integrations(self, comment_id: int):
 
 
 @celery_app.task
-def pull_integration_comments():
-    """Beat task: import new external comments on linked, active requests."""
+def pull_integration_comments(integration_id: Optional[int] = None):
+    """Import new external comments on linked, active requests.
+
+    Scoped to one integration when an admin asked for one; see
+    pull_integration_updates for why that matters.
+    """
     from app.integrations import build_connector_for
 
     async def _pull_comments():
         async with SessionLocal() as db:
-            integrations = (await db.execute(
-                select(IntegrationConfig).where(
-                    IntegrationConfig.enabled == True,  # noqa: E712
-                    IntegrationConfig.sync_direction.in_(["pull", "bidirectional"]),
-                )
-            )).scalars().all()
+            query = select(IntegrationConfig).where(
+                IntegrationConfig.enabled == True,  # noqa: E712
+                IntegrationConfig.sync_direction.in_(["pull", "bidirectional"]),
+            )
+            if integration_id is not None:
+                query = query.where(IntegrationConfig.id == integration_id)
+            integrations = (await db.execute(query)).scalars().all()
 
             for integration in integrations:
                 try:
@@ -811,23 +826,35 @@ def pull_integration_comments():
 
 
 @celery_app.task
-def sync_integration_assets():
-    """Beat task: mirror external asset inventories into Pinpoint map layers.
+def sync_integration_assets(integration_id: Optional[int] = None):
+    """Mirror external asset inventories into Pinpoint map layers.
 
     Synced assets become a point layer usable for asset-linked request intake
     (residents pick the exact hydrant/streetlight/sign the report is about).
-    Enabled per integration via config.sync_assets = true."""
+
+    On the nightly beat this covers every integration with config.sync_assets
+    set. Called with an `integration_id` it runs that one regardless of the flag:
+    an admin pressing "Sync assets now" is asking for this run and only this run.
+    The endpoint used to grant the request by *setting* the flag, which enrolled
+    the integration in the nightly job permanently, with no UI indication and no
+    way back.
+    """
     from app.integrations import build_connector_for
 
     async def _sync_assets():
         async with SessionLocal() as db:
-            integrations = (await db.execute(
-                select(IntegrationConfig).where(IntegrationConfig.enabled == True)  # noqa: E712
-            )).scalars().all()
+            query = select(IntegrationConfig).where(
+                IntegrationConfig.enabled == True  # noqa: E712
+            )
+            if integration_id is not None:
+                query = query.where(IntegrationConfig.id == integration_id)
+            integrations = (await db.execute(query)).scalars().all()
 
             for integration in integrations:
                 config = integration.config or {}
-                if not _flag(config, "sync_assets"):
+                # The flag governs the unattended nightly pass only. A one-off
+                # asked for by name does not need permission to be asked for.
+                if integration_id is None and not _flag(config, "sync_assets"):
                     continue
                 try:
                     connector = await build_connector_for(integration)

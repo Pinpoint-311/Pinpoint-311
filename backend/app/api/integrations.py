@@ -440,10 +440,35 @@ async def trigger_sync(
     # a broker that cannot take it is a failed request, not a quiet log line --
     # otherwise an admin watches nothing happen and has no way to tell whether
     # the sync ran and found nothing or never ran at all.
+    #
+    # Scoped to the clicked integration. It used to enqueue the global beat
+    # tasks, so pressing the button on one card polled every vendor the town
+    # uses.
     from app.tasks.integrations import pull_integration_comments, pull_integration_updates
-    if not enqueue(pull_integration_updates) or not enqueue(pull_integration_comments):
+    # Both are enqueued before either result is judged. Written as
+    # `enqueue(a) or enqueue(b)`, a first failure short-circuited and never
+    # queued the second, and a second failure returned 503 after the first job
+    # had already started -- so "this job did not start. Nothing has been
+    # changed." was untrue in exactly the case it was meant to cover.
+    started = {
+        "updates": enqueue(pull_integration_updates, integration.id),
+        "comments": enqueue(pull_integration_comments, integration.id),
+    }
+    if not any(started.values()):
         raise HTTPException(status_code=503, detail=QUEUE_UNAVAILABLE)
-    return {"message": "Sync started", "platform": integration.platform}
+    if all(started.values()):
+        return {"message": "Sync started", "platform": integration.platform,
+                "started": started}
+    # Partly started, which is neither of the two answers this endpoint had.
+    # Naming what did run beats a 503 whose text says nothing has been changed,
+    # in the one case where something has.
+    ran = ", ".join(sorted(k for k, ok in started.items() if ok))
+    return {
+        "message": f"Sync partly started ({ran}). The rest could not be queued — "
+                   f"check that the worker and Redis are running, then try again.",
+        "platform": integration.platform,
+        "started": started,
+    }
 
 
 @router.post("/{integration_id}/sync-assets")
@@ -461,14 +486,72 @@ async def trigger_asset_sync(
     catalog = PLATFORM_CATALOG.get(integration.platform, {})
     if "assets" not in catalog.get("capabilities", []):
         raise HTTPException(status_code=400, detail=f"{integration.platform} does not support asset sync")
-    from app.tasks.integrations import _flag
-    if not _flag(integration.config, "sync_assets"):
-        integration.config = {**(integration.config or {}), "sync_assets": True}
-        await db.commit()
+    # The catalog says what the platform *can* do; the built connector says what
+    # this configuration actually does. For generic_rest they differ: asset sync
+    # needs an assets_path, and without one the task would skip the run after
+    # this endpoint had already answered "Asset sync started".
+    try:
+        connector = await build_connector_for(integration)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=_friendly_test_error(str(e)))
+    if "assets" not in connector.capabilities:
+        raise HTTPException(
+            status_code=400,
+            detail=("This connection has no asset endpoint configured, so there is "
+                    "nothing to sync. Add the asset inventory path from your "
+                    "vendor's API docs and try again."),
+        )
+    # Deliberately does not touch config. Pressing this button used to set
+    # config["sync_assets"] = True, which enrolled the integration in the nightly
+    # beat job permanently -- from one click, with nothing on screen saying so and
+    # no way to undo it. `sync_assets` is a config field in the wizard now, so
+    # opting into the nightly sync is a choice somebody makes and can see.
     from app.tasks.integrations import sync_integration_assets
-    if not enqueue(sync_integration_assets):
+    if not enqueue(sync_integration_assets, integration.id):
         raise HTTPException(status_code=503, detail=QUEUE_UNAVAILABLE)
     return {"message": "Asset sync started", "platform": integration.platform}
+
+
+@router.post("/{integration_id}/regenerate-webhook-token")
+@limiter.limit("6/minute")
+async def regenerate_webhook_token(
+    request: Request,
+    integration_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """Issue a new inbound webhook token, invalidating the old one.
+
+    The token is in the URL path, which is where a URL's secrets are least well
+    kept: it lands in reverse-proxy access logs, in the vendor's own outbound
+    request logs, and in any screenshot of the setup page. There was no way to
+    rotate it -- so a token disclosed that way was disclosed permanently, and the
+    only remedy was deleting the integration and re-entering every credential.
+
+    The old token stops working the moment this returns, so the vendor has to be
+    given the new URL. That is stated plainly in the response rather than left
+    for somebody to discover from a silent gap in inbound records.
+    """
+    integration = await _get_integration(db, integration_id)
+    integration.webhook_token = pysecrets.token_urlsafe(32)
+    integration.updated_at = datetime.now(timezone.utc)
+    db.add(IntegrationSyncLog(
+        integration_id=integration.id, operation="webhook_token_rotated",
+        status="success",
+        detail=f"Rotated by {current_user.username}. The previous URL no longer works.",
+    ))
+    await db.commit()
+    await db.refresh(integration)
+    from app.core.sanitize import sanitize_for_log
+    logger.info("[Integrations] %s rotated the webhook token for %s",
+                sanitize_for_log(current_user.username),
+                sanitize_for_log(integration.platform))
+    return {
+        **_serialize(integration),
+        "message": ("New webhook address issued. The previous one stopped working "
+                    "immediately — send the new address to your vendor, or they will "
+                    "keep posting to an address that now refuses them."),
+    }
 
 
 @router.post("/requests/{request_id}/refresh")
@@ -563,8 +646,28 @@ async def get_request_links(
 
 # ---------- Inbound webhook (no session auth — token in path) ----------
 
+def _webhook_rate_key(request: Request) -> str:
+    """Rate-limit inbound webhooks per connection, not per source address.
+
+    One vendor's egress IP serves every event for every town on their platform,
+    so a per-IP bucket meant a busy neighbour's traffic could exhaust the budget
+    for ours -- and, the other way round, that one misconfigured integration
+    could not be throttled without throttling every connection sharing that IP.
+    The path already identifies the connection.
+    """
+    parts = [p for p in request.url.path.split("/") if p]
+    # .../webhook/{platform}/{token} -- keyed on the platform plus a digest of
+    # the token, so the bucket name is per-connection without a credential
+    # ending up in the limiter's store or its log lines.
+    if len(parts) >= 2 and parts[-2]:
+        import hashlib
+        digest = hashlib.sha256(parts[-1].encode("utf-8", "replace")).hexdigest()[:16]
+        return f"webhook:{parts[-2]}:{digest}"
+    return f"webhook:{get_remote_address(request)}"
+
+
 @router.post("/webhook/{platform}/{token}", status_code=status.HTTP_201_CREATED)
-@limiter.limit("60/minute")
+@limiter.limit("60/minute", key_func=_webhook_rate_key)
 async def integration_webhook(
     request: Request,
     platform: str,
@@ -577,15 +680,30 @@ async def integration_webhook(
     Creates a new service request (or updates the status of the already-linked
     one when the same external_id is posted again). Authenticated by the
     per-integration webhook token."""
+    # Fetched by platform, then compared in Python with compare_digest. Matching
+    # the token inside the SQL predicate makes the comparison the database's
+    # byte-by-byte one, whose duration depends on how many leading characters are
+    # right -- and this endpoint is unauthenticated and remotely timeable, which
+    # is the whole precondition for extracting a token that way.
     integration = (await db.execute(
         select(IntegrationConfig).where(
             IntegrationConfig.platform == platform,
-            IntegrationConfig.webhook_token == token,
             IntegrationConfig.enabled == True,  # noqa: E712
         )
     )).scalar_one_or_none()
-    if not integration:
+    if not integration or not pysecrets.compare_digest(
+            str(integration.webhook_token or ""), str(token)):
         raise HTTPException(status_code=401, detail="Invalid webhook token")
+    # A push-only connection is one the town configured to send and not receive.
+    # Accepting inbound creates on it anyway meant a vendor could open service
+    # requests in a town that had deliberately not asked them to -- and the
+    # sync_direction setting the admin chose did nothing on this path.
+    if integration.sync_direction == "push":
+        raise HTTPException(
+            status_code=403,
+            detail=("This connection is set to send only. Change its sync direction "
+                    "to 'pull' or 'bidirectional' to accept incoming records."),
+        )
 
     async def _import_webhook_comments(service_request_pk: int) -> int:
         """Attach comments carried in the payload, deduped by external comment id."""
