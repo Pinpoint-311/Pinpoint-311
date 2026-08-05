@@ -95,20 +95,43 @@ async def test_resolve_references_to_live_values(monkeypatch):
     assert resolved == {"client_id": "public-id", "client_secret": "s3cr3t"}
 
 
-async def test_resolve_omits_unresolvable_reference(monkeypatch):
+async def test_resolve_refuses_to_pretend_an_unreadable_vault_is_a_blank_field(monkeypatch):
+    """An unresolvable reference used to be silently omitted.
+
+    The connector then reported "credentials missing", which the admin API
+    translates for a clerk as "Some required fields are still blank — go back one
+    step and fill them in". The fields are not blank; the vault is unreachable.
+    Following that instruction retypes credentials over working `@secret:`
+    references, so an outage that would have cleared on its own becomes
+    permanent loss of the reference.
+
+    So this raises, and the exception names the fields without carrying a value.
+    """
     async def _missing(name):
         return None
 
     monkeypatch.setattr(sm, "get_secret", _missing)
 
-    resolved = await creds_mod.resolve_credentials({
-        "api_key": creds_mod.make_reference("INTEGRATION_GHOST_API_KEY"),
-        "base_url_token": "kept",
-    })
-    # The dangling reference is dropped so the connector sees a missing key,
-    # never the literal "@secret:..." string.
-    assert "api_key" not in resolved
-    assert resolved == {"base_url_token": "kept"}
+    with pytest.raises(creds_mod.CredentialsUnavailable) as caught:
+        await creds_mod.resolve_credentials({
+            "api_key": creds_mod.make_reference("INTEGRATION_GHOST_API_KEY"),
+            "base_url_token": "kept",
+        })
+    assert caught.value.fields == ["api_key"]
+    assert "Secret Manager" in str(caught.value)
+    # Never the literal "@secret:..." string, and never a value.
+    assert "@secret:" not in str(caught.value)
+
+
+async def test_the_unreadable_vault_message_does_not_tell_anyone_to_retype(monkeypatch):
+    """The friendly translation has to branch before the "fields are blank" one,
+    or the fix above changes nothing that a clerk can see."""
+    pytest.importorskip("fastapi")
+    from app.api.integrations import _friendly_test_error
+
+    advice = _friendly_test_error(str(creds_mod.CredentialsUnavailable(["api_key"])))
+    assert "nothing here needs re-entering" in advice.lower()
+    assert "fill them in" not in advice.lower()
 
 
 async def test_store_then_resolve_roundtrip(monkeypatch):

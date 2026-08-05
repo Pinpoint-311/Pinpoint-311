@@ -226,3 +226,21 @@ def set_secret(name: str, value: str) -> bool:
     )
     resp.raise_for_status()
     return True
+
+
+def delete_secret(name: str) -> bool:
+    """Remove a secret. True if it is gone (including already absent).
+
+    Needed so disconnecting a govtech integration takes its vendor credentials
+    out of the vault with it, rather than leaving a live client secret in the
+    town's Key Vault with nothing in the UI referring to it.
+    """
+    token = _get_token()
+    if not token:
+        return False
+    url = f"{_vault_url()}/secrets/{_secret_id(name)}?api-version={_api_version()}"
+    resp = httpx.delete(url, headers={"Authorization": f"Bearer {token}"}, timeout=15.0)
+    if resp.status_code == 404:
+        return True
+    resp.raise_for_status()
+    return True

@@ -102,3 +102,27 @@ def set_secret(name: str, value: str) -> bool:
                 return False
         logger.error(f"AWS Secrets Manager write failed for {name}: {e}")
         return False
+
+
+def delete_secret(name: str) -> bool:
+    """Remove a secret. True if it is gone (including already absent).
+
+    Needed so disconnecting a govtech integration takes its vendor credentials
+    out of the vault with it, rather than leaving a live client secret in the
+    town's Secrets Manager with nothing in the UI referring to it.
+
+    Scheduled with the shortest recovery window AWS allows rather than forced,
+    so an accidental disconnect is recoverable for a week.
+    """
+    client = _client()
+    if not client:
+        return False
+    try:
+        client.delete_secret(SecretId=_secret_id(name), RecoveryWindowInDays=7)
+        return True
+    except Exception as e:
+        if e.__class__.__name__ in ("ResourceNotFoundException", "InvalidRequestException"):
+            # Already gone, or already scheduled for deletion.
+            return True
+        logger.error(f"AWS Secrets Manager delete failed for {name}: {e}")
+        return False

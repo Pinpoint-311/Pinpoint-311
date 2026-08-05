@@ -17,7 +17,7 @@ Credentials:
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import json
@@ -28,6 +28,18 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_API_BASE = "https://apis.accela.com"
 DEFAULT_AUTH_BASE = "https://auth.accela.com"
+
+
+def _accela_window(since: datetime) -> str:
+    """Format a pull window boundary for Accela's date parameters.
+
+    `YYYY-MM-DD HH:MM:SS`, in UTC. Accela's Construct API accepts a time
+    component here; sending date-only granularity meant a fifteen-minute poll
+    asked for the whole day on every run.
+    """
+    if since.tzinfo is not None:
+        since = since.astimezone(timezone.utc)
+    return since.strftime("%Y-%m-%d %H:%M:%S")
 
 
 class AccelaConnector(BaseConnector):
@@ -188,17 +200,51 @@ class AccelaConnector(BaseConnector):
             self._raise_for_status(resp, "Accela update record status")
 
     async def pull_updates(self, since: Optional[datetime] = None) -> List[ExternalRecord]:
+        """Every record changed since `since`, across as many pages as it takes.
+
+        Two bugs lived in the previous four lines. It sent `limit: 100` with no
+        offset loop, so a busy agency's 101st changed record was silently
+        dropped -- and the one place that would have shown it, the record count
+        in the sync log, said "100 record(s) fetched", which looks like a
+        complete answer. `pull_assets` in this same file already paged properly.
+
+        And `updateDateFrom` was formatted `%Y-%m-%d`, so a poll every fifteen
+        minutes re-fetched the entire day, every time, all day: ninety-six
+        requests for the same widening set of records, each one paying the full
+        page walk. Accela's Construct API takes a time component on these
+        parameters, so the window can be the window.
+        """
         token = await self._get_token()
-        params: Dict[str, Any] = {"limit": 100}
-        if since:
-            params["updateDateFrom"] = since.strftime("%Y-%m-%d")
+        records: List[ExternalRecord] = []
+        seen: set = set()
+        offset = 0
         async with self._client() as client:
-            resp = await client.get(
-                f"{self.api_base}/v4/records", params=params, headers=self._headers(token)
-            )
-            self._raise_for_status(resp, "Accela list records")
-            result = resp.json().get("result") or []
-        return [self._record_from_accela(item) for item in result if item.get("id")]
+            while offset < 10000:  # hard ceiling, matching pull_assets
+                params: Dict[str, Any] = {"limit": 100, "offset": offset}
+                if since:
+                    params["updateDateFrom"] = _accela_window(since)
+                resp = await client.get(
+                    f"{self.api_base}/v4/records", params=params, headers=self._headers(token)
+                )
+                self._raise_for_status(resp, "Accela list records")
+                result = resp.json().get("result") or []
+                if not result:
+                    break
+                for item in result:
+                    if not item.get("id"):
+                        continue
+                    record = self._record_from_accela(item)
+                    # A record edited between two page requests shifts position
+                    # and can arrive twice; applying it twice is harmless but
+                    # counting it twice makes the sync log lie.
+                    if record.external_id in seen:
+                        continue
+                    seen.add(record.external_id)
+                    records.append(record)
+                if len(result) < 100:
+                    break
+                offset += 100
+        return records
 
     async def fetch_record(self, external_id: str) -> Optional[ExternalRecord]:
         token = await self._get_token()

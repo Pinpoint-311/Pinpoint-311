@@ -179,8 +179,13 @@ async def _run_schema_migrations():
         "ALTER TABLE request_comments ADD COLUMN IF NOT EXISTS external_ref VARCHAR(200)",
         "CREATE INDEX IF NOT EXISTS ix_request_comments_external_ref ON request_comments (external_ref)",
         "ALTER TABLE integration_links ADD COLUMN IF NOT EXISTS pushed_comment_ids JSON DEFAULT '[]'",
-        "ALTER TABLE integration_links ADD COLUMN IF NOT EXISTS documents_pushed BOOLEAN DEFAULT FALSE",
         "ALTER TABLE integration_links ADD COLUMN IF NOT EXISTS documents_pushed_count INTEGER DEFAULT 0",
+        # One integration per platform. The create endpoint does a
+        # SELECT-then-INSERT, so without this two concurrent connects produce two
+        # enabled rows for one vendor and every report is pushed there twice.
+        # Non-unique index dropped by name first, since this replaces it.
+        "DROP INDEX IF EXISTS ix_integration_configs_platform",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_integration_configs_platform ON integration_configs (platform)",
         # Immutable/tamper-evident request audit log hash chain (added 2026-07-02)
         "ALTER TABLE request_audit_logs ADD COLUMN IF NOT EXISTS previous_hash VARCHAR(64)",
         "ALTER TABLE request_audit_logs ADD COLUMN IF NOT EXISTS entry_hash VARCHAR(64)",
