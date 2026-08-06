@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
-    Landmark, CheckCircle, AlertCircle, ExternalLink, RefreshCw,
+    Landmark, CheckCircle, AlertCircle, ExternalLink,
     Plug, Trash2, Copy, Check, Mail, ClipboardList, Loader2, ArrowLeft,
     ChevronDown, ChevronUp, PartyPopper, Sparkles, Search,
     ArrowUpRight, ArrowDownLeft, MessageSquare, Image as ImageIcon, MapPin, ClipboardCheck,
@@ -18,10 +18,21 @@ import {
 import {
     alreadyStored as alreadyStoredIn,
     buildSavePayload,
+    connectionState,
+    connectionStateLabel,
+    healthKey,
     needsEnableConfirmation,
     requiredMissing as missingRequired,
     truncate,
+    type ConnectorHealthRow,
 } from './integrationState';
+// The same tile, pill and buttons the capability cards use. These were
+// hand-rolled here from utility classes, so the town-system cards and the
+// provider cards drifted into looking like two different products -- and the
+// pill said "Connected" off `enabled && last_sync_status !== 'error'`, which is
+// the credentials-are-stored question this whole health system exists to stop
+// badges from answering.
+import { StatusPill, CapabilityTile, Action, hasAlert } from './capabilityUI';
 
 const MODE_LABELS: Record<string, { label: string; className: string }> = {
     public_api: { label: 'Works with your account login', className: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
@@ -58,6 +69,13 @@ export default function GovtechIntegrations() {
     // the Tyler card the clerk was about to look at.
     const [busy, setBusy] = useState<Record<number, string>>({});
     const [cardResult, setCardResult] = useState<Record<string, IntegrationTestResult>>({});
+    // The govtech rows out of the shared connector-health table, keyed by
+    // connector name. Same source the provider cards read, so both surfaces
+    // answer "is it working" from the same evidence.
+    const [healthRows, setHealth] = useState<Record<string, ConnectorHealthRow>>({});
+    // A mute taken in this session, which is fresher than the row we loaded.
+    const [muted, setMuted] = useState<Record<string, string | null>>({});
+    const [muting, setMuting] = useState<string | null>(null);
     const [logs, setLogs] = useState<Record<string, IntegrationSyncLog[]>>({});
     const [logsOpen, setLogsOpen] = useState<string | null>(null);
     const [copied, setCopied] = useState<string | null>(null);
@@ -98,17 +116,32 @@ export default function GovtechIntegrations() {
             return next;
         });
 
+    const loadHealth = useCallback(async () => {
+        try {
+            const report = await api.getConnectorHealth();
+            setHealth(Object.fromEntries(
+                report.connectors
+                    .filter(c => c.connector.startsWith('govtech:'))
+                    .map(c => [c.connector, c as unknown as ConnectorHealthRow]),
+            ));
+        } catch {
+            // No health is not the same as bad health. The cards fall back to
+            // "not checked yet", which is the honest answer when we cannot ask.
+        }
+    }, []);
+
     const load = useCallback(async () => {
         try {
             const [cat, cfgs] = await Promise.all([api.getIntegrationCatalog(), api.getIntegrations()]);
             setCatalog(cat);
             setConfigs(cfgs);
+            loadHealth();
         } catch (err: any) {
             setError(err?.message || 'Could not load the connections list. Try refreshing the page.');
         } finally {
             setLoaded(true);
         }
-    }, []);
+    }, [loadHealth]);
 
     useEffect(() => { load(); }, [load]);
 
@@ -241,7 +274,8 @@ export default function GovtechIntegrations() {
      * so the card kept showing the state from page load until somebody refreshed
      * the browser. */
     const refreshAfterAction = async (existing: IntegrationConfig) => {
-        await load();
+        await load();          // reloads health too
+
         if (logsOpen === existing.platform) {
             try {
                 const entries = await api.getIntegrationLogs(existing.id);
@@ -331,6 +365,28 @@ export default function GovtechIntegrations() {
             setCardResult(prev => ({ ...prev, [existing.platform]: { ok: false, detail: err?.message || 'Could not start the asset copy.' } }));
         } finally {
             setBusyFor(existing.id, null);
+        }
+    };
+
+    /** Stop (or resume) the alert emails about one connection.
+     *
+     * The mute endpoint has always accepted any connector name, including
+     * `govtech:accela`, and nothing here offered it -- so the daily digest could
+     * name a town system and the only place to silence it was a provider card
+     * for something else entirely. Silences the email and nothing else: the card
+     * keeps whatever colour the connection has earned. */
+    const handleMute = async (existing: IntegrationConfig, currentlyMuted: boolean) => {
+        const key = healthKey(existing.platform);
+        setMuting(key);
+        try {
+            const r = await api.muteConnectorAlerts(key, currentlyMuted ? 0 : undefined);
+            setMuted(prev => ({ ...prev, [key]: r.muted_until }));
+        } catch (err: any) {
+            // Leaving the button as it was is the honest failure: claiming a
+            // mute that did not take would produce silence nobody asked for.
+            setError(err?.message || 'Could not change the alert setting.');
+        } finally {
+            setMuting(null);
         }
     };
 
@@ -558,9 +614,18 @@ export default function GovtechIntegrations() {
                     const mode = MODE_LABELS[platform.integration_mode] || MODE_LABELS.partner_api;
                     const result = cardResult[platform.platform];
                     const platformLogs = logs[platform.platform];
-                    const isWorking = existing?.enabled && existing.last_sync_status !== 'error';
-                    const needsAttention = existing?.enabled && existing.last_sync_status === 'error';
                     const isOpen = openCards.has(platform.platform);
+                    // One word, from the same evidence and the same rules the
+                    // capability cards use. Was `enabled && last_sync_status !==
+                    // 'error'`, which drew a green "Connected" for a connection
+                    // whose credentials had been revoked months ago.
+                    const row = existing ? healthRows[healthKey(platform.platform)] : undefined;
+                    const state = connectionState(existing, row, result);
+                    const needsAttention = state === 'failing';
+                    const muteKey = healthKey(platform.platform);
+                    const mutedUntil = muteKey in muted
+                        ? muted[muteKey]
+                        : (row?.alerts_muted_until ?? null);
 
                     return (
                         <motion.div
@@ -582,37 +647,18 @@ export default function GovtechIntegrations() {
                                 className="relative w-full flex items-center justify-between gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 rounded-xl"
                             >
                                 <div className="flex items-center gap-3.5 min-w-0">
-                                    <div className="relative shrink-0">
-                                        {existing?.enabled && (
-                                            <div className="absolute -inset-1 rounded-2xl bg-gradient-to-br from-primary-400/40 to-primary-600/20 blur-md" aria-hidden="true" />
-                                        )}
-                                        <div className={`relative w-11 h-11 rounded-2xl flex items-center justify-center shadow-lg ${existing?.enabled
-                                            ? 'bg-gradient-to-br from-primary-500/30 to-primary-700/20 border border-primary-400/30 shadow-primary-900/40'
-                                            : 'bg-white/[0.06] border border-white/10 shadow-black/20'
-                                            }`}>
-                                            <Plug className={`w-5 h-5 ${existing?.enabled ? 'text-primary-200' : 'text-white/60'}`} />
-                                        </div>
-                                    </div>
+                                    <CapabilityTile
+                                        icon={Plug}
+                                        tone={needsAttention ? 'alert' : state === 'working' ? 'done' : 'normal'}
+                                    />
                                     <div className="min-w-0">
                                         <h3 className="font-semibold text-white tracking-tight">{platform.name}</h3>
                                         <p className="text-white/60 text-xs truncate">{platform.category}</p>
                                     </div>
                                 </div>
                                 <div className="shrink-0 flex items-center gap-2">
-                                    {isWorking ? (
-                                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-200 border border-emerald-400/30">
-                                            <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400" aria-hidden="true" /> Connected
-                                        </span>
-                                    ) : needsAttention ? (
-                                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                                            <AlertCircle className="w-3 h-3" /> Needs attention
-                                        </span>
-                                    ) : existing ? (
-                                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-medium bg-white/10 text-white/50 border border-white/10">
-                                            Turned off
-                                        </span>
-                                    ) : (
-                                        <span className="text-white/60 text-xs">Not connected</span>
+                                    {state && (
+                                        <StatusPill state={state} label={connectionStateLabel(existing, state)} />
                                     )}
                                     <motion.span animate={{ rotate: isOpen ? 180 : 0 }} transition={{ duration: 0.3 }} aria-hidden="true" className="text-white/60">
                                         <ChevronDown className="w-4 h-4" />
@@ -640,6 +686,26 @@ export default function GovtechIntegrations() {
                                     </span>
                                 ))}
                             </div>
+
+                            {/* What the last check actually found, from the same
+                                health row the provider cards read. The card had
+                                only ever shown sync outcomes, so a connection
+                                whose credentials were rejected an hour ago could
+                                still show nothing but "Last checked … all good". */}
+                            {row && (row.last_result || row.summary) && (
+                                <p className={`relative text-[11px] mt-2 ${
+                                    needsAttention ? 'text-red-200/85' : 'text-white/60'}`}>
+                                    {truncate(row.last_result || row.summary || '')}
+                                </p>
+                            )}
+
+                            {mutedUntil && (
+                                <p className="relative text-[11px] mt-2 text-amber-200/85">
+                                    Nobody is being emailed about this until{' '}
+                                    {new Date(mutedUntil).toLocaleDateString()}.
+                                    {needsAttention ? ' It is still not working.' : ''}
+                                </p>
+                            )}
 
                             {existing?.last_sync_at && (
                                 <div className={`relative text-[11px] mt-2 ${existing.last_sync_status === 'error' ? 'text-amber-300' : 'text-white/60'}`}>
@@ -755,29 +821,46 @@ export default function GovtechIntegrations() {
                                     </button>
                                 ) : (
                                     <>
-                                        <Button size="sm" variant="ghost" className="text-xs" onClick={() => openWizard(platform, 'details')}>
+                                        <Action size="sm" variant="primary" onClick={() => openWizard(platform, 'details')} chevron>
                                             Settings
-                                        </Button>
-                                        <Button size="sm" variant="ghost" className="text-xs" onClick={() => handleCardTest(existing)} disabled={busyOf(existing) !== null}>
+                                        </Action>
+                                        <Action size="sm" onClick={() => handleCardTest(existing)}
+                                            busy={busyOf(existing) === 'test'} disabled={busyOf(existing) !== null}>
                                             {busyOf(existing) === 'test' ? 'Checking…' : 'Check connection'}
-                                        </Button>
+                                        </Action>
+                                        {/* Only where something is actually alerting, and where
+                                            a mute is already in force. Same rule as the provider
+                                            cards: offering to silence a connector nobody is being
+                                            emailed about is offering to stop a sound that was
+                                            never going to be made. */}
+                                        {(hasAlert(row?.status) || !!mutedUntil) && (
+                                            <Action size="sm" onClick={() => handleMute(existing, !!mutedUntil)}
+                                                busy={muting === muteKey} disabled={muting !== null}
+                                                title={mutedUntil
+                                                    ? 'Start emailing administrators about this again'
+                                                    : 'Stop emailing administrators about this for a week. The card stays as it is.'}>
+                                                {mutedUntil ? 'Unmute' : 'Mute alerts'}
+                                            </Action>
+                                        )}
                                         {existing.enabled && platform.capabilities.includes('pull') && (
-                                            <Button size="sm" variant="ghost" className="text-xs" onClick={() => handleSync(existing)} disabled={busyOf(existing) !== null} leftIcon={<RefreshCw className={`w-3 h-3 ${busyOf(existing) === 'sync' ? 'animate-spin' : ''}`} />}>
+                                            <Action size="sm" onClick={() => handleSync(existing)}
+                                                busy={busyOf(existing) === 'sync'} disabled={busyOf(existing) !== null}>
                                                 {/* The only button here that never said it was
                                                     working, so pressing it looked like nothing
                                                     happened -- which is also what a broken one
                                                     looks like. */}
                                                 {busyOf(existing) === 'sync' ? 'Checking…' : 'Check for updates'}
-                                            </Button>
+                                            </Action>
                                         )}
                                         {existing.enabled && platform.capabilities.includes('assets') && (
-                                            <Button size="sm" variant="ghost" className="text-xs" onClick={() => handleSyncAssets(existing)} disabled={busyOf(existing) !== null}>
+                                            <Action size="sm" onClick={() => handleSyncAssets(existing)}
+                                                busy={busyOf(existing) === 'assets'} disabled={busyOf(existing) !== null}>
                                                 {busyOf(existing) === 'assets' ? 'Copying…' : 'Copy their assets to my map'}
-                                            </Button>
+                                            </Action>
                                         )}
-                                        <Button size="sm" variant="ghost" className="text-xs" onClick={() => toggleLogs(existing)} rightIcon={logsOpen === platform.platform ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}>
+                                        <Action size="sm" onClick={() => toggleLogs(existing)} chevron>
                                             Activity
-                                        </Button>
+                                        </Action>
                                         <label className="flex items-center gap-2 ml-auto text-[11px] text-white/60 cursor-pointer select-none">
                                             {existing.enabled ? 'On' : 'Off'}
                                             <button

@@ -422,7 +422,21 @@ async def test_integration(
     # a test pass while the card still said "not checked yet" -- the only writer
     # of govtech health was the resident-report push path.
     result = await check_integration_now(db, integration)
+    # The provider test endpoint does the same before it writes, and for the same
+    # reason: a check that failed part-way can leave this session in a failed
+    # transaction, and every statement after that raises PendingRollbackError --
+    # so the sync-log write below would be lost and the 500 would replace a
+    # perfectly good "here is what went wrong". Health is written on its own
+    # session and is already safe from this.
+    try:
+        await db.rollback()
+    except Exception:
+        pass
     if result.get("ok"):
+        # `verifiable` alongside `verified`, so the admin UI can derive a card's
+        # state with one function for both surfaces rather than two that drift.
+        if result.get("verified") is not None:
+            result = {**result, "verifiable": result["verified"]}
         log_status, detail = "success", str(result.get("detail") or "OK")
     else:
         detail = str(result.get("detail") or "")

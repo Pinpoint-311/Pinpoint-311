@@ -71,9 +71,12 @@ Each connection reports health under `govtech:<platform>` in the same
 `connector_health` table as the built-in capabilities, so it inherits the same
 escalation, the same daily digest email and the same mute.
 
-Three things write that row: a resident's report being pushed, an admin pressing
-**Check connection**, and the daily sweep, which tests every *enabled* connection
-whether or not any resident traffic has touched it. That last one is what makes a
+Every real call to the vendor writes that row: a resident's report being pushed,
+a status update, the 15-minute poll, the comment and asset jobs, an admin
+pressing **Check connection**, and the daily sweep, which tests every *enabled*
+connection whether or not any resident traffic has touched it. The poll runs
+behind the same circuit breaker as a push, so a vendor that has stopped
+answering is not called again on our schedule until a cooldown elapses. That last one is what makes a
 vendor outage visible on a quiet weekend instead of on Monday from a resident —
 and what keeps a healthy connection from ageing into `stale` and emailing the
 town that Accela may stop working when nothing is wrong with it.
@@ -81,6 +84,14 @@ town that Accela may stop working when nothing is wrong with it.
 Disabled connections are never tested. A connection a town switched off has not
 made a mistake, and an amber badge on it is the noise that teaches people to
 ignore badges.
+
+The cards read that row and nothing else for their status pill, in the same
+vocabulary as the provider cards — *Working*, *Not working*, *Not checked yet*,
+*Set up · we cannot test this one*. Deliberately not "is it switched on", which
+is a fact about our own database that stays true through a revoked key. And
+because these rows sit in the same table as everything else, the same **Mute
+alerts** button is on the card: it stops the emails for a week and changes
+nothing on screen, so a known problem never becomes an invisible one.
 
 ### Privacy
 
