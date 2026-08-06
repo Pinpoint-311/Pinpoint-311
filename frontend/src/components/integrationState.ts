@@ -173,8 +173,18 @@ export function needsEnableConfirmation(
  * `unknown` means nobody has looked and `stale` means not lately -- neither is
  * evidence of a fault, and badging them as one produces a number that never
  * reaches zero on a town whose sweep has not run yet.
+ *
+ * Only platforms in `enabledPlatforms` count at all. A health row outlives the
+ * integration that wrote it: the backend never decays a failing row, and the
+ * sweep only tests enabled integrations, so nothing ever writes over the last
+ * failure of a connector that was disabled or deleted. Without the cross-check
+ * the badge stayed red forever for a connection the town had already turned
+ * off -- which is the fix, not the fault.
  */
-export function townSystemHealth(health: Record<string, string>): {
+export function townSystemHealth(
+    health: Record<string, string>,
+    enabledPlatforms: ReadonlySet<string>,
+): {
     all: string[];
     broken: string[];
 } {
@@ -183,6 +193,7 @@ export function townSystemHealth(health: Record<string, string>): {
     for (const [connector, status] of Object.entries(health || {})) {
         if (!connector.startsWith('govtech:')) continue;
         const name = connector.slice('govtech:'.length);
+        if (!enabledPlatforms.has(name)) continue;
         all.push(name);
         if (status === 'failing' || status === 'down') broken.push(name);
     }

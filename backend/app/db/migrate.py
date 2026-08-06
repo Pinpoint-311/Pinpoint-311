@@ -93,7 +93,6 @@ DEFAULT_BACKUP_DIR = "/backups"
 _DESTRUCTIVE_OPS = ("drop_table", "drop_column", "rename_table")
 
 _OP_CALL = re.compile(r"\bop\.(\w+)\s*\(")
-_ALTER_COLUMN = re.compile(r"\bop\.alter_column\s*\((.*?)\)\s*$", re.DOTALL | re.MULTILINE)
 
 # A String-typed length in an alter_column argument list, for the one type
 # change that is provably safe: widening a varchar.
@@ -103,10 +102,66 @@ _NEW_STRING = re.compile(
     r"\btype_\s*=\s*sa\.String\s*\(\s*(?:length\s*=\s*)?(\d+)\s*\)")
 
 
+def _call_spans(body: str, name: str):
+    """The argument text of each `op.<name>(...)` call -- one span per call.
+
+    Balanced-paren extraction, the same walk _executes_are_safe uses. The
+    regex this replaces spanned `\\((.*?)\\)\\s*$`, which runs from one call's
+    opening paren to whatever call happens to end a line later -- so a
+    destructive alter_column and an adjacent widen merged into a single span
+    and were judged together, inheriting the widen's verdict.
+    """
+    for call in re.finditer(rf"\bop\.{name}\s*\(", body):
+        depth, i = 1, call.end()
+        while i < len(body) and depth:
+            depth += (body[i] == "(") - (body[i] == ")")
+            i += 1
+        yield body[call.end():i - 1]
+
+
+def _top_level_kwargs(args: str) -> set:
+    """The keyword-argument names of one call, ignoring anything nested.
+
+    `sa.String(length=255)` carries a `length=` of its own, so a flat regex
+    over the argument text reports kwargs the call never had. String literals
+    are blanked first so a comma or paren inside SQL cannot skew the depth
+    count.
+    """
+    names, depth, start = set(), 0, 0
+    flat = _STRING_LITERAL.sub("''", args)
+    parts = []
+    for i, char in enumerate(flat):
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif char == "," and depth == 0:
+            parts.append(flat[start:i])
+            start = i + 1
+    parts.append(flat[start:])
+    for part in parts:
+        match = re.match(r"\s*(\w+)\s*=", part)
+        if match:
+            names.add(match.group(1))
+    return names
+
+
+# The only kwargs a widen is allowed to carry (besides the table/column
+# positionals). Everything else means the call does more than the two lengths
+# say: `postgresql_using` especially, which is arbitrary SQL riding inside
+# alter_column -- `postgresql_using="''"` blanks every row while existing_type
+# and type_ swear nothing changed.
+_SAFE_WIDEN_KWARGS = {"existing_type", "type_", "existing_nullable", "nullable", "schema"}
+
+
 def _is_pure_widen(args: str) -> bool:
     """True only for `existing_type=sa.String(n)` -> `type_=sa.String(m)`,
-    m >= n. Anything else -- a narrow, a change to another type, a length this
-    cannot parse -- is not provably safe and stays gated."""
+    m >= n, with no kwargs beyond _SAFE_WIDEN_KWARGS. Anything else -- a
+    narrow, a change to another type, a length this cannot parse, a sibling
+    kwarg this does not positively recognise -- is not provably safe and
+    stays gated."""
+    if not _top_level_kwargs(args) <= _SAFE_WIDEN_KWARGS:
+        return False
     existing = _EXISTING_STRING.search(args)
     new = _NEW_STRING.search(args)
     return bool(existing and new and int(new.group(1)) >= int(existing.group(1)))
@@ -170,13 +225,8 @@ def _executes_are_safe(body: str) -> bool:
     several strings. Only the first carries the verb; the rest are continuations
     and must not be judged on their own.
     """
-    for call in re.finditer(r"\bop\.execute\s*\(", body):
-        # Walk to the matching close paren so nested parens in the SQL survive.
-        depth, i = 1, call.end()
-        while i < len(body) and depth:
-            depth += (body[i] == "(") - (body[i] == ")")
-            i += 1
-        args = body[call.end():i - 1].strip()
+    for span in _call_spans(body, "execute"):
+        args = span.strip()
 
         pieces = [next(g for g in m.groups() if g is not None)
                   for m in _STRING_LITERAL.finditer(args)]
@@ -228,10 +278,14 @@ def classify_source(source: str) -> str:
     # and cannot lose a byte. Destructive when it renames, narrows, or changes
     # the type in any way this cannot positively identify as a widen: every
     # ambiguity here resolves toward "make a human look at it".
-    for args in _ALTER_COLUMN.findall(body):
-        if "new_column_name" in args:
+    #
+    # Each call is judged alone, on its own parsed kwargs -- not on a substring
+    # scan of a regex span that could cover more than one call.
+    for args in _call_spans(body, "alter_column"):
+        kwargs = _top_level_kwargs(args)
+        if "new_column_name" in kwargs:
             return DESTRUCTIVE
-        if "type_" in args and not _is_pure_widen(args):
+        if "type_" in kwargs and not _is_pure_widen(args):
             return DESTRUCTIVE
 
     # SQL executed through a raw connection rather than op.execute, which

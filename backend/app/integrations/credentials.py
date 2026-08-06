@@ -45,12 +45,35 @@ def make_reference(name: str) -> str:
     return f"{SECRET_REF_PREFIX}{name}"
 
 
+def owned_secret_names(platform: str, stored: Dict[str, str]) -> set:
+    """The vault names in a stored credentials dict that this module itself
+    minted -- exactly ``secret_key_for(platform, field)``, nothing looser.
+
+    The disconnect path deletes what this returns. Deleting every name a
+    reference happens to point at would let a row that somehow carries
+    ``@secret:GCP_SERVICE_ACCOUNT_JSON`` turn "Disconnect" into destroying the
+    platform key -- a reference is a pointer, and following a pointer somebody
+    else wrote into a delete is the whole attack. A name is only ours to remove
+    when it is the one we would have written for that platform and field.
+    """
+    return {
+        reference_name(value)
+        for field, value in (stored or {}).items()
+        if is_reference(value) and reference_name(value) == secret_key_for(platform, field)
+    }
+
+
 async def store_credentials(platform: str, credentials: Dict[str, str]) -> Dict[str, str]:
     """Persist raw secret values to the external Secret Manager and return the
     dict to store on the ``IntegrationConfig`` row.
 
     For each field:
-      * an already-``@secret:`` reference is passed through untouched;
+      * a ``@secret:`` reference is refused outright. References are minted by
+        this module when it vaults a value; they are never accepted from a
+        caller. Accepting one would let an admin store a pointer at *any* vault
+        entry -- ``@secret:GCP_SERVICE_ACCOUNT_JSON`` -- and then read the
+        platform key out through a connector aimed at their own base_url, or
+        destroy it via the disconnect cleanup;
       * a blank value is dropped (means "keep existing" upstream);
       * a real value is written to the vault. If the write succeeds, the row
         stores a ``@secret:NAME`` reference (the raw value never lands in the
@@ -61,20 +84,28 @@ async def store_credentials(platform: str, credentials: Dict[str, str]) -> Dict[
     if not credentials:
         return {}
 
+    # Before anything touches the vault, and before the no-vault fallback:
+    # both paths used to pass a reference through, and both are reachable with
+    # caller-supplied values.
+    for field, value in credentials.items():
+        if is_reference(value):
+            raise ValueError(
+                f"Credential value for {field!r} may not start with "
+                f"'{SECRET_REF_PREFIX}'. Secret references are created by the "
+                "server when a value is vaulted; they cannot be supplied."
+            )
+
     out: Dict[str, str] = {}
     try:
         from app.services.secret_manager import set_secret, clear_cache
     except Exception:  # secret_manager unavailable → keep everything raw
-        return {k: v for k, v in credentials.items() if v or is_reference(v)}
+        return {k: v for k, v in credentials.items() if v}
 
     from app.core.sanitize import sanitize_for_log
 
     wrote = False
     written: list[str] = []
     for field, value in credentials.items():
-        if is_reference(value):
-            out[field] = value
-            continue
         if not value:
             continue
         name = secret_key_for(platform, field)

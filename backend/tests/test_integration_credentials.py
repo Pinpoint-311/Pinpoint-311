@@ -68,16 +68,89 @@ async def test_store_falls_back_to_raw_when_no_vault(monkeypatch):
     assert not creds_mod.is_reference(stored["api_key"])
 
 
-async def test_store_passes_through_existing_reference(monkeypatch):
-    async def _boom(name, value):  # should not be called for an existing ref
+async def test_store_refuses_a_caller_supplied_reference(monkeypatch):
+    """References are minted by this module when it vaults a value -- never
+    accepted from a caller. A stored reference is a pointer resolve_credentials
+    follows and the disconnect path deletes, so accepting one from an admin is
+    accepting "read (and later destroy) any vault entry I can name":
+    @secret:GCP_SERVICE_ACCOUNT_JSON aimed at an attacker-controlled base_url
+    exfiltrates the platform key, and Disconnect then deletes it -- around the
+    reject_platform_key_writes gate, because this path talks to the vault
+    directly."""
+    async def _boom(name, value):  # must never be reached
         raise AssertionError("set_secret must not be called for a reference")
 
     monkeypatch.setattr(sm, "set_secret", _boom)
     monkeypatch.setattr(sm, "clear_cache", lambda: None)
 
-    ref = creds_mod.make_reference("INTEGRATION_SDL_API_KEY")
-    stored = await creds_mod.store_credentials("sdl", {"api_key": ref})
-    assert stored == {"api_key": ref}
+    with pytest.raises(ValueError) as caught:
+        await creds_mod.store_credentials(
+            "sdl", {"api_key": "@secret:GCP_SERVICE_ACCOUNT_JSON"})
+    # Names the field so the error is actionable; never echoes the target name.
+    assert "api_key" in str(caught.value)
+    assert "GCP_SERVICE_ACCOUNT_JSON" not in str(caught.value)
+    # Even a reference in this module's own namespace is refused -- the module
+    # re-mints it on a genuine save, so there is no honest reason to send one.
+    with pytest.raises(ValueError):
+        await creds_mod.store_credentials(
+            "sdl", {"api_key": creds_mod.make_reference("INTEGRATION_SDL_API_KEY")})
+
+
+async def test_the_no_vault_fallback_also_refuses_references(monkeypatch):
+    """The import-failure path used to pass references through raw, which is
+    the same injection with the vault switched off."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _no_sm(name, *args, **kwargs):
+        if name == "app.services.secret_manager":
+            raise ImportError("no vault here")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _no_sm)
+    with pytest.raises(ValueError):
+        await creds_mod.store_credentials(
+            "sdl", {"api_key": "@secret:GCP_SERVICE_ACCOUNT_JSON"})
+
+
+def test_disconnect_only_owns_the_names_it_would_have_minted():
+    """The disconnect cleanup deletes what owned_secret_names returns, so this
+    is the second half of the injection fix: even if a foreign reference is
+    already sitting on a row (written before the store-side rejection), the
+    delete must not follow the pointer."""
+    names = creds_mod.owned_secret_names("accela", {
+        "client_secret": creds_mod.make_reference("INTEGRATION_ACCELA_CLIENT_SECRET"),
+        # A pointer at the platform key: never ours to delete.
+        "api_key": "@secret:GCP_SERVICE_ACCOUNT_JSON",
+        # Another integration's entry, smuggled under the wrong field.
+        "password": creds_mod.make_reference("INTEGRATION_TYLER_API_KEY"),
+        # Raw fallback value, not a reference at all.
+        "username": "clerk@town.gov",
+    })
+    assert names == {"INTEGRATION_ACCELA_CLIENT_SECRET"}
+
+
+async def test_forget_vault_secrets_never_deletes_outside_the_namespace(monkeypatch):
+    """End to end through the API helper: only this integration's own vault
+    entries are deleted on disconnect, whatever the row's references claim."""
+    pytest.importorskip("fastapi")
+    from app.api import integrations as api_mod
+
+    deleted = []
+
+    async def _delete(name):
+        deleted.append(name)
+        return True
+
+    monkeypatch.setattr(sm, "delete_secret", _delete)
+    monkeypatch.setattr(sm, "clear_cache", lambda **kw: None)
+
+    await api_mod._forget_vault_secrets("accela", {
+        "client_secret": creds_mod.make_reference("INTEGRATION_ACCELA_CLIENT_SECRET"),
+        "api_key": "@secret:GCP_SERVICE_ACCOUNT_JSON",
+    })
+    assert deleted == ["INTEGRATION_ACCELA_CLIENT_SECRET"]
 
 
 async def test_resolve_references_to_live_values(monkeypatch):

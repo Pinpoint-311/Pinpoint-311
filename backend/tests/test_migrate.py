@@ -91,6 +91,39 @@ def test_widening_a_varchar_applies_unattended():
     assert classify_source(migration(body)) == ADDITIVE
 
 
+@pytest.mark.parametrize("body", [
+    # postgresql_using is arbitrary SQL riding inside alter_column: with both
+    # lengths equal the old check called this a "widen" while the USING clause
+    # blanked every row.
+    '    op.alter_column("t", "c", existing_type=sa.String(255), '
+    'type_=sa.String(255), postgresql_using="\'\'")',
+    # A genuine widen does not launder the USING clause riding with it.
+    '    op.alter_column("t", "c", existing_type=sa.String(50), '
+    'type_=sa.String(500), postgresql_using="NULL")',
+    # Adjacent calls must be judged one by one. The old regex span could run
+    # from the destructive call's opening paren to the widen's closing one,
+    # merging them into a single argument list that read as a widen.
+    ('    op.alter_column("t", "c", type_=sa.Integer())\n'
+     '    op.alter_column("t", "d", existing_type=sa.String(50), type_=sa.String(500))'),
+    ('    op.alter_column("t", "c", type_=sa.Integer()); '
+     'op.alter_column("t", "d", existing_type=sa.String(50), type_=sa.String(500))'),
+])
+def test_alter_column_cannot_smuggle_work_past_the_widen_exemption(body):
+    """The widen exemption accepts exactly one shape: both lengths stated,
+    new >= old, and no kwargs beyond the ones a widen needs. Anything a call
+    carries beyond that -- and any judging of two calls as one -- resolves the
+    usual way: make a human look at it."""
+    assert classify_source(migration(body)) == DESTRUCTIVE
+
+
+def test_a_widen_next_to_another_widen_is_still_additive():
+    """The per-call judging must not overcorrect: two legitimate widens in one
+    upgrade() are as safe as one."""
+    body = ('    op.alter_column("t", "c", existing_type=sa.String(50), type_=sa.String(500))\n'
+            '    op.alter_column("t", "d", existing_type=sa.String(100), type_=sa.String(200))')
+    assert classify_source(migration(body)) == ADDITIVE
+
+
 def test_arbitrary_sql_is_destructive_because_it_cannot_be_read():
     assert classify_source(migration('    op.execute("DELETE FROM service_requests")')) == DESTRUCTIVE
     assert classify_source(migration('    op.execute("UPDATE users SET role = \'admin\'")')) == DESTRUCTIVE
