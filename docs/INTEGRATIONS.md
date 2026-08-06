@@ -140,6 +140,49 @@ intake), the wizard's success screen shows the inbound webhook address with a
 copy button and tells you to pass it to the vendor — the request email
 template already includes it.
 
+### Accela: signing in instead of storing a password
+
+Accela is connected through OAuth2 **authorization code** sign-in
+([Accela docs](https://developer.accela.com/docs/construct-authCodeFlow.html)),
+not by handing us an agency password. The wizard asks only for the agency name,
+environment, and record type; pressing **Sign in with Accela** sends the admin
+to Accela's own login and consent page. Pinpoint stores only the refresh token
+that comes back, in the same credential vault as every other secret — and any
+password left over from a previous setup is deleted at that moment.
+
+The developer-portal app belongs to Pinpoint, not to each town, so its
+credentials are **deployment-level** rather than something a clerk types in.
+Set them as environment variables, or as Secret Manager entries of the same
+name:
+
+| Key | Required | What it is |
+| --- | --- | --- |
+| `ACCELA_CLIENT_ID` | yes | App ID from developer.accela.com |
+| `ACCELA_CLIENT_SECRET` | yes | Its matching secret |
+| `ACCELA_REDIRECT_URI` | no | Pin the callback URL when the registered one differs from the town's own domain (shared-host deployments, or a proxy that rewrites the host) |
+
+Without them the wizard says so plainly and falls back to the username/password
+option. The exact callback URL to register on the app is returned by
+`GET /api/integrations/accela/oauth/status`; by default it is
+`https://<your-domain>/api/integrations/accela/oauth/callback`.
+
+Two details worth knowing when reading the code:
+
+- **Tokens rotate.** Accela retires the old refresh token on every exchange, so
+  the connector writes the new one straight back through the vault
+  (`build_connector_for` attaches the writer). Access tokens are cached per
+  agency for their advertised lifetime, which also stops two concurrent syncs
+  from rotating each other out.
+- **The callback is deliberately unauthenticated.** It arrives as a browser
+  redirect with no session, so an HMAC-signed, ten-minute `state` bound to one
+  integration and one admin is what authorizes it. Without that check, an
+  attacker could feed an admin their own authorization code and point the
+  town's Accela sync at their account.
+
+The password grant still works for towns whose Accela administrator prefers a
+service account — it lives behind *"Use an Accela username and password
+instead"* in the wizard and needs the town's own Client ID and Secret.
+
 ### Inbound webhook payload
 
 `POST /api/integrations/webhook/{platform}/{token}`
@@ -194,7 +237,9 @@ what the UI exposes (set them via `PUT /api/integrations/{id}`):
   `documents_path`, `document_file_field`. Assets: `assets_path` (accepts a
   GeoJSON FeatureCollection directly, or a JSON list mapped via
   `asset_id_field`/`asset_name_field`/`asset_lat_field`/`asset_long_field`).
-- Accela: `environment` (PROD/TEST), `record_type`, `api_base`/`auth_base` overrides.
+- Accela: `environment` (PROD/TEST), `record_type`, `scope` (default
+  `records assets`), `api_base`/`auth_base` overrides. `auth_mode` is set to
+  `authorization_code` by the sign-in callback and is informational.
 - Open311/Tyler: `jurisdiction_id`, `default_service_code`.
 
 ## Operational notes
