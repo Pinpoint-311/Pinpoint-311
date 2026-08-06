@@ -222,7 +222,11 @@ def classify_source(source: str) -> str:
     # flagging them marked six of the seven existing migrations destructive.
     if re.search(r"get_bind\s*\(\s*\)\s*\.\s*(?:execute|exec_driver_sql)\s*\(", body):
         return DESTRUCTIVE
-    if re.search(r"\bconn(?:ection)?\s*\.\s*(?:execute|exec_driver_sql)\s*\(", body):
+    # Any receiver other than `op` -- `conn`, `connection`, `bind`, `session`,
+    # whatever the author named the variable holding get_bind(). Matching only
+    # `conn` let `bind = op.get_bind(); bind.execute(sa.delete(...))` walk
+    # straight past the gate, and that exact shape shipped in a real revision.
+    if re.search(r"\b(?!op\b)\w+\s*\.\s*(?:execute|exec_driver_sql)\s*\(", body):
         return DESTRUCTIVE
 
     return ADDITIVE
