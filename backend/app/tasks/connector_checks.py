@@ -50,8 +50,7 @@ def probe_system():
 
     async def run():
         from app.db.session import SessionLocal
-        from app.services.connector_verification import notify
-        from app.services import capability_switches
+        from app.services import capability_switches, connector_alerts
 
         # Keeps `wanted_sync` current in this process. Sentry's `before_send`
         # cannot await a database read, so it answers from the last map anything
@@ -64,14 +63,14 @@ def probe_system():
             # A probe that records a full disk and does not send the email is
             # the same silence this replaces, one layer further in.
             #
-            # `notify`, not `connector_alerts.dispatch`. The probe calls this
-            # as `alerts(db)` and dispatch requires the health rows as an
-            # argument -- so the previous wiring raised TypeError on the email
-            # step of every hourly probe: the full disk was recorded, the
-            # dashboard showed it, and the email this task exists to send was
-            # never sent. notify(db) loads the snapshot, the town name and the
-            # settings link, and filters switched-off capabilities.
-            return await run_probe(db, alerts=notify)
+            # The dispatcher itself, with its real signature. probe_system
+            # routes it through notify, which loads the snapshot, the town
+            # name and the settings link, and filters switched-off
+            # capabilities -- an earlier wiring called the dispatcher as
+            # `alerts(db)` and raised TypeError on the email step of every
+            # hourly probe: the full disk was recorded, the dashboard showed
+            # it, and the email this task exists to send was never sent.
+            return await run_probe(db, alerts=connector_alerts.dispatch)
 
     try:
         return asyncio.run(run())

@@ -42,7 +42,10 @@ export interface IntegrationPlatform {
     name: string;
     vendor: string;
     category: string;
-    integration_mode: 'public_api' | 'open311' | 'partner_api';
+    // 'generic' is what the registry sends for the configurable REST connector.
+    // It was missing here while the UI carried a label for it, so the value the
+    // backend actually emits was the one the type said could not arrive.
+    integration_mode: 'public_api' | 'open311' | 'partner_api' | 'generic';
     docs_url: string;
     description: string;
     capabilities: string[];
@@ -61,6 +64,11 @@ export interface IntegrationTestResult {
     ok: boolean;
     detail: string;
     friendly?: string;
+    // False when the endpoint answered but nothing exercised the credentials —
+    // an Open311 server that serves /services.json to anybody, or a vendor with
+    // no key saved. Rendering these as "Connected" is what let a clerk walk away
+    // from a connection that had never been authenticated.
+    verified?: boolean;
 }
 
 export interface IntegrationConfig {
@@ -73,6 +81,11 @@ export interface IntegrationConfig {
     config: Record<string, unknown>;
     configured_credentials: string[];
     credentials_vaulted: boolean;
+    // 'all' | 'partial' | 'none'. `credentials_vaulted` used to be an `any`, so a
+    // vault write that failed for one field still reported the whole set as
+    // vaulted; 'partial' is the state worth naming, because it means at least one
+    // secret is in this app's database after all.
+    credentials_vaulted_state?: 'all' | 'partial' | 'none';
     webhook_path: string;
     last_sync_at: string | null;
     last_sync_status: string | null;
@@ -85,8 +98,23 @@ export interface IntegrationSave {
     display_name?: string;
     enabled?: boolean;
     sync_direction?: string;
+    // A null value deletes that key. The backend merges config and the wizard
+    // skipped empty strings, so between them a wrong jurisdiction_id could never
+    // be blanked — it stayed in every outbound payload forever.
     config?: Record<string, unknown>;
     credentials?: Record<string, string>;
+}
+
+/** An external platform's record for one service request (staff view). */
+export interface IntegrationRequestLink {
+    platform: string;
+    platform_name: string;
+    external_id: string;
+    external_status: string | null;
+    direction: string;
+    last_pushed_at: string | null;
+    last_pulled_at: string | null;
+    sync_error: string | null;
 }
 
 export interface IntegrationSyncLog {
@@ -673,8 +701,35 @@ class ApiClient {
         return this.request<IntegrationTestResult>(`/integrations/${id}/test`, { method: 'POST' });
     }
 
-    async syncIntegration(id: number): Promise<{ message: string }> {
-        return this.request<{ message: string }>(`/integrations/${id}/sync`, { method: 'POST' });
+    async syncIntegration(id: number): Promise<{ message: string; started?: Record<string, boolean> }> {
+        return this.request<{ message: string; started?: Record<string, boolean> }>(
+            `/integrations/${id}/sync`, { method: 'POST' }
+        );
+    }
+
+    async regenerateIntegrationWebhookToken(id: number): Promise<IntegrationConfig & { message: string }> {
+        return this.request<IntegrationConfig & { message: string }>(
+            `/integrations/${id}/regenerate-webhook-token`, { method: 'POST' }
+        );
+    }
+
+    /** Deployment shape the admin UI branches on (managed mode, public origin).
+     *
+     * Was a bare `fetch('/api/system/config')`, which sent no Authorization
+     * header and bypassed the 401 handling every other call gets -- so on an
+     * expired session it failed quietly and the page rendered as an unmanaged
+     * deployment with no public origin, rather than sending anyone to log in. */
+    async getSystemConfig(): Promise<{ managed_mode?: boolean; public_origin?: string | null }> {
+        return this.request<{ managed_mode?: boolean; public_origin?: string | null }>(
+            '/system/config'
+        );
+    }
+
+    /** External platform records linked to one request. Staff-visible. */
+    async getRequestIntegrationLinks(serviceRequestId: string): Promise<IntegrationRequestLink[]> {
+        return this.request<IntegrationRequestLink[]>(
+            `/integrations/requests/${serviceRequestId}/links`
+        );
     }
 
     async syncIntegrationAssets(id: number): Promise<{ message: string }> {

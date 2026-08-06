@@ -57,9 +57,47 @@ DEFAULT_FIELD_MAP = {
 }
 
 
+# Optional endpoints this connector will only use if the admin told us where
+# they are: capability -> the config key that has to be set.
+#
+# Nothing here has a usable default. "/requests/{id}/comments" is a guess about
+# a vendor whose whole point is that we do not know its shape, and guessing wrong
+# is not free: `pull_integration_comments` runs every fifteen minutes and
+# `sync_integration_assets` nightly, so an unconditional claim meant a 404
+# written to integration_sync_logs ninety-six times a day, for an endpoint the
+# vendor never had. The Activity drawer then shows a connector that is working
+# perfectly as permanently failing.
+OPTIONAL_ENDPOINTS = {
+    "comments": "comments_path",
+    "documents": "documents_path",
+    "assets": "assets_path",
+}
+
+# Work-order support is not an endpoint -- the fields ride along on records the
+# pull already fetches -- so it is claimed when the admin has mapped at least one
+# of them to a vendor field name.
+WORK_ORDER_FIELD_KEYS = (
+    "work_order_id_field", "priority_field", "assigned_to_field",
+    "assigned_department_field", "scheduled_date_field", "due_date_field",
+    "resolution_field",
+)
+
+
 class GenericRestConnector(BaseConnector):
     platform = "generic_rest"
-    capabilities = {"test", "push", "push_status", "pull", "comments", "documents", "assets", "work_orders"}
+
+    # What every vendor with a JSON REST API can be assumed to do, because these
+    # are the paths the wizard asks for and defaults sensibly.
+    BASE_CAPABILITIES = {"test", "push", "push_status", "pull"}
+
+    def __init__(self, config, credentials):
+        super().__init__(config, credentials)
+        self.capabilities = set(self.BASE_CAPABILITIES)
+        for capability, config_key in OPTIONAL_ENDPOINTS.items():
+            if str(self.config.get(config_key) or "").strip():
+                self.capabilities.add(capability)
+        if any(str(self.config.get(k) or "").strip() for k in WORK_ORDER_FIELD_KEYS):
+            self.capabilities.add("work_orders")
 
     DEFAULT_STATUS_MAP_OUT = {"open": "open", "in_progress": "in_progress", "closed": "closed"}
     DEFAULT_STATUS_MAP_IN = {
@@ -175,6 +213,21 @@ class GenericRestConnector(BaseConnector):
         body.update(extra)
         return body
 
+    def _has_credential(self) -> bool:
+        """Whether this request will actually carry a credential.
+
+        `_request_kwargs` attaches auth only when the matching credential is
+        present, so an integration saved with every credential field blank sends
+        a plain anonymous GET -- and a vendor endpoint that happens to allow
+        anonymous reads then answers 200 and the check reports success. Knowing
+        whether anything was sent is the difference between "your key works" and
+        "we never used it".
+        """
+        style = self.config.get("auth_style", "bearer")
+        if style == "basic":
+            return bool(self.credentials.get("username"))
+        return bool(self.credentials.get("api_key"))
+
     async def test_connection(self) -> Dict[str, Any]:
         async with self._client(**self._request_kwargs()) as client:
             resp = await client.get(
@@ -182,7 +235,19 @@ class GenericRestConnector(BaseConnector):
                 params={**self._query_auth(), "limit": 1},
             )
             self._raise_for_status(resp, f"{self.platform} API probe")
-        return {"ok": True, "detail": f"Connected to {self.base_url}"}
+        if not self._has_credential():
+            style = self.config.get("auth_style", "bearer")
+            need = "a username and password" if style == "basic" else "an API key"
+            return {
+                "ok": True, "verified": False,
+                "detail": (f"Server at {self.base_url} answered, but no credentials are "
+                           f"saved, so none were sent. This vendor allows anonymous reads; "
+                           f"filing reports will almost certainly need {need}."),
+            }
+        return {
+            "ok": True, "verified": True,
+            "detail": f"Connected to {self.base_url} and the saved credentials were accepted",
+        }
 
     async def push_request(self, payload: Dict[str, Any]) -> ExternalRecord:
         body = self._build_create_body(payload)

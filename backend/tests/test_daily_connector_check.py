@@ -355,20 +355,20 @@ def test_a_broken_switch_lookup_still_alerts(monkeypatch):
     assert [h.connector for h in alerts.calls[0]] == ["sms"]
 
 
-def test_the_probe_alert_hook_is_called_with_only_the_session():
-    """probe_system hands its `alerts` callable nothing but the session, so
-    whatever is wired there must accept (db) alone. The original wiring passed
-    connector_alerts.dispatch, whose required `healths` argument made the email
-    step raise TypeError on every hourly probe -- the full disk was recorded,
-    the dashboard showed it, and the email this task exists to send never was."""
-    import inspect
-
-    from app.services.connector_verification import notify, probe_system
+def test_the_probe_alert_hook_gets_the_dispatcher_signature():
+    """probe_system routes its `alerts` callable through notify, which calls
+    it as a dispatcher: `healths` supplied, town and settings link alongside.
+    So the callable the celery task wires in is `connector_alerts.dispatch`
+    itself, and this pins the shape it is called with -- the original wiring
+    called dispatch as `alerts(db)` and raised TypeError on the email step of
+    every hourly probe, so the full disk was recorded, the dashboard showed
+    it, and the email the task exists to send never was."""
+    from app.services.connector_verification import probe_system
 
     calls = []
 
-    async def alerts(db):
-        calls.append(db)
+    async def alerts(db, *, healths, **kwargs):
+        calls.append(list(healths))
         return {"sent": False}
 
     health = FakeHealth()
@@ -376,7 +376,5 @@ def test_the_probe_alert_hook_is_called_with_only_the_session():
         None, readings={"disk": {"ok": False, "detail": "98% full"}},
         health=health, alerts=alerts))
 
-    assert calls == [None]
+    assert len(calls) == 1, "the probe recorded a failure and told nobody"
     assert result["probes"]["disk"] == "failing"
-    # And the callable the celery task actually wires in accepts that shape.
-    inspect.signature(notify).bind(None)

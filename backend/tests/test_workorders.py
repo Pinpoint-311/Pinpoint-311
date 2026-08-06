@@ -71,8 +71,43 @@ def test_work_order_status_lifecycle():
     assert gr.map_status_in("Cancelled") == "closed"
 
 
+# What a connector needs configured before it can honestly claim each optional
+# capability. The purpose-built connectors need nothing -- they are written
+# against one documented API, so their capabilities are a fact about that API.
+# generic_rest is configuration by definition: it cannot know where a vendor
+# keeps its comments, and guessing meant polling a path that was never there.
+FULLY_CONFIGURED = {
+    "generic_rest": {
+        "comments_path": "/requests/{id}/comments",
+        "documents_path": "/requests/{id}/documents",
+        "assets_path": "/assets",
+        "assigned_to_field": "AssignedTo",
+    },
+}
+
+
 def test_catalog_work_orders_capability_consistent():
+    """A platform whose catalog claims work_orders must be able to deliver it.
+
+    "Able to" rather than "always does": for generic_rest the catalog advertises
+    what the connector supports once told where the vendor's endpoints are, which
+    is what makes the wizard offer those fields at all. Asserting the bare
+    connector claims everything is what let it claim comments, documents and
+    assets against a vendor that had none of them.
+    """
     for key, meta in PLATFORM_CATALOG.items():
-        if "work_orders" in meta["capabilities"]:
-            conn = build_connector(key, {"base_url": "https://x"}, {})
-            assert "work_orders" in conn.capabilities, f"{key} catalog claims work_orders but connector lacks it"
+        if "work_orders" not in meta["capabilities"]:
+            continue
+        config = {"base_url": "https://x", **FULLY_CONFIGURED.get(key, {})}
+        conn = build_connector(key, config, {})
+        assert "work_orders" in conn.capabilities, \
+            f"{key} catalog claims work_orders but a fully-configured connector lacks it"
+
+
+def test_a_configurable_connector_claims_nothing_it_was_not_configured_for():
+    """The other direction, and the one that was broken: every optional
+    capability the catalog advertises has to be off until it is set up."""
+    bare = build_connector("generic_rest", {"base_url": "https://x"}, {})
+    for capability in ("comments", "documents", "assets", "work_orders"):
+        assert capability in PLATFORM_CATALOG["generic_rest"]["capabilities"]
+        assert capability not in bare.capabilities, capability

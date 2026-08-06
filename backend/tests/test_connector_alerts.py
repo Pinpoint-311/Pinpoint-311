@@ -488,16 +488,67 @@ def test_a_naive_mute_deadline_does_not_explode():
     assert A.muted(level=A.BROKEN, muted_until=naive, muted_level=A.BROKEN, now=NOW) is True
 
 
-def test_the_planner_reads_the_mute_off_the_row():
-    class Muted:
+def stored_row(**overrides):
+    """A stand-in for one `connector_health` table row.
+
+    Attribute names are the column names, so what comes out of `to_health` is
+    what the real sweep would build from the real row.
+    """
+    class Row:
         connector = "ai"
-        status = "down"
+        provider = None
+        last_success_at = None
+        last_error_at = NOW - timedelta(days=5)
+        last_error = "the key was rejected"
+        consecutive_failures = 5
+        total_successes = 0
+        total_failures = 5
         alerted_level = A.BROKEN
         alerted_at = NOW - timedelta(days=5)
-        alert_muted_until = NOW + timedelta(days=3)
-        alert_muted_level = A.BROKEN
+        last_result = None
+        verifiable = True
+        alert_muted_until = None
+        alert_muted_level = None
 
-    assert A.plan([Muted()], now=NOW) == []
+    for key, value in overrides.items():
+        setattr(Row, key, value)
+    return Row()
+
+
+def test_the_planner_reads_the_mute_off_the_health_the_sweep_builds():
+    """Through the real `to_health`, not an object shaped to make it pass.
+
+    This test used to hand the planner an ad-hoc class carrying
+    `alert_muted_level` directly. `Health` had no such field and `to_health`
+    never copied it, so in production the planner read `None`, fell back to
+    treating every mute as covering `broken`, and the mute logic did not do what
+    the test said it did. The bug lived behind a passing assertion for as long
+    as the collaborator was faked.
+    """
+    from app.services.connector_health import to_health
+
+    health = to_health(stored_row(alert_muted_until=NOW + timedelta(days=3),
+                                  alert_muted_level=A.BROKEN), now=NOW)
+    assert health.alert_muted_level == A.BROKEN, "to_health dropped the muted level"
+    assert A.plan([health], now=NOW) == []
+
+
+def test_an_escalation_breaks_through_a_mute_built_by_the_sweep():
+    """The invariant the missing field silently repealed.
+
+    Something acknowledged while it was failing intermittently, that then goes
+    fully down, is new information. If `alert_muted_level` does not survive
+    `to_health`, the planner compares against a default of `broken` and the
+    outage is suppressed for the rest of the week -- the one outcome a dismiss
+    button must never be able to produce.
+    """
+    from app.services.connector_health import to_health
+
+    # Five failures in a row, so `classify` derives "down" -> level broken.
+    health = to_health(stored_row(alerted_level=A.AT_RISK,
+                                  alert_muted_until=NOW + timedelta(days=3),
+                                  alert_muted_level=A.AT_RISK), now=NOW)
+    assert [a.kind for a in A.plan([health], now=NOW)] == ["escalated"]
 
 
 def test_a_row_predating_the_mute_columns_is_simply_not_muted():

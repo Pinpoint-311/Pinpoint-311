@@ -108,7 +108,12 @@ const props: any = {
 
 async function mount() {
     const { default: Page } = await import('./SetupIntegrationsPage');
-    await act(async () => { root.render(React.createElement(Page, props)); });
+    // Inside DialogProvider, as App.tsx mounts it: the town-systems section
+    // calls useDialog, which throws without the provider.
+    const { DialogProvider } = await import('./DialogProvider');
+    await act(async () => {
+        root.render(React.createElement(DialogProvider, null, React.createElement(Page, props)));
+    });
     return host.textContent || '';
 }
 

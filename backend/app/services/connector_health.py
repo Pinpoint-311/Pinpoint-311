@@ -27,6 +27,7 @@ bookkeeping bug would be indefensible.
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -95,6 +96,16 @@ class Health:
     # outage somewhere else entirely, and it takes every provider card down with
     # it because they hydrate from the same response.
     alert_muted_until: Optional[datetime] = None
+    # What was wrong when the mute was taken.
+    #
+    # The deadline alone cannot express what an administrator agreed to. Muting
+    # is consent to a *known* problem, and `connector_alerts.muted` compares the
+    # current level against this one so something acknowledged while it was
+    # failing intermittently still breaks through when it goes fully down.
+    # Without the field the comparison read `getattr(h, ..., None)` on every
+    # row, fell back to treating the mute as covering `broken`, and the
+    # documented escalation-beats-a-mute invariant quietly did not hold.
+    alert_muted_level: Optional[str] = None
 
     @property
     def ok(self) -> bool:
@@ -159,6 +170,7 @@ def to_health(row: Any, *, now: Optional[datetime] = None) -> Health:
         # run the mute migration yet degrades to "not muted" instead of 500ing
         # the whole health page.
         alert_muted_until=getattr(row, "alert_muted_until", None),
+        alert_muted_level=getattr(row, "alert_muted_level", None),
     )
 
 
@@ -211,6 +223,48 @@ async def _commit_or_retry_without(db, row, columns) -> bool:
         return False
 
 
+def _is_real_session(db) -> bool:
+    try:
+        from sqlalchemy.ext.asyncio import AsyncSession
+    except Exception:
+        return False
+    return isinstance(db, AsyncSession)
+
+
+@asynccontextmanager
+async def _recording_session(db):
+    """A session to write one health row in, preferring one of our own.
+
+    These functions commit, and they are called from inside per-integration
+    loops -- through `guard`, on every push. Committing the *caller's* session
+    there flushed work that iteration had only half applied: in
+    `push_status_to_integrations` a link's new `external_status` and
+    `last_pushed_at` were written to disk by a health counter update, before the
+    document push that might still have failed. Health is operational state
+    about a connector; it has no business deciding when a resident's report is
+    durable.
+
+    Falls back to the caller's session when there is no real one to replace --
+    which is every test in this suite, and any caller passing a stand-in.
+    """
+    if not _is_real_session(db):
+        yield db
+        return
+    try:
+        from app.db.session import SessionLocal
+    except Exception:
+        yield db
+        return
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        try:
+            await session.close()
+        except Exception:
+            pass
+
+
 async def _row(db, connector: str):
     from sqlalchemy import select
 
@@ -220,11 +274,52 @@ async def _row(db, connector: str):
         select(ConnectorHealth).where(ConnectorHealth.connector == connector)
     )
     row = result.scalar_one_or_none()
-    if row is None:
-        row = ConnectorHealth(connector=connector, consecutive_failures=0,
-                              total_successes=0, total_failures=0)
-        db.add(row)
+    if row is not None:
+        return row
+
+    # The first write for a connector is a race. Two workers both found no row,
+    # both added one, and `connector` is unique -- so one committed and the other
+    # took an IntegrityError that record_* swallowed by design, losing the very
+    # data point it was called to store. Which is the worst time to lose one: it
+    # is the first evidence anybody has about that connector.
+    #
+    # ON CONFLICT DO NOTHING makes the loser a no-op rather than an error, and
+    # the re-read below finds the winner's row to update.
+    inserted = await _insert_if_absent(db, connector)
+    if inserted is not None:
+        return inserted
+
+    row = ConnectorHealth(connector=connector, consecutive_failures=0,
+                          total_successes=0, total_failures=0)
+    db.add(row)
     return row
+
+
+async def _insert_if_absent(db, connector: str):
+    """Claim the row with an upsert, then return it. None if unavailable.
+
+    Returns None on any dialect without ON CONFLICT support, or on a session
+    that is not a real one, so the plain add() path below still works -- this is
+    a narrowing of a race, not a new requirement.
+    """
+    try:
+        from sqlalchemy import select
+        from sqlalchemy.dialects.postgresql import insert
+
+        from app.models import ConnectorHealth
+
+        await db.execute(
+            insert(ConnectorHealth)
+            .values(connector=connector, consecutive_failures=0,
+                    total_successes=0, total_failures=0)
+            .on_conflict_do_nothing(index_elements=["connector"])
+        )
+        result = await db.execute(
+            select(ConnectorHealth).where(ConnectorHealth.connector == connector)
+        )
+        return result.scalar_one_or_none()
+    except Exception:
+        return None
 
 
 async def record_success(db, connector: str, provider: Optional[str] = None,
@@ -232,29 +327,31 @@ async def record_success(db, connector: str, provider: Optional[str] = None,
     """A real call worked. Never raises."""
     try:
         now = datetime.now(timezone.utc)
-        row = await _row(db, connector)
-        row.provider = provider or row.provider
-        row.last_attempt_at = now
-        row.last_success_at = now
-        # Kept, so a card can say what the last check found rather than only
-        # when it happened.
-        row.last_result = (detail or "")[:500] or None
-        row.verifiable = True
-        # Reset, not decrement: the connector demonstrably works right now, and
-        # carrying old failures forward would keep it amber after it recovered.
-        row.consecutive_failures = 0
-        row.last_error = None
-        row.total_successes = (row.total_successes or 0) + 1
-        if not await _commit_or_retry_without(db, row, LATER_COLUMNS):
-            # Second pass with only the columns every deployment has.
-            row = await _row(db, connector)
+        async with _recording_session(db) as session:
+            row = await _row(session, connector)
             row.provider = provider or row.provider
             row.last_attempt_at = now
             row.last_success_at = now
+            # Kept, so a card can say what the last check found rather than only
+            # when it happened.
+            row.last_result = (detail or "")[:500] or None
+            row.verifiable = True
+            # Reset, not decrement: the connector demonstrably works right now,
+            # and carrying old failures forward would keep it amber after it
+            # recovered.
             row.consecutive_failures = 0
             row.last_error = None
             row.total_successes = (row.total_successes or 0) + 1
-            await db.commit()
+            if not await _commit_or_retry_without(session, row, LATER_COLUMNS):
+                # Second pass with only the columns every deployment has.
+                row = await _row(session, connector)
+                row.provider = provider or row.provider
+                row.last_attempt_at = now
+                row.last_success_at = now
+                row.consecutive_failures = 0
+                row.last_error = None
+                row.total_successes = (row.total_successes or 0) + 1
+                await session.commit()
     except Exception as exc:
         logger.warning("[Health] could not record success for %s: %s",
                        sanitize_for_log(connector), sanitize_for_log(str(exc)))
@@ -275,19 +372,20 @@ async def record_unverifiable(db, connector: str, detail: str,
     anything about.
     """
     try:
-        row = await _row(db, connector)
-        row.provider = provider or row.provider
-        row.last_attempt_at = datetime.now(timezone.utc)
-        row.last_result = (detail or "")[:500] or None
-        row.verifiable = False
-        if not await _commit_or_retry_without(db, row, LATER_COLUMNS):
-            # Nothing left to record: "we tried and cannot tell" lives entirely
-            # in the columns this deployment does not have yet. The attempt
-            # timestamp is still worth keeping.
-            row = await _row(db, connector)
+        async with _recording_session(db) as session:
+            row = await _row(session, connector)
             row.provider = provider or row.provider
             row.last_attempt_at = datetime.now(timezone.utc)
-            await db.commit()
+            row.last_result = (detail or "")[:500] or None
+            row.verifiable = False
+            if not await _commit_or_retry_without(session, row, LATER_COLUMNS):
+                # Nothing left to record: "we tried and cannot tell" lives
+                # entirely in the columns this deployment does not have yet. The
+                # attempt timestamp is still worth keeping.
+                row = await _row(session, connector)
+                row.provider = provider or row.provider
+                row.last_attempt_at = datetime.now(timezone.utc)
+                await session.commit()
     except Exception as exc:
         logger.warning("[Health] could not record unverifiable for %s: %s",
                        sanitize_for_log(connector), sanitize_for_log(str(exc)))
@@ -298,24 +396,25 @@ async def record_failure(db, connector: str, error: Any,
     """A real call failed. Never raises."""
     try:
         now = datetime.now(timezone.utc)
-        row = await _row(db, connector)
-        row.provider = provider or row.provider
-        row.last_attempt_at = now
-        row.last_error_at = now
-        row.last_error = clean_error(error)
-        row.last_result = row.last_error
-        row.verifiable = True
-        row.consecutive_failures = (row.consecutive_failures or 0) + 1
-        row.total_failures = (row.total_failures or 0) + 1
-        if not await _commit_or_retry_without(db, row, LATER_COLUMNS):
-            row = await _row(db, connector)
+        async with _recording_session(db) as session:
+            row = await _row(session, connector)
             row.provider = provider or row.provider
             row.last_attempt_at = now
             row.last_error_at = now
             row.last_error = clean_error(error)
+            row.last_result = row.last_error
+            row.verifiable = True
             row.consecutive_failures = (row.consecutive_failures or 0) + 1
             row.total_failures = (row.total_failures or 0) + 1
-            await db.commit()
+            if not await _commit_or_retry_without(session, row, LATER_COLUMNS):
+                row = await _row(session, connector)
+                row.provider = provider or row.provider
+                row.last_attempt_at = now
+                row.last_error_at = now
+                row.last_error = clean_error(error)
+                row.consecutive_failures = (row.consecutive_failures or 0) + 1
+                row.total_failures = (row.total_failures or 0) + 1
+                await session.commit()
     except Exception as exc:
         logger.warning("[Health] could not record failure for %s: %s",
                        sanitize_for_log(connector), sanitize_for_log(str(exc)))

@@ -16,6 +16,7 @@ import GovtechIntegrations from './GovtechIntegrations';
 import ServiceProviders from './ServiceProviders';
 import SetupWizard from './SetupWizard';
 import { buildPlan, summarise, nameList, BACKUP_SECRETS, SENTRY_SECRETS } from './setupPlan';
+import { townSystemHealth } from './integrationState';
 // Registers every provider's setup steps as a side effect, so the guide can
 // render them inline rather than pointing at the cards that do.
 import './setupStepsContent';
@@ -660,8 +661,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         ));
     }, [providerStatus]);
     useEffect(() => {
-        fetch('/api/system/config')
-            .then(r => (r.ok ? r.json() : null))
+        api.getSystemConfig()
             .then(cfg => {
                 setManagedMode(!!cfg?.managed_mode);
                 setPublicOrigin(cfg?.public_origin ?? null);
@@ -786,7 +786,21 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             },
         },
     );
-    const outstanding = planSummary.notSetUp.length + planSummary.notWorking.length;
+    /* The town's own govtech connections, which ride in the same health table.
+     *
+     * They were excluded from this count because their rows were meaningless: a
+     * `govtech:*` row only appeared when a resident's report happened to be
+     * pushed, and the daily sweep never tested them. Now that the sweep does,
+     * an Accela connection that has stopped working is exactly the kind of thing
+     * this badge exists to surface -- and leaving it out would mean the page said
+     * "All set up" while reports were failing to reach the county.
+     *
+     * Same rule as the capabilities above: only a real failure counts. `unknown`
+     * means nobody has looked and `stale` means not lately. */
+    const { all: townSystems, broken: townSystemsBroken } = townSystemHealth(connectorHealth);
+
+    const outstanding = planSummary.notSetUp.length + planSummary.notWorking.length
+        + townSystemsBroken.length;
 
     /* The progress chips, from the same plan the wizard renders.
      *
@@ -815,6 +829,13 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 done: planItemDone(item),
                 required: !!item.required,
             })),
+        /* Only once the town has one. Listing "Town systems" as an outstanding
+           step for every town would mark a complete setup incomplete on the
+           strength of an integration most towns will never want -- the same
+           false-negative the sign-in and email checks above were fixed for. */
+        ...(townSystems.length > 0
+            ? [{ label: 'Town systems', done: townSystemsBroken.length === 0, required: false }]
+            : []),
     ];
     const completedCount = setupSteps.filter(s => s.done).length;
 
@@ -1140,6 +1161,19 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                             them to the wrong place. Named where the list is
                             short enough to name, because "which ones" is the
                             next question either way. */}
+                        {/* Named separately from the capability failures: a broken
+                            Accela connection needs somebody to open the town-systems
+                            section, not the provider cards, and merging the two
+                            counts sends them to the wrong place. */}
+                        {townSystemsBroken.length > 0 && (
+                            <span
+                                title={`Town systems not working: ${townSystemsBroken.join(', ')}`}
+                                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl text-xs font-semibold border bg-gradient-to-r from-red-500/25 to-rose-500/20 text-red-200 border-red-400/35 shadow-md shadow-red-950/40"
+                            >
+                                <AlertCircle className="w-3.5 h-3.5" aria-hidden="true" />
+                                {townSystemsBroken.length} town system{townSystemsBroken.length === 1 ? '' : 's'} not working
+                            </span>
+                        )}
                         {planSummary.notWorking.length > 0 && (
                             <span
                                 title={nameList(planSummary.notWorking, 99)}
