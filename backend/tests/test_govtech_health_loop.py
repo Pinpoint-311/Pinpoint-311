@@ -385,15 +385,23 @@ def test_a_sweep_that_cannot_read_the_integrations_still_reports_the_capabilitie
     assert result["checked"]["maps"] == "working"
 
 
-def test_the_sweep_and_the_push_path_write_the_same_row():
+def test_every_path_writes_the_same_row():
     """`govtech:accela`, not `accela` and not `integration:accela`. A second
     naming would give one connector two rows, and the card would show whichever
-    code path last ran."""
+    code path last ran.
+
+    Asserted through the shared helper rather than a literal: push, pull,
+    comments, assets, the admin Test button and the daily sweep all call
+    `health_key`, so there is one spelling and nowhere to typo a second one.
+    """
     from pathlib import Path
 
     assert health_key("accela") == "govtech:accela"
     tasks = (Path(__file__).resolve().parents[1] / "app/tasks/integrations.py").read_text()
-    assert 'f"govtech:{integration.platform}"' in tasks
+    assert "from app.services.connector_verification import health_key" in tasks
+    assert "health_key(integration.platform)" in tasks
+    # And nobody rebuilt it by hand alongside the helper.
+    assert 'f"govtech:' not in tasks
 
 
 def test_the_daily_task_is_what_runs_the_sweep():
@@ -402,3 +410,57 @@ def test_the_daily_task_is_what_runs_the_sweep():
 
     entry = celery_app.conf.beat_schedule.get("daily-connector-check")
     assert entry and entry["task"] == "app.tasks.connector_checks.verify_connectors"
+
+
+# ---------------------------------------------------------------------------
+# Every real call to a vendor is recorded, not only the ones on the push path
+# ---------------------------------------------------------------------------
+
+def sync_task_source() -> str:
+    from pathlib import Path
+    return (Path(__file__).resolve().parents[1] / "app/tasks/integrations.py").read_text()
+
+
+def test_the_scheduled_poll_goes_through_the_breaker_like_a_push():
+    """The poll used to call the connector directly.
+
+    So a vendor that had stopped answering failed here every fifteen minutes and
+    the only trace was `last_sync_error` -- a column no health surface reads.
+    Health went on saying "working" from whatever push last succeeded, the daily
+    sweep was the first thing to notice, and until it ran the badge was green
+    while nothing came back. Now it is the same guard, the same row and the same
+    breaker as a resident's report.
+    """
+    source = sync_task_source()
+    block = source[source.index("def pull_integration_updates("):]
+    block = block[:block.index("@celery_app.task", 1)]
+    assert "await guard(" in block
+    assert "health_key(platform)" in block
+    assert "db=db" in block
+    assert "await connector.pull_updates(" not in block, "the poll still calls the vendor directly"
+
+
+def test_a_paused_vendor_is_not_counted_as_a_fresh_poll_failure():
+    """`guard` declines the call rather than making it. Counting that as a new
+    failure would inflate the number that decides blip from outage, on evidence
+    nobody gathered."""
+    source = sync_task_source()
+    block = source[source.index("def pull_integration_updates("):]
+    block = block[:block.index("@celery_app.task", 1)]
+    assert "except CircuitOpen" in block
+    handler = block[block.index("except CircuitOpen"):]
+    handler = handler[:handler.index("except Exception")]
+    assert "record_failure" not in handler
+
+
+@pytest.mark.parametrize("task,operation", [
+    ("pull_integration_comments", "pull_comments"),
+    ("sync_integration_assets", "sync_assets"),
+])
+def test_the_other_beat_jobs_record_their_failures_too(task, operation):
+    """A connector whose comment poll 404s every fifteen minutes is a connector
+    that is not working, and these paths wrote a sync-log line and nothing else."""
+    source = sync_task_source()
+    block = source[source.index(f"def {task}("):]
+    assert "connector_health.record_failure(" in block
+    assert "health_key(integration.platform)" in block

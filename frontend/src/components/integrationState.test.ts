@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 
 import {
     alreadyStored,
+    connectionState,
+    connectionStateLabel,
+    healthKey,
     buildSavePayload,
     needsEnableConfirmation,
     requiredMissing,
@@ -259,5 +262,87 @@ describe('clipping a vendor error for the card', () => {
 
     it('does not leave a space before the ellipsis', () => {
         expect(truncate('abcd efgh', 5)).toBe('abcd…');
+    });
+});
+
+
+// ---------------------------------------------------------------------------
+// The badge, in the same vocabulary as a capability card
+// ---------------------------------------------------------------------------
+
+describe('what a connection card says it is doing', () => {
+    const on = (over = {}) => saved({ enabled: true, ...over });
+    const row = (status: string, extra = {}) =>
+        ({ connector: 'govtech:accela', status, ...extra });
+
+    it('reports a platform with no connection as unset', () => {
+        expect(connectionState(undefined)).toBe('unset');
+        expect(connectionStateLabel(undefined, 'unset')).toBe('Not connected');
+    });
+
+    it('distinguishes turned-off from never-connected', () => {
+        /* Both are "unset" as far as health goes, and they are completely
+         * different situations for the person reading the card. */
+        expect(connectionState(saved())).toBe('unset');
+        expect(connectionStateLabel(saved(), 'unset')).toBe('Turned off');
+    });
+
+    it('does not call a connection working just because it is switched on', () => {
+        /* The bug this replaces: the pill was `enabled && last_sync_status !==
+         * "error"`, so a connection whose credentials were revoked months ago
+         * showed a green "Connected" -- and on a push-only connection
+         * last_sync_status is null forever, so it never went any other way. */
+        expect(connectionState(on({ last_sync_status: null }))).toBe('unchecked');
+    });
+
+    it('reports working only when a real call succeeded', () => {
+        expect(connectionState(on(), row('working'))).toBe('working');
+    });
+
+    it('reports failing when the last real call failed', () => {
+        expect(connectionState(on(), row('failing'))).toBe('failing');
+        expect(connectionState(on(), row('down'))).toBe('failing');
+    });
+
+    it('keeps unchecked as its own answer', () => {
+        /* A connection nobody has exercised is not healthy and not broken.
+         * Collapsing it into either is how an expired credential keeps a green
+         * tick for a month. */
+        expect(connectionState(on(), row('unknown'))).toBe('unchecked');
+        expect(connectionState(on())).toBe('unchecked');
+    });
+
+    it('treats stale as unchecked rather than broken', () => {
+        /* It alerts, but it is not evidence of a fault -- the sweep simply has
+         * not recorded a success lately. Same call the provider cards make. */
+        expect(connectionState(on(), row('stale'))).toBe('unchecked');
+    });
+
+    it('reports unverifiable where nothing can check the credentials', () => {
+        expect(connectionState(on(), row('working', { verifiable: false }))).toBe('unverifiable');
+    });
+
+    it('prefers a check run on this page over the stored row', () => {
+        /* Otherwise a connection that was just fixed keeps being reported as
+         * broken by the row the failure wrote. The stored value is a fallback
+         * for a fresh page, not a second opinion. */
+        expect(connectionState(on(), row('down'), { ok: true, detail: '' })).toBe('working');
+        expect(connectionState(on(), row('working'), { ok: false, detail: '' })).toBe('failing');
+    });
+
+    it('carries a this-session unverified result through', () => {
+        expect(connectionState(on(), row('working'), { ok: true, detail: '', verified: false }))
+            .toBe('unverifiable');
+    });
+
+    it('labels only the unset state, leaving the shared pill to name the rest', () => {
+        expect(connectionStateLabel(on(), 'working')).toBeUndefined();
+        expect(connectionStateLabel(on(), 'failing')).toBeUndefined();
+    });
+
+    it('agrees with the backend on the health row name', () => {
+        /* One connector, one row. A second spelling would give the card and the
+         * push path different rows and show whichever ran last. */
+        expect(healthKey('accela')).toBe('govtech:accela');
     });
 });

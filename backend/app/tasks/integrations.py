@@ -33,6 +33,9 @@ from app.models import (
     ServiceDefinition,
     ServiceRequest,
 )
+from app.services import connector_health
+from app.services.circuit_breaker import CircuitOpen, guard
+from app.services.connector_verification import health_key
 from app.tasks.service_requests import run_async
 
 logger = logging.getLogger(__name__)
@@ -400,10 +403,9 @@ def push_request_to_integrations(self, request_id: int):
                     # service that is not coming back this minute. This also
                     # records the outcome, so the admin badge reflects real
                     # pushes rather than only whenever someone pressed Test.
-                    from app.services.circuit_breaker import guard
                     payload = _build_payload(sr, integration.config or {}, await _dept_name(db, sr))
                     record = await guard(
-                        f"govtech:{integration.platform}",
+                        health_key(integration.platform),
                         lambda: connector.push_request(payload),
                         db=db,
                         provider=integration.platform,
@@ -468,9 +470,8 @@ def push_status_to_integrations(self, request_id: int, notes: str = None):
                     connector = await build_connector_for(integration)
                     if "push_status" not in connector.capabilities:
                         continue
-                    from app.services.circuit_breaker import guard
                     await guard(
-                        f"govtech:{integration.platform}",
+                        health_key(integration.platform),
                         lambda: connector.push_status(link.external_id, sr.status, notes),
                         db=db,
                         provider=integration.platform,
@@ -543,7 +544,20 @@ def pull_integration_updates(integration_id: Optional[int] = None):
                     # started after. Those updates were skipped forever, and
                     # nothing anywhere would ever have said so.
                     started_at = datetime.now(timezone.utc)
-                    records = await connector.pull_updates(since=_pull_since(integration))
+                    # Behind the same breaker, and recorded to the same health
+                    # row, as a resident-report push. The poll used to call the
+                    # connector directly, so a vendor that had stopped answering
+                    # failed here every fifteen minutes and the only trace was
+                    # `last_sync_error` -- which nothing reads. Health said
+                    # "working" on the strength of whatever push last succeeded,
+                    # the daily sweep was the first thing to notice, and until it
+                    # ran the badge was green while nothing came back.
+                    records = await guard(
+                        health_key(platform),
+                        lambda: connector.pull_updates(since=_pull_since(integration)),
+                        db=db,
+                        provider=platform,
+                    )
                     updated = 0
                     imported = 0
                     for record in records:
@@ -609,6 +623,15 @@ def pull_integration_updates(integration_id: Optional[int] = None):
                                f"{imported} new request(s) imported"
                                + (f", newest change {newest.isoformat()}" if newest else ""),
                                len(records))
+                except CircuitOpen as e:
+                    # Already known to be down; `guard` declined the call rather
+                    # than making it. Not recorded as a new failure -- the
+                    # failures that opened the circuit are in the row already,
+                    # and counting a call we chose not to make would inflate the
+                    # number that decides blip from outage.
+                    await db.rollback()
+                    await _log(db, integration_id, "pull", "skipped", str(e))
+                    continue
                 except Exception as e:
                     # Clear any pending-rollback state before writing the error
                     # log, so one bad record can't poison the whole beat cycle.
@@ -818,6 +841,13 @@ def pull_integration_comments(integration_id: Optional[int] = None):
                                    imported)
                 except Exception as e:
                     await db.rollback()
+                    # Recorded, like every other real call to this vendor. A
+                    # connector whose comment poll fails every fifteen minutes is
+                    # a connector that is not working, and this path used to
+                    # write a sync-log line no health surface reads.
+                    await connector_health.record_failure(
+                        db, health_key(integration.platform), e,
+                        provider=integration.platform)
                     await _log(db, integration.id, "pull_comments", "error", str(e))
                     logger.warning(f"[Integrations] Comment pull from {integration.platform} failed: {e}")
             await db.commit()
@@ -894,6 +924,9 @@ def sync_integration_assets(integration_id: Optional[int] = None):
                                len(features))
                 except Exception as e:
                     await db.rollback()
+                    await connector_health.record_failure(
+                        db, health_key(integration.platform), e,
+                        provider=integration.platform)
                     await _log(db, integration.id, "sync_assets", "error", str(e))
                     logger.warning(f"[Integrations] Asset sync from {integration.platform} failed: {e}")
             await db.commit()

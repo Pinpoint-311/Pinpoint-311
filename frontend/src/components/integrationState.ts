@@ -15,7 +15,70 @@
  * Pure, so each can be checked directly rather than through a mounted page.
  */
 
-import type { IntegrationConfig, IntegrationPlatform } from '../services/api';
+import type { IntegrationConfig, IntegrationPlatform, IntegrationTestResult } from '../services/api';
+import type { CapabilityState } from './capabilityUI';
+
+/** One connector's row from GET /api/system/connectors/health. */
+export interface ConnectorHealthRow {
+    connector: string;
+    status: string;
+    summary?: string;
+    last_result?: string | null;
+    last_error?: string | null;
+    verifiable?: boolean | null;
+    alerts_muted_until?: string | null;
+}
+
+/** The health row a connection reports under. Shared with the backend's
+ *  `health_key`, and with the push path, so one connector has one row. */
+export const healthKey = (platform: string) => `govtech:${platform}`;
+
+/**
+ * What a connection is actually doing, in the same vocabulary as a capability.
+ *
+ * Deliberately the same shape as `capabilityState` in ServiceProviders, because
+ * these are the same question asked about a different vendor, and the town-system
+ * cards had been answering a different one: `enabled && last_sync_status !==
+ * 'error'` drew a green "Connected" pill. Both halves of that are wrong in the
+ * direction this whole health system exists to prevent -- `enabled` is a fact
+ * about our own database that stays true through a revoked key, and
+ * `last_sync_status` is the outcome of the last *poll*, which is null forever on
+ * a push-only connection.
+ *
+ * `unchecked` stays its own answer. A connection nobody has exercised is not
+ * healthy and not broken, and collapsing it into either is how an expired
+ * credential keeps a green tick for a month.
+ */
+export function connectionState(
+    existing: IntegrationConfig | undefined,
+    health?: ConnectorHealthRow,
+    sessionResult?: IntegrationTestResult | null,
+): CapabilityState | null {
+    if (!existing) return 'unset';
+    if (!existing.enabled) return 'unset';
+
+    // A check run on this page is fresher than the stored row. Same precedence
+    // as capabilityState: the stored value is a fallback for a fresh page, not a
+    // second opinion -- otherwise a connection that just passed would keep being
+    // reported as broken by the row the failure wrote.
+    if (sessionResult) {
+        if (!sessionResult.ok) return 'failing';
+        return sessionResult.verified === false ? 'unverifiable' : 'working';
+    }
+
+    if (health?.verifiable === false) return 'unverifiable';
+    if (!health || health.status === 'unknown' || health.status === 'stale') return 'unchecked';
+    return health.status === 'working' ? 'working' : 'failing';
+}
+
+/** The pill's words, where "unset" covers two different situations. */
+export function connectionStateLabel(
+    existing: IntegrationConfig | undefined,
+    state: CapabilityState | null,
+): string | undefined {
+    if (state !== 'unset') return undefined;
+    return existing ? 'Turned off' : 'Not connected';
+}
 
 /** A vendor error is unbounded remote text; the card has room for a line of it. */
 export const ERROR_PREVIEW_CHARS = 160;
