@@ -378,3 +378,45 @@ def test_the_probe_alert_hook_gets_the_dispatcher_signature():
 
     assert len(calls) == 1, "the probe recorded a failure and told nobody"
     assert result["probes"]["disk"] == "failing"
+
+
+def test_a_disconnected_town_system_does_not_keep_emailing(monkeypatch):
+    """Disabling or deleting a govtech integration stops the sweep testing it,
+    so its health row freezes red (or drifts to stale, which alerts as
+    at-risk). There is no card for a deleted integration and therefore no mute
+    button; the off switch itself has to stop the mail. Only rows for
+    currently-enabled integrations may reach dispatch."""
+    from types import SimpleNamespace
+
+    from app.services import connector_verification as cv
+
+    rows = {
+        "govtech:accela": SimpleNamespace(connector="govtech:accela"),
+        "govtech:open311": SimpleNamespace(connector="govtech:open311"),
+        "email": SimpleNamespace(connector="email"),
+    }
+
+    class SnapshotHealth(FakeHealth):
+        async def snapshot(self, db):
+            return rows
+
+    async def enabled_integrations(db):
+        return [SimpleNamespace(platform="open311")]
+
+    monkeypatch.setattr(cv, "_enabled_integrations", enabled_integrations)
+
+    # Pin the capability switches on, like the neighbouring tests: this test
+    # is about the govtech filter, and the legacy EMAIL_ENABLED opt-in would
+    # otherwise swallow the email row in an environment with no database.
+    from app.services import capability_switches
+
+    async def everything_on(capability):
+        return True
+
+    monkeypatch.setattr(capability_switches, "enabled", everything_on)
+
+    alerts = FakeAlerts()
+    asyncio.run(cv.notify(None, health=SnapshotHealth(), alerts=alerts))
+
+    dispatched = sorted(h.connector for h in alerts.calls[0])
+    assert dispatched == ["email", "govtech:open311"]

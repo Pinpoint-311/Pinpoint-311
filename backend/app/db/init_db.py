@@ -131,7 +131,13 @@ async def _run_pii_migrations():
         "ALTER TABLE service_requests ALTER COLUMN first_name TYPE VARCHAR(500)",
         "ALTER TABLE service_requests ALTER COLUMN last_name TYPE VARCHAR(500)",
         "ALTER TABLE service_requests ALTER COLUMN email TYPE VARCHAR(500)",
-        "ALTER TABLE service_requests ALTER COLUMN phone TYPE VARCHAR(200)",
+        # 500 like the other three. This ran at every boot saying 200 and
+        # silently *shrank* the column migration e7f8a9b0c1d2 had widened --
+        # Postgres allows the shrink whenever every stored value happens to
+        # fit, which is exactly the state right after the widen, so the first
+        # restart re-broke KMS phone writes. Same number as models.py or it
+        # is not a size fix, it is a tug of war.
+        "ALTER TABLE service_requests ALTER COLUMN phone TYPE VARCHAR(500)",
     ]
     
     try:

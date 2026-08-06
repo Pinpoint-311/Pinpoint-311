@@ -462,3 +462,26 @@ def test_the_fresh_plan_log_omits_the_classification():
     """DESTRUCTIVE printed next to a revision that is about to be applied
     anyway reads as a warning that was ignored."""
     assert "DESTRUCTIVE" not in " ".join(format_plan(_plan(DESTRUCTIVE, fresh=True)))
+
+
+def test_boot_time_pii_widening_never_undercuts_the_model():
+    """init_db's per-boot ALTERs ran saying VARCHAR(200) for phone after the
+    model and migration e7f8a9b0c1d2 moved to 500 -- and Postgres allows a
+    shrink whenever every stored value happens to fit, which is exactly the
+    state right after the widen. So every restart quietly re-broke KMS phone
+    writes. The boot statements must state sizes at least as large as the
+    model's, or they are a tug of war the boot always wins."""
+    import re
+
+    init = Path("app/db/init_db.py").read_text()
+    model = Path("app/models.py").read_text()
+    stated = dict(re.findall(
+        r"ALTER TABLE service_requests ALTER COLUMN (\w+) TYPE VARCHAR\((\d+)\)", init))
+    for column in ("first_name", "last_name", "email", "phone"):
+        declared = re.search(
+            rf'Column\("{column}", String\((\d+)\)', model)
+        assert declared, f"could not find the model size for {column}"
+        assert column in stated, f"init_db no longer widens {column}; update this test"
+        assert int(stated[column]) >= int(declared.group(1)), (
+            f"init_db states VARCHAR({stated[column]}) for {column}, smaller than "
+            f"the model's String({declared.group(1)}) -- every boot shrinks it back")
