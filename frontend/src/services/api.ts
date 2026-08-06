@@ -61,6 +61,9 @@ export interface IntegrationTestResult {
     ok: boolean;
     detail: string;
     friendly?: string;
+    // Things that work today but will stop a report from being filed — e.g. a
+    // SeeClickFix request type asking a required question we cannot answer.
+    warnings?: string[];
 }
 
 export interface IntegrationConfig {

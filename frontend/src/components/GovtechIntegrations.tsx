@@ -468,6 +468,20 @@ export default function GovtechIntegrations() {
                                 </div>
                             )}
 
+                            {/* A connection can sign in fine and still be unable to file a
+                                report. That gap is invisible until a resident's report is
+                                rejected, so it gets its own line rather than a green tick. */}
+                            {(result?.warnings || []).length > 0 && (
+                                <div className="relative mt-2 rounded-lg px-3 py-2 text-xs border bg-amber-500/10 border-amber-500/25 text-amber-200 space-y-1.5">
+                                    {result!.warnings!.map((w, i) => (
+                                        <p key={i} className="flex items-start gap-1.5">
+                                            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" aria-hidden="true" />
+                                            <span>{w}</span>
+                                        </p>
+                                    ))}
+                                </div>
+                            )}
+
                             <div className="relative flex flex-wrap items-center gap-2 mt-4">
                                 {!existing ? (
                                     <button
@@ -731,15 +745,38 @@ export default function GovtechIntegrations() {
                             {!testing && testResult?.ok && (
                                 <div className="space-y-4">
                                     <div className="flex flex-col items-center py-4 text-center">
-                                        <div className="w-14 h-14 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mb-3">
-                                            <PartyPopper className="w-7 h-7 text-emerald-300" />
-                                        </div>
-                                        <h4 className="text-white font-semibold">You're connected!</h4>
+                                        {(testResult.warnings || []).length > 0 ? (
+                                            <div className="w-14 h-14 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center mb-3">
+                                                <AlertCircle className="w-7 h-7 text-amber-300" />
+                                            </div>
+                                        ) : (
+                                            <div className="w-14 h-14 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mb-3">
+                                                <PartyPopper className="w-7 h-7 text-emerald-300" />
+                                            </div>
+                                        )}
+                                        <h4 className="text-white font-semibold">
+                                            {(testResult.warnings || []).length > 0 ? 'Almost there' : "You're connected!"}
+                                        </h4>
                                         <p className="text-white/50 text-sm mt-1 max-w-sm">
-                                            The connection works and has been turned on. New resident reports will
-                                            now flow to {wizard.name} automatically — nothing else to do.
+                                            {(testResult.warnings || []).length > 0
+                                                ? `The sign-in works and the connection is on — but ${wizard.name} still needs the details below before reports will go through.`
+                                                : `The connection works and has been turned on. New resident reports will now flow to ${wizard.name} automatically — nothing else to do.`}
                                         </p>
                                     </div>
+
+                                    {(testResult.warnings || []).length > 0 && (
+                                        <div className="rounded-xl bg-amber-500/10 border border-amber-500/25 p-4 space-y-2">
+                                            <h4 className="text-amber-200 font-semibold text-sm flex items-center gap-2">
+                                                <AlertCircle className="w-4 h-4" /> Finish this before the first report
+                                            </h4>
+                                            {testResult.warnings!.map((w, i) => (
+                                                <p key={i} className="text-amber-100/80 text-sm">{w}</p>
+                                            ))}
+                                            <Button variant="ghost" size="sm" onClick={() => setStep('details')} leftIcon={<ArrowLeft className="w-3.5 h-3.5" />}>
+                                                Go back and fill this in
+                                            </Button>
+                                        </div>
+                                    )}
 
                                     {(() => {
                                         const existing = configFor(wizard.platform);
