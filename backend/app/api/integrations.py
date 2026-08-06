@@ -247,7 +247,13 @@ async def create_integration(
     # store only @secret: references on the row. Falls back to encrypted-in-DB
     # when no external vault is configured (see integrations/credentials.py).
     creds = {k: v for k, v in (data.credentials or {}).items() if v}
-    integration.credentials = await store_credentials(data.platform, creds)
+    try:
+        integration.credentials = await store_credentials(data.platform, creds)
+    except ValueError as exc:
+        # A caller-supplied @secret: reference. Refused there because a stored
+        # pointer at somebody else's vault entry is read by resolve_credentials
+        # and deleted by disconnect -- see store_credentials.
+        raise HTTPException(status_code=422, detail=str(exc))
     db.add(integration)
     try:
         await db.commit()
@@ -298,7 +304,11 @@ async def update_integration(
         # what it wrote to the vault, raw values only as an encrypted-DB fallback.
         changed = {k: v for k, v in data.credentials.items() if v}
         if changed:
-            stored = await store_credentials(integration.platform, changed)
+            try:
+                stored = await store_credentials(integration.platform, changed)
+            except ValueError as exc:
+                # A caller-supplied @secret: reference — same refusal as create.
+                raise HTTPException(status_code=422, detail=str(exc))
             merged = dict(integration.credentials or {})
             merged.update(stored)
             integration.credentials = merged
@@ -336,11 +346,19 @@ async def delete_integration(
 
 
 async def _forget_vault_secrets(platform: str, stored: Dict[str, Any]) -> None:
-    """Delete the Secret Manager entries a disconnected integration wrote."""
-    from app.core.sanitize import sanitize_for_log
-    from app.integrations.credentials import is_reference, reference_name
+    """Delete the Secret Manager entries a disconnected integration wrote.
 
-    names = {reference_name(v) for v in stored.values() if is_reference(v)}
+    Only the entries it *wrote*: names are recomputed from the platform and
+    field, never taken from wherever a stored reference happens to point. A
+    reference is a pointer, and a row that carried
+    ``@secret:GCP_SERVICE_ACCOUNT_JSON`` would otherwise turn Disconnect into
+    deleting the platform key -- outside the reject_platform_key_writes gate,
+    because this path talks to the vault directly.
+    """
+    from app.core.sanitize import sanitize_for_log
+    from app.integrations.credentials import owned_secret_names
+
+    names = owned_secret_names(platform, stored)
     if not names:
         return
     try:
@@ -678,22 +696,27 @@ async def get_request_links(
 # ---------- Inbound webhook (no session auth — token in path) ----------
 
 def _webhook_rate_key(request: Request) -> str:
-    """Rate-limit inbound webhooks per connection, not per source address.
+    """Rate-limit inbound webhooks per connection *and* source address.
 
     One vendor's egress IP serves every event for every town on their platform,
-    so a per-IP bucket meant a busy neighbour's traffic could exhaust the budget
-    for ours -- and, the other way round, that one misconfigured integration
-    could not be throttled without throttling every connection sharing that IP.
-    The path already identifies the connection.
+    so a bucket keyed on the IP alone meant a busy neighbour's traffic could
+    exhaust the budget for ours -- and one misconfigured integration could not
+    be throttled without throttling every connection sharing that IP. The path
+    identifies the connection, so the token digest stays in the key.
+
+    The address stays in it too. Keyed on the token alone, every *guessed*
+    token minted a fresh bucket with a fresh budget -- an attacker
+    brute-forcing this unauthenticated endpoint was never rate-limited at all,
+    and each miss grew the limiter's in-memory store by one bucket, forever.
     """
     parts = [p for p in request.url.path.split("/") if p]
-    # .../webhook/{platform}/{token} -- keyed on the platform plus a digest of
-    # the token, so the bucket name is per-connection without a credential
-    # ending up in the limiter's store or its log lines.
+    # .../webhook/{platform}/{token} -- a digest of the token, so the bucket
+    # name is per-connection without a credential ending up in the limiter's
+    # store or its log lines.
     if len(parts) >= 2 and parts[-2]:
         import hashlib
         digest = hashlib.sha256(parts[-1].encode("utf-8", "replace")).hexdigest()[:16]
-        return f"webhook:{parts[-2]}:{digest}"
+        return f"webhook:{parts[-2]}:{digest}:{get_remote_address(request)}"
     return f"webhook:{get_remote_address(request)}"
 
 

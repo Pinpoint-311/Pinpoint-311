@@ -599,10 +599,18 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * only say whether a credential is stored, and "stored" is the fact that
      * stays true through a key being revoked. */
     const [connectorHealth, setConnectorHealth] = useState<Record<string, string>>({});
+    /* Which town-system platforms are currently switched on. A govtech health
+     * row outlives the integration that wrote it -- nothing decays a failing
+     * row once its connector is disabled or deleted -- so counting rows alone
+     * kept the badge red forever after the town turned the broken thing off. */
+    const [enabledTownSystems, setEnabledTownSystems] = useState<Set<string>>(new Set());
     const loadHealth = useCallback(() => {
         api.getConnectorHealth()
             .then(r => setConnectorHealth(Object.fromEntries(r.connectors.map(c => [c.connector, c.status]))))
             .catch(() => { /* no health is not the same as bad health */ });
+        api.getIntegrations()
+            .then(rows => setEnabledTownSystems(new Set(rows.filter(r => r.enabled).map(r => r.platform))))
+            .catch(() => { /* keep the last answer; the section below has its own load */ });
     }, []);
     useEffect(() => { loadHealth(); }, [loadHealth, providerRefresh]);
     const loadProviderStatus = useCallback(() => {
@@ -796,8 +804,12 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * "All set up" while reports were failing to reach the county.
      *
      * Same rule as the capabilities above: only a real failure counts. `unknown`
-     * means nobody has looked and `stale` means not lately. */
-    const { all: townSystems, broken: townSystemsBroken } = townSystemHealth(connectorHealth);
+     * means nobody has looked and `stale` means not lately. And only currently
+     * *enabled* connections count -- their health rows outlive them, and a
+     * connector the town disabled because it was broken is dealt with, not
+     * outstanding. */
+    const { all: townSystems, broken: townSystemsBroken } =
+        townSystemHealth(connectorHealth, enabledTownSystems);
 
     const outstanding = planSummary.notSetUp.length + planSummary.notWorking.length
         + townSystemsBroken.length;

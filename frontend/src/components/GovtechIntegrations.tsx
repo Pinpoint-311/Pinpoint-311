@@ -68,7 +68,17 @@ export default function GovtechIntegrations() {
     // disabled while any one of them was working, so checking Accela greyed out
     // the Tyler card the clerk was about to look at.
     const [busy, setBusy] = useState<Record<number, string>>({});
+    // Genuine connection checks only. cardResult feeds connectionState and the
+    // enable-confirmation, so writing anything else into it repaints the pill:
+    // "Check for updates" used to put `{ok: true}` here and turn a failing
+    // connector green "Working" until reload.
     const [cardResult, setCardResult] = useState<Record<string, IntegrationTestResult>>({});
+    // Feedback from actions that verify nothing -- an enqueued sync, a new
+    // webhook address. Rendered in the same spot as a check result but never
+    // handed to connectionState or needsEnableConfirmation: "the queue took the
+    // job" is not evidence the connection works, and "the enqueue failed" is
+    // not evidence it is broken.
+    const [cardNotice, setCardNotice] = useState<Record<string, { ok: boolean; detail?: string }>>({});
     // The govtech rows out of the shared connector-health table, keyed by
     // connector name. Same source the provider cards read, so both surfaces
     // answer "is it working" from the same evidence.
@@ -318,6 +328,13 @@ export default function GovtechIntegrations() {
 
     const handleCardTest = async (existing: IntegrationConfig) => {
         setBusyFor(existing.id, 'test');
+        // A fresh verdict supersedes "update check started…" — leaving the old
+        // notice next to it reads as two answers to one question.
+        setCardNotice(prev => {
+            const next = { ...prev };
+            delete next[existing.platform];
+            return next;
+        });
         try {
             const result = await api.testIntegration(existing.id);
             setCardResult(prev => ({ ...prev, [existing.platform]: result }));
@@ -335,7 +352,7 @@ export default function GovtechIntegrations() {
             const response = await api.syncIntegration(existing.id);
             const partly = response.started
                 && Object.values(response.started).some(started => !started);
-            setCardResult(prev => ({
+            setCardNotice(prev => ({
                 ...prev,
                 [existing.platform]: {
                     // A partial start is not a success. The endpoint says which
@@ -349,7 +366,7 @@ export default function GovtechIntegrations() {
             }));
             await refreshAfterAction(existing);
         } catch (err: any) {
-            setCardResult(prev => ({ ...prev, [existing.platform]: { ok: false, detail: err?.message || 'Could not start the update check.' } }));
+            setCardNotice(prev => ({ ...prev, [existing.platform]: { ok: false, detail: err?.message || 'Could not start the update check.' } }));
         } finally {
             setBusyFor(existing.id, null);
         }
@@ -359,10 +376,10 @@ export default function GovtechIntegrations() {
         setBusyFor(existing.id, 'assets');
         try {
             await api.syncIntegrationAssets(existing.id);
-            setCardResult(prev => ({ ...prev, [existing.platform]: { ok: true, detail: 'Copying their asset list (hydrants, lights, signs…) onto your map. This can take a few minutes.' } }));
+            setCardNotice(prev => ({ ...prev, [existing.platform]: { ok: true, detail: 'Copying their asset list (hydrants, lights, signs…) onto your map. This can take a few minutes.' } }));
             await refreshAfterAction(existing);
         } catch (err: any) {
-            setCardResult(prev => ({ ...prev, [existing.platform]: { ok: false, detail: err?.message || 'Could not start the asset copy.' } }));
+            setCardNotice(prev => ({ ...prev, [existing.platform]: { ok: false, detail: err?.message || 'Could not start the asset copy.' } }));
         } finally {
             setBusyFor(existing.id, null);
         }
@@ -405,7 +422,7 @@ export default function GovtechIntegrations() {
         try {
             const updated = await api.regenerateIntegrationWebhookToken(existing.id);
             setConfigs(prev => [...prev.filter(c => c.platform !== existing.platform), updated]);
-            setCardResult(prev => ({ ...prev, [existing.platform]: { ok: true, detail: updated.message } }));
+            setCardNotice(prev => ({ ...prev, [existing.platform]: { ok: true, detail: updated.message } }));
         } catch (err: any) {
             setError(err?.message || 'Could not issue a new address.');
         } finally {
@@ -612,6 +629,7 @@ export default function GovtechIntegrations() {
                     const existing = configFor(platform.platform);
                     const mode = MODE_LABELS[platform.integration_mode] || MODE_LABELS.partner_api;
                     const result = cardResult[platform.platform];
+                    const notice = cardNotice[platform.platform];
                     const platformLogs = logs[platform.platform];
                     const isOpen = openCards.has(platform.platform);
                     // One word, from the same evidence and the same rules the
@@ -763,6 +781,18 @@ export default function GovtechIntegrations() {
                                         <span className="font-semibold block mb-0.5">Reachable — credentials not checked</span>
                                     )}
                                     {result.ok ? result.detail : (result.friendly || result.detail)}
+                                </div>
+                            )}
+
+                            {/* Action feedback (sync enqueued, address reissued).
+                                Same spot as a check result, deliberately not the
+                                same state: this never reaches connectionState, so
+                                enqueueing a job cannot repaint the pill. */}
+                            {notice && (
+                                <div className={`relative mt-2 rounded-lg px-3 py-2 text-xs border ${notice.ok
+                                    ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-200'
+                                    : 'bg-amber-500/10 border-amber-500/25 text-amber-200'}`}>
+                                    {notice.detail}
                                 </div>
                             )}
 

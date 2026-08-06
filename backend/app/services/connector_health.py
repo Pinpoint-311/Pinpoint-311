@@ -27,6 +27,7 @@ bookkeeping bug would be indefensible.
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -174,15 +175,37 @@ def to_health(row: Any, *, now: Optional[datetime] = None) -> Health:
     )
 
 
+# Provider errors echo the request, and the request carries the credential.
+# httpx's raise_for_status message quotes the *full* URL, query string and all,
+# so a failing Google Translate call arrives here as
+# "... for url 'https://.../v2?key=AIza...'". A URL's query string is where
+# keys travel; nothing a card or an alert email needs lives after the "?".
+_URL_QUERY = re.compile(r"\?[^\s'\"<>]+")
+
+# `param=value` shapes outside a URL -- a vendor echoing form fields or config
+# back in an error body. The value goes, the name stays: "api_key=[redacted]"
+# still tells support which field to look at.
+_CREDENTIAL_PARAM = re.compile(
+    r"(?i)\b(key|api[-_]?key|apikey|token|access[-_]?token|signature|secret|"
+    r"password|passwd|pwd|subscription[-_]?key)\s*=\s*[^&\s'\"<>]+")
+
+
+def _scrub_secrets(text: str) -> str:
+    text = _URL_QUERY.sub("?…", text)
+    return _CREDENTIAL_PARAM.sub(lambda m: f"{m.group(1)}=[redacted]", text)
+
+
 def clean_error(exc: Any) -> str:
     """The provider's message, trimmed and stripped of anything secret.
 
     Provider errors sometimes echo the request, and the request contains the
-    credential. Storing that would put a key in a table the admin UI renders
-    and the support process copy-pastes out of.
+    credential. Storing that would put a key in a table the admin UI renders,
+    the alert emails quote, and the support process copy-pastes out of.
+    sanitize_for_log alone was not enough: it strips log-injection characters,
+    not the ?key=... that httpx bakes into every status-error message.
     """
 
-    text = sanitize_for_log(str(exc)).strip()
+    text = _scrub_secrets(sanitize_for_log(str(exc)).strip())
     return text[:ERROR_MAX_CHARS] if text else "Unknown error"
 
 
@@ -333,8 +356,9 @@ async def record_success(db, connector: str, provider: Optional[str] = None,
             row.last_attempt_at = now
             row.last_success_at = now
             # Kept, so a card can say what the last check found rather than only
-            # when it happened.
-            row.last_result = (detail or "")[:500] or None
+            # when it happened. Scrubbed like an error: a success detail is
+            # still a vendor string, and it lands in the same rendered column.
+            row.last_result = _scrub_secrets(detail or "")[:500] or None
             row.verifiable = True
             # Reset, not decrement: the connector demonstrably works right now,
             # and carrying old failures forward would keep it amber after it
@@ -376,7 +400,9 @@ async def record_unverifiable(db, connector: str, detail: str,
             row = await _row(session, connector)
             row.provider = provider or row.provider
             row.last_attempt_at = datetime.now(timezone.utc)
-            row.last_result = (detail or "")[:500] or None
+            # Same scrub as record_success: also a vendor-shaped string, also
+            # rendered.
+            row.last_result = _scrub_secrets(detail or "")[:500] or None
             row.verifiable = False
             if not await _commit_or_retry_without(session, row, LATER_COLUMNS):
                 # Nothing left to record: "we tried and cannot tell" lives

@@ -152,24 +152,49 @@ def test_a_push_only_connection_refuses_inbound_records():
     assert "status_code=403" in block
 
 
-def test_the_webhook_is_rate_limited_per_connection_not_per_address():
-    """One vendor's egress IP serves every town on their platform, so a per-IP
-    bucket lets a busy neighbour exhaust ours."""
+class _RateReq:
+    """Just what _webhook_rate_key reads: the path and the peer address."""
+
+    def __init__(self, path, host="203.0.113.9"):
+        self.url = type("U", (), {"path": path})()
+        self.client = type("C", (), {"host": host})()
+
+
+def test_the_webhook_is_rate_limited_per_connection_not_per_address_alone():
+    """One vendor's egress IP serves every town on their platform, so a bucket
+    keyed on the IP alone lets a busy neighbour exhaust ours. The token digest
+    keeps two connections behind one NAT in separate buckets."""
     source = api_source()
     assert "key_func=_webhook_rate_key" in source
 
     pytest.importorskip("fastapi")
     from app.api.integrations import _webhook_rate_key
 
-    class Req:
-        def __init__(self, path):
-            self.url = type("U", (), {"path": path})()
-
-    one = _webhook_rate_key(Req("/api/integrations/webhook/accela/tok-aaa"))
-    two = _webhook_rate_key(Req("/api/integrations/webhook/accela/tok-bbb"))
+    one = _webhook_rate_key(_RateReq("/api/integrations/webhook/accela/tok-aaa"))
+    two = _webhook_rate_key(_RateReq("/api/integrations/webhook/accela/tok-bbb"))
     assert one != two, "two connections share a rate-limit bucket"
-    assert one == _webhook_rate_key(Req("/api/integrations/webhook/accela/tok-aaa"))
+    assert one == _webhook_rate_key(_RateReq("/api/integrations/webhook/accela/tok-aaa"))
     assert "accela" in one
+
+
+def test_the_rate_key_carries_the_source_address():
+    """The endpoint is unauthenticated and the token used to be the whole key,
+    so the bucket name was entirely attacker-chosen: every wrong guess opened a
+    brand-new bucket, invisible to the per-address accounting everything else
+    on this API gets. With the address composed in, a guessing source is
+    subject to address-keyed limits and attribution like any other client --
+    and a real vendor's bucket cannot be exhausted by someone who knows (or
+    guesses) the same token from elsewhere."""
+    pytest.importorskip("fastapi")
+    from app.api.integrations import _webhook_rate_key
+
+    attacker = "198.51.100.7"
+    guess = _webhook_rate_key(_RateReq("/api/integrations/webhook/accela/guess-1", attacker))
+    assert attacker in guess
+    # Same token from a different source is a different bucket: one noisy
+    # sender cannot starve the real vendor of its budget.
+    other = _webhook_rate_key(_RateReq("/api/integrations/webhook/accela/guess-1", "192.0.2.1"))
+    assert other != guess
 
 
 def test_the_rate_limit_key_does_not_carry_the_token():
@@ -177,10 +202,8 @@ def test_the_rate_limit_key_does_not_carry_the_token():
     pytest.importorskip("fastapi")
     from app.api.integrations import _webhook_rate_key
 
-    class Req:
-        url = type("U", (), {"path": "/api/integrations/webhook/accela/s3cr3t-token"})()
-
-    assert "s3cr3t-token" not in _webhook_rate_key(Req())
+    req = _RateReq("/api/integrations/webhook/accela/s3cr3t-token")
+    assert "s3cr3t-token" not in _webhook_rate_key(req)
 
 
 def test_the_webhook_token_can_be_rotated():

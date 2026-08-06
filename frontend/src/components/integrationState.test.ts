@@ -208,13 +208,15 @@ describe('turning a connector on', () => {
 // ---------------------------------------------------------------------------
 
 describe('the town-systems health rollup', () => {
+    const enabled = (...platforms: string[]) => new Set(platforms);
+
     it('picks out the town\'s own connections', () => {
         const { all, broken } = townSystemHealth({
             'govtech:accela': 'down',
             'govtech:civicplus': 'working',
             email: 'down',
             'system:disk': 'down',
-        });
+        }, enabled('accela', 'civicplus'));
         expect(all.sort()).toEqual(['accela', 'civicplus']);
         expect(broken).toEqual(['accela']);
     });
@@ -226,7 +228,7 @@ describe('the town-systems health rollup', () => {
         const { all, broken } = townSystemHealth({
             'govtech:accela': 'unknown',
             'govtech:tyler': 'stale',
-        });
+        }, enabled('accela', 'tyler'));
         expect(all.sort()).toEqual(['accela', 'tyler']);
         expect(broken).toEqual([]);
     });
@@ -235,13 +237,28 @@ describe('the town-systems health rollup', () => {
         const { broken } = townSystemHealth({
             'govtech:accela': 'failing',
             'govtech:tyler': 'down',
-        });
+        }, enabled('accela', 'tyler'));
         expect(broken.sort()).toEqual(['accela', 'tyler']);
     });
 
+    it('ignores rows whose integration is no longer enabled', () => {
+        /* A health row outlives the integration that wrote it: nothing decays a
+         * failing row once its connector is disabled or deleted, and the sweep
+         * only tests enabled integrations. Counting the orphan kept the badge
+         * red forever after the town turned the broken thing off -- which is
+         * the fix, not the fault. */
+        const { all, broken } = townSystemHealth({
+            'govtech:accela': 'down',      // disabled after it broke
+            'govtech:seeclickfix': 'down', // deleted entirely
+            'govtech:tyler': 'working',
+        }, enabled('tyler'));
+        expect(all).toEqual(['tyler']);
+        expect(broken).toEqual([]);
+    });
+
     it('survives an empty or missing health map', () => {
-        expect(townSystemHealth({})).toEqual({ all: [], broken: [] });
-        expect(townSystemHealth(undefined as never)).toEqual({ all: [], broken: [] });
+        expect(townSystemHealth({}, enabled())).toEqual({ all: [], broken: [] });
+        expect(townSystemHealth(undefined as never, enabled())).toEqual({ all: [], broken: [] });
     });
 });
 
