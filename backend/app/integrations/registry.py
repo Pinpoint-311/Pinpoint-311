@@ -28,10 +28,10 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "description": "Full two-way sync with Accela Civic Platform via the Construct API v4: records, status, comments, photo attachments, and asset inventory sync into Pinpoint map layers.",
         "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "work_orders", "test"],
         "credential_fields": [
-            {"key": "client_id", "label": "Client ID", "secret": False},
-            {"key": "client_secret", "label": "Client Secret", "secret": True},
-            {"key": "username", "label": "Agency Username", "secret": False},
-            {"key": "password", "label": "Agency Password", "secret": True},
+            {"key": "client_id", "label": "Client ID", "secret": False, "required": True},
+            {"key": "client_secret", "label": "Client Secret", "secret": True, "required": True},
+            {"key": "username", "label": "Agency Username", "secret": False, "required": True},
+            {"key": "password", "label": "Agency Password", "secret": True, "required": True},
         ],
         "config_fields": [
             {"key": "agency_name", "label": "Agency Name", "placeholder": "YOURAGENCY", "required": True},
@@ -51,7 +51,7 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "description": "Connects to Tyler's Open311 GeoReport v2 endpoint for your jurisdiction: pushes new requests and polls for status changes.",
         "capabilities": ["push", "pull", "test"],
         "credential_fields": [
-            {"key": "api_key", "label": "Open311 API Key", "secret": True},
+            {"key": "api_key", "label": "Open311 API Key", "secret": True, "required": True},
         ],
         "config_fields": [
             {"key": "base_url", "label": "Open311 Base URL", "placeholder": "https://yourcity.tylerapp.com/open311/v2", "required": True},

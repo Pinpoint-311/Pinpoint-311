@@ -279,7 +279,13 @@ async def update_integration(
     if data.sync_direction is not None:
         integration.sync_direction = data.sync_direction
     if data.config is not None:
-        integration.config = {**(integration.config or {}), **data.config}
+        # An explicit null deletes the key. Config was merged and the frontend
+        # skipped empty strings, so between them there was no way to blank a
+        # setting at all: a jurisdiction_id typed by mistake stayed in the
+        # payload of every push forever, and the only remedy was disconnecting
+        # the integration and re-entering every credential.
+        merged = {**(integration.config or {}), **data.config}
+        integration.config = {k: v for k, v in merged.items() if v is not None}
     if data.credentials:
         # Only the fields the admin actually filled in are (re)written to the
         # vault; blanks mean "keep existing" and untouched fields keep their
