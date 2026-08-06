@@ -155,6 +155,11 @@ def _vaulted_state(credentials: Dict[str, Any]) -> str:
 
 def _serialize(integration: IntegrationConfig) -> Dict[str, Any]:
     catalog = PLATFORM_CATALOG.get(integration.platform, {})
+    # Read once. `credentials` is a hybrid property that Fernet-decrypts on every
+    # access, and this function touched it four times per row -- on a list of
+    # connections that is four decryptions each, for one response.
+    credentials = integration.credentials or {}
+    vaulted = _vaulted_state(credentials)
     return {
         "id": integration.id,
         "platform": integration.platform,
@@ -164,7 +169,7 @@ def _serialize(integration: IntegrationConfig) -> Dict[str, Any]:
         "sync_direction": integration.sync_direction,
         "config": integration.config or {},
         # Never return secret values — only which keys are set
-        "configured_credentials": sorted((integration.credentials or {}).keys()),
+        "configured_credentials": sorted(credentials.keys()),
         # Whether the stored credentials are Secret Manager references (the raw
         # secret lives only in the vault, not this database) — the UI's "stored in
         # your Secret Manager" trust line.
@@ -173,11 +178,11 @@ def _serialize(integration: IntegrationConfig) -> Dict[str, Any]:
         # keeping that value encrypted in this database, and `any` reported the
         # whole set as vaulted on the strength of the fields that succeeded. A
         # trust signal about where secrets live must not round up.
-        "credentials_vaulted": _vaulted_state(integration.credentials or {}) == "all",
+        "credentials_vaulted": vaulted == "all",
         # "all" | "partial" | "none", so the UI can say which rather than only
         # yes-or-no. Partial is the state worth naming: it means at least one
         # secret is in the application database after all.
-        "credentials_vaulted_state": _vaulted_state(integration.credentials or {}),
+        "credentials_vaulted_state": vaulted,
         "webhook_path": f"/api/integrations/webhook/{integration.platform}/{integration.webhook_token}",
         "last_sync_at": integration.last_sync_at.isoformat() if integration.last_sync_at else None,
         "last_sync_status": integration.last_sync_status,
