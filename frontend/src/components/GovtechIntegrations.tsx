@@ -5,7 +5,7 @@ import {
     Plug, Trash2, Copy, Check, Mail, ClipboardList, Loader2, ArrowLeft,
     ChevronDown, ChevronUp, PartyPopper, Sparkles, Search,
     ArrowUpRight, ArrowDownLeft, MessageSquare, Image as ImageIcon, MapPin, ClipboardCheck,
-    ShieldCheck,
+    ShieldCheck, LogIn, KeyRound,
 } from 'lucide-react';
 
 import { Button, Modal, CollapsibleSection } from './ui';
@@ -67,6 +67,14 @@ export default function GovtechIntegrations() {
     const [showTechnical, setShowTechnical] = useState(false);
     const testStarted = useRef(false);
 
+    // Vendor sign-in (Accela): the admin authenticates on the vendor's own site
+    // in a popup, so nothing here holds their password.
+    const [oauthStatus, setOauthStatus] = useState<{ configured: boolean; redirect_uri: string } | null>(null);
+    const [oauthBusy, setOauthBusy] = useState(false);
+    const [oauthError, setOauthError] = useState<string | null>(null);
+    const [showPasswordFallback, setShowPasswordFallback] = useState(false);
+    const oauthPopup = useRef<Window | null>(null);
+
     const load = useCallback(async () => {
         try {
             const [cat, cfgs] = await Promise.all([api.getIntegrationCatalog(), api.getIntegrations()]);
@@ -120,6 +128,20 @@ export default function GovtechIntegrations() {
         setTestResult(null);
         setShowTechnical(false);
         testStarted.current = false;
+        setOauthError(null);
+        setOauthBusy(false);
+        setOauthStatus(null);
+        // Only pre-open the password fields for a town already using them — a
+        // fresh setup should see the sign-in button, not four secret boxes.
+        setShowPasswordFallback(
+            !!platform.oauth && !!existing && !existing.oauth_connected
+            && existing.configured_credentials.includes('password'),
+        );
+        if (platform.oauth) {
+            api.getAccelaOAuthStatus()
+                .then(setOauthStatus)
+                .catch(() => setOauthStatus({ configured: false, redirect_uri: '' }));
+        }
     };
 
     const closeWizard = () => { setWizard(null); load(); };
@@ -182,6 +204,74 @@ export default function GovtechIntegrations() {
             setTesting(false);
         }
     };
+
+    // ---------- Vendor sign-in (OAuth authorization code) ----------
+
+    /** Save what the admin has typed (the agency name is needed to build the
+     *  authorize URL), then hand them to the vendor's login in a popup. */
+    const startVendorSignIn = async (platform: IntegrationPlatform) => {
+        setOauthError(null);
+        const saved = await saveWizard(platform);
+        if (!saved) return;
+        setOauthBusy(true);
+        try {
+            const { authorize_url } = await api.startAccelaOAuth(saved.id);
+            const popup = window.open(authorize_url, 'pinpoint-vendor-signin', 'width=560,height=760');
+            if (!popup) {
+                setOauthBusy(false);
+                setOauthError('Your browser blocked the sign-in window. Allow pop-ups for this site and try again.');
+                return;
+            }
+            oauthPopup.current = popup;
+        } catch (err: any) {
+            setOauthBusy(false);
+            setOauthError(err?.message || 'Could not start the sign-in. Please try again.');
+        }
+    };
+
+    // The callback page posts back to us and closes itself. Origin is checked
+    // because any site can postMessage into an opener.
+    useEffect(() => {
+        if (!wizard?.oauth) return;
+        const platform = wizard;
+
+        const onMessage = async (event: MessageEvent) => {
+            if (event.origin !== window.location.origin) return;
+            if (event.data?.source !== 'pinpoint-accela-oauth') return;
+            setOauthBusy(false);
+            if (!event.data.ok) {
+                setOauthError(`${platform.name} did not finish the sign-in. You can try again, or use a username and password instead.`);
+                return;
+            }
+            try {
+                const cfgs = await api.getIntegrations();
+                setConfigs(cfgs);
+                const saved = cfgs.find(c => c.platform === platform.platform) || null;
+                setStep('finish');
+                testStarted.current = true;
+                runFinishTest(platform, saved);
+            } catch {
+                setOauthError('Signed in, but we could not refresh this page. Close and reopen Settings.');
+            }
+        };
+
+        // A popup the admin simply closes sends nothing — without this the
+        // button would spin forever.
+        const poll = window.setInterval(() => {
+            if (oauthPopup.current?.closed) {
+                oauthPopup.current = null;
+                setOauthBusy(false);
+                window.clearInterval(poll);
+            }
+        }, 800);
+
+        window.addEventListener('message', onMessage);
+        return () => {
+            window.removeEventListener('message', onMessage);
+            window.clearInterval(poll);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [wizard]);
 
     const goToFinish = async (platform: IntegrationPlatform) => {
         const saved = await saveWizard(platform);
@@ -453,6 +543,13 @@ export default function GovtechIntegrations() {
                                 </p>
                             )}
 
+                            {existing?.oauth_connected && (
+                                <p className="relative text-[11px] mt-2 flex items-center gap-1.5 text-emerald-300/80">
+                                    <LogIn className="w-3 h-3 shrink-0" aria-hidden="true" />
+                                    Signed in through {platform.name} — no {platform.name} password is stored here.
+                                </p>
+                            )}
+
                             {existing?.credentials_vaulted && (
                                 <p className="relative text-[11px] mt-2 flex items-center gap-1.5 text-emerald-300/80">
                                     <ShieldCheck className="w-3 h-3 shrink-0" aria-hidden="true" />
@@ -619,8 +716,93 @@ export default function GovtechIntegrations() {
 
                             <div className="space-y-3">
                                 {wizard.config_fields.filter(f => f.required).map(f => renderField(wizard, f, false))}
-                                {wizard.credential_fields.map(f => renderField(wizard, f, true))}
+                                {!wizard.oauth && wizard.credential_fields.map(f => renderField(wizard, f, true))}
                             </div>
+
+                            {/* Sign-in on the vendor's own site, for platforms that
+                                support it. The password fields stay available, but
+                                behind a disclosure — they are the exception now. */}
+                            {wizard.oauth && (
+                                <div className="space-y-3">
+                                    {configFor(wizard.platform)?.oauth_connected && !oauthError ? (
+                                        <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.07] p-4">
+                                            <p className="text-emerald-200 text-sm font-semibold flex items-center gap-2">
+                                                <CheckCircle className="w-4 h-4 shrink-0" /> Signed in to {wizard.name}
+                                            </p>
+                                            <p className="text-white/60 text-xs mt-1">
+                                                Pinpoint holds a revocable access token — no {wizard.name} password is
+                                                stored here. Your {wizard.name} administrator can withdraw it at any time.
+                                            </p>
+                                            <Button
+                                                size="sm" variant="ghost" className="mt-2 text-xs"
+                                                onClick={() => startVendorSignIn(wizard)}
+                                                disabled={oauthBusy || saving}
+                                            >
+                                                {oauthBusy ? 'Waiting for sign-in…' : 'Sign in again'}
+                                            </Button>
+                                        </div>
+                                    ) : oauthStatus && !oauthStatus.configured ? (
+                                        <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.07] p-4">
+                                            <p className="text-amber-200 text-sm font-semibold flex items-center gap-2">
+                                                <AlertCircle className="w-4 h-4 shrink-0" /> {wizard.name} sign-in isn't set up on this system
+                                            </p>
+                                            <p className="text-amber-100/70 text-xs mt-1">
+                                                Whoever runs this Pinpoint installation needs to register its {wizard.name} app
+                                                first. Until then, use the username and password option below.
+                                            </p>
+                                        </div>
+                                    ) : (
+                                        <div className="rounded-xl border border-indigo-500/25 bg-indigo-500/[0.06] p-4">
+                                            <p className="text-white font-semibold text-sm flex items-center gap-2">
+                                                <ShieldCheck className="w-4 h-4 text-indigo-300 shrink-0" /> Sign in — no password to type here
+                                            </p>
+                                            <p className="text-white/60 text-xs mt-1 leading-relaxed">{wizard.oauth.explainer}</p>
+                                            <button
+                                                type="button"
+                                                onClick={() => startVendorSignIn(wizard)}
+                                                disabled={oauthBusy || saving || requiredMissing(wizard).length > 0}
+                                                className="mt-3 inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-900/40 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                                            >
+                                                {oauthBusy
+                                                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Waiting for {wizard.name}…</>
+                                                    : <><LogIn className="w-4 h-4" /> {wizard.oauth.button_label}</>}
+                                            </button>
+                                            {requiredMissing(wizard).length > 0 && (
+                                                <p className="text-white/60 text-[11px] mt-2">
+                                                    Fill in the fields above first — we need them to open the right sign-in page.
+                                                </p>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {oauthError && (
+                                        <p className="text-amber-300/90 text-xs flex items-start gap-1.5">
+                                            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" /> {oauthError}
+                                        </p>
+                                    )}
+
+                                    <div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPasswordFallback(v => !v)}
+                                            className="text-white/60 text-xs hover:text-white/70 inline-flex items-center gap-1"
+                                        >
+                                            {showPasswordFallback ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                                            <KeyRound className="w-3 h-3" /> {wizard.oauth.fallback_label}
+                                        </button>
+                                        {showPasswordFallback && (
+                                            <div className="space-y-3 mt-3">
+                                                <p className="text-white/50 text-xs leading-relaxed">
+                                                    Only if your {wizard.name} administrator would rather issue a service
+                                                    account. This stores that account's password in your credential vault,
+                                                    and it keeps working until someone changes it.
+                                                </p>
+                                                {wizard.credential_fields.map(f => renderField(wizard, f, true))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
 
                             {wizard.config_fields.some(f => !f.required) && (
                                 <div>

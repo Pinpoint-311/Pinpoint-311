@@ -240,6 +240,12 @@ class BaseConnector:
     # carries assignment/priority outbound.
     capabilities = {"test"}
 
+    #: Set by ``build_connector_for``: an awaitable taking a dict of credential
+    #: fields the vendor has rotated (e.g. a new OAuth refresh token), which
+    #: writes them back through the credential vault. None when the connector is
+    #: built standalone, in which case a rotation cannot be persisted.
+    persist_credentials: Optional[Any] = None
+
     def __init__(self, config: Dict[str, Any], credentials: Dict[str, Any]):
         self.config = config or {}
         self.credentials = credentials or {}
