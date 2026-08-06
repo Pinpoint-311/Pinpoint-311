@@ -157,7 +157,12 @@ class ServiceRequest(Base):
     _first_name_encrypted = Column("first_name", String(500))  # Encrypted storage
     _last_name_encrypted = Column("last_name", String(500))   # Encrypted storage
     _email_encrypted = Column("email", String(500), nullable=False)  # Encrypted storage
-    _phone_encrypted = Column("phone", String(200))  # Encrypted storage
+    # 500 like the other three, not the 200 it started at. A KMS-wrapped value
+    # is ~225 characters -- prefix, wrapped data key, nonce, ciphertext -- so at
+    # 200 every phone write failed with StringDataRightTruncation the moment a
+    # cloud key service was configured, and the nightly re-wrap could never
+    # finish. Widening is the fix; truncating ciphertext is never recoverable.
+    _phone_encrypted = Column("phone", String(500))  # Encrypted storage
     
     @hybrid_property
     def first_name(self):

@@ -59,9 +59,27 @@ def migration(body: str, down: str = "    pass") -> str:
     '    op.rename_table("old", "new")',
     '    op.alter_column("t", "c", type_=sa.Integer())',
     '    op.alter_column("t", "c", new_column_name="d")',
+    # Narrowing truncates stored values; a widen with no stated starting
+    # length is not provably a widen. Both stay gated.
+    '    op.alter_column("t", "c", existing_type=sa.String(500), type_=sa.String(200))',
+    '    op.alter_column("t", "c", type_=sa.String(500))',
 ])
 def test_data_losing_operations_are_destructive(body):
     assert classify_source(migration(body)) == DESTRUCTIVE
+
+
+def test_widening_a_varchar_applies_unattended():
+    """Lengthening a varchar is metadata-only in Postgres and cannot lose a
+    byte -- and it is the fix for ciphertext outgrowing its column, which a
+    town needs applied at deploy time, not gated behind a human. Only the
+    provable case passes: both lengths stated, new >= old."""
+    body = ('    op.alter_column(\n'
+            '        "service_requests", "phone",\n'
+            '        existing_type=sa.String(length=200),\n'
+            '        type_=sa.String(length=500),\n'
+            '        existing_nullable=True,\n'
+            '    )')
+    assert classify_source(migration(body)) == ADDITIVE
 
 
 def test_arbitrary_sql_is_destructive_because_it_cannot_be_read():
