@@ -94,7 +94,8 @@ async def _discover_vertex(creds: Dict[str, str]) -> Optional[List[Dict[str, str
         from google.auth.transport.requests import Request
         from google.oauth2 import service_account
 
-        from app.services.ai.vertex_publishers import ANTHROPIC, GOOGLE, SUPPORTED_PUBLISHERS
+        from app.services.ai.vertex_publishers import (
+            ANTHROPIC, GOOGLE, MAAS_PUBLISHERS, META, SUPPORTED_PUBLISHERS)
 
         scopes = ["https://www.googleapis.com/auth/cloud-platform"]
         if sa_json:
@@ -109,10 +110,14 @@ async def _discover_vertex(creds: Dict[str, str]) -> Optional[List[Dict[str, str
         seen = set()
         failures = []
         for publisher in SUPPORTED_PUBLISHERS:
-            # Anthropic models are not listed from the global endpoint.
+            # Anthropic models are not listed from the global endpoint, and
+            # neither are the MaaS publishers (Meta's global listing is empty;
+            # observed live). Same fallback regions endpoint_for uses to call.
             region = location
             if publisher == ANTHROPIC and region in ("", "global"):
                 region = "us-east5"
+            if publisher in MAAS_PUBLISHERS and region in ("", "global"):
+                region = "us-central1"
             host = ("aiplatform.googleapis.com" if region in ("", "global")
                     else f"{region}-aiplatform.googleapis.com")
             # v1beta1, deliberately. ListPublisherModels does not exist under
@@ -141,7 +146,20 @@ async def _discover_vertex(creds: Dict[str, str]) -> Optional[List[Dict[str, str
                         # side with the text models.
                         if any(x in mid.lower() for x in (
                                 "embedding", "aqa", "imagen", "veo",
-                                "tts", "image", "audio", "-live-")):
+                                "tts", "image", "audio", "-live-",
+                                # Observed in the live Mistral listing: an OCR
+                                # model and a deploy-it-yourself Codestral,
+                                # neither callable through the MaaS endpoint.
+                                "ocr", "-self-deploy")):
+                            continue
+                        # Meta's listing is mostly self-deploy Model Garden
+                        # cards -- faster-r-cnn, segment-anything, roberta,
+                        # bare llama2/3/4, llama-guard/prompt-guard -- with no
+                        # serving endpoint behind them. Only the `-maas` ids
+                        # (observed: llama-3.3-70b-instruct-maas,
+                        # llama-4-maverick-17b-128e-instruct-maas) answer the
+                        # chat/completions endpoint this caller speaks.
+                        if publisher == META and not mid.endswith("-maas"):
                             continue
                         seen.add(mid)
                         label = m.get("displayName") or mid
