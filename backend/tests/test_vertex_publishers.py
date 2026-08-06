@@ -44,6 +44,18 @@ class TestWhoseModelIsThis:
     def test_an_explicit_prefix_wins(self):
         assert V.publisher_for("anthropic/claude-x") == V.ANTHROPIC
 
+    def test_llama_is_meta(self):
+        assert V.publisher_for("llama-3.3-70b-instruct-maas") == V.META
+        assert V.publisher_for("meta/llama-4-maverick-17b-128e-instruct-maas") == V.META
+
+    def test_mistral_family_names_are_mistralai(self):
+        """Their ids do not share a prefix -- ministral and codestral are
+        Mistral's too -- and a missed prefix falls back to a Gemini-shaped
+        request that 404s at triage."""
+        for mid in ("mistral-small-2503", "mistral-large-3", "mixtral-8x7b",
+                    "ministral-3", "codestral-2", "mistralai/mistral-medium-3"):
+            assert V.publisher_for(mid) == V.MISTRAL, mid
+
     def test_an_unknown_id_falls_back_to_google(self):
         """Which is where every stored id came from before this existed, so an
         upgrade cannot reroute a town's working model somewhere else."""
@@ -58,18 +70,24 @@ class TestWhoseModelIsThis:
 
 class TestOnlyOfferWhatWeCanCall:
     def test_the_supported_list_is_what_has_a_handler(self):
+        samples = {
+            V.GOOGLE: "gemini-3.5-flash",
+            V.ANTHROPIC: "claude-sonnet-4",
+            V.META: "llama-3.3-70b-instruct-maas",
+            V.MISTRAL: "mistral-small-2503",
+        }
         for publisher in V.SUPPORTED_PUBLISHERS:
-            model = "gemini-3.5-flash" if publisher == V.GOOGLE else "claude-sonnet-4"
+            model = samples[publisher]
             assert V.publisher_for(model) == publisher
             assert V.build_payload(model, "hi")
             assert V.endpoint_for(model, "proj")
 
-    def test_meta_and_mistral_are_not_offered_yet(self):
-        """They are real on Vertex and served through a third shape, the
-        OpenAI-compatible MaaS endpoint. Listing them before that is
-        implemented would be offering models that cannot be called."""
-        assert "meta" not in V.SUPPORTED_PUBLISHERS
-        assert "mistral" not in V.SUPPORTED_PUBLISHERS
+    def test_the_remaining_maas_publishers_are_not_offered_yet(self):
+        """AI21, Cohere and xAI are real on Vertex but nobody has verified
+        their wire shape against a live project. Listing them before that
+        would be offering models that cannot be called."""
+        for absent in ("ai21", "cohere", "xai"):
+            assert absent not in V.SUPPORTED_PUBLISHERS
 
 
 class TestTheEndpoint:
@@ -90,10 +108,31 @@ class TestTheEndpoint:
         assert "/locations/global/" not in url
         assert VERTEX_HOST.match(host_of(url))
 
+    def test_maas_models_share_the_openai_endpoint(self):
+        """One URL for Meta and Mistral both -- the model rides in the body,
+        not the path (see the envelope tests)."""
+        for model in ("llama-3.3-70b-instruct-maas", "mistral-small-2503"):
+            url = V.endpoint_for(model, "town-311")
+            assert url.endswith("/endpoints/openapi/chat/completions")
+            # No model segment in the path -- rawPredict/generateContent
+            # publishers carry it there, this endpoint must not.
+            assert "/models/" not in url
+
+    def test_maas_is_not_asked_for_from_the_global_endpoint(self):
+        """Meta lists nothing from `global` (observed live); us-central1 is
+        where the MaaS models are served."""
+        url = V.endpoint_for("llama-3.3-70b-instruct-maas", "town-311", "global")
+        assert "/locations/global/" not in url
+        assert host_of(url).startswith("us-central1-")
+        # But a town that configured a region keeps it.
+        url = V.endpoint_for("mistral-small-2503", "town-311", "europe-west4")
+        assert host_of(url).startswith("europe-west4-")
+
     def test_every_request_goes_to_google(self):
         """The host is asserted rather than searched for. A model id is
         town-supplied, and it is interpolated into this URL."""
-        for model in ("gemini-3.5-flash", "claude-sonnet-4"):
+        for model in ("gemini-3.5-flash", "claude-sonnet-4",
+                      "llama-3.3-70b-instruct-maas", "mistral-small-2503"):
             for location in ("", "global", "europe-west4"):
                 host = host_of(V.endpoint_for(model, "p", location))
                 assert VERTEX_HOST.match(host), host
@@ -122,6 +161,18 @@ class TestTheEnvelope:
         assert body["messages"][0]["content"][-1]["text"] == "describe this"
         assert "contents" not in body
 
+    def test_maas_gets_the_openai_shape_with_a_qualified_model_field(self):
+        """The endpoint URL names no model, so the body must -- and Vertex
+        resolves the publisher from it, so the bare id alone is a 404."""
+        body = V.build_payload("llama-3.3-70b-instruct-maas", "describe this")
+        assert body["model"] == "meta/llama-3.3-70b-instruct-maas"
+        assert body["messages"] == [{"role": "user", "content": "describe this"}]
+        assert body["max_tokens"] > 0
+        assert "contents" not in body and "anthropic_version" not in body
+        # An already-qualified id is not qualified twice.
+        body = V.build_payload("mistralai/mistral-small-2503", "x")
+        assert body["model"] == "mistralai/mistral-small-2503"
+
     def test_claude_requires_max_tokens(self):
         """Anthropic's API rejects a request without it, so a missing default
         would fail every call rather than degrade."""
@@ -133,10 +184,15 @@ class TestTheEnvelope:
         assert g["contents"][0]["parts"][0]["inline_data"]["data"] == "AAA"
         a = V.build_payload("claude-sonnet-4", "x", img)
         assert a["messages"][0]["content"][0]["source"]["data"] == "AAA"
+        m = V.build_payload("llama-3.3-70b-instruct-maas", "x", img)
+        part = m["messages"][0]["content"][0]
+        assert part == {"type": "image_url",
+                        "image_url": {"url": "data:image/jpeg;base64,AAA"}}
 
     def test_the_prompt_comes_last_so_images_precede_it(self):
         img = [{"mime_type": "image/png", "data": "B"}]
-        for model in ("gemini-3.5-flash", "claude-sonnet-4"):
+        for model in ("gemini-3.5-flash", "claude-sonnet-4",
+                      "llama-3.3-70b-instruct-maas"):
             body = V.build_payload(model, "the question", img)
             blocks = body.get("contents", [{}])[0].get("parts") or body["messages"][0]["content"]
             assert "text" in blocks[-1]
@@ -159,9 +215,30 @@ class TestReadingTheAnswer:
                               {"type": "text", "text": "answer"}]}
         assert V.extract_text("claude-sonnet-4", result) == "answer"
 
+    def test_maas_string_content_is_the_answer(self):
+        result = {"choices": [{"message": {"role": "assistant",
+                                           "content": '{"priority_score": 5}'}}]}
+        assert V.extract_text("llama-3.3-70b-instruct-maas", result) == '{"priority_score": 5}'
+
+    def test_maas_list_content_is_joined(self):
+        """OpenAI's spec allows content as typed parts; a served model choosing
+        that form must not read as an empty answer."""
+        result = {"choices": [{"message": {"content": [
+            {"type": "text", "text": '{"a":'},
+            {"type": "image_url", "image_url": {"url": "data:x"}},
+            {"type": "text", "text": " 1}"},
+        ]}}]}
+        assert V.extract_text("mistral-small-2503", result) == '{"a": 1}'
+
     def test_an_empty_response_is_empty_rather_than_an_error(self):
-        for model in ("gemini-3.5-flash", "claude-sonnet-4"):
+        for model in ("gemini-3.5-flash", "claude-sonnet-4",
+                      "llama-3.3-70b-instruct-maas"):
             assert V.extract_text(model, {}) == ""
+        # Defensive against half-shaped responses too, not just empty ones.
+        assert V.extract_text("llama-3.3-70b-instruct-maas",
+                              {"choices": [{}]}) == ""
+        assert V.extract_text("llama-3.3-70b-instruct-maas",
+                              {"choices": [{"message": {"content": None}}]}) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -191,8 +268,17 @@ class TestDiscoveryOffersOnlyUsableModels:
     def test_vertex_lists_only_publishers_with_a_handler(self):
         src = _source("app/services/ai/model_discovery.py")
         assert "SUPPORTED_PUBLISHERS" in src
-        for unsupported in ('"meta"', '"mistral"', '"cohere"', '"ai21"', '"writer"', '"xai"'):
+        for unsupported in ('"cohere"', '"ai21"', '"writer"', '"xai"'):
             assert unsupported not in src, f"{unsupported} is offered without a handler"
+
+    def test_vertex_skips_meta_cards_with_no_serving_endpoint(self):
+        """Meta's publisher listing is mostly self-deploy Model Garden cards
+        (faster-r-cnn, roberta, bare llama2/3/4, llama-guard) with nothing
+        behind them for this caller; only `-maas` ids answer the MaaS
+        endpoint, so only those may reach the picker."""
+        src = _source("app/services/ai/model_discovery.py")
+        assert '-maas' in src
+        assert '"-self-deploy"' in src and '"ocr"' in src
 
     def test_a_failing_publisher_is_logged_rather_than_swallowed(self):
         """Eight silent excepts meant all eight could fail while the picker
