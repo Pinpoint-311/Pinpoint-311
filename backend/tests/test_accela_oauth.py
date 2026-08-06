@@ -20,12 +20,17 @@ asset sync is the one part of this connector nobody watches interactively, so
 the scope is pinned in a test rather than left to a comment.
 """
 
+import logging
 import time
 
 import httpx
 import pytest
 
 import app.integrations.base as base
+
+# The autouse fixture below disables the SSRF guard so ordinary tests can use a
+# fake transport; the auth_base tests put the real one back.
+_REAL_ASSERT_PUBLIC_URL = base._assert_public_url
 from app.integrations import accela_oauth
 from app.integrations.base import ConnectorError
 from app.integrations.connectors.accela import AccelaConnector, _clear_token_cache
@@ -161,25 +166,116 @@ def test_a_town_can_override_the_scope():
     assert dict(httpx.QueryParams(url.split("?", 1)[1]))["scope"] == "records"
 
 
-async def test_the_redirect_uri_defaults_to_the_admins_own_domain(monkeypatch):
-    monkeypatch.delenv(accela_oauth.REDIRECT_URI_KEY, raising=False)
-    monkeypatch.setattr(accela_oauth, "_deployment_value", lambda key: _none())
-    assert await accela_oauth.redirect_uri_for("https://town.gov/") == (
-        "https://town.gov/api/integrations/accela/oauth/callback"
-    )
-
-
 async def test_a_pinned_redirect_uri_wins(monkeypatch):
     async def _pinned(key):
         return "https://shared.pinpoint311.org/api/integrations/accela/oauth/callback"
     monkeypatch.setattr(accela_oauth, "_deployment_value", _pinned)
-    assert await accela_oauth.redirect_uri_for("https://town.gov/") == (
+    assert await accela_oauth.redirect_uri_for(None, "https://town.gov/") == (
         "https://shared.pinpoint311.org/api/integrations/accela/oauth/callback"
     )
 
 
+async def test_the_redirect_uri_comes_from_the_configured_public_origin(monkeypatch):
+    """Behind the TLS-terminating proxy, request.base_url is http://backend:8000/ —
+    a URL Accela can neither match nor redirect to. The deployment's configured
+    public origin is what the callback must be built on."""
+    import app.api.system as system_mod
+
+    monkeypatch.delenv(accela_oauth.REDIRECT_URI_KEY, raising=False)
+    monkeypatch.setattr(accela_oauth, "_deployment_value", lambda key: _none())
+
+    async def _origin(db):
+        return "https://town.pinpoint311.org"
+
+    monkeypatch.setattr(system_mod, "public_origin", _origin)
+    assert await accela_oauth.redirect_uri_for(object(), "http://backend:8000/") == (
+        "https://town.pinpoint311.org/api/integrations/accela/oauth/callback"
+    )
+
+
+async def test_with_nothing_configured_the_request_url_is_a_logged_last_resort(monkeypatch, caplog):
+    import app.api.system as system_mod
+
+    monkeypatch.delenv(accela_oauth.REDIRECT_URI_KEY, raising=False)
+    monkeypatch.setattr(accela_oauth, "_deployment_value", lambda key: _none())
+
+    async def _no_origin(db):
+        return None
+
+    monkeypatch.setattr(system_mod, "public_origin", _no_origin)
+    with caplog.at_level(logging.WARNING, logger="app.integrations.accela_oauth"):
+        uri = await accela_oauth.redirect_uri_for(object(), "https://town.gov/")
+    assert uri == "https://town.gov/api/integrations/accela/oauth/callback"
+    assert any("public origin" in r.getMessage() for r in caplog.records)
+
+
 async def _none():
     return None
+
+
+# ---------------------------------------------------------------------------
+# Where the sign-in is allowed to point
+# ---------------------------------------------------------------------------
+#
+# auth_base is an admin-settable config key, and the code exchange posts the
+# deployment-level client secret to it. Without these checks, one town's admin
+# on a shared host could point the flow at their own server and collect the
+# secret every town uses.
+
+def _resolves_to(monkeypatch, ip):
+    monkeypatch.setattr(
+        base.socket, "getaddrinfo",
+        lambda *a, **k: [(None, None, None, None, (ip, 443))],
+    )
+
+
+def test_without_an_override_the_auth_base_is_pinned_to_accela():
+    assert accela_oauth.auth_base({}) == "https://auth.accela.com"
+    assert accela_oauth.auth_base(None) == "https://auth.accela.com"
+
+
+def test_an_override_on_accelas_own_domain_is_accepted(monkeypatch):
+    monkeypatch.setattr(base, "_assert_public_url", _REAL_ASSERT_PUBLIC_URL)
+    _resolves_to(monkeypatch, "34.201.10.10")  # any public address
+    assert accela_oauth.auth_base({"auth_base": "https://auth.accela.com/"}) == (
+        "https://auth.accela.com"
+    )
+
+
+@pytest.mark.parametrize("bad", [
+    "https://attacker.example.com",
+    "https://evilaccela.com",            # dot-boundary: not a subdomain
+    "https://accela.com.attacker.net",   # suffix in the middle doesn't count
+    "https://ACCELA.example.org",        # case games don't help either
+    "https://127.0.0.1:8443",
+])
+def test_an_override_off_accela_dot_com_is_refused(monkeypatch, bad):
+    monkeypatch.setattr(base, "_assert_public_url", _REAL_ASSERT_PUBLIC_URL)
+    with pytest.raises(accela_oauth.OAuthError) as exc:
+        accela_oauth.auth_base({"auth_base": bad})
+    assert "accela.com" in str(exc.value)
+
+
+def test_an_internal_host_is_refused_even_dressed_as_accela(monkeypatch):
+    """A name under accela.com that resolves inward is still SSRF — the public-URL
+    guard has to run on the override, not just the suffix check."""
+    monkeypatch.setattr(base, "_assert_public_url", _REAL_ASSERT_PUBLIC_URL)
+    _resolves_to(monkeypatch, "10.0.0.5")
+    with pytest.raises(accela_oauth.OAuthError) as exc:
+        accela_oauth.auth_base({"auth_base": "https://internal.accela.com"})
+    assert "internal" in str(exc.value)
+
+
+async def test_the_exchange_never_posts_the_secret_off_accela(monkeypatch):
+    _app(monkeypatch)
+    seen = _transport(monkeypatch, lambda req, i: _json(req, {"refresh_token": "rt"}))
+    monkeypatch.setattr(accela_oauth.httpx, "AsyncClient", base.httpx.AsyncClient)
+    with pytest.raises(accela_oauth.OAuthError):
+        await accela_oauth.exchange_code(
+            code="c", redirect_uri="https://town.gov/cb",
+            config={"auth_base": "https://attacker.example.com"},
+        )
+    assert seen == []
 
 
 # ---------------------------------------------------------------------------
