@@ -1116,6 +1116,22 @@ async def save_provider(
     # No clear_cache() here: _persist_secret already dropped the bundle for each
     # key it wrote, and the provider-selection key above. A blanket clear would
     # undo that targeting and refetch every other capability's credentials.
+    # The backstop middleware would record "Updated the SMS provider settings",
+    # which says which capability but not which provider was chosen or which
+    # credentials changed. Key *names* only -- the values are the secrets this
+    # endpoint exists to protect, and this table is exported.
+    from app.services.admin_audit import record_admin_action
+    await record_admin_action(
+        db, event_type="provider_saved", actor=_,
+        details={
+            "capability": capability,
+            "provider": provider_id,
+            **({"model": body.model} if capability == "ai" and body.model else {}),
+            # Named "settings", not "credentials": `safe_details` redacts any
+            # key containing that word, and this is a list of field names.
+            "settings_updated": sorted(k for k, v in (body.settings or {}).items() if v),
+        },
+    )
     # Shape findings are advisory and never block: a rule is a heuristic about
     # someone else's format, and refusing a credential that would have worked is
     # a worse failure than accepting one that will not -- the second is
@@ -2527,8 +2543,20 @@ async def set_capability_switches(
     off -- while the page's own copy said "untick to remove it".
     """
     from app.services import capability_switches
+    from app.services.admin_audit import record_admin_action
 
-    return {"switches": await capability_switches.set_enabled(db, body.switches)}
+    switches = await capability_switches.set_enabled(db, body.switches)
+    # "Who decided this town does not send text messages" is a question with a
+    # date on it. The request body is the answer: only the switches the caller
+    # actually changed, not the full map that comes back.
+    await record_admin_action(
+        db, event_type="capability_switches_changed", actor=_,
+        details={
+            "turned_on": sorted(k for k, v in (body.switches or {}).items() if v),
+            "turned_off": sorted(k for k, v in (body.switches or {}).items() if not v),
+        },
+    )
+    return {"switches": switches}
 
 
 @router.get("/providers/cloud-identity")
@@ -2929,6 +2957,19 @@ async def create_or_update_secret(
     # After the response, so a slow store cannot make Save feel broken.
     from app.services.storage_maintenance import vault_secrets as _vault
     background.add_task(_vault)
+
+    # The backstop middleware records "Added or updated: /api/system/secrets",
+    # which does not say which credential -- and which credential is the whole
+    # entry. The key name only; the value is what this table must never carry.
+    from app.services.admin_audit import record_admin_action
+    await record_admin_action(
+        db, event_type="secret_saved", actor=_,
+        details={
+            "key_name": secret_data.key_name,
+            "configured": secret.is_configured,
+            "stored_in": "secret_manager" if sm_success else "database",
+        },
+    )
 
     return {
         **secret.__dict__,

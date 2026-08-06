@@ -28,6 +28,11 @@ MUST_AUDIT = {
     "users.py": ["create_user", "update_user", "delete_user", "reset_password_json"],
     "departments.py": ["create_department", "delete_department"],
     "services.py": ["create_service", "delete_service", "toggle_service"],
+    # The setup page's three write paths. The backstop covers them, but a
+    # backstop row says "Added or updated: /api/system/secrets" -- it cannot
+    # say which provider was chosen, which credential was saved, or which
+    # integration was switched off, and those are the questions asked.
+    "system.py": ["save_provider", "create_or_update_secret", "set_capability_switches"],
 }
 
 
@@ -68,9 +73,44 @@ def test_a_role_change_records_the_new_role():
     assert '"role": user.role' in body
 
 
+def test_a_saved_secret_is_named_but_never_valued():
+    """"Somebody saved a secret" is not an audit entry; "somebody saved
+    TWILIO_AUTH_TOKEN" is. The name goes in, the value never does -- this
+    table is exported to CSV and handed over on request."""
+    body = _function("system.py", "create_or_update_secret")
+    payload = body.split("record_admin_action(")[1][:600]
+    assert '"key_name": secret_data.key_name' in payload
+    assert "key_value" not in payload, "the secret's value is in the audit payload"
+
+
+def test_a_provider_save_records_which_provider_and_only_field_names():
+    """Four provider saves in a row is what working through the setup guide
+    looks like; the record has to say Twilio-for-SMS, not just that a save
+    happened. And it lists the *names* of the settings that changed -- the
+    values are the credentials the endpoint exists to protect."""
+    body = _function("system.py", "save_provider")
+    payload = body.split("record_admin_action(")[1][:800]
+    assert '"capability": capability' in payload
+    assert '"provider": provider_id' in payload
+    # Field names only: the comprehension keeps keys, never values.
+    assert "settings_updated" in payload
+    assert "k for k, v in" in payload
+
+
+def test_a_capability_switch_records_what_was_turned_off():
+    """Switching text messages off is the decision behind "why did no resident
+    get an SMS since March". The entry records only the switches the caller
+    changed, so an untouched question is not given an invented answer."""
+    body = _function("system.py", "set_capability_switches")
+    payload = body.split("record_admin_action(")[1][:600]
+    assert '"turned_on"' in payload
+    assert '"turned_off"' in payload
+    assert "body.switches" in payload
+
+
 def test_the_password_is_never_in_the_audit_payload():
     body = _function("users.py", "reset_password_json")
-    assert "new_password" not in body.split("record_admin_action")[1][:400]
+    assert "new_password" not in body.split("record_admin_action(")[1][:400]
 
 
 def test_there_is_no_endpoint_that_takes_a_password_in_the_url():
