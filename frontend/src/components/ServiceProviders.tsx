@@ -58,6 +58,33 @@ const CAPS: { key: Capability; title: string; blurb: string; icon: typeof Sparkl
     { key: 'secrets', title: 'Secret Storage', blurb: 'Where every credential on this page is kept. The check writes a throwaway key, reads it back and removes it.', icon: ShieldCheck },
 ];
 
+/** The same sliding pill the Modules screen uses, so on/off looks like on/off
+ * everywhere in the console rather than being a labelled button here and a
+ * toggle there. Held to the exact geometry of the modules one on purpose. */
+function Switch({ on, busy, disabled, onChange, label }: {
+    on: boolean; busy?: boolean; disabled?: boolean;
+    onChange: () => void; label: string;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onChange}
+            disabled={disabled}
+            role="switch"
+            aria-checked={on}
+            aria-label={label}
+            className={`relative inline-flex items-center rounded-full transition-colors duration-300 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 disabled:opacity-50 ${on ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-slate-600'}`}
+            style={{ width: 44, height: 24, minHeight: 24, maxHeight: 24, padding: 0 }}
+        >
+            <span
+                className={`inline-block rounded-full bg-white shadow-md transition-transform duration-300 ${on ? 'translate-x-6' : 'translate-x-1'} ${busy ? 'animate-pulse' : ''}`}
+                style={{ width: 16, height: 16 }}
+                aria-hidden="true"
+            />
+        </button>
+    );
+}
+
 /** A numbered section heading inside a provider card.
  *
  * Configuring a provider is a short ordered task -- pick one, pick a model,
@@ -1135,21 +1162,21 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                         are still saved, and switching back on picks up as it
                         was. */}
                     {onSwitchOff && (
-                        <span className="ml-auto inline-flex items-center gap-2">
+                        <span className="ml-auto inline-flex items-center gap-2.5"
+                            title="Stops this service running and stops testing it. Everything entered here stays saved.">
                             <span className="text-white/45 text-[11px] hidden sm:block">
-                                Credentials stay saved.
+                                {switching ? 'Switching off…' : 'On — switching off keeps the credentials saved'}
                             </span>
-                            <Action
-                                onClick={async () => {
+                            <Switch
+                                on={!switching}
+                                busy={switching}
+                                disabled={switching || busy !== null}
+                                onChange={async () => {
                                     setSwitching(true);
                                     try { await onSwitchOff(); } finally { setSwitching(false); }
                                 }}
-                                busy={switching}
-                                disabled={switching || busy !== null}
-                                title="Stops this service running and stops testing it. Everything entered here stays saved."
-                            >
-                                {switching ? 'Switching off…' : 'Switch off'}
-                            </Action>
+                                label={`Switch ${title} off`}
+                            />
                         </span>
                     )}
                 </div>
@@ -1645,17 +1672,20 @@ export default function ServiceProviders({ show, statusMap, extras, footer, extr
                                     up" is a scavenger hunt; the off switch is
                                     on the card, so the on switch is too. */}
                                 {onSwitch && (
-                                    <div className="mt-2.5">
-                                        <Action
-                                            onClick={async () => {
+                                    <div className="mt-2.5 flex items-center gap-2.5">
+                                        <Switch
+                                            on={switchingOnId === c.id}
+                                            busy={switchingOnId === c.id}
+                                            disabled={switchingOnId !== null}
+                                            onChange={async () => {
                                                 setSwitchingOnId(c.id);
                                                 try { await onSwitch(c.id, true); } finally { setSwitchingOnId(null); }
                                             }}
-                                            busy={switchingOnId === c.id}
-                                            disabled={switchingOnId !== null}
-                                        >
+                                            label={`Switch ${c.title} on`}
+                                        />
+                                        <span className="text-[11px] text-white/50">
                                             {switchingOnId === c.id ? 'Switching on…' : 'Switch back on'}
-                                        </Action>
+                                        </span>
                                     </div>
                                 )}
                             </div>

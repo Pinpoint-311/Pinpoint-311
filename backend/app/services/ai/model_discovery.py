@@ -134,10 +134,14 @@ async def _discover_vertex(creds: Dict[str, str]) -> Optional[List[Dict[str, str
                         mid = name.split("/")[-1] if name else m.get("modelId", "")
                         if not mid or mid in seen:
                             continue
-                        # Text generation only. An embedding or image model in
-                        # a triage picker is a choice that fails at request
-                        # time rather than at selection.
-                        if any(x in mid.lower() for x in ("embedding", "aqa", "imagen", "veo")):
+                        # Text generation only. An embedding, image, speech or
+                        # live-audio model in a triage picker is a choice that
+                        # fails at request time rather than at selection --
+                        # Google's publisher list carries all of them side by
+                        # side with the text models.
+                        if any(x in mid.lower() for x in (
+                                "embedding", "aqa", "imagen", "veo",
+                                "tts", "image", "audio", "-live-")):
                             continue
                         seen.add(mid)
                         label = m.get("displayName") or mid
