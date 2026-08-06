@@ -863,7 +863,7 @@ class IntegrationSyncLog(Base):
     id = Column(Integer, primary_key=True, index=True)
     integration_id = Column(Integer, ForeignKey("integration_configs.id", ondelete="CASCADE"), nullable=False, index=True)
     operation = Column(String(30), nullable=False)  # test, push, push_status, pull, webhook
-    status = Column(String(20), nullable=False)  # success, error
+    status = Column(String(20), nullable=False)  # success, warning, error
     detail = Column(Text)
     request_count = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)

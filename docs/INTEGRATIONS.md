@@ -124,6 +124,17 @@ has no third-party status-update, comment, or attachment endpoints, and
 SeeClickFix's public API exposes comments but not document upload or asset
 inventories. Everything the vendor's interface allows is wired.
 
+**SeeClickFix report forms.** Creating an issue means answering the request
+type's report form: the connector fetches `/request_types/{id}`, fills the
+questions a resident's report answers (title, description, address, photo
+links), and sends the rest as `answers` keyed by each question's `primary_key`.
+Required questions Pinpoint cannot answer — "Depth of pothole?", say — are
+answered once per connection via the **Extra answers** setting
+(`{"142": "SHALLOW"}`); the connection check names any that are still missing
+rather than letting each resident's report take a 422. Authenticate with a
+Personal Access Token (`Authorization: Bearer`); username/password Basic remains
+only as a fallback for older service accounts.
+
 **Purpose-built vs. generic.** Accela, CivicPlus/SeeClickFix, and Tyler (Open311)
 are implemented against each platform's actual, documented API and work out of
 the box with account credentials or the jurisdiction's GeoReport v2 endpoint.

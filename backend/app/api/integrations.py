@@ -438,6 +438,12 @@ async def test_integration(
         if result.get("verified") is not None:
             result = {**result, "verifiable": result["verified"]}
         log_status, detail = "success", str(result.get("detail") or "OK")
+        # A warning means the credentials are fine but something still blocks a
+        # report. Keeping it out of the activity trail is how it gets forgotten
+        # between the wizard closing and the first rejected report.
+        if result.get("warnings"):
+            log_status = "warning"
+            detail = detail + " — " + " ".join(result["warnings"])
     else:
         detail = str(result.get("detail") or "")
         result = {**result, "friendly": _friendly_test_error(detail)}

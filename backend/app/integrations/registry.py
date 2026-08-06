@@ -66,18 +66,28 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "category": "311 CRM & citizen requests",
         "integration_mode": "public_api",
         "docs_url": "https://dev.seeclickfix.com",
-        "description": "Two-way sync with CivicPlus SeeClickFix via the public SeeClickFix API v2 — creates issues, polls your place for status changes, and syncs comment threads both ways.",
+        "description": "Two-way sync with CivicPlus SeeClickFix via the public SeeClickFix API v2 — creates issues (filling the request type's report form), polls your place for status changes, and syncs comment threads both ways.",
         "capabilities": ["push", "pull", "comments", "test"],
         "credential_fields": [
-            {"key": "username", "label": "SeeClickFix Username", "secret": False},
-            {"key": "password", "label": "SeeClickFix Password", "secret": True},
-            {"key": "api_key", "label": "API Token (optional, instead of user/pass)", "secret": True},
+            {"key": "api_key", "label": "Personal Access Token", "secret": True},
+            {"key": "username", "label": "SeeClickFix Username (legacy sign-in only)", "secret": False},
+            {"key": "password", "label": "SeeClickFix Password (legacy sign-in only)", "secret": True},
         ],
         "config_fields": [
+            {"key": "request_type_id", "label": "Request Type ID", "placeholder": "1234 (or 'other')", "required": True},
             {"key": "place_url", "label": "Place Slug", "placeholder": "your-town", "required": False},
-            {"key": "request_type", "label": "Request Type ID", "placeholder": "1234", "required": False},
+            {"key": "organization_id", "label": "Organization ID", "placeholder": "1234", "required": False},
+            {"key": "answers", "label": "Extra report-form answers (JSON)", "placeholder": '{"142": "SHALLOW"}', "required": False},
         ],
-        "setup_notes": "Any SeeClickFix account works for read access; issue creation needs an account (or CivicPlus-issued token) with reporting rights in your place.",
+        "setup_notes": (
+            "Authenticate with a Personal Access Token: in SeeClickFix go to Account → Password & "
+            "Security (account.civicplus.com/security) → Personal Access Token, create one, and paste "
+            "it here. Username/password (HTTP Basic) still works for older service accounts but is not "
+            "the documented scheme. Issue creation needs a Request Type ID, and if that request type "
+            "asks required questions Pinpoint can't answer from a resident's report (e.g. 'Depth of "
+            "pothole?'), supply them once under Extra answers — the connection check names any that "
+            "are missing."
+        ),
     },
     "generic_rest": {
         "name": "Other REST System (Generic Connector)",
@@ -213,20 +223,26 @@ CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
     "civicplus": {
         "plain_summary": "Reports submitted here also appear in SeeClickFix, and SeeClickFix status changes and comments show up here.",
         "what_you_need": [
-            "A SeeClickFix account with permission to report in your town (username + password)",
+            "A Personal Access Token from a SeeClickFix account that can report in your town — "
+            "sign in, open the account menu → Password & Security (account.civicplus.com/security), "
+            "find the 'Personal Access Token' section, and create one. Copy it now; it is shown once.",
+            "The Request Type ID resident reports should be filed under — ask CivicPlus, or use "
+            "'other', which every place has",
             "Optional: your town's SeeClickFix web address (the part after seeclickfix.com/, e.g. 'springfield')",
         ],
         "vendor_ask": {
             "to_hint": "Your CivicPlus / SeeClickFix account manager",
             "subject": "API access for our 311 system (Pinpoint 311)",
-            "body": "Hello,\n\nWe are connecting our resident request system (Pinpoint 311) to our SeeClickFix account.\n\nCould you please confirm:\n1. The account (or API token) we should use for creating issues via the SeeClickFix API v2\n2. Our place URL (the seeclickfix.com/... address for our town)\n3. The request type ID resident reports should use\n\nThank you!",
+            "body": "Hello,\n\nWe are connecting our resident request system (Pinpoint 311) to our SeeClickFix account.\n\nCould you please confirm:\n1. The account we should use for creating issues via the SeeClickFix API v2 (we will generate a Personal Access Token on it)\n2. Our place URL (the seeclickfix.com/... address for our town) and our organization id\n3. The request type ID resident reports should use, and the answers you want for any required questions on that request type\n\nThank you!",
         },
         "field_help": {
-            "username": "The email address of the SeeClickFix account to connect.",
-            "password": "That account's password.",
-            "api_key": "Only needed if CivicPlus gave you a token instead of a username and password.",
+            "api_key": "Your Personal Access Token. In SeeClickFix: account menu → Password & Security (account.civicplus.com/security) → Personal Access Token → create. Copy it straight away — SeeClickFix shows it only once. Treat it like a password.",
+            "username": "Only for older accounts set up before tokens. Leave blank if you pasted a token above.",
+            "password": "That account's password. Leave blank if you pasted a token above.",
             "place_url": "The last part of your town's SeeClickFix page address, e.g. 'springfield' from seeclickfix.com/springfield.",
-            "request_type": "A number CivicPlus can give you. Leave blank to use the default.",
+            "organization_id": "Optional — the account number CivicPlus uses for your organization. Filling it in lets us read your private issues too, instead of only public ones.",
+            "request_type_id": "Which SeeClickFix category new reports are filed under. CivicPlus can tell you the number; 'other' works everywhere if you don't have one yet.",
+            "answers": "Only needed if your request type asks questions we can't answer from a resident's report. The connection check tells you the question id and the allowed answers, e.g. {\"142\": \"SHALLOW\"}.",
         },
         "recommended_sync_direction": "bidirectional",
     },
