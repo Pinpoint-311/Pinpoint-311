@@ -70,7 +70,7 @@ class Recorder:
             # read() first: a multipart (attachment) request streams, so
             # touching .content before reading raises.
             body = request.read().decode("utf-8", "replace")
-            self.requests.append((str(request.url), request.method, body))
+            self.requests.append((str(request.url), request.method, body, dict(request.headers)))
             path = request.url.path
             for suffix, payload in self.routes.items():
                 # "metadata" is the layer url itself — no operation on the end.
@@ -88,7 +88,7 @@ class Recorder:
         from urllib.parse import parse_qs, urlparse
         matches = [r for r in self.requests if suffix in urlparse(r[0]).path]
         assert matches, f"no request to {suffix}"
-        url, _method, body = matches[-1]
+        url, _method, body, _headers = matches[-1]
         merged = {**parse_qs(urlparse(url).query), **parse_qs(body)}
         return {k: v[0] for k, v in merged.items()}
 
@@ -97,11 +97,15 @@ class Recorder:
 
 
 @pytest.mark.asyncio
-async def test_api_key_is_passed_as_the_token_parameter(monkeypatch):
+async def test_api_key_travels_as_a_bearer_header_on_reads(monkeypatch):
+    """GETs carry the token in X-Esri-Authorization, never the URL — query
+    strings are copied into proxy and access logs."""
     rec = Recorder({"metadata": LAYER_METADATA}).install(monkeypatch)
     conn = _connector()
     await conn.test_connection()
-    assert "token=test-key" in rec.requests[0][0]
+    url, _method, _body, headers = rec.requests[0]
+    assert "test-key" not in url
+    assert headers["x-esri-authorization"] == "Bearer test-key"
 
 
 @pytest.mark.asyncio
@@ -114,7 +118,8 @@ async def test_username_password_generates_a_token(monkeypatch):
     await conn.test_connection()
     assert rec.requests[0][0].endswith("/sharing/rest/generateToken")
     assert rec.params_for("generateToken")["client"] == "requestip"
-    assert "token=minted-token" in rec.requests[1][0]
+    assert "minted-token" not in rec.requests[1][0]
+    assert rec.requests[1][3]["x-esri-authorization"] == "Bearer minted-token"
 
 
 @pytest.mark.asyncio
@@ -128,13 +133,34 @@ async def test_falls_back_to_the_maps_arcgis_api_key(monkeypatch):
 
     monkeypatch.setattr("app.services.secret_manager.get_secret", fake_get_secret)
     await conn.test_connection()
-    assert "token=maps-key" in rec.requests[0][0]
+    assert rec.requests[0][3]["x-esri-authorization"] == "Bearer maps-key"
 
 
 @pytest.mark.asyncio
 async def test_reuse_can_be_turned_off(monkeypatch):
     conn = build_connector("arcgis", {"layer_url": LAYER, "reuse_maps_api_key": "false"}, {})
     with pytest.raises(ConnectorError, match="credentials missing"):
+        await conn._get_token()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", [
+    "gis.example.gov",   # a town's own ArcGIS Enterprise server
+    "notarcgis.com",     # a lookalike — the suffix check needs the dot boundary
+    "evil.arcgis.com.attacker.net",
+])
+async def test_maps_key_is_not_reused_off_esri_hosts(monkeypatch, host):
+    """The maps key is an org-wide secret; auto-sending it to whatever
+    layer_url an admin pasted would hand it to any host that asks."""
+    conn = build_connector(
+        "arcgis", {"layer_url": f"https://{host}/arcgis/rest/services/Requests/FeatureServer/0"}, {},
+    )
+
+    async def fake_get_secret(name):
+        return "maps-key" if name == "ARCGIS_API_KEY" else None
+
+    monkeypatch.setattr("app.services.secret_manager.get_secret", fake_get_secret)
+    with pytest.raises(ConnectorError, match=r"only reused for layers on \*\.arcgis\.com"):
         await conn._get_token()
 
 
@@ -146,6 +172,21 @@ async def test_error_body_on_http_200_raises(monkeypatch):
     Recorder({"metadata": {"error": {"code": 400, "message": "Invalid URL", "details": []}}}).install(monkeypatch)
     with pytest.raises(ConnectorError, match="ArcGIS error 400"):
         await _connector().test_connection()
+
+
+def test_non_json_error_body_is_redacted():
+    """A proxy error page can echo the request back, token included; what we
+    store and display must be scrubbed."""
+    from app.integrations.connectors.arcgis import ArcGISConnector
+
+    resp = httpx.Response(
+        200, text="<html>502 Bad Gateway: /query?token=SECRETVALUE123&f=json</html>",
+        request=httpx.Request("GET", LAYER),
+    )
+    with pytest.raises(ConnectorError) as exc:
+        ArcGISConnector._arcgis_json(resp, "ArcGIS query")
+    assert "SECRETVALUE123" not in str(exc.value)
+    assert "[REDACTED]" in str(exc.value)
 
 
 @pytest.mark.asyncio
@@ -288,6 +329,15 @@ async def test_push_status_updates_by_object_id(monkeypatch):
     assert attributes["notes"] == "Patched on Tuesday"
 
 
+@pytest.mark.asyncio
+async def test_push_status_fails_on_an_empty_apply_edits_body(monkeypatch):
+    """A 200 with no updateResults is not a confirmation — treating it as one
+    would mark the sync done while the layer never changed."""
+    Recorder({"applyEdits": {}, "metadata": LAYER_METADATA}).install(monkeypatch)
+    with pytest.raises(ConnectorError, match="no updateResults"):
+        await _connector().push_status("618", "closed")
+
+
 # ---- Pull -------------------------------------------------------------------
 
 
@@ -378,7 +428,7 @@ async def test_push_document_posts_to_add_attachment(monkeypatch):
         "metadata": LAYER_METADATA,
     }).install(monkeypatch)
     await _connector().push_document("618", "photo.jpg", b"\xff\xd8jpegbytes", "image/jpeg")
-    url, method, body = rec.requests[-1]
+    url, method, body, _headers = rec.requests[-1]
     assert url.endswith("/FeatureServer/0/618/addAttachment") and method == "POST"
     assert "photo.jpg" in body and "jpegbytes" in body
 
