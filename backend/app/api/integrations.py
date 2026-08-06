@@ -274,6 +274,12 @@ async def test_integration(
         connector = await build_connector_for(integration)
         result = await connector.test_connection()
         log_status, detail = "success", result.get("detail", "OK")
+        # A warning means the credentials are fine but something still blocks a
+        # report. Keeping it out of the activity trail is how it gets forgotten
+        # between the wizard closing and the first rejected report.
+        if result.get("warnings"):
+            log_status = "warning"
+            detail = detail + " — " + " ".join(result["warnings"])
     except Exception as e:
         result = {"ok": False, "detail": str(e), "friendly": _friendly_test_error(str(e))}
         log_status, detail = "error", str(e)
