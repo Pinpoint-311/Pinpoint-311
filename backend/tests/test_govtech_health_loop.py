@@ -468,3 +468,33 @@ def test_the_other_beat_jobs_record_their_failures_too(task, operation):
     # `integration.platform` there raises under the async engine.
     assert "health_key(platform)" in block
     assert "health_key(integration.platform)" not in block
+
+
+def test_the_pull_loops_do_not_shadow_their_own_task_parameter():
+    """Reassigning `integration_id` inside the loop makes the name local to
+    the entire closure -- Python scoping, not control flow -- so the
+    `if integration_id is not None` filter at the top raised
+    UnboundLocalError before the first query. Both pull tasks died on every
+    beat tick and every manual "Check for updates", while trigger_sync still
+    answered "Sync started". The loop-local must be a different name."""
+    import ast
+    from pathlib import Path
+
+    source = Path("app/tasks/integrations.py").read_text()
+    tree = ast.parse(source)
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        params = {a.arg for a in func.args.args}
+        for node in ast.walk(func):
+            if isinstance(node, ast.Assign):
+                for target in ast.walk(node):
+                    if isinstance(target, ast.Name) and isinstance(target.ctx, ast.Store):
+                        assert target.id != "integration_id" or "integration_id" not in params or func.name in (
+                            # top-level rebinding of a parameter before any read is fine;
+                            # the bug is rebinding it inside a nested closure that also
+                            # reads the outer value first.
+                        ), (
+                            f"{func.name} rebinds its own `integration_id` parameter -- "
+                            "use a different loop-local (see row_id in sync_integration_assets)"
+                        )
