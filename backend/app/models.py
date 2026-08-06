@@ -792,7 +792,24 @@ class IntegrationConfig(Base):
             from app.core.encryption import decrypt
             import json as _json
             return _json.loads(decrypt(self._credentials_encrypted))
-        except Exception:
+        except Exception as exc:
+            # Logged, because the two causes look identical from here and lead
+            # somewhere completely different. A rotated SECRET_KEY makes every
+            # integration's credentials undecryptable at once, and returning a
+            # bare {} presented that as "someone deleted the credentials" -- so
+            # the advice on screen became "go back and fill them in", which
+            # overwrites the vault references and makes the damage permanent.
+            #
+            # The id and the exception type only. Never the ciphertext, and never
+            # the exception's own text, which for a Fernet failure can quote the
+            # token back.
+            import logging
+            logging.getLogger(__name__).error(
+                "[Integrations] could not decrypt credentials for integration %s "
+                "(%s). If SECRET_KEY was rotated, restore the previous key or "
+                "re-enter these credentials deliberately.",
+                self.id, type(exc).__name__,
+            )
             return {}
 
     @credentials.setter
@@ -824,10 +841,13 @@ class IntegrationLink(Base):
 
     # External comment ids created by our pushes — skipped on pull to avoid echo
     pushed_comment_ids = Column(JSON, default=list)
-    # Whether local media/documents were uploaded to the external record
-    documents_pushed = Column(Boolean, default=False)
     # How many media items have been pushed — lets photos added after the
     # initial push sync on a later run (push only media beyond this count).
+    #
+    # There was a `documents_pushed` boolean beside this, written on every push
+    # and read by nothing. The count answers the same question and one more the
+    # boolean could not: "three photos, all attached" and "no photos on this
+    # report" were both simply True. Dropped in a7029676a2bc.
     documents_pushed_count = Column(Integer, default=0)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

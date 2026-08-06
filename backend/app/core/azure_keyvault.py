@@ -231,9 +231,12 @@ def set_secret(name: str, value: str) -> bool:
 def delete_secret(name: str) -> bool:
     """Remove a secret from the vault. Returns whether it is gone.
 
-    Only the secret-store round-trip check uses this: a probe that cannot take
-    back what it wrote leaves litter in a town's vault forever. A 404 counts as
-    success -- the caller asked for it to be absent, and it is.
+    Two callers depend on this: the secret-store round-trip check, whose probe
+    must take back what it wrote or leave litter in a town's vault forever, and
+    govtech-integration disconnect, which takes the vendor credentials out of
+    the vault with the connection rather than leaving a live client secret with
+    nothing in the UI referring to it. A 404 counts as success -- the caller
+    asked for it to be absent, and it is.
     """
     token = _get_token()
     if not token:

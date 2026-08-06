@@ -259,6 +259,10 @@ EXPECTED_GATED = {
     "20260804_1400_f1a2b3c4d5e6_capability_switches.py",
     # Raw-SQL backfill of setup_completed_at.
     "20260804_1500_a2b3c4d5e6f7_setup_completed_marker.py",
+    # Drops the never-read integration_links.documents_pushed boolean --
+    # deliberately its own revision so the additive fix before it applies
+    # unattended and only this tidy-up waits for an operator.
+    "20260806_0910_a7029676a2bc_drop_dead_documents_pushed_flag.py",
 }
 
 

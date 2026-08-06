@@ -107,10 +107,15 @@ def set_secret(name: str, value: str) -> bool:
 def delete_secret(name: str) -> bool:
     """Remove a secret. Returns whether it is gone.
 
-    `ForceDeleteWithoutRecovery`, deliberately: this exists for the secret-store
-    round-trip probe, and the default 30-day recovery window would leave the
-    probe key occupying its own name for a month -- so the next check would find
-    it scheduled for deletion and fail to recreate it.
+    Two callers: the secret-store round-trip probe, and govtech-integration
+    disconnect, which takes vendor credentials out of the vault with the
+    connection rather than leaving a live client secret nothing in the UI
+    refers to any more.
+
+    `ForceDeleteWithoutRecovery`, deliberately, for both: a recovery window
+    would leave the deleted key occupying its own name, so the probe's next
+    check -- or an admin reconnecting the same integration within the window --
+    would find it scheduled for deletion and fail to recreate it.
 
     An already-absent secret counts as success: the caller asked for it to be
     gone, and it is.
@@ -122,7 +127,8 @@ def delete_secret(name: str) -> bool:
         client.delete_secret(SecretId=_secret_id(name), ForceDeleteWithoutRecovery=True)
         return True
     except Exception as e:
-        if e.__class__.__name__ == "ResourceNotFoundException":
+        if e.__class__.__name__ in ("ResourceNotFoundException", "InvalidRequestException"):
+            # Already gone, or already scheduled for deletion.
             return True
         logger.warning(f"AWS Secrets Manager delete failed for {name}: {e}")
         return False

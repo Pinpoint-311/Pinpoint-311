@@ -66,16 +66,41 @@ class SeeClickFixConnector(BaseConnector):
         )
 
     async def test_connection(self) -> Dict[str, Any]:
-        params: Dict[str, Any] = {"per_page": 1}
-        if self.config.get("place_url"):
-            params["place_url"] = self.config["place_url"]
-        async with self._client(**self._auth_kwargs()) as client:
-            resp = await client.get(f"{self.api_base}/issues", params=params)
-            self._raise_for_status(resp, "SeeClickFix issues probe")
-            body = resp.json()
-        total = (body.get("metadata") or {}).get("pagination", {}).get("entries")
+        """Sign in, then look at the place.
+
+        `/issues` is public: it answers a request carrying no credentials at
+        all, so probing it proved only that seeclickfix.com was up. A wrong
+        password, an expired CivicPlus token or an empty credential set all came
+        back "Connected", and the first sign of trouble was a report that never
+        appeared. `/profile` is the account endpoint -- it is the one call here
+        that a bad credential fails.
+        """
+        auth = self._auth_kwargs()
         scope = self.config.get("place_url") or "global"
-        return {"ok": True, "detail": f"Connected — scope '{scope}', {total if total is not None else 'unknown'} issue(s) visible"}
+        if not auth:
+            # Nothing to verify. Still worth confirming the API answers, so a
+            # typo'd api_base is caught here rather than on the first report.
+            async with self._client() as client:
+                resp = await client.get(f"{self.api_base}/issues", params={"per_page": 1})
+                self._raise_for_status(resp, "SeeClickFix issues probe")
+            return {
+                "ok": True, "verified": False,
+                "detail": ("Server reachable, but no sign-in details are saved. Creating "
+                           "issues needs an account or a CivicPlus token — add one, or "
+                           "reports will only be read, never filed."),
+            }
+
+        async with self._client(**auth) as client:
+            resp = await client.get(f"{self.api_base}/profile")
+            self._raise_for_status(resp, "SeeClickFix sign-in")
+            profile = resp.json() if resp.content else {}
+        who = None
+        if isinstance(profile, dict):
+            who = profile.get("name") or profile.get("login") or profile.get("email")
+        return {
+            "ok": True, "verified": True,
+            "detail": f"Signed in as {who or 'the configured account'} — scope '{scope}'",
+        }
 
     async def push_request(self, payload: Dict[str, Any]) -> ExternalRecord:
         if payload.get("lat") is None or payload.get("long") is None:

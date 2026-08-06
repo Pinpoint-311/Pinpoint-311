@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_admin, get_current_staff
@@ -83,8 +84,82 @@ class WebhookRequestIn(BaseModel):
     media_urls: Optional[List[str]] = None
 
 
+def _allowed_keys(platform: str, field_list: str) -> set:
+    catalog = PLATFORM_CATALOG.get(platform, {})
+    return {f["key"] for f in catalog.get(field_list, []) if isinstance(f, dict) and f.get("key")}
+
+
+def _reject_unknown_keys(platform: str, credentials: Optional[Dict[str, Any]],
+                         config: Optional[Dict[str, Any]]) -> None:
+    """Refuse credential and config keys the platform does not declare.
+
+    `credentials` is unvalidated input that becomes a Secret Manager key name:
+    `store_credentials` writes each field to `INTEGRATION_<PLATFORM>_<FIELD>`.
+    Without an allowlist an admin could name any field they liked and write
+    arbitrary `INTEGRATION_*` entries into the town's vault of record -- next to
+    the ones the platform itself relies on, in the namespace it reads from.
+
+    The same check on `config` is about honesty rather than the vault: config is
+    merged into a JSON blob that the connectors read by key, so an unrecognised
+    key is a setting the admin believes they set and nothing will ever read.
+    """
+    for values, field_list, label in (
+        (credentials, "credential_fields", "credential"),
+        (config, "config_fields", "setting"),
+    ):
+        if not values:
+            continue
+        allowed = _allowed_keys(platform, field_list)
+        unknown = sorted(set(values) - allowed - _EXTRA_CONFIG_KEYS.get(field_list, set()))
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Unknown {label} field(s) for {platform}: {', '.join(unknown)}. "
+                        f"Accepted: {', '.join(sorted(allowed)) or 'none'}"),
+            )
+
+
+# Config keys the connectors read that the wizard does not show as fields --
+# per-vendor mappings and tuning an integrator sets deliberately. Kept as an
+# explicit list so "the catalog does not mention it" stays the default answer.
+_EXTRA_CONFIG_KEYS = {
+    "config_fields": {
+        "share_pii", "import_new_records", "service_code_map",
+        "default_local_service_code", "status_map_in", "status_map_out",
+        "field_map", "static_fields", "max_retries", "max_pull_pages",
+        "list_items_field", "next_field", "comments_path", "comments_items_field",
+        "comment_id_field", "comment_text_field", "comment_author_field",
+        "comment_created_field", "documents_path", "document_file_field",
+        "assets_path", "assets_items_field", "asset_id_field", "asset_name_field",
+        "asset_type_field", "asset_lat_field", "asset_long_field",
+        "asset_layer_id", "asset_service_codes", "assets_on_resident_portal",
+        "work_order_id_field", "priority_field", "assigned_to_field",
+        "assigned_department_field", "scheduled_date_field", "due_date_field",
+        "resolution_field", "auth_query_param", "api_base", "auth_base",
+    },
+}
+
+
+def _vaulted_state(credentials: Dict[str, Any]) -> str:
+    """Whether every stored credential is a vault reference, some, or none."""
+    from app.integrations.credentials import is_reference
+
+    values = list(credentials.values())
+    if not values:
+        return "none"
+    referenced = [v for v in values if is_reference(v)]
+    if len(referenced) == len(values):
+        return "all"
+    return "partial" if referenced else "none"
+
+
 def _serialize(integration: IntegrationConfig) -> Dict[str, Any]:
     catalog = PLATFORM_CATALOG.get(integration.platform, {})
+    # Read once. `credentials` is a hybrid property that Fernet-decrypts on every
+    # access, and this function touched it four times per row -- on a list of
+    # connections that is four decryptions each, for one response.
+    credentials = integration.credentials or {}
+    vaulted = _vaulted_state(credentials)
     return {
         "id": integration.id,
         "platform": integration.platform,
@@ -94,14 +169,20 @@ def _serialize(integration: IntegrationConfig) -> Dict[str, Any]:
         "sync_direction": integration.sync_direction,
         "config": integration.config or {},
         # Never return secret values — only which keys are set
-        "configured_credentials": sorted((integration.credentials or {}).keys()),
-        # True when the stored credentials are Secret Manager references (the raw
-        # secret lives only in the vault, not this database) — lets the UI show a
-        # "stored in your Secret Manager" trust signal for government deployments.
-        "credentials_vaulted": any(
-            isinstance(v, str) and v.startswith("@secret:")
-            for v in (integration.credentials or {}).values()
-        ),
+        "configured_credentials": sorted(credentials.keys()),
+        # Whether the stored credentials are Secret Manager references (the raw
+        # secret lives only in the vault, not this database) — the UI's "stored in
+        # your Secret Manager" trust line.
+        #
+        # `all`, not `any`. A vault write that failed for one field falls back to
+        # keeping that value encrypted in this database, and `any` reported the
+        # whole set as vaulted on the strength of the fields that succeeded. A
+        # trust signal about where secrets live must not round up.
+        "credentials_vaulted": vaulted == "all",
+        # "all" | "partial" | "none", so the UI can say which rather than only
+        # yes-or-no. Partial is the state worth naming: it means at least one
+        # secret is in the application database after all.
+        "credentials_vaulted_state": vaulted,
         "webhook_path": f"/api/integrations/webhook/{integration.platform}/{integration.webhook_token}",
         "last_sync_at": integration.last_sync_at.isoformat() if integration.last_sync_at else None,
         "last_sync_status": integration.last_sync_status,
@@ -146,6 +227,7 @@ async def create_integration(
 ):
     if data.platform not in PLATFORM_CATALOG:
         raise HTTPException(status_code=400, detail=f"Unknown platform: {data.platform}")
+    _reject_unknown_keys(data.platform, data.credentials, data.config)
 
     existing = (await db.execute(
         select(IntegrationConfig).where(IntegrationConfig.platform == data.platform)
@@ -167,7 +249,18 @@ async def create_integration(
     creds = {k: v for k, v in (data.credentials or {}).items() if v}
     integration.credentials = await store_credentials(data.platform, creds)
     db.add(integration)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # The SELECT above is not a lock. Two admins connecting the same vendor
+        # at once both saw "no existing row" and both inserted, giving one
+        # platform two enabled integrations -- after which every resident report
+        # was pushed to the county twice, as two records. The unique index added
+        # in 7d73fe63d6e3 makes the second insert fail; the answer an admin
+        # should see is the same 409 the SELECT would have produced.
+        await db.rollback()
+        raise HTTPException(
+            status_code=409, detail=f"An integration for {data.platform} already exists")
     await db.refresh(integration)
     from app.core.sanitize import sanitize_for_log
     logger.info(f"[Integrations] {sanitize_for_log(current_user.username)} created integration {sanitize_for_log(data.platform)}")
@@ -182,6 +275,7 @@ async def update_integration(
     current_user: User = Depends(get_current_admin),
 ):
     integration = await _get_integration(db, integration_id)
+    _reject_unknown_keys(integration.platform, data.credentials, data.config)
 
     if data.display_name is not None:
         integration.display_name = data.display_name
@@ -190,7 +284,13 @@ async def update_integration(
     if data.sync_direction is not None:
         integration.sync_direction = data.sync_direction
     if data.config is not None:
-        integration.config = {**(integration.config or {}), **data.config}
+        # An explicit null deletes the key. Config was merged and the frontend
+        # skipped empty strings, so between them there was no way to blank a
+        # setting at all: a jurisdiction_id typed by mistake stayed in the
+        # payload of every push forever, and the only remedy was disconnecting
+        # the integration and re-entering every credential.
+        merged = {**(integration.config or {}), **data.config}
+        integration.config = {k: v for k, v in merged.items() if v is not None}
     if data.credentials:
         # Only the fields the admin actually filled in are (re)written to the
         # vault; blanks mean "keep existing" and untouched fields keep their
@@ -219,10 +319,46 @@ async def delete_integration(
 ):
     integration = await _get_integration(db, integration_id)
     platform = integration.platform
+    # Read before the delete: after it, the row is gone and so is the only record
+    # of which vault entries belonged to it.
+    stored = dict(integration.credentials or {})
     await db.delete(integration)
     await db.commit()
+    # Disconnecting left the vendor's client secret and agency password sitting
+    # in the town's Secret Manager under INTEGRATION_<PLATFORM>_<FIELD>, with
+    # nothing left in the UI referring to them -- so a credential an admin
+    # believes they revoked by pressing Disconnect stayed live and unlisted.
+    # Best-effort: the integration is already gone, and failing the request now
+    # would tell the admin the disconnect did not happen when it did.
+    await _forget_vault_secrets(platform, stored)
     logger.info(f"[Integrations] {current_user.username} deleted integration {platform}")
     return {"message": "Integration deleted", "platform": platform}
+
+
+async def _forget_vault_secrets(platform: str, stored: Dict[str, Any]) -> None:
+    """Delete the Secret Manager entries a disconnected integration wrote."""
+    from app.core.sanitize import sanitize_for_log
+    from app.integrations.credentials import is_reference, reference_name
+
+    names = {reference_name(v) for v in stored.values() if is_reference(v)}
+    if not names:
+        return
+    try:
+        from app.services.secret_manager import clear_cache, delete_secret
+    except Exception:
+        logger.warning("[Integrations] no secret manager available to clean up "
+                       "%s credentials", sanitize_for_log(platform))
+        return
+    for name in sorted(names):
+        try:
+            await delete_secret(name)
+            clear_cache(key_name=name)
+            logger.info("[Integrations] removed vault entry %s on disconnect",
+                        sanitize_for_log(name))
+        except Exception as exc:
+            # Named, so somebody can remove it by hand. Never the value.
+            logger.warning("[Integrations] could not remove vault entry %s: %s",
+                           sanitize_for_log(name), sanitize_for_log(str(exc)))
 
 
 # ---------- Actions ----------
@@ -231,6 +367,14 @@ def _friendly_test_error(error: str) -> str:
     """Translate a technical connection error into plain language a
     non-technical admin can act on."""
     text = error.lower()
+    # Before the credential-specific advice below: the fields are not blank, and
+    # telling somebody to re-enter them here overwrites working vault references
+    # with whatever they retype.
+    if "secret manager" in text and "could not read" in text:
+        return ("The credentials are saved, but we couldn't read them from your "
+                "Secret Manager just now. Nothing here needs re-entering — check "
+                "that the vault is reachable and that this system still has "
+                "permission to read it, then try again.")
     if "http 401" in text or "http 403" in text or "unauthorized" in text or "forbidden" in text:
         return ("The platform refused the sign-in details. Double-check the key or "
                 "username/password — copy and paste them again with no extra spaces.")
@@ -270,13 +414,34 @@ async def test_integration(
     _: User = Depends(get_current_admin),
 ):
     integration = await _get_integration(db, integration_id)
+    from app.services.connector_verification import check_integration_now
+
+    # The check itself lives in a service so it records health and clears the
+    # breaker the same way wherever it is called from. This endpoint used to
+    # write an IntegrationSyncLog row and nothing else, so an admin could watch
+    # a test pass while the card still said "not checked yet" -- the only writer
+    # of govtech health was the resident-report push path.
+    result = await check_integration_now(db, integration)
+    # The provider test endpoint does the same before it writes, and for the same
+    # reason: a check that failed part-way can leave this session in a failed
+    # transaction, and every statement after that raises PendingRollbackError --
+    # so the sync-log write below would be lost and the 500 would replace a
+    # perfectly good "here is what went wrong". Health is written on its own
+    # session and is already safe from this.
     try:
-        connector = await build_connector_for(integration)
-        result = await connector.test_connection()
-        log_status, detail = "success", result.get("detail", "OK")
-    except Exception as e:
-        result = {"ok": False, "detail": str(e), "friendly": _friendly_test_error(str(e))}
-        log_status, detail = "error", str(e)
+        await db.rollback()
+    except Exception:
+        pass
+    if result.get("ok"):
+        # `verifiable` alongside `verified`, so the admin UI can derive a card's
+        # state with one function for both surfaces rather than two that drift.
+        if result.get("verified") is not None:
+            result = {**result, "verifiable": result["verified"]}
+        log_status, detail = "success", str(result.get("detail") or "OK")
+    else:
+        detail = str(result.get("detail") or "")
+        result = {**result, "friendly": _friendly_test_error(detail)}
+        log_status = "error"
 
     db.add(IntegrationSyncLog(
         integration_id=integration.id, operation="test", status=log_status, detail=detail[:2000]
@@ -300,10 +465,35 @@ async def trigger_sync(
     # a broker that cannot take it is a failed request, not a quiet log line --
     # otherwise an admin watches nothing happen and has no way to tell whether
     # the sync ran and found nothing or never ran at all.
+    #
+    # Scoped to the clicked integration. It used to enqueue the global beat
+    # tasks, so pressing the button on one card polled every vendor the town
+    # uses.
     from app.tasks.integrations import pull_integration_comments, pull_integration_updates
-    if not enqueue(pull_integration_updates) or not enqueue(pull_integration_comments):
+    # Both are enqueued before either result is judged. Written as
+    # `enqueue(a) or enqueue(b)`, a first failure short-circuited and never
+    # queued the second, and a second failure returned 503 after the first job
+    # had already started -- so "this job did not start. Nothing has been
+    # changed." was untrue in exactly the case it was meant to cover.
+    started = {
+        "updates": enqueue(pull_integration_updates, integration.id),
+        "comments": enqueue(pull_integration_comments, integration.id),
+    }
+    if not any(started.values()):
         raise HTTPException(status_code=503, detail=QUEUE_UNAVAILABLE)
-    return {"message": "Sync started", "platform": integration.platform}
+    if all(started.values()):
+        return {"message": "Sync started", "platform": integration.platform,
+                "started": started}
+    # Partly started, which is neither of the two answers this endpoint had.
+    # Naming what did run beats a 503 whose text says nothing has been changed,
+    # in the one case where something has.
+    ran = ", ".join(sorted(k for k, ok in started.items() if ok))
+    return {
+        "message": f"Sync partly started ({ran}). The rest could not be queued — "
+                   f"check that the worker and Redis are running, then try again.",
+        "platform": integration.platform,
+        "started": started,
+    }
 
 
 @router.post("/{integration_id}/sync-assets")
@@ -321,14 +511,72 @@ async def trigger_asset_sync(
     catalog = PLATFORM_CATALOG.get(integration.platform, {})
     if "assets" not in catalog.get("capabilities", []):
         raise HTTPException(status_code=400, detail=f"{integration.platform} does not support asset sync")
-    from app.tasks.integrations import _flag
-    if not _flag(integration.config, "sync_assets"):
-        integration.config = {**(integration.config or {}), "sync_assets": True}
-        await db.commit()
+    # The catalog says what the platform *can* do; the built connector says what
+    # this configuration actually does. For generic_rest they differ: asset sync
+    # needs an assets_path, and without one the task would skip the run after
+    # this endpoint had already answered "Asset sync started".
+    try:
+        connector = await build_connector_for(integration)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=_friendly_test_error(str(e)))
+    if "assets" not in connector.capabilities:
+        raise HTTPException(
+            status_code=400,
+            detail=("This connection has no asset endpoint configured, so there is "
+                    "nothing to sync. Add the asset inventory path from your "
+                    "vendor's API docs and try again."),
+        )
+    # Deliberately does not touch config. Pressing this button used to set
+    # config["sync_assets"] = True, which enrolled the integration in the nightly
+    # beat job permanently -- from one click, with nothing on screen saying so and
+    # no way to undo it. `sync_assets` is a config field in the wizard now, so
+    # opting into the nightly sync is a choice somebody makes and can see.
     from app.tasks.integrations import sync_integration_assets
-    if not enqueue(sync_integration_assets):
+    if not enqueue(sync_integration_assets, integration.id):
         raise HTTPException(status_code=503, detail=QUEUE_UNAVAILABLE)
     return {"message": "Asset sync started", "platform": integration.platform}
+
+
+@router.post("/{integration_id}/regenerate-webhook-token")
+@limiter.limit("6/minute")
+async def regenerate_webhook_token(
+    request: Request,
+    integration_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """Issue a new inbound webhook token, invalidating the old one.
+
+    The token is in the URL path, which is where a URL's secrets are least well
+    kept: it lands in reverse-proxy access logs, in the vendor's own outbound
+    request logs, and in any screenshot of the setup page. There was no way to
+    rotate it -- so a token disclosed that way was disclosed permanently, and the
+    only remedy was deleting the integration and re-entering every credential.
+
+    The old token stops working the moment this returns, so the vendor has to be
+    given the new URL. That is stated plainly in the response rather than left
+    for somebody to discover from a silent gap in inbound records.
+    """
+    integration = await _get_integration(db, integration_id)
+    integration.webhook_token = pysecrets.token_urlsafe(32)
+    integration.updated_at = datetime.now(timezone.utc)
+    db.add(IntegrationSyncLog(
+        integration_id=integration.id, operation="webhook_token_rotated",
+        status="success",
+        detail=f"Rotated by {current_user.username}. The previous URL no longer works.",
+    ))
+    await db.commit()
+    await db.refresh(integration)
+    from app.core.sanitize import sanitize_for_log
+    logger.info("[Integrations] %s rotated the webhook token for %s",
+                sanitize_for_log(current_user.username),
+                sanitize_for_log(integration.platform))
+    return {
+        **_serialize(integration),
+        "message": ("New webhook address issued. The previous one stopped working "
+                    "immediately — send the new address to your vendor, or they will "
+                    "keep posting to an address that now refuses them."),
+    }
 
 
 @router.post("/requests/{request_id}/refresh")
@@ -423,8 +671,28 @@ async def get_request_links(
 
 # ---------- Inbound webhook (no session auth — token in path) ----------
 
+def _webhook_rate_key(request: Request) -> str:
+    """Rate-limit inbound webhooks per connection, not per source address.
+
+    One vendor's egress IP serves every event for every town on their platform,
+    so a per-IP bucket meant a busy neighbour's traffic could exhaust the budget
+    for ours -- and, the other way round, that one misconfigured integration
+    could not be throttled without throttling every connection sharing that IP.
+    The path already identifies the connection.
+    """
+    parts = [p for p in request.url.path.split("/") if p]
+    # .../webhook/{platform}/{token} -- keyed on the platform plus a digest of
+    # the token, so the bucket name is per-connection without a credential
+    # ending up in the limiter's store or its log lines.
+    if len(parts) >= 2 and parts[-2]:
+        import hashlib
+        digest = hashlib.sha256(parts[-1].encode("utf-8", "replace")).hexdigest()[:16]
+        return f"webhook:{parts[-2]}:{digest}"
+    return f"webhook:{get_remote_address(request)}"
+
+
 @router.post("/webhook/{platform}/{token}", status_code=status.HTTP_201_CREATED)
-@limiter.limit("60/minute")
+@limiter.limit("60/minute", key_func=_webhook_rate_key)
 async def integration_webhook(
     request: Request,
     platform: str,
@@ -437,15 +705,30 @@ async def integration_webhook(
     Creates a new service request (or updates the status of the already-linked
     one when the same external_id is posted again). Authenticated by the
     per-integration webhook token."""
+    # Fetched by platform, then compared in Python with compare_digest. Matching
+    # the token inside the SQL predicate makes the comparison the database's
+    # byte-by-byte one, whose duration depends on how many leading characters are
+    # right -- and this endpoint is unauthenticated and remotely timeable, which
+    # is the whole precondition for extracting a token that way.
     integration = (await db.execute(
         select(IntegrationConfig).where(
             IntegrationConfig.platform == platform,
-            IntegrationConfig.webhook_token == token,
             IntegrationConfig.enabled == True,  # noqa: E712
         )
     )).scalar_one_or_none()
-    if not integration:
+    if not integration or not pysecrets.compare_digest(
+            str(integration.webhook_token or ""), str(token)):
         raise HTTPException(status_code=401, detail="Invalid webhook token")
+    # A push-only connection is one the town configured to send and not receive.
+    # Accepting inbound creates on it anyway meant a vendor could open service
+    # requests in a town that had deliberately not asked them to -- and the
+    # sync_direction setting the admin chose did nothing on this path.
+    if integration.sync_direction == "push":
+        raise HTTPException(
+            status_code=403,
+            detail=("This connection is set to send only. Change its sync direction "
+                    "to 'pull' or 'bidirectional' to accept incoming records."),
+        )
 
     async def _import_webhook_comments(service_request_pk: int) -> int:
         """Attach comments carried in the payload, deduped by external comment id."""
