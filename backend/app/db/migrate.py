@@ -95,6 +95,22 @@ _DESTRUCTIVE_OPS = ("drop_table", "drop_column", "rename_table")
 _OP_CALL = re.compile(r"\bop\.(\w+)\s*\(")
 _ALTER_COLUMN = re.compile(r"\bop\.alter_column\s*\((.*?)\)\s*$", re.DOTALL | re.MULTILINE)
 
+# A String-typed length in an alter_column argument list, for the one type
+# change that is provably safe: widening a varchar.
+_EXISTING_STRING = re.compile(
+    r"existing_type\s*=\s*sa\.String\s*\(\s*(?:length\s*=\s*)?(\d+)\s*\)")
+_NEW_STRING = re.compile(
+    r"\btype_\s*=\s*sa\.String\s*\(\s*(?:length\s*=\s*)?(\d+)\s*\)")
+
+
+def _is_pure_widen(args: str) -> bool:
+    """True only for `existing_type=sa.String(n)` -> `type_=sa.String(m)`,
+    m >= n. Anything else -- a narrow, a change to another type, a length this
+    cannot parse -- is not provably safe and stays gated."""
+    existing = _EXISTING_STRING.search(args)
+    new = _NEW_STRING.search(args)
+    return bool(existing and new and int(new.group(1)) >= int(existing.group(1)))
+
 # SQL verbs that cannot lose data. Index creation is the case that actually
 # comes up: a GIST index on a cast expression is not something Alembic's op
 # layer can express, so it has to go through raw SQL, and gating every such
@@ -207,10 +223,15 @@ def classify_source(source: str) -> str:
     if "execute" in calls and not _executes_are_safe(body):
         return DESTRUCTIVE
 
-    # alter_column is additive when it only relaxes nullability or sets a
-    # default, and destructive when it rewrites the type or renames.
+    # alter_column is additive when it only relaxes nullability, sets a
+    # default, or widens a varchar -- lengthening is metadata-only in Postgres
+    # and cannot lose a byte. Destructive when it renames, narrows, or changes
+    # the type in any way this cannot positively identify as a widen: every
+    # ambiguity here resolves toward "make a human look at it".
     for args in _ALTER_COLUMN.findall(body):
-        if "type_" in args or "new_column_name" in args:
+        if "new_column_name" in args:
+            return DESTRUCTIVE
+        if "type_" in args and not _is_pure_widen(args):
             return DESTRUCTIVE
 
     # SQL executed through a raw connection rather than op.execute, which

@@ -1143,6 +1143,18 @@ async def save_provider(
         # response so a slow store cannot make Save feel broken.
         from app.services.storage_maintenance import vault_secrets as _vault
         background.add_task(_vault)
+
+    if capability == "kms":
+        # Saving a key service is the moment resident records wrapped with the
+        # old key become stale, and "re-encrypted overnight" is a long time to
+        # show an admin who just pressed Save. The worker task runs the same
+        # bounded batches the nightly pass does; if the queue is down, the
+        # nightly pass still covers it, so a failure here is only logged.
+        try:
+            from app.core.celery_app import celery_app as _celery
+            _celery.send_task("app.tasks.storage.rewrap_pii")
+        except Exception:
+            logger.debug("[Save] could not queue the PII re-wrap; the nightly pass will run it")
     # Whether this provider can actually be used, and what is missing if not.
     #
     # `settings: {}` means "keep what is stored", which is right when a town is
@@ -2846,6 +2858,7 @@ async def list_secrets(
 @router.post("/secrets", response_model=SecretResponse)
 async def create_or_update_secret(
     secret_data: SecretCreate,
+    background: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
@@ -2904,7 +2917,19 @@ async def create_or_update_secret(
     
     await db.commit()
     await db.refresh(secret)
-    
+
+    # Sweep now, not at the top of the hour. This endpoint keeps an encrypted
+    # database copy of everything it writes, and only the vault sweep scrubs
+    # those into the chosen store -- so a town that finished setup was shown
+    # "N keys are still in the database" until the hourly task fired, and the
+    # hourly timer restarts from zero on every deploy. Kicked even when this
+    # write did not reach the store: a bootstrap key saved here (the Google
+    # service account) is exactly the save that makes the store reachable for
+    # everything entered before it. The sweep no-ops with no reachable store.
+    # After the response, so a slow store cannot make Save feel broken.
+    from app.services.storage_maintenance import vault_secrets as _vault
+    background.add_task(_vault)
+
     return {
         **secret.__dict__,
         "secret_manager": sm_success,

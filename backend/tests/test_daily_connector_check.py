@@ -353,3 +353,30 @@ def test_a_broken_switch_lookup_still_alerts(monkeypatch):
     asyncio.run(notify(None, health=SnapshotHealth(), alerts=alerts))
 
     assert [h.connector for h in alerts.calls[0]] == ["sms"]
+
+
+def test_the_probe_alert_hook_is_called_with_only_the_session():
+    """probe_system hands its `alerts` callable nothing but the session, so
+    whatever is wired there must accept (db) alone. The original wiring passed
+    connector_alerts.dispatch, whose required `healths` argument made the email
+    step raise TypeError on every hourly probe -- the full disk was recorded,
+    the dashboard showed it, and the email this task exists to send never was."""
+    import inspect
+
+    from app.services.connector_verification import notify, probe_system
+
+    calls = []
+
+    async def alerts(db):
+        calls.append(db)
+        return {"sent": False}
+
+    health = FakeHealth()
+    result = asyncio.run(probe_system(
+        None, readings={"disk": {"ok": False, "detail": "98% full"}},
+        health=health, alerts=alerts))
+
+    assert calls == [None]
+    assert result["probes"]["disk"] == "failing"
+    # And the callable the celery task actually wires in accepts that shape.
+    inspect.signature(notify).bind(None)
