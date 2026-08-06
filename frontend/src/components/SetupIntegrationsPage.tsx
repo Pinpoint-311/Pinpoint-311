@@ -502,8 +502,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * than sit there claiming an answer the server does not have. */
     const [wantedFeatures, setWantedFeatures] = useState<Set<string>>(new Set(ALL_FEATURES));
     const [switchError, setSwitchError] = useState<string | null>(null);
-    const toggleFeature = async (f: string) => {
-        const wantedNow = !wantedFeatures.has(f);
+    const setFeature = async (f: string, wantedNow: boolean) => {
         const before = wantedFeatures;
         setWantedFeatures(prev => {
             const next = new Set(prev);
@@ -526,6 +525,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         }
     };
     const wants = (f: string) => wantedFeatures.has(f);
+    const toggleFeature = (f: string) => setFeature(f, !wantedFeatures.has(f));
 
 
     /* The questionnaire's answers, translated into the provider ids the
@@ -1425,6 +1425,15 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                        fetches its catalog and the section would otherwise have
                        to guess. */
                     statusMap={providerStatus}
+                    /* The same persisted switch the questionnaire ticks flip,
+                       reachable from the card itself. The cards speak
+                       capability ids and the ticks speak feature ids; `safety`
+                       vs `redaction` is the one pair where those differ. */
+                    onSwitch={async (id, on) => {
+                        const feature = Object.entries(FEATURE_TO_CAPABILITY)
+                            .find(([, capability]) => capability === id)?.[0] ?? id;
+                        await setFeature(feature, on);
+                    }}
                     /* Backups and crash reporting are features without a
                        provider catalog, so they are not in CAPS and could never
                        show up as switched off -- which is the pair somebody is

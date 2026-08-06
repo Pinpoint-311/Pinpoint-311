@@ -115,7 +115,11 @@ async def _discover_vertex(creds: Dict[str, str]) -> Optional[List[Dict[str, str
                 region = "us-east5"
             host = ("aiplatform.googleapis.com" if region in ("", "global")
                     else f"{region}-aiplatform.googleapis.com")
-            url = f"https://{host}/v1/publishers/{publisher}/models"
+            # v1beta1, deliberately. ListPublisherModels does not exist under
+            # /v1 -- Google answers it with an HTML 404 -- so every publisher
+            # "failed" and the picker silently fell back to the curated list
+            # on every deployment, which read as discovery not working at all.
+            url = f"https://{host}/v1beta1/publishers/{publisher}/models"
             page_token = None
             try:
                 for _ in range(5):  # bound pagination
