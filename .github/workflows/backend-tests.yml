@@ -21,7 +21,10 @@ jobs:
           python-version: "3.11"
       - name: Install test dependencies
         # The security/integration logic tests are self-contained (no DB); they
-        # need only the crypto + HTTP libraries plus pytest.
-        run: pip install cryptography httpx pytest pytest-asyncio
+        # need only the crypto + HTTP libraries plus pytest. Alembic is here for
+        # test_migrate.py's plan/chain tests: without it they importorskip, and
+        # a skip in this suite once hid a failing migration-gate regression for
+        # months (it first surfaced inside the production image).
+        run: pip install cryptography httpx pytest pytest-asyncio alembic
       - name: Run tests
         run: python -m pytest tests/ -q

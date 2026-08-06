@@ -22,10 +22,19 @@ from pathlib import Path
 
 import pytest
 
-# Guard on a submodule, not "alembic": backend/alembic/ is the migrations
-# directory, and with alembic uninstalled Python resolves that directory as a
-# namespace package, so importorskip("alembic") succeeds and the guard misses.
-pytest.importorskip("alembic.script")  # the chain checks read real revision scripts
+# No module-level importorskip. There used to be one, for alembic, and it made
+# this whole file silently skip in CI -- which does not install alembic -- so
+# the chain regression test below first actually ran inside the production
+# image, months and ten revisions after it last passed. The classifier and
+# revision_sources() are pure file-reading code with no third-party imports;
+# only the tests that call into alembic itself guard on it, individually.
+#
+# Guard on a submodule, not "alembic", where a guard is needed: backend/alembic/
+# is the migrations directory, and with alembic uninstalled Python resolves that
+# directory as a namespace package, so importorskip("alembic") succeeds and the
+# guard misses.
+def _needs_alembic():
+    pytest.importorskip("alembic.script")
 
 from app.db.migrate import (
     ADDITIVE,
@@ -108,6 +117,18 @@ def test_a_looped_execute_is_destructive():
 def test_sql_run_through_a_raw_connection_is_destructive():
     assert classify_source(migration('    op.get_bind().execute(sa.text("DELETE FROM t"))')) == DESTRUCTIVE
     assert classify_source(migration('    conn.execute(sa.text("DROP TABLE t"))')) == DESTRUCTIVE
+
+
+def test_a_bind_variable_does_not_smuggle_sql_past_the_gate():
+    """The check used to match only a variable literally named `conn`, so
+    `bind = op.get_bind(); bind.execute(sa.delete(...))` -- a row deletion --
+    classified ADDITIVE. A real revision (the system_settings singleton
+    collapse) was written exactly that way; it happened to be gated anyway on
+    a separate op.execute, which is the only reason the bypass never fired."""
+    body = ("    bind = op.get_bind()\n"
+            "    bind.execute(sa.delete(table).where(table.c.id.in_(drop)))")
+    assert classify_source(migration(body)) == DESTRUCTIVE
+    assert classify_source(migration("    session.execute(stmt)")) == DESTRUCTIVE
 
 
 @pytest.mark.parametrize("source", [
@@ -207,19 +228,60 @@ def test_downgrade_is_not_scanned():
 
 # ---- the real migrations in this repository ---------------------------------
 
-def test_every_shipped_migration_classifies_and_only_the_real_drop_is_gated():
+# Every revision the gate holds for a human, and why. This is a ledger, not a
+# tolerance list: a new revision landing here must be a deliberate decision,
+# because each entry means a town upgrading across it has its container stop
+# and wait for an operator to run the printed override command.
+#
+# None of these are classifier false positives. Each one really does what the
+# gate exists to make a human look at: drop or rename columns that live code
+# may still be reading, or rewrite rows through raw SQL the scanner cannot
+# prove harmless.
+EXPECTED_GATED = {
+    # Drops four service_requests columns, including photos and media_url.
+    "20260203_1911_2237fb926131_add_uptime_records_table.py",
+    # Deletes duplicate system_settings rows after folding their values.
+    "20260731_1400_d0e1f2a3b4c5_system_settings_singleton.py",
+    # UPDATEs retention_mode values ('anonymize' -> 'redact').
+    "20260801_0400_e1f2a3b4c5d6_retention_scrub_fields.py",
+    # Renames three ai_* columns -- breaks the old container mid-rolling-deploy.
+    "20260801_0600_f2a3b4c5d6e7_ai_columns_and_town_timezone.py",
+    # UPDATEs retention_mode values ('delete' -> 'purge').
+    "20260801_0800_a3b4c5d6e7f8_retire_hard_delete.py",
+    # Raw-SQL backfill of connector_health.last_result from last_error.
+    "20260801_1000_b4c5d6e7f8a9_persist_last_check_result.py",
+    # Raw-SQL backfill of NULL retention_mode rows.
+    "20260802_0900_c5d6e7f8a9b0_retention_state_must_be_chosen.py",
+    # Drops retention_state_code / retention_state_confirmed, renames
+    # retention_days_override.
+    "20260804_0900_d6e7f8a9b0c1_town_sets_its_own_retention.py",
+    # Rewrites the modules JSON and seeds capability_switches over a raw bind.
+    "20260804_1400_f1a2b3c4d5e6_capability_switches.py",
+    # Raw-SQL backfill of setup_completed_at.
+    "20260804_1500_a2b3c4d5e6f7_setup_completed_marker.py",
+}
+
+
+def test_every_shipped_migration_classifies_and_the_gated_set_is_deliberate():
     """A regression guard on the whole chain. If a future revision trips the
     gate, that should be a deliberate decision, not a surprise on a town's
-    server at 3am."""
+    server at 3am.
+
+    This test must never be guarded on an optional import: it skipped in CI
+    for months behind a module-level importorskip("alembic.script") while ten
+    gated revisions accumulated, and the first place it actually ran was the
+    production image. revision_sources() and classify_source() read files and
+    need nothing beyond the standard library."""
     sources = revision_sources()
     assert sources, "no migrations found"
 
     gated = {path.name for _, (path, src) in sources.items()
              if classify_source(src) == DESTRUCTIVE}
 
-    # This one genuinely drops four columns from service_requests, including
-    # photos and media_url. It is the case the gate exists for.
-    assert gated == {"20260203_1911_2237fb926131_add_uptime_records_table.py"}, gated
+    assert gated == EXPECTED_GATED, (
+        f"newly gated: {sorted(gated - EXPECTED_GATED)}; "
+        f"no longer gated: {sorted(EXPECTED_GATED - gated)}"
+    )
 
 
 def test_the_road_tables_migration_exists_and_can_auto_apply():
@@ -240,6 +302,7 @@ def test_the_road_tables_migration_exists_and_can_auto_apply():
 def test_the_revision_chain_is_linear_with_one_head():
     """Two heads means `alembic upgrade head` is ambiguous and the entrypoint
     would fail on every start."""
+    _needs_alembic()
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
@@ -321,6 +384,7 @@ def test_a_fresh_plan_does_not_replay_the_chain():
     `departments` and no revision creates that table. Nothing noticed because
     the schema was always built by create_all. A fresh install builds from the
     models and stamps head instead."""
+    _needs_alembic()
     from app.db.migrate import build_plan
     plan = build_plan(current=None, has_tables=False)
     assert plan.fresh
@@ -328,6 +392,7 @@ def test_a_fresh_plan_does_not_replay_the_chain():
 
 
 def test_an_existing_database_with_no_history_is_adopted_not_replayed():
+    _needs_alembic()
     from app.db.migrate import build_plan
     plan = build_plan(current=None, has_tables=True)
     assert plan.baseline and not plan.fresh
