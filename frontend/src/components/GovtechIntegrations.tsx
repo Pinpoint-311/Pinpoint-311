@@ -10,9 +10,18 @@ import {
 
 import { Button, Modal, CollapsibleSection } from './ui';
 import SecretField from './SecretField';
+import { useDialog } from './DialogProvider';
 import {
     api, IntegrationPlatform, IntegrationConfig, IntegrationSyncLog, IntegrationTestResult,
 } from '../services/api';
+// The decisions worth checking directly live next door, with no JSX around them.
+import {
+    alreadyStored as alreadyStoredIn,
+    buildSavePayload,
+    needsEnableConfirmation,
+    requiredMissing as missingRequired,
+    truncate,
+} from './integrationState';
 
 const MODE_LABELS: Record<string, { label: string; className: string }> = {
     public_api: { label: 'Works with your account login', className: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
@@ -41,17 +50,24 @@ const SYNC_CHOICES = (name: string) => [
 type WizardStep = 'intro' | 'details' | 'finish';
 
 export default function GovtechIntegrations() {
+    const dialog = useDialog();
     const [catalog, setCatalog] = useState<IntegrationPlatform[]>([]);
     const [configs, setConfigs] = useState<IntegrationConfig[]>([]);
-    const [busy, setBusy] = useState<string | null>(null);
+    // Keyed by integration id. One global string meant every card's controls
+    // disabled while any one of them was working, so checking Accela greyed out
+    // the Tyler card the clerk was about to look at.
+    const [busy, setBusy] = useState<Record<number, string>>({});
     const [cardResult, setCardResult] = useState<Record<string, IntegrationTestResult>>({});
     const [logs, setLogs] = useState<Record<string, IntegrationSyncLog[]>>({});
     const [logsOpen, setLogsOpen] = useState<string | null>(null);
     const [copied, setCopied] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [query, setQuery] = useState('');
-    // Which connector cards are expanded. With 11 platforms, showing every card
-    // fully expanded is a wall — collapse to a compact row and open on demand.
+    // Distinguishes "nothing matches" from "we have not asked yet". Without it
+    // the first paint rendered `No platforms match ""` under the search box.
+    const [loaded, setLoaded] = useState(false);
+    // Which connector cards are expanded. With this many platforms, showing every
+    // card fully expanded is a wall — collapse to a compact row and open on demand.
     const [openCards, setOpenCards] = useState<Set<string>>(new Set());
     const initialized = useRef(false);
 
@@ -59,13 +75,28 @@ export default function GovtechIntegrations() {
     const [wizard, setWizard] = useState<IntegrationPlatform | null>(null);
     const [step, setStep] = useState<WizardStep>('intro');
     const [values, setValues] = useState<Record<string, string>>({});
+    // Config keys the admin has asked to blank on save, sent as explicit nulls.
+    const [cleared, setCleared] = useState<Set<string>>(new Set());
     const [syncChoice, setSyncChoice] = useState('bidirectional');
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState<IntegrationTestResult | null>(null);
     const [showTechnical, setShowTechnical] = useState(false);
-    const testStarted = useRef(false);
+    // Errors from inside the wizard. The shared `error` banner renders behind the
+    // modal, so a failed save made "Save & check the connection" look like a
+    // button that does nothing at all.
+    const [wizardError, setWizardError] = useState<string | null>(null);
+
+    const busyOf = (existing?: IntegrationConfig | null) =>
+        (existing && busy[existing.id]) || null;
+
+    const setBusyFor = (id: number, action: string | null) =>
+        setBusy(prev => {
+            const next = { ...prev };
+            if (action) next[id] = action; else delete next[id];
+            return next;
+        });
 
     const load = useCallback(async () => {
         try {
@@ -74,6 +105,8 @@ export default function GovtechIntegrations() {
             setConfigs(cfgs);
         } catch (err: any) {
             setError(err?.message || 'Could not load the connections list. Try refreshing the page.');
+        } finally {
+            setLoaded(true);
         }
     }, []);
 
@@ -102,10 +135,16 @@ export default function GovtechIntegrations() {
     const webhookUrl = (existing?: IntegrationConfig) =>
         existing ? `${window.location.origin}${existing.webhook_path}` : null;
 
+    // Clipboard writes reject on a denied permission or a non-secure context, and
+    // an unhandled rejection there left the button silently claiming "Copied".
     const copyText = (key: string, text: string) => {
-        navigator.clipboard.writeText(text);
-        setCopied(key);
-        setTimeout(() => setCopied(null), 2000);
+        navigator.clipboard.writeText(text).then(
+            () => {
+                setCopied(key);
+                setTimeout(() => setCopied(null), 2000);
+            },
+            () => setError('Your browser blocked the copy. Select the text and copy it manually.'),
+        );
     };
 
     // ---------- Wizard ----------
@@ -115,34 +154,26 @@ export default function GovtechIntegrations() {
         setWizard(platform);
         setStep(startAt);
         setValues({});
+        setCleared(new Set());
         setSyncChoice(existing?.sync_direction || platform.recommended_sync_direction || 'bidirectional');
         setShowAdvanced(false);
         setTestResult(null);
         setShowTechnical(false);
-        testStarted.current = false;
+        setWizardError(null);
     };
 
     const closeWizard = () => { setWizard(null); load(); };
 
-    const requiredMissing = (platform: IntegrationPlatform): string[] => {
-        const existing = configFor(platform.platform);
-        return platform.config_fields
-            .filter(f => f.required)
-            .filter(f => !values[f.key] && (existing?.config as Record<string, unknown> | undefined)?.[f.key] === undefined)
-            .map(f => f.label);
-    };
+    const requiredMissing = (platform: IntegrationPlatform): string[] =>
+        missingRequired(platform, values, configFor(platform.platform), cleared);
 
     const saveWizard = async (platform: IntegrationPlatform): Promise<IntegrationConfig | null> => {
         const existing = configFor(platform.platform);
-        const credentials: Record<string, string> = {};
-        const config: Record<string, unknown> = {};
-        // Trim on save — a stray copy-paste space is the most common reason a
-        // correct key or URL is rejected by the vendor.
-        platform.credential_fields.forEach(f => { const v = (values[f.key] || '').trim(); if (v) credentials[f.key] = v; });
-        platform.config_fields.forEach(f => { const v = (values[f.key] ?? '').trim(); if (v !== '') config[f.key] = v; });
+        const { credentials, config } = buildSavePayload(platform, values, cleared);
 
         setSaving(true);
         setError(null);
+        setWizardError(null);
         try {
             let saved: IntegrationConfig;
             if (existing) {
@@ -154,9 +185,10 @@ export default function GovtechIntegrations() {
                 });
             }
             setConfigs(prev => [...prev.filter(c => c.platform !== platform.platform), saved]);
+            setCleared(new Set());
             return saved;
         } catch (err: any) {
-            setError(err?.message || 'Could not save. Please try again.');
+            setWizardError(err?.message || 'Could not save. Please try again.');
             return null;
         } finally {
             setSaving(false);
@@ -165,7 +197,17 @@ export default function GovtechIntegrations() {
 
     const runFinishTest = async (platform: IntegrationPlatform, saved?: IntegrationConfig | null) => {
         const existing = saved || configFor(platform.platform);
-        if (!existing) return;
+        if (!existing) {
+            // The finish step renders nothing at all when there is neither a
+            // spinner nor a result, so returning silently here left an empty
+            // modal with no explanation and no way forward but Back.
+            setTestResult({
+                ok: false,
+                detail: 'No saved connection to check.',
+                friendly: 'We could not find the saved connection to check. Go back a step and save it again.',
+            });
+            return;
+        }
         setTesting(true);
         setTestResult(null);
         setShowTechnical(false);
@@ -185,73 +227,156 @@ export default function GovtechIntegrations() {
 
     const goToFinish = async (platform: IntegrationPlatform) => {
         const saved = await saveWizard(platform);
-        if (!saved) return;
+        if (!saved) return;  // wizardError is rendered in the modal
         setStep('finish');
-        testStarted.current = true;
         runFinishTest(platform, saved);
     };
 
     // ---------- Card actions ----------
 
-    const handleToggle = async (existing: IntegrationConfig) => {
-        setBusy(`toggle:${existing.platform}`);
+    /** Reload configs, and the Activity drawer if it happens to be open.
+     *
+     * Every card action changes server state -- a test now writes a health row and
+     * clears the breaker, a sync writes log entries -- and none of them reloaded,
+     * so the card kept showing the state from page load until somebody refreshed
+     * the browser. */
+    const refreshAfterAction = async (existing: IntegrationConfig) => {
+        await load();
+        if (logsOpen === existing.platform) {
+            try {
+                const entries = await api.getIntegrationLogs(existing.id);
+                setLogs(prev => ({ ...prev, [existing.platform]: entries }));
+            } catch { /* the drawer keeps what it had */ }
+        }
+    };
+
+    const handleToggle = async (existing: IntegrationConfig, name: string) => {
+        // Turning a connector *on* is the consequential direction, and the wizard
+        // promises the connection stays off until a check passes. The toggle
+        // bypassed that entirely, so a connector whose last check failed could be
+        // switched on with one click and start dropping resident reports.
+        {
+            const lastResult = cardResult[existing.platform];
+            if (needsEnableConfirmation(existing, lastResult)) {
+                const detail = existing.last_sync_error || lastResult?.detail || '';
+                const confirmed = await dialog.confirm({
+                    title: `Turn on ${name} anyway?`,
+                    message: `The last check on this connection failed${detail ? `:\n\n${truncate(detail, 300)}` : '.'}\n\n`
+                        + 'Reports sent while it is broken are not queued and retried — they '
+                        + 'are logged as failed. Run "Check connection" first unless you know '
+                        + 'the problem is already fixed.',
+                    variant: 'warning',
+                    confirmText: 'Turn it on anyway',
+                });
+                if (!confirmed) return;
+            }
+        }
+        setBusyFor(existing.id, 'toggle');
         try {
             await api.updateIntegration(existing.id, { enabled: !existing.enabled });
             await load();
         } catch (err: any) {
             setError(err?.message || 'Could not update the connection.');
         } finally {
-            setBusy(null);
+            setBusyFor(existing.id, null);
         }
     };
 
     const handleCardTest = async (existing: IntegrationConfig) => {
-        setBusy(`test:${existing.platform}`);
+        setBusyFor(existing.id, 'test');
         try {
             const result = await api.testIntegration(existing.id);
             setCardResult(prev => ({ ...prev, [existing.platform]: result }));
+            await refreshAfterAction(existing);
         } catch (err: any) {
             setCardResult(prev => ({ ...prev, [existing.platform]: { ok: false, detail: err?.message || 'Test failed' } }));
         } finally {
-            setBusy(null);
+            setBusyFor(existing.id, null);
         }
     };
 
     const handleSync = async (existing: IntegrationConfig) => {
-        setBusy(`sync:${existing.platform}`);
+        setBusyFor(existing.id, 'sync');
         try {
-            await api.syncIntegration(existing.id);
-            setCardResult(prev => ({ ...prev, [existing.platform]: { ok: true, detail: 'Update check started — new activity will appear within a minute or two.' } }));
+            const response = await api.syncIntegration(existing.id);
+            const partly = response.started
+                && Object.values(response.started).some(started => !started);
+            setCardResult(prev => ({
+                ...prev,
+                [existing.platform]: {
+                    // A partial start is not a success. The endpoint says which
+                    // half ran; repeating its message beats replacing it with a
+                    // reassurance the server did not give.
+                    ok: !partly,
+                    detail: partly
+                        ? response.message
+                        : 'Update check started — new activity will appear within a minute or two.',
+                },
+            }));
+            await refreshAfterAction(existing);
         } catch (err: any) {
             setCardResult(prev => ({ ...prev, [existing.platform]: { ok: false, detail: err?.message || 'Could not start the update check.' } }));
         } finally {
-            setBusy(null);
+            setBusyFor(existing.id, null);
         }
     };
 
     const handleSyncAssets = async (existing: IntegrationConfig) => {
-        setBusy(`assets:${existing.platform}`);
+        setBusyFor(existing.id, 'assets');
         try {
             await api.syncIntegrationAssets(existing.id);
             setCardResult(prev => ({ ...prev, [existing.platform]: { ok: true, detail: 'Copying their asset list (hydrants, lights, signs…) onto your map. This can take a few minutes.' } }));
+            await refreshAfterAction(existing);
         } catch (err: any) {
             setCardResult(prev => ({ ...prev, [existing.platform]: { ok: false, detail: err?.message || 'Could not start the asset copy.' } }));
         } finally {
-            setBusy(null);
+            setBusyFor(existing.id, null);
+        }
+    };
+
+    const handleRegenerateToken = async (existing: IntegrationConfig, name: string) => {
+        const confirmed = await dialog.confirm({
+            title: `Issue a new address for ${name}?`,
+            message: 'The current address stops working immediately. Anything the vendor '
+                + 'sends to it will be refused until you give them the new one.\n\n'
+                + 'Do this if the address may have been shared or logged somewhere it '
+                + 'should not have been.',
+            variant: 'warning',
+            confirmText: 'Issue a new address',
+        });
+        if (!confirmed) return;
+        setBusyFor(existing.id, 'rotate');
+        try {
+            const updated = await api.regenerateIntegrationWebhookToken(existing.id);
+            setConfigs(prev => [...prev.filter(c => c.platform !== existing.platform), updated]);
+            setCardResult(prev => ({ ...prev, [existing.platform]: { ok: true, detail: updated.message } }));
+        } catch (err: any) {
+            setError(err?.message || 'Could not issue a new address.');
+        } finally {
+            setBusyFor(existing.id, null);
         }
     };
 
     const handleDelete = async (existing: IntegrationConfig, name: string) => {
-        if (!window.confirm(`Disconnect ${name}? Reports already sent will stay in both systems, but nothing new will sync.`)) return;
-        setBusy(`delete:${existing.platform}`);
+        const confirmed = await dialog.confirm({
+            title: `Disconnect ${name}?`,
+            message: 'Reports already sent will stay in both systems, but nothing new will '
+                + 'sync. The credentials are removed from your Secret Manager too, so '
+                + 'reconnecting means entering them again.',
+            variant: 'danger',
+            confirmText: 'Disconnect',
+        });
+        if (!confirmed) return;
+        setBusyFor(existing.id, 'delete');
         try {
             await api.deleteIntegration(existing.id);
+            // closeWizard already reloads; a second load() raced the first and
+            // could paint the pre-delete list over the post-delete one.
             closeWizard();
-            await load();
         } catch (err: any) {
-            setError(err?.message || 'Could not disconnect.');
+            setWizardError(err?.message || 'Could not disconnect.');
         } finally {
-            setBusy(null);
+            setBusyFor(existing.id, null);
         }
     };
 
@@ -268,24 +393,58 @@ export default function GovtechIntegrations() {
 
     const renderField = (platform: IntegrationPlatform, field: { key: string; label: string; secret?: boolean; placeholder?: string; required?: boolean }, isCredential: boolean) => {
         const existing = configFor(platform.platform);
-        const alreadySet = isCredential
-            ? !!existing?.configured_credentials.includes(field.key)
-            : existing !== undefined && (existing.config as Record<string, unknown>)[field.key] !== undefined;
+        // Deliberately without `cleared`: a field marked for clearing must keep
+        // showing its Clear/Keep-it control so the choice can be undone.
+        const alreadySet = alreadyStoredIn(existing, field.key, isCredential);
         // Config (non-secret) fields show their current value as the placeholder;
         // secrets show a masked "leave blank to keep" and get a reveal toggle.
         const currentConfigVal = !isCredential ? String((existing?.config as Record<string, unknown>)?.[field.key] ?? '') : '';
+        const isCleared = cleared.has(field.key);
         return (
-            <SecretField
-                key={field.key}
-                label={field.label}
-                secret={!!field.secret}
-                required={field.required}
-                value={values[field.key] || ''}
-                onChange={(v) => setValues(p => ({ ...p, [field.key]: v }))}
-                placeholder={!isCredential && alreadySet ? currentConfigVal : (field.placeholder || '')}
-                help={platform.field_help?.[field.key]}
-                savedHint={!!(isCredential && alreadySet)}
-            />
+            <div key={field.key}>
+                <SecretField
+                    label={field.label}
+                    secret={!!field.secret}
+                    required={field.required}
+                    value={values[field.key] || ''}
+                    onChange={(v) => setValues(p => ({ ...p, [field.key]: v }))}
+                    placeholder={!isCredential && alreadySet && !isCleared ? currentConfigVal : (field.placeholder || '')}
+                    help={platform.field_help?.[field.key]}
+                    savedHint={!!(isCredential && alreadySet)}
+                />
+                {/* Blank means "keep what is stored", so emptying the box cannot
+                    delete a setting. A wrong jurisdiction_id was therefore
+                    permanent. Clearing is asked for by name instead. */}
+                {!isCredential && alreadySet && !field.required && (
+                    isCleared ? (
+                        <p className="text-[11px] text-amber-300/80 mt-1 flex items-center gap-2">
+                            Will be cleared when you save.
+                            <button
+                                type="button"
+                                className="underline hover:text-amber-200"
+                                onClick={() => setCleared(prev => {
+                                    const next = new Set(prev);
+                                    next.delete(field.key);
+                                    return next;
+                                })}
+                            >
+                                Keep it
+                            </button>
+                        </p>
+                    ) : (
+                        <button
+                            type="button"
+                            className="text-[11px] text-white/45 hover:text-white/70 mt-1 underline"
+                            onClick={() => {
+                                setValues(p => ({ ...p, [field.key]: '' }));
+                                setCleared(prev => new Set(prev).add(field.key));
+                            }}
+                        >
+                            Clear this setting
+                        </button>
+                    )
+                )}
+            </div>
         );
     };
 
@@ -297,6 +456,24 @@ export default function GovtechIntegrations() {
             url || '(we will send you this address once our side is set up)'
         );
     };
+
+    /** The sync directions this connector can actually offer. */
+    const syncOptionsFor = (platform: IntegrationPlatform) =>
+        SYNC_CHOICES(platform.name).filter(c => c.value === 'bidirectional'
+            ? platform.capabilities.includes('push') && platform.capabilities.includes('pull')
+            : platform.capabilities.includes(c.value));
+
+    // A single possible direction is not a choice, so the panel is hidden and the
+    // value pinned. Pinning it happened during render, which is a state update in
+    // a render body -- React warns, and under StrictMode it runs twice.
+    useEffect(() => {
+        if (!wizard) return;
+        const options = syncOptionsFor(wizard);
+        if (options.length === 1 && syncChoice !== options[0].value) {
+            setSyncChoice(options[0].value);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [wizard, syncChoice]);
 
     const connectedCount = (configs || []).filter(c => c.enabled).length;
 
@@ -313,10 +490,18 @@ export default function GovtechIntegrations() {
 
     return (
         <>
+        {/* id so the setup page's status rail can link here, the way it does for
+            every other section. Without it the rail's "town systems" entry had
+            nowhere to scroll to. */}
+        <div id="sec-town-systems">
         <CollapsibleSection
             title="Connect Your Other Town Systems"
             icon={Landmark}
-            subtitle={`${(visibleCatalog || []).length || (catalog || []).length} platforms available — Accela, Tyler, CivicPlus, Open311, or a generic connector for anything else`}
+            // Counts the catalog, not the filtered view. It read off
+            // `visibleCatalog`, so typing in the search box rewrote the heading
+            // to "1 platforms available" -- which reads as the town only having
+            // one option rather than as a filter being applied.
+            subtitle={`${(catalog || []).length} platforms available — Accela, Tyler, CivicPlus, Open311, or a generic connector for anything else`}
             defaultOpen={true}
             badge={connectedCount > 0 ? (
                 <span className="inline-flex items-center gap-2 rounded-full bg-emerald-500/15 border border-emerald-400/30 pl-2.5 pr-3 py-1 text-[11px] font-semibold text-emerald-200 whitespace-nowrap">
@@ -350,9 +535,20 @@ export default function GovtechIntegrations() {
                 </div>
             )}
 
-            {(visibleCatalog || []).length === 0 && (
+            {/* "Nothing matches" and "we have not asked yet" are different
+                answers. This rendered `No platforms match ""` on first paint. */}
+            {!loaded && (
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-8 text-center text-white/50 text-sm flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                    Loading the platforms your town can connect to…
+                </div>
+            )}
+
+            {loaded && (visibleCatalog || []).length === 0 && (
                 <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-8 text-center text-white/50 text-sm">
-                    No platforms match “{query}”. Don’t see yours? The <span className="text-white/70">Generic Open311</span> connector works with many systems.
+                    {query
+                        ? <>No platforms match “{query}”. Don’t see yours? The <span className="text-white/70">Generic Open311</span> connector works with many systems.</>
+                        : 'No platforms are available to connect.'}
                 </div>
             )}
 
@@ -446,25 +642,106 @@ export default function GovtechIntegrations() {
                             </div>
 
                             {existing?.last_sync_at && (
-                                <p className={`relative text-[11px] mt-2 ${existing.last_sync_status === 'error' ? 'text-amber-300' : 'text-white/60'}`}>
-                                    {existing.last_sync_status === 'error'
-                                        ? 'The last update check hit a problem — press "Check connection" for a plain-language explanation.'
-                                        : `Last checked ${new Date(existing.last_sync_at).toLocaleString()} — all good.`}
-                                </p>
+                                <div className={`relative text-[11px] mt-2 ${existing.last_sync_status === 'error' ? 'text-amber-300' : 'text-white/60'}`}>
+                                    {existing.last_sync_status === 'error' ? (
+                                        <>
+                                            <p>The last update check hit a problem:</p>
+                                            {/* The vendor's own words. `last_sync_error` was
+                                                fetched and never rendered, so the card said
+                                                "hit a problem" and the only way to find out
+                                                which problem was to press another button. */}
+                                            {existing.last_sync_error && (
+                                                <p className="text-amber-200/70 mt-0.5 break-words">
+                                                    {truncate(existing.last_sync_error)}
+                                                </p>
+                                            )}
+                                            <p className="text-amber-300/60 mt-0.5">
+                                                Open Activity for the full message, or press “Check connection”
+                                                for a plain-language explanation.
+                                            </p>
+                                        </>
+                                    ) : (
+                                        <p>Last checked {new Date(existing.last_sync_at).toLocaleString()} — all good.</p>
+                                    )}
+                                </div>
                             )}
 
-                            {existing?.credentials_vaulted && (
-                                <p className="relative text-[11px] mt-2 flex items-center gap-1.5 text-emerald-300/80">
-                                    <ShieldCheck className="w-3 h-3 shrink-0" aria-hidden="true" />
-                                    Credentials stored in your Secret Manager — not in this app's database.
-                                </p>
+                            {existing && existing.credentials_vaulted_state !== 'none' && (
+                                existing.credentials_vaulted_state === 'partial' ? (
+                                    /* Said plainly, because the reassuring version of this
+                                       line used to appear whenever *any* field made it to
+                                       the vault -- over-claiming exactly where a government
+                                       deployment is relying on the claim. */
+                                    <p className="relative text-[11px] mt-2 flex items-center gap-1.5 text-amber-300/80">
+                                        <AlertCircle className="w-3 h-3 shrink-0" aria-hidden="true" />
+                                        Some credentials are in your Secret Manager and some are stored
+                                        encrypted in this app's database. Re-save them to move the rest.
+                                    </p>
+                                ) : (
+                                    <p className="relative text-[11px] mt-2 flex items-center gap-1.5 text-emerald-300/80">
+                                        <ShieldCheck className="w-3 h-3 shrink-0" aria-hidden="true" />
+                                        Credentials stored in your Secret Manager — not in this app's database.
+                                    </p>
+                                )
                             )}
 
                             {result && (
-                                <div className={`relative mt-2 rounded-lg px-3 py-2 text-xs border ${result.ok
-                                    ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-200'
-                                    : 'bg-amber-500/10 border-amber-500/25 text-amber-200'}`}>
+                                <div className={`relative mt-2 rounded-lg px-3 py-2 text-xs border ${!result.ok
+                                    ? 'bg-amber-500/10 border-amber-500/25 text-amber-200'
+                                    : result.verified === false
+                                        ? 'bg-sky-500/10 border-sky-500/25 text-sky-200'
+                                        : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-200'}`}>
+                                    {/* A pass that verified nothing is not a pass in the sense a
+                                        clerk reads "Connected" as. Open311 has no authenticated
+                                        endpoint at all, so saying so is the only honest option. */}
+                                    {result.ok && result.verified === false && (
+                                        <span className="font-semibold block mb-0.5">Reachable — credentials not checked</span>
+                                    )}
                                     {result.ok ? result.detail : (result.friendly || result.detail)}
+                                </div>
+                            )}
+
+                            {/* The inbound address and the vendor email were reachable
+                                only inside the wizard -- the address on its success
+                                screen, the email on an intro step you could get back to
+                                only by pressing Back. Both are things somebody needs
+                                weeks later, when the vendor finally replies. */}
+                            {existing && (
+                                <div className="relative mt-3 space-y-2">
+                                    {(() => {
+                                        const url = webhookUrl(existing);
+                                        if (!url) return null;
+                                        return (
+                                            <div className="rounded-lg bg-white/[0.03] border border-white/10 p-2.5">
+                                                <p className="text-white/60 text-[11px] mb-1.5">
+                                                    Inbound address for {platform.name} — the mailbox only they drop into.
+                                                </p>
+                                                <div className="flex items-center gap-2">
+                                                    <code className="flex-1 bg-black/30 rounded px-2 py-1.5 text-[10px] text-indigo-200 break-all">{url}</code>
+                                                    <Button size="sm" variant="ghost" onClick={() => copyText(`hook:${platform.platform}`, url)} aria-label="Copy the inbound address">
+                                                        {copied === `hook:${platform.platform}` ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                                                    </Button>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRegenerateToken(existing, platform.name)}
+                                                    disabled={busyOf(existing) !== null}
+                                                    className="text-[10px] text-white/40 hover:text-white/70 underline mt-1.5 disabled:opacity-50"
+                                                >
+                                                    {busyOf(existing) === 'rotate' ? 'Issuing…' : 'Issue a new address'}
+                                                </button>
+                                            </div>
+                                        );
+                                    })()}
+                                    {platform.vendor_ask && (
+                                        <Button
+                                            size="sm" variant="ghost" className="text-xs"
+                                            onClick={() => copyText(`mail:${platform.platform}`, `Subject: ${platform.vendor_ask!.subject}\n\n${emailBody(platform)}`)}
+                                            leftIcon={copied === `mail:${platform.platform}` ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Mail className="w-3.5 h-3.5" />}
+                                        >
+                                            {copied === `mail:${platform.platform}` ? 'Copied — paste it into an email' : 'Copy the vendor request email'}
+                                        </Button>
+                                    )}
                                 </div>
                             )}
 
@@ -481,17 +758,21 @@ export default function GovtechIntegrations() {
                                         <Button size="sm" variant="ghost" className="text-xs" onClick={() => openWizard(platform, 'details')}>
                                             Settings
                                         </Button>
-                                        <Button size="sm" variant="ghost" className="text-xs" onClick={() => handleCardTest(existing)} disabled={busy !== null}>
-                                            {busy === `test:${platform.platform}` ? 'Checking…' : 'Check connection'}
+                                        <Button size="sm" variant="ghost" className="text-xs" onClick={() => handleCardTest(existing)} disabled={busyOf(existing) !== null}>
+                                            {busyOf(existing) === 'test' ? 'Checking…' : 'Check connection'}
                                         </Button>
                                         {existing.enabled && platform.capabilities.includes('pull') && (
-                                            <Button size="sm" variant="ghost" className="text-xs" onClick={() => handleSync(existing)} disabled={busy !== null} leftIcon={<RefreshCw className="w-3 h-3" />}>
-                                                Check for updates
+                                            <Button size="sm" variant="ghost" className="text-xs" onClick={() => handleSync(existing)} disabled={busyOf(existing) !== null} leftIcon={<RefreshCw className={`w-3 h-3 ${busyOf(existing) === 'sync' ? 'animate-spin' : ''}`} />}>
+                                                {/* The only button here that never said it was
+                                                    working, so pressing it looked like nothing
+                                                    happened -- which is also what a broken one
+                                                    looks like. */}
+                                                {busyOf(existing) === 'sync' ? 'Checking…' : 'Check for updates'}
                                             </Button>
                                         )}
                                         {existing.enabled && platform.capabilities.includes('assets') && (
-                                            <Button size="sm" variant="ghost" className="text-xs" onClick={() => handleSyncAssets(existing)} disabled={busy !== null}>
-                                                {busy === `assets:${platform.platform}` ? 'Copying…' : 'Copy their assets to my map'}
+                                            <Button size="sm" variant="ghost" className="text-xs" onClick={() => handleSyncAssets(existing)} disabled={busyOf(existing) !== null}>
+                                                {busyOf(existing) === 'assets' ? 'Copying…' : 'Copy their assets to my map'}
                                             </Button>
                                         )}
                                         <Button size="sm" variant="ghost" className="text-xs" onClick={() => toggleLogs(existing)} rightIcon={logsOpen === platform.platform ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}>
@@ -500,8 +781,8 @@ export default function GovtechIntegrations() {
                                         <label className="flex items-center gap-2 ml-auto text-[11px] text-white/60 cursor-pointer select-none">
                                             {existing.enabled ? 'On' : 'Off'}
                                             <button
-                                                onClick={() => handleToggle(existing)}
-                                                disabled={busy !== null}
+                                                onClick={() => handleToggle(existing, platform.name)}
+                                                disabled={busyOf(existing) !== null}
                                                 role="switch"
                                                 aria-checked={existing.enabled}
                                                 aria-label={`Turn ${platform.name} connection ${existing.enabled ? 'off' : 'on'}`}
@@ -519,6 +800,17 @@ export default function GovtechIntegrations() {
 
                             {logsOpen === platform.platform && platformLogs && (
                                 <div className="relative mt-3 rounded-lg border border-white/10 divide-y divide-white/5 max-h-48 overflow-y-auto">
+                                    {/* The current error in full, pinned above the history.
+                                        Somebody who opened this drawer opened it to read the
+                                        message, and the card only had room to clip it. */}
+                                    {existing?.last_sync_status === 'error' && existing.last_sync_error && (
+                                        <div className="px-3 py-2 bg-amber-500/[0.06]">
+                                            <p className="text-amber-200 text-[11px] font-semibold">Most recent problem</p>
+                                            <p className="text-amber-100/70 text-[11px] mt-0.5 break-words whitespace-pre-wrap">
+                                                {existing.last_sync_error}
+                                            </p>
+                                        </div>
+                                    )}
                                     {(platformLogs || []).length === 0 && (
                                         <p className="text-white/60 text-xs px-3 py-2">Nothing has synced yet. Activity will show up here once reports start flowing.</p>
                                     )}
@@ -541,6 +833,7 @@ export default function GovtechIntegrations() {
                 })}
             </div>
         </CollapsibleSection>
+        </div>
 
         {/* ---------- Setup wizard ---------- */}
         {wizard && (
@@ -550,12 +843,35 @@ export default function GovtechIntegrations() {
                     title={step === 'intro' ? `Connect ${wizard.name}` : step === 'details' ? `Connect ${wizard.name} — enter the details` : `Connect ${wizard.name} — final check`}
                     size="lg"
                 >
-                    {/* Step dots */}
-                    <div className="flex items-center gap-2 mb-4" aria-hidden="true">
-                        {(['intro', 'details', 'finish'] as WizardStep[]).map((s) => (
-                            <div key={s} className={`h-1.5 rounded-full transition-all ${step === s ? 'w-8 bg-indigo-400' : 'w-4 bg-white/15'}`} />
-                        ))}
+                    {/* Step dots, plus the same thing in words.
+                        The dots were aria-hidden with no textual equivalent, so a
+                        screen-reader user had no way to know this was step 2 of 3 --
+                        the one piece of orientation a multi-step form owes them. */}
+                    <div className="flex items-center justify-between gap-3 mb-4">
+                        <div className="flex items-center gap-2" aria-hidden="true">
+                            {(['intro', 'details', 'finish'] as WizardStep[]).map((s) => (
+                                <div key={s} className={`h-1.5 rounded-full transition-all ${step === s ? 'w-8 bg-indigo-400' : 'w-4 bg-white/15'}`} />
+                            ))}
+                        </div>
+                        <p className="text-white/50 text-[11px]">
+                            Step {step === 'intro' ? 1 : step === 'details' ? 2 : 3} of 3
+                            <span className="sr-only">
+                                {step === 'intro' ? ': what you need' : step === 'details' ? ': enter the details' : ': final check'}
+                            </span>
+                        </p>
                     </div>
+
+                    {/* Inside the modal, because the shared banner renders behind it.
+                        A failed save made "Save & check the connection" appear to do
+                        nothing at all: the error was written, the step did not
+                        advance, and the only visible change was the spinner
+                        stopping. */}
+                    {wizardError && (
+                        <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200 flex items-start gap-2">
+                            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+                            <span className="break-words">{wizardError}</span>
+                        </div>
+                    )}
 
                     {step === 'intro' && (
                         <div className="space-y-4">
@@ -640,15 +956,11 @@ export default function GovtechIntegrations() {
                             )}
 
                             {(() => {
-                                const syncOptions = SYNC_CHOICES(wizard.name).filter(c => c.value === 'bidirectional'
-                                    ? wizard.capabilities.includes('push') && wizard.capabilities.includes('pull')
-                                    : wizard.capabilities.includes(c.value));
-                                // A single possible direction isn't a choice — don't ask. Just
-                                // pin it so the payload is correct and skip the redundant panel.
-                                if ((syncOptions || []).length <= 1) {
-                                    if (syncOptions[0] && syncChoice !== syncOptions[0].value) setSyncChoice(syncOptions[0].value);
-                                    return null;
-                                }
+                                const syncOptions = syncOptionsFor(wizard);
+                                // A single possible direction isn't a choice — don't ask. The
+                                // value is pinned by an effect above, not here: setting state
+                                // during render is what React warns about.
+                                if ((syncOptions || []).length <= 1) return null;
                                 return (
                             <div className="rounded-xl bg-white/[0.04] border border-white/10 p-4">
                                 <h4 className="text-white font-semibold text-sm mb-3">How should the two systems work together?</h4>
@@ -730,15 +1042,39 @@ export default function GovtechIntegrations() {
 
                             {!testing && testResult?.ok && (
                                 <div className="space-y-4">
+                                    {/* Two different outcomes, and they were shown identically.
+                                        "The connection works" is a claim about the credentials;
+                                        for Open311, or a vendor with no key saved, nothing here
+                                        has tested them and the first thing to find out otherwise
+                                        would be a report that never arrived. */}
                                     <div className="flex flex-col items-center py-4 text-center">
-                                        <div className="w-14 h-14 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mb-3">
-                                            <PartyPopper className="w-7 h-7 text-emerald-300" />
-                                        </div>
-                                        <h4 className="text-white font-semibold">You're connected!</h4>
-                                        <p className="text-white/50 text-sm mt-1 max-w-sm">
-                                            The connection works and has been turned on. New resident reports will
-                                            now flow to {wizard.name} automatically — nothing else to do.
-                                        </p>
+                                        {testResult.verified === false ? (
+                                            <>
+                                                <div className="w-14 h-14 rounded-full bg-sky-500/20 border border-sky-500/40 flex items-center justify-center mb-3">
+                                                    <CheckCircle className="w-7 h-7 text-sky-300" />
+                                                </div>
+                                                <h4 className="text-white font-semibold">Reachable — and switched on</h4>
+                                                <p className="text-white/50 text-sm mt-1 max-w-sm">
+                                                    We reached {wizard.name} and turned the connection on. Nothing here
+                                                    could test your credentials, though:
+                                                </p>
+                                                <p className="text-sky-200/80 text-xs mt-2 max-w-sm">{testResult.detail}</p>
+                                                <p className="text-white/40 text-xs mt-2 max-w-sm">
+                                                    Send yourself a test report to confirm it arrives at their end.
+                                                </p>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <div className="w-14 h-14 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mb-3">
+                                                    <PartyPopper className="w-7 h-7 text-emerald-300" />
+                                                </div>
+                                                <h4 className="text-white font-semibold">You're connected!</h4>
+                                                <p className="text-white/50 text-sm mt-1 max-w-sm">
+                                                    The credentials were accepted and the connection has been turned on.
+                                                    New resident reports will now flow to {wizard.name} automatically.
+                                                </p>
+                                            </>
+                                        )}
                                     </div>
 
                                     {(() => {

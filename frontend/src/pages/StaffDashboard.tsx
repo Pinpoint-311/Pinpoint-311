@@ -51,7 +51,7 @@ import {
 import { Button, Card, Modal, Input, Textarea, Select, StatusBadge, Badge } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
-import { api, MapLayer } from '../services/api';
+import { api, MapLayer, IntegrationRequestLink } from '../services/api';
 import { ServiceRequest, ServiceRequestDetail, ServiceDefinition, Statistics, AdvancedStatistics, RequestComment, ClosedSubstatus, User as UserType, Department, AuditLogEntry, HeatmapData } from '../types';
 import { XAxis, YAxis, ResponsiveContainer, AreaChart, Area, Tooltip } from 'recharts';
 import StaffDashboardMap from '../components/StaffDashboardMap';
@@ -176,6 +176,14 @@ export default function StaffDashboard() {
     // Closed substatus state
     const [showClosedModal, setShowClosedModal] = useState(false);
     const [woRefresh, setWoRefresh] = useState<{ busy: boolean; msg: string | null }>({ busy: false, msg: null });
+    /* Which external records this request is linked to.
+     *
+     * GET /api/integrations/requests/{id}/links existed with no client function
+     * and no caller, so staff could see *that* a request had gone to Accela --
+     * the refresh button's tooltip names the platform -- but never which record
+     * it became. Reconciling one report against the county's system meant asking
+     * whoever had the county's login. */
+    const [externalRecords, setExternalRecords] = useState<IntegrationRequestLink[]>([]);
     const [closedSubstatus, setClosedSubstatus] = useState<ClosedSubstatus>('resolved');
     const [completionMessage, setCompletionMessage] = useState('');
     const [completionPhotoUrl, setCompletionPhotoUrl] = useState('');
@@ -634,6 +642,14 @@ export default function StaffDashboard() {
             // Load comments and audit log for this request
             loadComments(detail.id);
             loadAuditLog(requestId);
+            setExternalRecords([]);
+            if ((detail.external_links?.length ?? 0) > 0) {
+                api.getRequestIntegrationLinks(requestId)
+                    .then(setExternalRecords)
+                    // Not knowing the external ids is not a reason to fail the
+                    // whole detail view.
+                    .catch(() => setExternalRecords([]));
+            }
         } catch (err) {
             console.error('Failed to load request detail:', err);
         }
@@ -2178,6 +2194,32 @@ export default function StaffDashboard() {
                                         {woRefresh.msg && (
                                             <div className="mt-1.5 text-[11px] text-white/60 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5">
                                                 {woRefresh.msg}
+                                            </div>
+                                        )}
+
+                                        {/* The external record ids, so this report can be
+                                            reconciled against the other system without
+                                            needing a login to it. */}
+                                        {externalRecords.length > 0 && (
+                                            <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                                {externalRecords.map(link => (
+                                                    <span
+                                                        key={`${link.platform}:${link.external_id}`}
+                                                        title={link.sync_error
+                                                            ? `Last sync problem: ${link.sync_error}`
+                                                            : `${link.direction === 'pulled' ? 'Originated in' : 'Sent to'} ${link.platform_name}`}
+                                                        className={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[10px] sm:text-[11px] border ${link.sync_error
+                                                            ? 'bg-amber-500/10 text-amber-200 border-amber-500/30'
+                                                            : 'bg-white/5 text-white/70 border-white/10'}`}
+                                                    >
+                                                        {link.sync_error && <AlertCircle className="w-3 h-3 shrink-0" aria-hidden="true" />}
+                                                        <span className="text-white/50">{link.platform_name}</span>
+                                                        <span className="font-mono">{link.external_id}</span>
+                                                        {link.external_status && (
+                                                            <span className="text-white/50">· {link.external_status}</span>
+                                                        )}
+                                                    </span>
+                                                ))}
                                             </div>
                                         )}
 
