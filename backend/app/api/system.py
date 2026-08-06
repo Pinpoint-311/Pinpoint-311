@@ -96,10 +96,28 @@ async def get_deployment_config(db: AsyncSession = Depends(get_db)):
     an admin to paste into a vendor console."""
     from app.core.config import get_settings as get_app_settings
     app_settings = get_app_settings()
+
+    # Whether translating anything is currently possible, so the resident
+    # portal can hide its language picker instead of offering Spanish and then
+    # serving English. Switched off and not-configured read the same to a
+    # resident: nothing translates.
+    try:
+        from app.services import capability_switches
+
+        translation_enabled = (
+            await capability_switches.enabled("translation")
+            and await capability_is_configured("translation")
+        )
+    except Exception:
+        # Only a definite "off" may hide the picker. An error working it out
+        # must not take a working language switcher off the page.
+        translation_enabled = True
+
     return {
         "managed_mode": app_settings.managed_mode,
         "app_version": app_settings.app_version,
         "public_origin": await public_origin(db),
+        "translation_enabled": translation_enabled,
     }
 
 
@@ -1225,6 +1243,17 @@ async def save_provider(
 # never goes green teaches people to ignore badges.
 
 
+def _steps(*lines: str) -> str:
+    """A test's work, shown step by step.
+
+    One numbered line per thing the test actually did, each carrying what came
+    back -- the translated word, the resolved coordinates, the byte count of
+    the wrapped key. The result box renders newlines, so this is the difference
+    between "Wrapped a test key" (a claim) and a log an admin can verify.
+    """
+    return "\n".join(f"{i}. {line}" for i, line in enumerate(lines, 1))
+
+
 async def _test_ai(db) -> dict:
     from app.services.ai import get_ai_provider
     provider = await get_ai_provider(db)
@@ -1235,7 +1264,17 @@ async def _test_ai(db) -> dict:
     # JSON. Providers set `_reachable` when the API answered at all.
     reachable = isinstance(result, dict) and ("_error" not in result or bool(result.get("_reachable")))
     if reachable:
-        return {"ok": True, "detail": f"{provider.provider}/{provider.model} reachable and authenticated"}
+        # The model's own reply, shown. "Reachable and authenticated" is a
+        # claim; the actual answer to the actual prompt is evidence, and it is
+        # what lets an admin verify the test did what it says it did.
+        import json as _json
+        shown = {k: v for k, v in result.items() if not str(k).startswith("_")}
+        reply = _json.dumps(shown)[:160] if shown else "an empty JSON object"
+        return {"ok": True, "detail": _steps(
+            f'Sent {provider.provider}/{provider.model} a live prompt: '
+            f'Reply with {{"priority_score": 5}}. This is a connection test.',
+            f"It answered with {reply} — a real completion from the model you picked.",
+        )}
     return {"ok": False, "detail": f"Call failed: {result.get('_error', 'unknown')[:200]}"}
 
 
@@ -1245,7 +1284,13 @@ async def _test_translation(db) -> dict:
     if not provider:
         return {"ok": False, "detail": "No translation provider is configured."}
     out = await provider.translate(["hello"], "en", "es")
-    return {"ok": bool(out), "detail": f"Translated sample → {out[0]}" if out else "No translation returned"}
+    # The translation itself, not a summary of it. "Sample translated" is a
+    # claim; "hello came back as hola" is something an admin can check.
+    return {"ok": bool(out),
+            "detail": _steps(
+                'Sent the word "hello" to the live API, English → Spanish.',
+                f'It came back as "{out[0]}".',
+            ) if out else "No translation returned"}
 
 
 async def _test_identity(db) -> dict:
@@ -1348,11 +1393,20 @@ async def _test_kms(db=None) -> dict:
     from app.core.encryption import _kms_provider
 
     selected = _kms_provider()
-    actual = pii_crypto.probe_backend()
+    probe = pii_crypto.probe_wrap()
+    actual = probe["backend"]
     if actual == selected:
         label = {"google": "Google Cloud KMS", "azure": "Azure Key Vault",
                  "aws": "AWS KMS", "local": "the application key"}.get(actual, actual)
-        return {"ok": True, "detail": f"Wrapped a test key with {label}."}
+        evidence = (f"a {probe['wrapped_len']}-byte wrapped key came back"
+                    + (f" (ciphertext begins {probe['peek']}…)" if probe.get("peek") else ""))
+        return {"ok": True, "detail": _steps(
+            "Generated a throwaway 256-bit data key on this server.",
+            f"Asked the key service to wrap it — {evidence}.",
+            f"The wrapping is tagged as {label}, which is the provider you selected — "
+            f"so resident data is being encrypted with the key you chose.",
+            "Discarded the test key. Nothing was stored.",
+        )}
     return {"ok": False, "detail": (
         f"Selected {selected}, but a test key was wrapped with {actual}. Resident "
         f"data is not being encrypted with the key you chose — check the "
@@ -1401,9 +1455,12 @@ async def _test_redaction(db=None) -> dict:
             f"been rotated, and that the region and endpoint match. The server log line "
             f"beginning \"[Redaction] {actual} could not detect\" has the vendor's own words.")}
 
-    return {"ok": True, "detail": (
-        f"{actual} answered a live detection request and will blur faces and plates. "
-        f"(No faces in the test image, which is the expected answer.)")}
+    return {"ok": True, "detail": _steps(
+        "Built a one-pixel test image on this server.",
+        f"Sent it to {actual} for a live face and licence-plate scan.",
+        "It answered: nothing to blur — the correct answer for this image — "
+        "so the detector is accepting requests and real photos will be redacted.",
+    )}
 
 
 def _one_pixel_probe_image() -> bytes:
@@ -1520,10 +1577,22 @@ async def _test_maps(db=None) -> dict:
                       "includedPrimaryTypes": ["geocode"]},
             )
             if pr.status_code == 200:
-                return {"ok": True, "detail": (
-                    "Both APIs answered: a test address geocoded and address autocomplete "
-                    "returned suggestions, so the APIs are enabled and billing is attached. "
-                    "The map in a resident's browser is checked separately, on this page."
+                # Show the round trip itself: which address was sent, and what
+                # Google resolved it to. Evidence an admin can verify beats a
+                # sentence asking to be believed.
+                first = (body.get("results") or [{}])[0]
+                where = first.get("formatted_address") or sample
+                loc = first.get("geometry", {}).get("location", {})
+                coords = (f" at ({loc.get('lat'):.4f}, {loc.get('lng'):.4f})"
+                          if loc.get("lat") is not None else "")
+                suggestions = len((pr.json() or {}).get("suggestions", []) or [])
+                return {"ok": True, "detail": _steps(
+                    f'Sent the test address "{sample}" to the Geocoding API.',
+                    f"Google resolved it to {where}{coords}.",
+                    f"Asked Places API (New) to autocomplete the same address — "
+                    f"it returned {suggestions or 'live'} suggestions.",
+                    "So both APIs are enabled and billing is attached. The map in a "
+                    "resident's browser is checked separately, on this page.",
                 )}
 
             places_error = ""
@@ -1553,7 +1622,14 @@ async def _test_maps(db=None) -> dict:
             r = await client.get("https://atlas.microsoft.com/search/address/json",
                                  params={"api-version": "1.0", "subscription-key": key, "query": sample})
             if r.status_code == 200:
-                return {"ok": True, "detail": "Key accepted; a test address geocoded successfully."}
+                try:
+                    pos = (r.json().get("results") or [{}])[0].get("position", {})
+                    coords = (f" → ({pos.get('lat'):.4f}, {pos.get('lon'):.4f})"
+                              if pos.get("lat") is not None else "")
+                except Exception:
+                    coords = ""
+                return {"ok": True, "detail": (
+                    f'Geocoded the test address "{sample}" live{coords} — the key is accepted.')}
             return {"ok": False, "detail": f"Azure Maps returned HTTP {r.status_code}."}
 
         if provider == "esri":
@@ -1568,7 +1644,11 @@ async def _test_maps(db=None) -> dict:
             if "error" in body:
                 return {"ok": False, "detail": f"ArcGIS: {body['error'].get('message', 'rejected the key')}"}
             if r.status_code == 200:
-                return {"ok": True, "detail": "Key accepted; the locator answered."}
+                first = (body.get("candidates") or [{}])[0]
+                found = first.get("address")
+                return {"ok": True, "detail": (
+                    f'Geocoded the test address "{sample}" live — the locator answered'
+                    + (f' with "{found}"' if found else "") + "; the key is accepted.")}
             return {"ok": False, "detail": f"ArcGIS returned HTTP {r.status_code}."}
 
         if provider == "apple":
@@ -1971,7 +2051,12 @@ async def _test_secrets(db=None) -> dict:
         return {"ok": True, "detail": (
             f"Wrote a test key to {label}, read it back, and could not remove it again. "
             f"Delete {key} by hand — nothing depends on it.")}
-    return {"ok": True, "detail": f"Wrote a test key to {label}, read it back, and removed it."}
+    return {"ok": True, "detail": _steps(
+        f"Wrote a secret named {key} with the random value {expected} to {label}.",
+        "Cleared the cache, so the next read had to come from the store itself.",
+        "Read it back — the store returned exactly that value.",
+        "Deleted it again and confirmed it is gone.",
+    )}
 
 
 # One table, so the set of capabilities the endpoint accepts and the set it can

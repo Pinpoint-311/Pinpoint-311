@@ -75,11 +75,16 @@ def test_encryption_passes_when_the_selected_key_did_the_wrapping(monkeypatch):
     from app.core import encryption, pii_crypto
 
     monkeypatch.setattr(encryption, "_kms_provider", lambda: "azure")
-    monkeypatch.setattr(pii_crypto, "probe_backend", lambda: "azure")
+    monkeypatch.setattr(pii_crypto, "probe_wrap",
+                        lambda: {"backend": "azure", "wrapped_len": 113, "peek": "ab12cd34"})
 
     result = _run(system._test_kms())
     assert result["ok"] is True
     assert "Azure Key Vault" in result["detail"]
+    # The steps carry the evidence, not just the verdict: the byte count and a
+    # peek at the ciphertext are what let an admin see a real wrap happened.
+    assert "113-byte" in result["detail"]
+    assert "ab12cd34" in result["detail"]
 
 
 def test_encryption_fails_when_something_else_did_the_wrapping(monkeypatch):
@@ -88,7 +93,8 @@ def test_encryption_fails_when_something_else_did_the_wrapping(monkeypatch):
     from app.core import encryption, pii_crypto
 
     monkeypatch.setattr(encryption, "_kms_provider", lambda: "azure")
-    monkeypatch.setattr(pii_crypto, "probe_backend", lambda: "local")
+    monkeypatch.setattr(pii_crypto, "probe_wrap",
+                        lambda: {"backend": "local", "wrapped_len": 60, "peek": ""})
 
     result = _run(system._test_kms())
     assert result["ok"] is False
@@ -104,7 +110,8 @@ def test_encryption_asks_the_key_service_rather_than_a_cache(monkeypatch):
     monkeypatch.setattr(encryption, "_kms_provider", lambda: "google")
     monkeypatch.setattr(pii_crypto, "active_backend",
                         lambda: (_ for _ in ()).throw(AssertionError("read the cache")))
-    monkeypatch.setattr(pii_crypto, "probe_backend", lambda: "google")
+    monkeypatch.setattr(pii_crypto, "probe_wrap",
+                        lambda: {"backend": "google", "wrapped_len": 145, "peek": "00ff"})
 
     assert _run(system._test_kms())["ok"] is True
 

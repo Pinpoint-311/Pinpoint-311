@@ -575,6 +575,26 @@ def strip_exif(raw: bytes) -> Optional[bytes]:
         return None
 
 
+def exif_only(media: str) -> str:
+    """One photo with its metadata block removed and nothing else done to it.
+
+    The off paths use this. A town switching redaction off is making a decision
+    about faces and plates -- the visible, sometimes-wrong blurring -- not about
+    the GPS block, which strip_exif removes with no detector, no credentials and
+    no false positives. Before this existed, the early returns handed the bytes
+    back untouched, so switching the blur off also published the reporter's
+    coordinates.
+
+    Anything that cannot be decoded or re-encoded passes through unchanged,
+    matching strip_exif's own contract of never dropping a photo.
+    """
+    decoded = _decode(media)
+    if not decoded:
+        return media
+    cleaned = strip_exif(decoded[0])
+    return _encode(cleaned, "image/jpeg") if cleaned is not None else media
+
+
 def image_size(raw: bytes) -> Tuple[int, int]:
     """(width, height), or (0, 0) if the bytes are not a readable image.
 
@@ -1198,7 +1218,10 @@ async def redact_media(media: Optional[List[str]]) -> BatchResult:
 
     provider, faces, plates = await settings()
     if not provider or not (faces or plates):
-        return BatchResult(media=list(media or []))
+        # No detection, but the metadata block still goes -- see exif_only. The
+        # off switch is about blurring, not about publishing GPS coordinates.
+        return BatchResult(media=[exif_only(m) for m in items]
+                           + list((media or [])[len(items):]))
 
     results = await asyncio.gather(
         *(redact_image(m, provider, faces, plates) for m in items),
@@ -1300,9 +1323,13 @@ async def screen_and_redact(media: Optional[List[str]]) -> Tuple[ModerationResul
     provider, faces, plates = await settings()
 
     # Either half being off means there is nothing to share, so take the plain
-    # path for whichever half is still on.
+    # path for whichever half is still on. The EXIF strip is not part of either
+    # half: it needs no detector, so the off switch must not carry it away --
+    # see exif_only.
     if not items or not provider or not (faces or plates):
-        return await screen_images(media or []), BatchResult(media=list(media or []))
+        stripped = BatchResult(media=[exif_only(m) for m in items]
+                               + list((media or [])[len(items):]))
+        return await screen_images(media or []), stripped
 
     if provider != "google":
         return await screen_images(media or []), await redact_media(media)

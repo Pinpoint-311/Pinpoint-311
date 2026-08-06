@@ -602,12 +602,12 @@ defineSteps('translation', 'google', () => [
     {
         body: (
             <>
-                Enter that project's ID. Translation reuses the Google credentials already configured for
-                this deployment, so there is no separate key to create.
+                That is the whole job: translation authenticates with the Google service account
+                entered at Setup, so there is nothing to type here — no separate key, and no
+                project ID, which the translator never reads.
             </>
         ),
-        fields: ['GOOGLE_CLOUD_PROJECT'],
-        note: <>The project <B>ID</B>, not the display name. They are often similar and occasionally identical; the ID is the one shown in the project picker in smaller grey type.</>,
+        note: <>If this card says the service account is missing, it is entered at Setup rather than here — it is the credential that makes the rest of the secret store work, so it is deliberately not editable from a provider card.</>,
     },
 ]);
 
@@ -671,10 +671,11 @@ defineSteps('email', 'smtp', () => [
         body: (
             <>
                 Fill in the server details. Port <C>587</C> with STARTTLS is the usual answer; <C>465</C>{' '}
-                is the older implicit-TLS port and also works.
+                is the older implicit-TLS port and also works — with the TLS box set to{' '}
+                <C>false</C>, because implicit TLS and STARTTLS are different handshakes.
             </>
         ),
-        fields: ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASSWORD'],
+        fields: ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASSWORD', 'SMTP_USE_TLS'],
     },
     {
         body: (
@@ -867,10 +868,11 @@ defineSteps('sms', 'http', () => [
         body: (
             <>
                 Enter the endpoint URL your provider gave you, and the key they issued. The key is sent
-                as a bearer token.
+                as a bearer token. If your gateway needs a sender number, add it too; most set the
+                sender themselves, in which case leave it blank.
             </>
         ),
-        fields: ['SMS_HTTP_API_URL', 'SMS_HTTP_API_KEY'],
+        fields: ['SMS_HTTP_API_URL', 'SMS_HTTP_API_KEY', 'SMS_FROM_NUMBER'],
         note: <>If their API expects a different shape or a different header, this will fail on every send. Check with them before relying on it, and send yourself a test message from the button below.</>,
     },
     {

@@ -266,10 +266,14 @@ export function capabilityState(s: CapStatus | undefined, health?: ConnectorHeal
 }
 
 function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, reloadToken, onStatus, health, step, guided, identity,
-    variant = 'full', state, expanded, onExpandToggle, onChanged, publicOrigin }: {
+    variant = 'full', state, expanded, onExpandToggle, onChanged, publicOrigin, onSwitchOff }: {
     cap: Capability; title: string; blurb: string; icon: typeof Sparkles; delay: number;
     recheckToken: number; reloadToken: number; onStatus: (cap: Capability, s: CapStatus) => void;
     health?: ConnectorHealth;
+    /** Switch this capability off, credentials intact. Absent on the ones a
+     *  town cannot run without (sign-in, maps, the secret store) and when the
+     *  page has nowhere to persist the answer. */
+    onSwitchOff?: () => Promise<void>;
     /* How this card is drawn. `full` is the guided walk, unchanged. The other
      * two are the Spotlight layout the standing cards use once setup is done:
      * anything wrong gets the whole width, everything healthy shrinks to a
@@ -301,6 +305,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const [model, setModel] = useState<string>('');
     const [values, setValues] = useState<Record<string, string>>({});
     const [busy, setBusy] = useState<'save' | 'test' | null>(null);
+    const [switching, setSwitching] = useState(false);
     /* `recorded === false` rides along, because "we cannot check this from
      * here" is a third answer and the box only had two. It was drawn in the
      * same amber as a failure, so a generic HTTP gateway -- which by definition
@@ -785,7 +790,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                     <h3 className="font-bold text-lg text-white tracking-tight">{title}</h3>
                                     <StatusPill state={shown} />
                                 </div>
-                                <p className={`text-sm mt-1.5 ${bad ? 'text-red-100/90' : 'text-white/70'}`}>
+                                <p className={`text-sm mt-1.5 whitespace-pre-line ${bad ? 'text-red-100/90' : 'text-white/70'}`}>
                                     {spotlightDetail}
                                 </p>
                                 {effectiveMute && (
@@ -913,7 +918,10 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                         : resultUncheckable
                             ? <HelpCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                             : <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
-                    <span>{shownResult.detail}</span>
+                    {/* pre-line: the tests report their work as numbered steps,
+                        one per line — collapsing them to a paragraph turns a
+                        verifiable log back into a claim. */}
+                    <span className="whitespace-pre-line">{shownResult.detail}</span>
                 </motion.div>
             )}
 
@@ -1121,6 +1129,29 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                     {cap === 'identity' && (
                         <span className="text-white/60 text-[11px] ml-auto hidden sm:block">Auth0 by default · Entra, Okta and any OIDC provider also supported</span>
                     )}
+                    {/* On the far side of the row from Save, so a hand reaching
+                        for one cannot land on the other. Off means off-and-kept:
+                        the tile this card collapses into says the credentials
+                        are still saved, and switching back on picks up as it
+                        was. */}
+                    {onSwitchOff && (
+                        <span className="ml-auto inline-flex items-center gap-2">
+                            <span className="text-white/45 text-[11px] hidden sm:block">
+                                Credentials stay saved.
+                            </span>
+                            <Action
+                                onClick={async () => {
+                                    setSwitching(true);
+                                    try { await onSwitchOff(); } finally { setSwitching(false); }
+                                }}
+                                busy={switching}
+                                disabled={switching || busy !== null}
+                                title="Stops this service running and stops testing it. Everything entered here stays saved."
+                            >
+                                {switching ? 'Switching off…' : 'Switch off'}
+                            </Action>
+                        </span>
+                    )}
                 </div>
             </div>
             </motion.div>
@@ -1246,7 +1277,7 @@ export interface PlainSecretsBridge {
     onSaved: () => void;
 }
 
-export default function ServiceProviders({ show, statusMap, extras, footer, extraOff = [], plainSettings = [], plainSecrets, refreshToken = 0, onChanged, publicOrigin = null }: {
+export default function ServiceProviders({ show, statusMap, extras, footer, extraOff = [], plainSettings = [], plainSecrets, refreshToken = 0, onChanged, publicOrigin = null, onSwitch }: {
     /* Which capabilities the town said it wants, from the setup questions.
      * Undefined means "no answer yet", which shows everything -- an absent
      * answer must not read as "wanted nothing", the same distinction the
@@ -1298,6 +1329,12 @@ export default function ServiceProviders({ show, statusMap, extras, footer, extr
     /** The reverse direction: something changed down here, so the guide's ticks
      *  are stale. */
     onChanged?: () => void;
+    /* Switch a capability (or backups/errors, by feature id) on or off,
+     * credentials intact. Owned by the page, which holds the persisted
+     * questionnaire ticks -- the same switch, reachable from the card, so
+     * turning something off does not mean finding the question that owns it
+     * three sections up. */
+    onSwitch?: (id: string, on: boolean) => Promise<void>;
     /** The address residents use, for the callback URLs in the console walks. */
     publicOrigin?: string | null;
 } = {}) {
@@ -1396,6 +1433,10 @@ export default function ServiceProviders({ show, statusMap, extras, footer, extr
         })),
         ...extraOff,
     ];
+    /* Which switched-off tile is mid-flight. One at a time: the write lands on
+     * a shared settings row, and two optimistic toggles racing each other is
+     * how a tick springs back with no error to explain it. */
+    const [switchingOnId, setSwitchingOnId] = useState<string | null>(null);
 
     /* Order matters, and not only for readability.
      *
@@ -1534,7 +1575,10 @@ export default function ServiceProviders({ show, statusMap, extras, footer, extr
                                 variant={spotlit.includes(c) ? 'spotlight' : 'bubble'}
                                 state={capState(c.key)}
                                 expanded={openCap === c.key}
-                                onExpandToggle={() => setOpenCap(k => (k === c.key ? null : c.key))} />
+                                onExpandToggle={() => setOpenCap(k => (k === c.key ? null : c.key))}
+                                onSwitchOff={onSwitch && !ALWAYS.has(c.key)
+                                    ? () => onSwitch(c.key, false)
+                                    : undefined} />
                         </div>
                     );
                 })}
@@ -1596,13 +1640,31 @@ export default function ServiceProviders({ show, statusMap, extras, footer, extr
                                         Nothing was deleted. Switch it back on and it works as it did.
                                     </p>
                                 )}
+                                {/* The way back, on the tile itself. "Go find
+                                    the question that owns this, three sections
+                                    up" is a scavenger hunt; the off switch is
+                                    on the card, so the on switch is too. */}
+                                {onSwitch && (
+                                    <div className="mt-2.5">
+                                        <Action
+                                            onClick={async () => {
+                                                setSwitchingOnId(c.id);
+                                                try { await onSwitch(c.id, true); } finally { setSwitchingOnId(null); }
+                                            }}
+                                            busy={switchingOnId === c.id}
+                                            disabled={switchingOnId !== null}
+                                        >
+                                            {switchingOnId === c.id ? 'Switching on…' : 'Switch back on'}
+                                        </Action>
+                                    </div>
+                                )}
                             </div>
                         ))}
                     </div>
                     <p className="text-[11px] text-white/55 mt-3.5">
-                        These are built and ready — nothing here needs writing. Tick one in the
-                        questions at the top of <strong className="text-white/75">Setup Instructions</strong> and
-                        its steps appear in the guide.
+                        These are built and ready — nothing here needs writing. Switch one back on
+                        and its card returns above; anything never set up also appears in the{' '}
+                        <strong className="text-white/75">Setup Instructions</strong> guide with its steps.
                     </p>
                 </div>
             )}

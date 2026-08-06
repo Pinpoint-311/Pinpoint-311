@@ -42,9 +42,10 @@ class FakeHealth:
         # it ran, which nothing recorded.
         self.providers = []
 
-    async def record_success(self, db, connector, provider=None):
+    async def record_success(self, db, connector, provider=None, detail=None):
         self.successes.append(connector)
         self.providers.append((connector, provider))
+        self.details = getattr(self, "details", []) + [(connector, detail)]
 
     async def record_failure(self, db, connector, error, provider=None):
         self.failures.append((connector, str(error)))

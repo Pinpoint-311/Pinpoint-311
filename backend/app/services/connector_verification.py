@@ -113,7 +113,12 @@ async def verify_all(
             # over a verdict an administrator had already got by hand.
             checked[capability] = "unverifiable"
         elif outcome.get("ok"):
-            await health.record_success(db, capability, provider=provider)
+            # The message too, not only the timestamp. The manual Test button
+            # stores what the check did (the translated word, the wrapped-key
+            # byte count); a nightly pass that wiped it back to nothing made
+            # the card less transparent every morning.
+            await health.record_success(db, capability, provider=provider,
+                                        detail=outcome.get("detail"))
             checked[capability] = "working"
         else:
             await health.record_failure(db, capability, outcome.get("detail", ""), provider=provider)

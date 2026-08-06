@@ -63,6 +63,20 @@ export default function ResidentPortal() {
     const { language } = useTranslation();
     const { requestId: urlRequestId } = useParams<{ requestId?: string }>();
 
+    // Whether the language picker is worth drawing. A picker over a translator
+    // that is switched off or unconfigured offers Spanish and then serves
+    // English. Defaults to shown: an older backend does not send the field,
+    // and a fetch error is not evidence that translation is unavailable.
+    const [translationEnabled, setTranslationEnabled] = useState(true);
+    useEffect(() => {
+        fetch('/api/system/config')
+            .then((r) => (r.ok ? r.json() : null))
+            .then((cfg) => {
+                if (cfg && cfg.translation_enabled === false) setTranslationEnabled(false);
+            })
+            .catch(() => { /* keep the picker */ });
+    }, []);
+
     // Initialize state based on URL hash (not pathname)
     const initialHash = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
     const [showTrackingView, setShowTrackingView] = useState(urlRequestId || initialHash === 'track');
@@ -516,7 +530,7 @@ export default function ResidentPortal() {
 
                     <div className="flex items-center gap-2 md:gap-4">
                         {/* Language selector */}
-                        <LanguageSelector />
+                        {translationEnabled && <LanguageSelector />}
                         <div className="relative">
                             <Link
                                 to="/login"

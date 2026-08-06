@@ -252,7 +252,10 @@ export default function InlineProviderSetup({
                     {shownResult.ok
                         ? <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
                         : <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />}
-                    <span>{shownResult.detail}</span>
+                    {/* pre-line: the tests report their work as numbered steps,
+                        one per line — collapsing them to a paragraph turns a
+                        verifiable log back into a claim. */}
+                    <span className="whitespace-pre-line">{shownResult.detail}</span>
                 </div>
             )}
 
