@@ -114,7 +114,11 @@ class SeeClickFixConnector(BaseConnector):
             "anonymize_reporter": not payload.get("email"),
         }
         if self.config.get("request_type"):
-            body["request_type"] = self.config["request_type"]
+            # `request_type_id`, not `request_type` -- the documented parameter
+            # (dev.seeclickfix.com/v2/issues/reporting). The wrong name was
+            # silently ignored, so every pushed issue landed as a generic
+            # community issue instead of routing into the org's workflow.
+            body["request_type_id"] = self.config["request_type"]
         async with self._client(**self._auth_kwargs()) as client:
             resp = await client.post(f"{self.api_base}/issues", json=body)
             self._raise_for_status(resp, "SeeClickFix create issue")
