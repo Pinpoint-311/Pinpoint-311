@@ -442,6 +442,21 @@ async def dispatch(
 
         if send is None:
             from app.services.notifications import NotificationService
+
+            # Build the sender from the stored credentials first. The email
+            # provider is a per-process singleton that the notification tasks
+            # configure before they send -- and the sweep and the hourly probe
+            # are usually the first thing to want email in a fresh worker, so
+            # without this the alert died with "Email provider not configured"
+            # while resident notifications from the same worker went out fine.
+            # A lazy import: app.tasks pulls in Celery, which CI does not
+            # install, and every CI caller of dispatch injects `send`.
+            try:
+                from app.tasks.service_requests import configure_notifications
+                await configure_notifications(db)
+            except Exception as exc:
+                # If configuration fails the send below reports it honestly.
+                logger.debug("[Health] could not configure the email sender: %s", str(exc)[:200])
             send = NotificationService.get_instance().send_email
 
         body = compose(alerts, town=town or "Pinpoint 311", settings_url=settings_url, now=now)
