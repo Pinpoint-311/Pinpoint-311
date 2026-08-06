@@ -531,7 +531,12 @@ def pull_integration_updates(integration_id: Optional[int] = None):
                 # Read while the session is certainly usable; see the error
                 # handler below for why they cannot be read from the instance
                 # after a rollback.
-                integration_id, platform = integration.id, integration.platform
+                # `row_id`, not `integration_id`. Reassigning the task's
+                # parameter name here makes it local to this whole closure, so
+                # the `if integration_id is not None` filter above raised
+                # UnboundLocalError before the first query -- every beat tick
+                # and every manual "Check for updates" died at the top.
+                row_id, platform = integration.id, integration.platform
                 try:
                     connector = await build_connector_for(integration)
                     if "pull" not in connector.capabilities:
@@ -630,7 +635,7 @@ def pull_integration_updates(integration_id: Optional[int] = None):
                     # and counting a call we chose not to make would inflate the
                     # number that decides blip from outage.
                     await db.rollback()
-                    await _log(db, integration_id, "pull", "skipped", str(e))
+                    await _log(db, row_id, "pull", "skipped", str(e))
                     continue
                 except Exception as e:
                     # Clear any pending-rollback state before writing the error
@@ -648,10 +653,10 @@ def pull_integration_updates(integration_id: Optional[int] = None):
                     # the primary key, which raises under the async engine.
                     await db.execute(
                         update(IntegrationConfig)
-                        .where(IntegrationConfig.id == integration_id)
+                        .where(IntegrationConfig.id == row_id)
                         .values(last_sync_status="error", last_sync_error=str(e)[:1000])
                     )
-                    await _log(db, integration_id, "pull", "error", str(e))
+                    await _log(db, row_id, "pull", "error", str(e))
                     logger.warning(f"[Integrations] Pull from {platform} failed: {e}")
             await db.commit()
 
@@ -795,7 +800,9 @@ def pull_integration_comments(integration_id: Optional[int] = None):
                 # Read while the session is certainly usable. The rollback in
                 # the error handler expires the instance, and attribute access
                 # on an expired instance raises under the async engine.
-                integration_id, platform = integration.id, integration.platform
+                # Same scoping trap as the pull loop above: the name must not
+                # shadow the task parameter read a few lines up.
+                row_id, platform = integration.id, integration.platform
                 try:
                     connector = await build_connector_for(integration)
                     if "comments" not in connector.capabilities:
@@ -851,7 +858,7 @@ def pull_integration_comments(integration_id: Optional[int] = None):
                     # write a sync-log line no health surface reads.
                     await connector_health.record_failure(
                         db, health_key(platform), e, provider=platform)
-                    await _log(db, integration_id, "pull_comments", "error", str(e))
+                    await _log(db, row_id, "pull_comments", "error", str(e))
                     logger.warning(f"[Integrations] Comment pull from {platform} failed: {e}")
             await db.commit()
 

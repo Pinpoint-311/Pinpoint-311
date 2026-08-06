@@ -766,6 +766,20 @@ export default function GovtechIntegrations() {
                                 </div>
                             )}
 
+                            {/* A connection can sign in fine and still be unable to file a
+                                report. That gap is invisible until a resident's report is
+                                rejected, so it gets its own line rather than a green tick. */}
+                            {(result?.warnings || []).length > 0 && (
+                                <div className="relative mt-2 rounded-lg px-3 py-2 text-xs border bg-amber-500/10 border-amber-500/25 text-amber-200 space-y-1.5">
+                                    {result!.warnings!.map((w, i) => (
+                                        <p key={i} className="flex items-start gap-1.5">
+                                            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" aria-hidden="true" />
+                                            <span>{w}</span>
+                                        </p>
+                                    ))}
+                                </div>
+                            )}
+
                             {/* The inbound address and the vendor email were reachable
                                 only inside the wizard -- the address on its success
                                 screen, the email on an intro step you could get back to
@@ -1145,6 +1159,20 @@ export default function GovtechIntegrations() {
                                                     Send yourself a test report to confirm it arrives at their end.
                                                 </p>
                                             </>
+                                        ) : (testResult.warnings || []).length > 0 ? (
+                                            /* Signed in, but something still blocks a report —
+                                               e.g. a SeeClickFix request type with a required
+                                               question nobody has answered. Amber, not a party. */
+                                            <>
+                                                <div className="w-14 h-14 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center mb-3">
+                                                    <AlertCircle className="w-7 h-7 text-amber-300" />
+                                                </div>
+                                                <h4 className="text-white font-semibold">Almost there</h4>
+                                                <p className="text-white/50 text-sm mt-1 max-w-sm">
+                                                    The sign-in works and the connection is on — but {wizard.name} still
+                                                    needs the details below before reports will go through.
+                                                </p>
+                                            </>
                                         ) : (
                                             <>
                                                 <div className="w-14 h-14 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mb-3">
@@ -1158,6 +1186,20 @@ export default function GovtechIntegrations() {
                                             </>
                                         )}
                                     </div>
+
+                                    {(testResult.warnings || []).length > 0 && (
+                                        <div className="rounded-xl bg-amber-500/10 border border-amber-500/25 p-4 space-y-2">
+                                            <h4 className="text-amber-200 font-semibold text-sm flex items-center gap-2">
+                                                <AlertCircle className="w-4 h-4" /> Finish this before the first report
+                                            </h4>
+                                            {testResult.warnings!.map((w, i) => (
+                                                <p key={i} className="text-amber-100/80 text-sm">{w}</p>
+                                            ))}
+                                            <Button variant="ghost" size="sm" onClick={() => setStep('details')} leftIcon={<ArrowLeft className="w-3.5 h-3.5" />}>
+                                                Go back and fill this in
+                                            </Button>
+                                        </div>
+                                    )}
 
                                     {(() => {
                                         const existing = configFor(wizard.platform);
