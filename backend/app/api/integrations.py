@@ -386,13 +386,17 @@ class AccelaOAuthStart(BaseModel):
 
 
 @router.get("/accela/oauth/status")
-async def accela_oauth_status(request: Request, _: User = Depends(get_current_admin)):
+async def accela_oauth_status(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
     """Whether this deployment can offer Accela sign-in, and the exact callback
     URL to register on the developer-portal app."""
     from app.integrations import accela_oauth
     return {
         "configured": await accela_oauth.is_configured(),
-        "redirect_uri": await accela_oauth.redirect_uri_for(str(request.base_url)),
+        "redirect_uri": await accela_oauth.redirect_uri_for(db, str(request.base_url)),
         "scope": accela_oauth.DEFAULT_SCOPE,
     }
 
@@ -426,7 +430,7 @@ async def accela_oauth_start(
     if not agency_name:
         raise HTTPException(status_code=400, detail="Enter your Accela agency name first")
 
-    redirect_uri = await accela_oauth.redirect_uri_for(str(request.base_url))
+    redirect_uri = await accela_oauth.redirect_uri_for(db, str(request.base_url))
     state = accela_oauth.sign_state(integration.id, current_user.id, redirect_uri)
     url = accela_oauth.authorize_url(
         client_id=client_id,
@@ -514,7 +518,7 @@ async def accela_oauth_callback(
     try:
         tokens = await accela_oauth.exchange_code(
             code=code,
-            redirect_uri=payload.get("ru") or await accela_oauth.redirect_uri_for(str(request.base_url)),
+            redirect_uri=payload.get("ru") or await accela_oauth.redirect_uri_for(db, str(request.base_url)),
             config=integration.config or {},
         )
     except Exception as e:

@@ -163,8 +163,13 @@ name:
 
 Without them the wizard says so plainly and falls back to the username/password
 option. The exact callback URL to register on the app is returned by
-`GET /api/integrations/accela/oauth/status`; by default it is
-`https://<your-domain>/api/integrations/accela/oauth/callback`.
+`GET /api/integrations/accela/oauth/status`. It resolves in this order:
+`ACCELA_REDIRECT_URI` if set; otherwise the deployment's configured public
+origin (the township's custom domain, else the `DOMAIN` environment variable)
+plus `/api/integrations/accela/oauth/callback`; and only as a logged last
+resort the address on the request itself — which, behind the TLS-terminating
+proxy, is `http://` and will not match what Accela has registered, so make
+sure one of the first two is set.
 
 Two details worth knowing when reading the code:
 
@@ -238,8 +243,11 @@ what the UI exposes (set them via `PUT /api/integrations/{id}`):
   GeoJSON FeatureCollection directly, or a JSON list mapped via
   `asset_id_field`/`asset_name_field`/`asset_lat_field`/`asset_long_field`).
 - Accela: `environment` (PROD/TEST), `record_type`, `scope` (default
-  `records assets`), `api_base`/`auth_base` overrides. `auth_mode` is set to
-  `authorization_code` by the sign-in callback and is informational.
+  `records assets`), `api_base`/`auth_base` overrides. In the sign-in flow an
+  `auth_base` override must be a public URL on an accela.com host — the code
+  exchange posts the deployment-level client secret there, so anything else
+  is refused. `auth_mode` is set to `authorization_code` by the sign-in
+  callback and is informational.
 - Open311/Tyler: `jurisdiction_id`, `default_service_code`.
 
 ## Operational notes

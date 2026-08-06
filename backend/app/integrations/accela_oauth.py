@@ -35,7 +35,7 @@ import os
 import secrets
 import time
 from typing import Any, Dict, Optional, Tuple
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 
@@ -95,18 +95,44 @@ async def is_configured() -> bool:
     return bool(client_id and client_secret)
 
 
-async def redirect_uri_for(request_base_url: str) -> str:
+async def redirect_uri_for(db, request_base_url: Optional[str] = None) -> str:
     """The callback URL handed to Accela.
 
-    It must match the value registered on the developer-portal app *exactly*.
-    Deployments behind a proxy, or ones sharing a single registered redirect
-    across many town domains, pin it with ``ACCELA_REDIRECT_URI``; everyone else
-    gets the callback on the domain the admin is already using.
+    It must match the value registered on the developer-portal app *exactly*,
+    so it is resolved in order of how much the source actually knows:
+
+    1. ``ACCELA_REDIRECT_URI`` — the explicit pin, for shared-host deployments
+       or a registered redirect that differs from the town's own domain.
+    2. The deployment's configured public origin (``public_origin``: the
+       township's custom domain, else the ``DOMAIN`` env var) plus the callback
+       path. This is the normal case: behind the TLS-terminating proxy,
+       ``request.base_url`` is ``http://`` and never matches what Accela has
+       registered.
+    3. The request's own base URL, as a logged last resort for deployments
+       that have configured nothing at all.
     """
     configured = await _deployment_value(REDIRECT_URI_KEY)
     if configured:
         return configured
-    return f"{str(request_base_url).rstrip('/')}{CALLBACK_PATH}"
+    origin = None
+    if db is not None:
+        try:
+            from app.api.system import public_origin
+            origin = await public_origin(db)
+        except Exception as e:
+            from app.core.sanitize import sanitize_for_log
+            logger.warning("[Accela OAuth] Could not look up the public origin: %s",
+                           sanitize_for_log(str(e)))
+    if origin:
+        return f"{origin.rstrip('/')}{CALLBACK_PATH}"
+    logger.warning(
+        "[Accela OAuth] No ACCELA_REDIRECT_URI and no public origin (custom domain "
+        "or DOMAIN) is configured; falling back to the request's own base URL %s. "
+        "Behind a TLS-terminating proxy this is usually http:// and will not match "
+        "the redirect URI registered with Accela.",
+        request_base_url,
+    )
+    return f"{str(request_base_url or '').rstrip('/')}{CALLBACK_PATH}"
 
 
 # ---------------------------------------------------------------------------
@@ -171,8 +197,39 @@ def verify_state(state: str, max_age: int = STATE_TTL_SECONDS) -> Optional[Dict[
 # The flow
 # ---------------------------------------------------------------------------
 
+class OAuthError(Exception):
+    """Raised when Accela refuses a token request, or when the flow's own
+    configuration is unusable."""
+
+
 def auth_base(config: Optional[Dict[str, Any]] = None) -> str:
-    return ((config or {}).get("auth_base") or DEFAULT_AUTH_BASE).rstrip("/")
+    """The Accela authorization server this flow talks to.
+
+    Defaults to https://auth.accela.com. The override exists for Accela's
+    non-production stacks — and only for them. The token exchange posts the
+    *deployment-level* client secret to whatever host this returns, and
+    ``auth_base`` is an admin-settable integration config key, so an arbitrary
+    override would let one town's admin point the flow at their own server and
+    collect the secret shared by every town on the host. An override must
+    therefore pass the same public-URL guard as every connector request, and
+    its host must be accela.com or a subdomain of it.
+    """
+    override = (config or {}).get("auth_base")
+    if not override:
+        return DEFAULT_AUTH_BASE
+    base = str(override).strip().rstrip("/")
+    host = (urlparse(base).hostname or "").lower()
+    if host != "accela.com" and not host.endswith(".accela.com"):
+        raise OAuthError(
+            "Refusing the configured Accela auth_base: the sign-in flow only "
+            "talks to accela.com hosts."
+        )
+    from app.integrations.base import ConnectorError, _assert_public_url
+    try:
+        _assert_public_url(base)
+    except ConnectorError as e:
+        raise OAuthError(f"Refusing the configured Accela auth_base: {e}")
+    return base
 
 
 def scope_for(config: Optional[Dict[str, Any]] = None) -> str:
@@ -193,10 +250,6 @@ def authorize_url(*, client_id: str, redirect_uri: str, state: str,
         "state": state,
     }
     return f"{auth_base(config)}/oauth2/authorize?{urlencode(params)}"
-
-
-class OAuthError(Exception):
-    """Raised when Accela refuses a token request."""
 
 
 async def exchange_code(*, code: str, redirect_uri: str,
