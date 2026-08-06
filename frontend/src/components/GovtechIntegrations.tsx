@@ -531,8 +531,6 @@ export default function GovtechIntegrations() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [wizard, syncChoice]);
 
-    const connectedCount = (configs || []).filter(c => c.enabled).length;
-
     // Filter by the clerk's search and surface connected platforms first.
     const q = query.trim().toLowerCase();
     const visibleCatalog = (catalog || [])
@@ -559,12 +557,13 @@ export default function GovtechIntegrations() {
             // one option rather than as a filter being applied.
             subtitle={`${(catalog || []).length} platforms available — Accela, Tyler, CivicPlus, Open311, or a generic connector for anything else`}
             defaultOpen={true}
-            badge={connectedCount > 0 ? (
-                <span className="inline-flex items-center gap-2 rounded-full bg-emerald-500/15 border border-emerald-400/30 pl-2.5 pr-3 py-1 text-[11px] font-semibold text-emerald-200 whitespace-nowrap">
-                    <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400 shrink-0" aria-hidden="true" />
-                    {connectedCount} connected
-                </span>
-            ) : undefined}
+            /* No connected-count badge. It counted `enabled` rows, and an
+             * enabled row is a fact about our database, not about a working
+             * connection -- a leftover test row that never synced once showed
+             * "1 connected" over a grid of cards that all said otherwise. The
+             * cards themselves carry the honest per-platform state, and a
+             * headline number that can disagree with every card under it is
+             * worse than no number. */
         >
             <p className="text-white/60 text-sm max-w-2xl leading-relaxed mb-4">
                 Full two-way connectors for the platforms your town already runs. Reports, photos, comments,
