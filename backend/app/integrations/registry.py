@@ -86,11 +86,14 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "integration_mode": "generic",
         "docs_url": "https://github.com/Pinpoint-311/Pinpoint-311/blob/main/docs/INTEGRATIONS.md",
         "description": (
-            "One configurable connector for any vendor that exposes a JSON REST API but isn't "
-            "purpose-built above — for example Trimble Cityworks, SDL (Spatial Data Logic), "
-            "Edmunds GovTech / MCSJ, GovPilot, FastTrackGov, or Polimorphic. You supply the base "
-            "URL, auth style, and (if the vendor differs from the common defaults) the endpoint "
-            "paths and field names from your vendor's API docs. "
+            "One configurable connector for any vendor that exposes a JSON REST API with API-key, "
+            "bearer-token, or username/password auth — Polimorphic and FastTrackGov are examples. "
+            "You supply the base URL, auth style, and (if the vendor differs from the common "
+            "defaults) the endpoint paths and field names from your vendor's API docs. "
+            "It will NOT work for vendors without a public JSON API (GovPilot, Edmunds GovTech, "
+            "PubWorks) or whose auth this cannot express (Trimble Cityworks uses a login-for-"
+            "session-token scheme). Spatial Data Logic towns: SDL syncs with ArcGIS Online, which "
+            "is the practical route. "
             "Note: this is a generic client, not certified against any specific vendor's API — "
             "always run the connection check and a test report before relying on it in production."
         ),
@@ -125,7 +128,7 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
             "Get your API base URL, key, auth style, and endpoint/field details from your vendor's "
             "API documentation or support team. Defaults follow a common REST convention (Bearer "
             "auth, /requests paths, id/status/updated_at fields); override only what your vendor "
-            "differs on. For a work-order system (e.g. Cityworks), map your work-order fields "
+            "differs on. For a work-order system, map your work-order fields "
             "(WorkOrderId, AssignedTo, Status, ScheduledDate) via id_field/status_field/field_map. "
             "This connector is not vendor-certified — verify with the connection check first."
         ),
@@ -228,7 +231,7 @@ CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
         "recommended_sync_direction": "bidirectional",
     },
     "generic_rest": {
-        "plain_summary": "A do-it-yourself connector for a vendor system that isn't listed above (Cityworks, SDL, Edmunds/MCSJ, GovPilot, FastTrackGov, Polimorphic, and others). You paste in the web address and key your vendor gives you, plus a few field names from their API guide if they differ from the common defaults.",
+        "plain_summary": "A do-it-yourself connector for a vendor system that isn't listed above and has a plain JSON API (Polimorphic and FastTrackGov, for example). You paste in the web address and key your vendor gives you, plus a few field names from their API guide if they differ from the common defaults. If your vendor has no public API — GovPilot, Edmunds, PubWorks — this cannot reach it; ask the vendor, or ask us.",
         "what_you_need": [
             "Your vendor's API base URL and an API key (or a username + password) — from their API docs or support team",
             "The auth style they use: most are 'bearer'; some use an API-key header or a basic login",
