@@ -31,6 +31,7 @@ Config:
     status_notes_field  layer field to write status notes into
     asset_layer_url     a second layer polled for the asset inventory
     reuse_maps_api_key  "false" to stop falling back to the maps ARCGIS_API_KEY
+                        (the fallback only applies to *.arcgis.com layers anyway)
 Credentials:
     api_key             an ArcGIS API key (used as the `token` parameter)
     username, password  an ArcGIS account; exchanged for a token via generateToken
@@ -40,8 +41,9 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
-from app.integrations.base import BaseConnector, ConnectorError, ExternalRecord
+from app.integrations.base import BaseConnector, ConnectorError, ExternalRecord, _redact_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,13 @@ DEFAULT_FIELD_MAP = {
     "phone": "phone",
     # lat/long are not attributes — they become the feature's geometry.
 }
+
+
+def _is_esri_host(url: str) -> bool:
+    """True only for Esri's own hosting (*.arcgis.com). The shared maps API
+    key is an org-wide secret and must never travel to any other host."""
+    host = (urlparse(url).hostname or "").lower()
+    return host == "arcgis.com" or host.endswith(".arcgis.com")
 
 
 def _epoch_ms(value: Any) -> Optional[int]:
@@ -141,15 +150,29 @@ class ArcGISConnector(BaseConnector):
         A town that set up Esri maps has an org API key on file; making them
         paste it a second time to connect the same org's feature layer is
         friction with no security benefit. Opt out with reuse_maps_api_key=false.
+
+        Reuse stops at Esri's own domain: auto-sending the org-wide key to
+        whatever layer_url an admin pasted would hand it to any host that asks.
+        A layer on any other server needs its own credentials.
         """
         if str(self.config.get("reuse_maps_api_key", "true")).strip().lower() in ("0", "false", "no", "off"):
             return None
         try:
             from app.services.secret_manager import get_secret
-            return await get_secret("ARCGIS_API_KEY")
+            key = await get_secret("ARCGIS_API_KEY")
         except Exception as e:  # secret manager unavailable — not fatal
             logger.debug("[ArcGIS] Could not read the maps ARCGIS_API_KEY: %s", e)
             return None
+        if not key:
+            return None
+        for url in (self.layer_url, (self.config.get("asset_layer_url") or "").rstrip("/")):
+            if url and not _is_esri_host(url):
+                raise ConnectorError(
+                    "ArcGIS: the saved maps API key is only reused for layers on "
+                    f"*.arcgis.com, and {urlparse(url).hostname or url} is not one. "
+                    "Enter an API key or username/password for that server instead."
+                )
+        return key
 
     async def _generate_token(self) -> str:
         """Exchange an ArcGIS username/password for a short-lived token.
@@ -208,7 +231,9 @@ class ArcGISConnector(BaseConnector):
         try:
             body = response.json()
         except ValueError:
-            raise ConnectorError(f"{context} returned a non-JSON response: {response.text[:200]}")
+            # The body is persisted and displayed, and a proxy error page can
+            # echo the request back — scrub anything credential-shaped first.
+            raise ConnectorError(f"{context} returned a non-JSON response: {_redact_secrets(response.text[:200])}")
         if not isinstance(body, dict):
             raise ConnectorError(f"{context} returned an unexpected response: {str(body)[:200]}")
         error = body.get("error")
@@ -234,7 +259,12 @@ class ArcGISConnector(BaseConnector):
         token = await self._get_token()
         target = url or self.layer_url
         async with self._client() as client:
-            resp = await client.get(target, params={"f": "json", "token": token})
+            # The token rides in a header, not the query string — URLs are
+            # copied into proxy and access logs, headers are not.
+            resp = await client.get(
+                target, params={"f": "json"},
+                headers={"X-Esri-Authorization": f"Bearer {token}"},
+            )
             self._raise_for_status(resp, "ArcGIS layer metadata")
             body = self._arcgis_json(resp, "ArcGIS layer metadata")
         if url is None:
@@ -458,7 +488,9 @@ class ArcGISConnector(BaseConnector):
             self._raise_for_status(resp, "ArcGIS applyEdits (update)")
             body = self._arcgis_json(resp, "ArcGIS applyEdits (update)")
         results = body.get("updateResults") or []
-        if results and not results[0].get("success"):
+        if not results:
+            raise ConnectorError("ArcGIS applyEdits returned no updateResults")
+        if not results[0].get("success"):
             error = results[0].get("error") or {}
             raise ConnectorError(
                 f"ArcGIS rejected the status update: {error.get('description') or error.get('code') or 'unknown reason'}"
@@ -515,9 +547,11 @@ class ArcGISConnector(BaseConnector):
             for _ in range(max_pages):
                 # GET, not POST: a query is a read, and only idempotent methods
                 # get the base transport's retries on a rate limit or gateway blip.
-                resp = await client.get(f"{target}/query", params={
+                # The token rides in a header so it stays out of logged URLs.
+                resp = await client.get(f"{target}/query", headers={
+                    "X-Esri-Authorization": f"Bearer {token}",
+                }, params={
                     "f": "json",
-                    "token": token,
                     "where": where,
                     "outFields": out_fields,
                     "returnGeometry": "true" if return_geometry else "false",
