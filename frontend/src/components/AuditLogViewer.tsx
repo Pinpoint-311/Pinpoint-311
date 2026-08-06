@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Shield, Download, RefreshCw, AlertCircle, CheckCircle, XCircle, User, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
+import { Fragment, useState, useEffect, useCallback } from 'react';
+import { Shield, Download, RefreshCw, AlertCircle, CheckCircle, XCircle, User, ChevronLeft, ChevronRight, ChevronDown, Sparkles } from 'lucide-react';
 import { AccordionSection } from './ui';
 
 interface AuditLog {
@@ -23,11 +23,122 @@ interface AuditStats {
     recent_failures: number;
 }
 
+type Details = Record<string, any>;
+
+const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`;
+const listOf = (v: unknown): string => Array.isArray(v) ? v.join(', ') : String(v ?? '');
+
+/** One sentence per event type: who did what to what — the "who" and "when"
+ * are their own columns, so the sentence carries the "what".
+ *
+ * "connector_alerts_muted" with a details blob nobody could see read as
+ * noise; "Muted alert emails for sms for 7 days" is a row a clerk can answer
+ * a question from. Each template reads only the keys its backend writer
+ * actually sends; an event type with no template (or whose details are
+ * missing the expected keys) falls through to a readable key: value list
+ * rather than raw JSON or a dash. */
+const EVENT_SENTENCES: Record<string, (d: Details) => string | null> = {
+    login_success: d => d.mfa_type ? `Signed in (MFA: ${d.mfa_type})` : 'Signed in',
+    logout: () => 'Signed out',
+    session_expired: () => 'Session expired',
+    role_changed: d => (d.old_role && d.new_role)
+        ? `Role changed from ${d.old_role} to ${d.new_role}${d.changed_by ? ` by ${d.changed_by}` : ''}`
+        : null,
+    // The backstop middleware already writes its own sentence.
+    admin_change: d => typeof d.action === 'string' && d.action
+        ? d.action
+        : (d.method && d.path ? `${d.method} ${d.path}` : null),
+    connector_alerts_muted: d => d.connector
+        ? `Muted alert emails for ${d.connector}${d.days ? ` for ${plural(d.days, 'day')}` : ''}`
+        : null,
+    connector_alerts_unmuted: d => d.connector ? `Unmuted alert emails for ${d.connector}` : null,
+    'setup.complete': () => 'Marked the setup guide as complete',
+    'secret_store.choose': d => d.store ? `Chose ${d.store} as the secret store` : null,
+    provider_saved: d => {
+        if (!d.capability || !d.provider) return null;
+        let s = `Selected ${d.provider} as the ${d.capability} provider`;
+        if (d.model) s += ` (model ${d.model})`;
+        if (Array.isArray(d.settings_updated) && d.settings_updated.length) {
+            s += `; updated ${listOf(d.settings_updated)}`;
+        }
+        return s;
+    },
+    secret_saved: d => d.key_name
+        ? (d.configured === false
+            ? `Cleared the ${d.key_name} credential`
+            : `Saved the ${d.key_name} credential${d.stored_in === 'secret_manager' ? ' to the secret store' : ''}`)
+        : null,
+    capability_switches_changed: d => {
+        const on = Array.isArray(d.turned_on) ? d.turned_on : [];
+        const off = Array.isArray(d.turned_off) ? d.turned_off : [];
+        const parts = [];
+        if (on.length) parts.push(`Turned on ${on.join(', ')}`);
+        if (off.length) parts.push(`${on.length ? 'turned' : 'Turned'} off ${off.join(', ')}`);
+        return parts.length ? parts.join('; ') : null;
+    },
+    user_created: d => d.target_username
+        ? `Created account ${d.target_username}${d.role ? ` with role ${d.role}` : ''}`
+        : null,
+    user_updated: d => d.target_username
+        ? `Updated account ${d.target_username}`
+            + (d.role ? ` — role set to ${d.role}` : '')
+            + (Array.isArray(d.fields) && d.fields.length ? ` (changed: ${listOf(d.fields)})` : '')
+        : null,
+    user_deleted: d => d.target_username
+        ? `Deleted account ${d.target_username}${d.role ? ` (${d.role})` : ''}`
+        : null,
+    user_password_reset: d => d.target_username ? `Reset the password for ${d.target_username}` : null,
+    department_created: d => d.name ? `Created department "${d.name}"` : null,
+    department_deleted: d => d.name ? `Deleted department "${d.name}"` : null,
+    service_created: d => `Created service category "${d.service_name || d.service_code || '?'}"`,
+    service_deleted: d => `Deleted service category "${d.service_name || d.service_code || '?'}"`,
+    service_toggled: d => d.service_code
+        ? `Turned ${d.is_active ? 'on' : 'off'} the ${d.service_code} service category`
+        : null,
+    public_records_export: d => typeof d.records === 'number'
+        ? `Exported ${plural(d.records, 'record')} to CSV`
+            + (Array.isArray(d.sensitive_fields) && d.sensitive_fields.length
+                ? ` including sensitive fields (${listOf(d.sensitive_fields)})` : '')
+        : null,
+    data_export_pii: d => `Exported service requests including resident PII (${d.format || 'csv'})`,
+    backup_key_generated: () => 'Generated a new backup encryption key',
+    pii_reencryption: d => `Re-encrypted resident records (${plural(d.rows ?? 0, 'row')}, ${plural(d.fields ?? 0, 'field')})`,
+    gcp_configured: d => d.project_id ? `Connected Google Cloud project ${d.project_id}` : null,
+    auth0_configured: d => d.domain ? `Connected Auth0 tenant ${d.domain}` : null,
+    version_deployed: d => d.to_sha ? `Deployed version ${d.to_sha}` : null,
+    version_deployment_failed: d => d.target_ref ? `Deployment of ${d.target_ref} failed and was rolled back` : null,
+    onboarding_redeemed: () => 'Signed in with a one-time onboarding link',
+};
+
+/** The fallback, and the expanded view: every detail as a readable
+ * "key: value" pair instead of raw JSON. Values are shallow — an array joins,
+ * a nested object stringifies — because the payloads are written flat. */
+const detailEntries = (details: unknown): Array<[string, string]> => {
+    if (!details || typeof details !== 'object') return [];
+    return Object.entries(details as Details)
+        .filter(([, v]) => v !== null && v !== undefined && v !== '')
+        .map(([k, v]) => [
+            k.replace(/_/g, ' '),
+            Array.isArray(v) ? v.join(', ')
+                : typeof v === 'object' ? JSON.stringify(v)
+                : String(v),
+        ]);
+};
+
+const describeEvent = (eventType: string, details: unknown): string => {
+    const template = EVENT_SENTENCES[eventType];
+    const d = (details && typeof details === 'object') ? details as Details : {};
+    const sentence = template ? template(d) : null;
+    if (sentence) return sentence;
+    return detailEntries(details).map(([k, v]) => `${k}: ${v}`).join(' · ');
+};
+
 export default function AuditLogViewer() {
     const [logs, setLogs] = useState<AuditLog[]>([]);
     const [stats, setStats] = useState<AuditStats | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [expandedId, setExpandedId] = useState<number | null>(null);
 
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(25);
@@ -173,31 +284,18 @@ export default function AuditLogViewer() {
             'account_unlocked': 'Account Unlocked',
             'emergency_access_success': 'Emergency Access',
             'emergency_access_failed': 'Emergency Access Failed',
+            // Dots defeat the generic snake_case fallback below.
+            'setup.complete': 'Setup Completed',
+            'secret_store.choose': 'Secret Store Chosen',
+            'connector_alerts_muted': 'Alerts Muted',
+            'connector_alerts_unmuted': 'Alerts Unmuted',
+            'data_export_pii': 'PII Export',
+            'public_records_export': 'Records Export',
+            'capability_switches_changed': 'Integrations Switched',
+            'provider_saved': 'Provider Saved',
+            'secret_saved': 'Credential Saved',
         };
         return labels[eventType] || eventType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-    };
-
-    /** What actually happened, in the row where "-" used to be.
-     *
-     * Every recorded change carried a description and the column showed none
-     * of it: the cell rendered `failure_reason` and, for anything that
-     * succeeded, a dash. So a page of successful admin changes read as a page
-     * of blanks -- the log looked broken, and the one entry somebody needed
-     * was indistinguishable from the twenty around it.
-     *
-     * Only known keys are read. This is server-supplied JSON rendered into the
-     * console, and dumping the whole object would put whatever a handler
-     * happened to stash -- a filename, a setting's old value -- on screen and
-     * into the CSV export. */
-    const describeDetails = (details: unknown): string => {
-        if (!details || typeof details !== 'object') return '';
-        const d = details as Record<string, unknown>;
-        if (typeof d.action === 'string' && d.action) return d.action;
-        if (typeof d.reason === 'string' && d.reason) return d.reason;
-        if (typeof d.method === 'string' && typeof d.path === 'string') {
-            return `${d.method} ${d.path}`;
-        }
-        return '';
     };
 
     const formatTimestamp = (timestamp: string) => {
@@ -255,10 +353,24 @@ export default function AuditLogViewer() {
                             className={inputStyle + " w-full"}
                         >
                             <option value="all" className="bg-slate-800">All Events</option>
-                            <option value="login_success" className="bg-slate-800">Login Success</option>
-                            <option value="login_failed" className="bg-slate-800">Login Failed</option>
-                            <option value="logout" className="bg-slate-800">Logout</option>
-                            <option value="emergency_access_success" className="bg-slate-800">Emergency Access</option>
+                            <optgroup label="Sign-in">
+                                <option value="login_success" className="bg-slate-800">Login Success</option>
+                                <option value="login_failed" className="bg-slate-800">Login Failed</option>
+                                <option value="logout" className="bg-slate-800">Logout</option>
+                                <option value="emergency_access_success" className="bg-slate-800">Emergency Access</option>
+                            </optgroup>
+                            <optgroup label="Admin actions">
+                                <option value="admin_change" className="bg-slate-800">Admin Change</option>
+                                <option value="user_created" className="bg-slate-800">Account Created</option>
+                                <option value="user_updated" className="bg-slate-800">Account Updated</option>
+                                <option value="user_deleted" className="bg-slate-800">Account Deleted</option>
+                                <option value="provider_saved" className="bg-slate-800">Provider Saved</option>
+                                <option value="secret_saved" className="bg-slate-800">Credential Saved</option>
+                                <option value="capability_switches_changed" className="bg-slate-800">Integrations Switched</option>
+                                <option value="connector_alerts_muted" className="bg-slate-800">Alerts Muted</option>
+                                <option value="public_records_export" className="bg-slate-800">Records Export</option>
+                                <option value="data_export_pii" className="bg-slate-800">PII Export</option>
+                            </optgroup>
                         </select>
                     </div>
 
@@ -363,30 +475,72 @@ export default function AuditLogViewer() {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-white/5">
-                                        {logs.map((log) => (
-                                            <tr key={log.id} className="hover:bg-white/5 transition-colors">
-                                                <td className="px-6 py-4">
-                                                    <div className="flex items-center gap-3">
-                                                        {getEventIcon(log.event_type, log.success)}
-                                                        <span className={`text-sm font-medium ${log.success ? 'text-white' : 'text-red-400'}`}>
-                                                            {getEventLabel(log.event_type)}
-                                                        </span>
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4 text-sm text-white/80">{log.username || 'Unknown'}</td>
-                                                <td className="px-6 py-4 text-sm text-white/50 font-mono">{log.ip_address || '-'}</td>
-                                                <td className="px-6 py-4 text-sm text-white/60">{formatTimestamp(log.timestamp)}</td>
-                                                <td className="px-6 py-4 text-sm">
-                                                    {log.failure_reason ? (
-                                                        <span className="text-red-400">{log.failure_reason}</span>
-                                                    ) : describeDetails(log.details) ? (
-                                                        <span className="text-white/70">{describeDetails(log.details)}</span>
-                                                    ) : (
-                                                        <span className="text-white/30">-</span>
+                                        {logs.map((log) => {
+                                            const sentence = describeEvent(log.event_type, log.details);
+                                            const entries = detailEntries(log.details);
+                                            const expandable = entries.length > 0 || !!log.user_agent;
+                                            const expanded = expandedId === log.id;
+                                            return (
+                                                <Fragment key={log.id}>
+                                                    <tr
+                                                        className={`hover:bg-white/5 transition-colors ${expandable ? 'cursor-pointer' : ''}`}
+                                                        onClick={() => expandable && setExpandedId(expanded ? null : log.id)}
+                                                    >
+                                                        <td className="px-6 py-4">
+                                                            <div className="flex items-center gap-3">
+                                                                {getEventIcon(log.event_type, log.success)}
+                                                                <span className={`text-sm font-medium ${log.success ? 'text-white' : 'text-red-400'}`}>
+                                                                    {getEventLabel(log.event_type)}
+                                                                </span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-6 py-4 text-sm text-white/80">{log.username || 'Unknown'}</td>
+                                                        <td className="px-6 py-4 text-sm text-white/50 font-mono">{log.ip_address || '-'}</td>
+                                                        <td className="px-6 py-4 text-sm text-white/60">{formatTimestamp(log.timestamp)}</td>
+                                                        <td className="px-6 py-4 text-sm">
+                                                            <div className="flex items-start gap-2">
+                                                                <div className="min-w-0">
+                                                                    {sentence && (
+                                                                        <span className="text-white/70">{sentence}</span>
+                                                                    )}
+                                                                    {log.failure_reason && (
+                                                                        <div className="text-red-400">{log.failure_reason}</div>
+                                                                    )}
+                                                                    {!sentence && !log.failure_reason && (
+                                                                        <span className="text-white/30">-</span>
+                                                                    )}
+                                                                </div>
+                                                                {expandable && (
+                                                                    <ChevronDown
+                                                                        className={`w-4 h-4 mt-0.5 shrink-0 text-white/40 transition-transform ${expanded ? 'rotate-180' : ''}`}
+                                                                    />
+                                                                )}
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                    {expanded && (
+                                                        <tr key={`${log.id}-details`} className="bg-white/5">
+                                                            <td colSpan={5} className="px-6 py-4">
+                                                                <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
+                                                                    {entries.map(([k, v]) => (
+                                                                        <div key={k} className="flex gap-2">
+                                                                            <dt className="text-white/50 capitalize shrink-0">{k}:</dt>
+                                                                            <dd className="text-white/80 break-all">{v}</dd>
+                                                                        </div>
+                                                                    ))}
+                                                                    {log.user_agent && (
+                                                                        <div className="flex gap-2 md:col-span-2">
+                                                                            <dt className="text-white/50 shrink-0">Browser:</dt>
+                                                                            <dd className="text-white/60 break-all">{log.user_agent}</dd>
+                                                                        </div>
+                                                                    )}
+                                                                </dl>
+                                                            </td>
+                                                        </tr>
                                                     )}
-                                                </td>
-                                            </tr>
-                                        ))}
+                                                </Fragment>
+                                            );
+                                        })}
                                     </tbody>
                                 </table>
                             </div>
