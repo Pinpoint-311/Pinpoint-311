@@ -710,6 +710,12 @@ async def integration_webhook(
     # byte-by-byte one, whose duration depends on how many leading characters are
     # right -- and this endpoint is unauthenticated and remotely timeable, which
     # is the whole precondition for extracting a token that way.
+    # Catalog membership too, not only an enabled row. A platform removed from
+    # the catalog (the practice sandbox, deleted 2026-07-20) can leave enabled
+    # rows behind with live webhook tokens, and this endpoint is
+    # unauthenticated -- an orphaned row must not stay a valid way in.
+    if platform not in PLATFORM_CATALOG:
+        raise HTTPException(status_code=404, detail="Unknown platform")
     integration = (await db.execute(
         select(IntegrationConfig).where(
             IntegrationConfig.platform == platform,
