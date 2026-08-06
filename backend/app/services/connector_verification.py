@@ -332,9 +332,19 @@ async def notify(db, *, health=None, alerts=None, dispatch=None) -> Dict[str, An
         # reminder about a service the town has said it is not using -- with no
         # card, and therefore no mute button, to stop it.
         off = await _switched_off(list(snapshot.keys()))
+        # Govtech rows have the same frozen-row problem and their own off
+        # switch: disabling or disconnecting an integration stops the sweep
+        # testing it, so a red govtech:accela row (or a healthy one going
+        # stale after three untested days) would email reminders forever --
+        # and a deleted integration has no card, hence no mute button. Only
+        # rows for currently-enabled integrations may alert.
+        enabled_keys = {health_key(i.platform) for i in await _enabled_integrations(db)}
+        healths = [h for h in snapshot.values()
+                   if h.connector not in off
+                   and (not h.connector.startswith("govtech:") or h.connector in enabled_keys)]
         return await dispatch(
             db,
-            healths=[h for h in snapshot.values() if h.connector not in off],
+            healths=healths,
             town=await _town_name(db),
             settings_url=await _settings_url(db),
         )
