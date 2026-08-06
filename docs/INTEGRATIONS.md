@@ -64,19 +64,31 @@ in the admin UI. Sync failures never block the core request lifecycle.
 | Platform | Vendor | Connection type | Push | Status out | Pull | Comments | Photos | Assets |
 | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | **Accela** | Accela Civic Platform | Public API (Construct API v4, OAuth2) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Esri ArcGIS** | Esri (ArcGIS Online / Enterprise) | Public API (Feature Service REST, API key or token) | ✅ | ✅ | ✅ | — | ✅ | ✅ |
 | **Tyler Technologies** | Tyler 311 / MyCivic / EnerGov | Open311 GeoReport v2 | ✅ | — | ✅ | — | — | — |
 | **CivicPlus (SeeClickFix)** | CivicPlus | Public API (SeeClickFix API v2) | ✅ | — | ✅ | ✅ | — | — |
 | **Generic Open311** | any GeoReport v2 endpoint | Open standard | ✅ | — | ✅ | — | — | — |
 | **Other REST System** | any vendor with a JSON REST API | Generic, self-configured (⚠ not vendor-certified) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 Dashes reflect hard limits of the vendor's public interface: the Open311 spec
-has no third-party status-update, comment, or attachment endpoints, and
-SeeClickFix's public API exposes comments but not document upload or asset
-inventories. Everything the vendor's interface allows is wired.
+has no third-party status-update, comment, or attachment endpoints, SeeClickFix's
+public API exposes comments but not document upload or asset inventories, and a
+feature layer is a table of rows with no comment model of its own. Everything the
+vendor's interface allows is wired.
 
-**Purpose-built vs. generic.** Accela, CivicPlus/SeeClickFix, and Tyler (Open311)
-are implemented against each platform's actual, documented API and work out of
-the box with account credentials or the jurisdiction's GeoReport v2 endpoint.
+**Purpose-built vs. generic.** Accela, Esri ArcGIS, CivicPlus/SeeClickFix, and
+Tyler (Open311) are implemented against each platform's actual, documented API
+and work out of the box with account credentials or the jurisdiction's GeoReport
+v2 endpoint.
+
+**Why ArcGIS reaches further than it looks.** The ArcGIS connector targets one
+feature layer, and Survey123, Field Maps, Experience Builder, and ArcGIS
+Dashboards all read and write that same layer — so connecting the layer also
+connects whatever intake and field stack the town has built on top of it. Spatial
+Data Logic's SDL Portal syncs with ArcGIS Online, which reaches those towns too.
+Because a town using Esri maps in Pinpoint already has an org API key on file,
+the connector reuses it when the key box is left blank (turn that off with
+`reuse_maps_api_key=false`).
 
 Everything else — Trimble Cityworks, SDL (Spatial Data Logic), Edmunds
 GovTech/MCSJ, GovPilot, FastTrackGov, Polimorphic, and any other vendor that
@@ -100,6 +112,11 @@ push/pull/comment/photo/asset code paths as production:
   [developer.accela.com](https://developer.accela.com): register an app,
   then use the Test API Token utility and sandbox agency to exercise the real
   Construct API.
+- **Esri ArcGIS** — a free ArcGIS Developer account includes a hosted feature
+  layer and an API key. Publish a point layer with editing and attachments
+  enabled, point the connector at its `/FeatureServer/0` URL, and the connection
+  check will report the layer name and exactly which of Create/Update/attachments
+  are on.
 - **CivicPlus SeeClickFix** — public API docs at
   [dev.seeclickfix.com](https://dev.seeclickfix.com) with a replicated test
   environment at `test.seeclickfix.com`; personal access tokens come from any
@@ -195,6 +212,17 @@ what the UI exposes (set them via `PUT /api/integrations/{id}`):
   GeoJSON FeatureCollection directly, or a JSON list mapped via
   `asset_id_field`/`asset_name_field`/`asset_lat_field`/`asset_long_field`).
 - Accela: `environment` (PROD/TEST), `record_type`, `api_base`/`auth_base` overrides.
+- Esri ArcGIS: `layer_url` (required — the layer, ending `/FeatureServer/0`),
+  `portal_url` (Enterprise only; default `https://www.arcgis.com`), `field_map`
+  (Pinpoint field → layer column; defaults follow Esri's citizen-request
+  template — `reqid`, `reqcategory`, `details`, `address`, `status`, `submitdt`),
+  `static_fields`, `wkid` (default 4326), `object_id_field`,
+  `external_id_field`, `edit_date_field` (detected from the layer's editor
+  tracking when blank), `status_notes_field`, `page_size`/`max_pull_pages`,
+  `reuse_maps_api_key`, and for assets `asset_layer_url` plus
+  `asset_id_field`/`asset_name_field`/`asset_type_field`. Attributes the layer
+  doesn't have are dropped with a warning rather than failing the whole edit,
+  and date columns are converted to the epoch milliseconds ArcGIS expects.
 - Open311/Tyler: `jurisdiction_id`, `default_service_code`.
 
 ## Operational notes

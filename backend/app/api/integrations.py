@@ -255,6 +255,12 @@ def _friendly_test_error(error: str) -> str:
                 "starts with https:// — if it does, ask the vendor about their certificate.")
     if "requires config.base_url" in text or "no api base url" in text:
         return "The web address (base URL) is missing. Paste the one the vendor sent you."
+    if "no feature layer url" in text:
+        return ("The feature layer address is missing. Paste the layer URL from ArcGIS — "
+                "it ends in a number, like /FeatureServer/0.")
+    if "arcgis rejected the credentials" in text:
+        return ("ArcGIS refused the key or account. Check that it has editing rights on "
+                "that layer, and that the layer is shared with it.")
     if "credentials missing" in text or "requires agency_name" in text or "requires record_type" in text:
         return "Some required fields are still blank — go back one step and fill them in."
     return ("Something didn't work. The technical details below may help the vendor's "

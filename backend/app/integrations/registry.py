@@ -9,6 +9,7 @@ from typing import Any, Dict
 
 from app.integrations.base import BaseConnector
 from app.integrations.connectors.accela import AccelaConnector
+from app.integrations.connectors.arcgis import ArcGISConnector
 from app.integrations.connectors.open311 import Open311Connector
 from app.integrations.connectors.seeclickfix import SeeClickFixConnector
 from app.integrations.connectors.generic_rest import GenericRestConnector
@@ -41,6 +42,44 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
             {"key": "asset_group", "label": "Asset Group Filter", "placeholder": "", "required": False},
         ],
         "setup_notes": "Create an app at developer.accela.com to get the Client ID/Secret, then use an agency account for the OAuth2 password grant. The record type must exist in your agency configuration.",
+    },
+    "arcgis": {
+        "name": "Esri ArcGIS (Feature Service)",
+        "vendor": "Esri",
+        "category": "GIS & mapping",
+        "integration_mode": "public_api",
+        "docs_url": "https://developers.arcgis.com/rest/services-reference/apply-edits-feature-service-.htm",
+        "description": (
+            "Writes each new report into an ArcGIS feature layer with applyEdits — geometry, "
+            "attributes, and resident photos as attachments — and polls the layer's edit date "
+            "for status changes made in ArcGIS. Because Survey123, Field Maps, and Experience "
+            "Builder all read and write the same feature layer, a crew editing a report in the "
+            "field updates Pinpoint too. Works with ArcGIS Online and ArcGIS Enterprise."
+        ),
+        "capabilities": ["push", "push_status", "pull", "documents", "assets", "test"],
+        "credential_fields": [
+            {"key": "api_key", "label": "ArcGIS API Key", "secret": True},
+            {"key": "username", "label": "ArcGIS Username (instead of an API key)", "secret": False},
+            {"key": "password", "label": "ArcGIS Password", "secret": True},
+        ],
+        "config_fields": [
+            {"key": "layer_url", "label": "Feature Layer URL", "placeholder": "https://services1.arcgis.com/AbC123/arcgis/rest/services/Requests/FeatureServer/0", "required": True},
+            {"key": "portal_url", "label": "Portal URL (ArcGIS Enterprise only)", "placeholder": "https://www.arcgis.com", "required": False},
+            {"key": "status_notes_field", "label": "Layer field for status notes", "placeholder": "", "required": False},
+            {"key": "edit_date_field", "label": "Last-edited field (leave blank to detect)", "placeholder": "EditDate", "required": False},
+            {"key": "external_id_field", "label": "Field holding the record id (leave blank for OBJECTID)", "placeholder": "", "required": False},
+            {"key": "reuse_maps_api_key", "label": "Reuse the ArcGIS key from your map settings (true/false)", "placeholder": "true", "required": False},
+            {"key": "sync_assets", "label": "Sync an asset layer onto the Pinpoint map (true/false)", "placeholder": "false", "required": False},
+            {"key": "asset_layer_url", "label": "Asset Layer URL (only if syncing assets)", "placeholder": "", "required": False},
+        ],
+        "setup_notes": (
+            "Point this at one feature LAYER url (it ends in /FeatureServer/0), not the service "
+            "root. The layer needs Create enabled for new reports and Update for status write-back; "
+            "turn on attachments if you want resident photos. Editor tracking (which adds the "
+            "EditDate field) is what makes status polling incremental. If your layer's column names "
+            "differ from Esri's citizen-request template (reqid, reqcategory, details, status), add "
+            "a field_map. Connection check reports the layer name and exactly which of these are on."
+        ),
     },
     "tyler": {
         "name": "Tyler Technologies",
@@ -179,6 +218,34 @@ CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
         },
         "recommended_sync_direction": "bidirectional",
     },
+    "arcgis": {
+        "plain_summary": "Every report submitted here also lands as a point on your town's ArcGIS map, photos and all. When someone changes a report's status in ArcGIS — including from Survey123 or Field Maps out in the field — that change comes back here.",
+        "what_you_need": [
+            "The web address of the ArcGIS layer reports should go into — your GIS staff or county GIS office has this, and it ends in /FeatureServer/0",
+            "An ArcGIS API key, or an ArcGIS username and password the connection can use (if you already set up Esri maps in Pinpoint, that key can be reused — leave the key box blank)",
+            "That layer set to allow editing, so reports can be added to it",
+            "Optional: attachments turned on for that layer, if you want resident photos copied over",
+        ],
+        "vendor_ask": {
+            "to_hint": "Your town or county GIS staff (or whoever manages your ArcGIS Online account)",
+            "subject": "ArcGIS feature layer for our 311 system (Pinpoint 311)",
+            "body": "Hello,\n\nWe are connecting our resident request system (Pinpoint 311) to ArcGIS so resident reports appear on our map automatically and status changes flow both ways.\n\nCould you please:\n1. Send us the URL of the feature layer reports should be written to (the address ending in /FeatureServer/0)\n2. Enable editing on that layer — Create so reports can be added, and Update so status changes write back\n3. Turn on attachments for the layer, so resident photos come across\n4. Turn on editor tracking, so we only poll for what actually changed\n5. Send an API key (or a named account) with editing rights on that layer\n6. Send us the layer's field names for category, description, status, and address if they differ from the standard citizen-request template\n\nThank you!",
+        },
+        "field_help": {
+            "api_key": "A long code from ArcGIS Developers -> Dashboard -> API keys. Leave blank if you already saved an ArcGIS key for your maps — the connection will reuse it — or if you're using a username and password instead.",
+            "username": "Only if you're not using an API key. The ArcGIS account the connection will act as.",
+            "password": "That account's password.",
+            "layer_url": "Open the layer in ArcGIS and copy the URL from its item page. It must end in a number, like /FeatureServer/0 — that number picks the specific layer.",
+            "portal_url": "Leave blank for ArcGIS Online. Only fill this in if your town runs its own ArcGIS Enterprise server, in which case use that server's address.",
+            "status_notes_field": "Optional — if your layer has a notes or comments column, put its name here and status notes will be written into it.",
+            "edit_date_field": "Leave blank. We read this from the layer automatically; only set it if your GIS staff tell you the column has a different name.",
+            "external_id_field": "Leave blank unless your GIS staff want reports tracked by a column other than the layer's built-in ID.",
+            "reuse_maps_api_key": "Leave blank or type true to reuse the ArcGIS key already saved in your map settings. Type false to require a key entered here instead.",
+            "sync_assets": "Type true to also copy an ArcGIS asset layer (hydrants, signs, streetlights) onto the Pinpoint map each night, so residents can pick the exact one they're reporting.",
+            "asset_layer_url": "Only if syncing assets — the /FeatureServer/ address of the layer holding that asset inventory.",
+        },
+        "recommended_sync_direction": "bidirectional",
+    },
     "tyler": {
         "plain_summary": "Reports submitted here are sent into your Tyler system, and Tyler status updates show up here automatically.",
         "what_you_need": [
@@ -274,6 +341,7 @@ for _key, _guide in CLERK_GUIDES.items():
 
 _CONNECTOR_CLASSES = {
     "accela": AccelaConnector,
+    "arcgis": ArcGISConnector,
     "tyler": TylerConnector,
     "civicplus": SeeClickFixConnector,
     "generic_rest": GenericRestConnector,
