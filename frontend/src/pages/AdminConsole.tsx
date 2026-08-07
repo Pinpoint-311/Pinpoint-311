@@ -1477,9 +1477,15 @@ export default function AdminConsole() {
         setIsLoading(true);
         try {
             // Pack switches ride with the module flags — one Save button for
-            // the whole screen. The server treats absent keys as pack defaults,
-            // so we always send the full map the toggles show.
-            await api.updateSettings({ modules, research_packs: packSwitches });
+            // the whole screen. But ONLY once they have actually loaded:
+            // `packSwitches` starts {} until GET /research/packs resolves, and
+            // sending {} persists "every pack back to its default" — a failed
+            // or slow fetch plus one unrelated module save silently re-enabled
+            // packs an admin had deliberately switched off. An absent key is
+            // the server's "leave them as they are".
+            const payload: Record<string, unknown> = { modules };
+            if (Object.keys(packSwitches).length > 0) payload.research_packs = packSwitches;
+            await api.updateSettings(payload);
             await refreshSettings();
             setSaveMessage('Modules saved successfully');
             setTimeout(() => setSaveMessage(null), 3000);
