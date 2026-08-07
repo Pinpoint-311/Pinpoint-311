@@ -28,6 +28,8 @@ The application makes no automatic calls to Pinpoint 311 servers. Because it is 
 
 The implementation is `frontend/src/components/StayInformed.tsx`, which carries the same account of what it does and does not send.
 
+A deployment may instead set `CONTACT_FORM_URL` to a registration form the operator hosts (a Microsoft Form, in practice). When it is set, the admin console replaces the built-in form with a link that opens the operator's form in a new browser tab, labelled as hosted by Microsoft Forms — the application then transmits nothing at all; whatever is entered goes from the admin's browser to Microsoft Forms. When it is unset (the default), the built-in form above is used unchanged.
+
 ### Audit Logging
 - **Comprehensive trail**: every lifecycle event is recorded in the `request_audit_logs` table (submission, assignment, status changes, comments, edits).
 - **Tamper-evident, not immutable**: entries are hash-chained, and the chain head is anchored on a schedule. The data lives in a normal database table — the chaining lets tampering be *detected*, it does not make the records physically immutable.

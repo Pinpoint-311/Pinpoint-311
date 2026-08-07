@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     app_version: str = "dev"
     git_sha: str = "unknown"
 
+    # Deployment registration form, if the operator hosts one (e.g. a Microsoft
+    # Form). When set, the admin console links out to it instead of showing the
+    # built-in contact form. Empty means no form: the in-app fallback is used.
+    contact_form_url: str = ""
+
     # Managed (state-hosted) mode — orchestrator-driven deployment. Every
     # managed-mode hook is additive and a no-op when this flag is off
     # (docs/ORCHESTRATOR_PLAN.md Part A).
