@@ -53,3 +53,19 @@ async def test_whitespace_is_not_a_configuration(monkeypatch):
     monkeypatch.setenv("CONTACT_FORM_URL", "   ")
     config = await get_deployment_config(db=_NoDatabase())
     assert config["contact_form_url"] == ""
+
+
+async def test_embedding_is_the_default(monkeypatch):
+    """Answering without leaving the console is the point of the setting, so an
+    operator who configures a form and nothing else gets the embedded form."""
+    monkeypatch.delenv("CONTACT_FORM_EMBED", raising=False)
+    config = await get_deployment_config(db=_NoDatabase())
+    assert config["contact_form_embed"] is True
+
+
+async def test_embedding_can_be_switched_off(monkeypatch):
+    """What a form restricted to the operator's own organisation needs: framed,
+    those serve a sign-in page rather than the questions."""
+    monkeypatch.setenv("CONTACT_FORM_EMBED", "false")
+    config = await get_deployment_config(db=_NoDatabase())
+    assert config["contact_form_embed"] is False

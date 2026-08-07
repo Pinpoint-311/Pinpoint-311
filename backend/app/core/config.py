@@ -54,9 +54,16 @@ class Settings(BaseSettings):
     git_sha: str = "unknown"
 
     # Deployment registration form, if the operator hosts one (e.g. a Microsoft
-    # Form). When set, the admin console links out to it instead of showing the
-    # built-in contact form. Empty means no form: the in-app fallback is used.
+    # Form). When set, the admin console offers it instead of the built-in
+    # contact form. Empty means no form: the in-app fallback is used. The URL
+    # may carry {organization}/{deployment_url}/... tokens the console fills in
+    # -- see frontend/src/components/contactForm.ts.
     contact_form_url: str = ""
+    # Whether that form is shown inside the console in a frame, so somebody can
+    # answer it without leaving the page. Off sends them to a new tab instead,
+    # which is what a form restricted to the operator's own organisation needs:
+    # those render a sign-in page in a frame rather than the questions.
+    contact_form_embed: bool = True
 
     # Managed (state-hosted) mode — orchestrator-driven deployment. Every
     # managed-mode hook is additive and a no-op when this flag is off

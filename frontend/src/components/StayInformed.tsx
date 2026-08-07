@@ -4,6 +4,7 @@ import { Bell, ExternalLink, Check, X } from 'lucide-react';
 
 import { Button, Input, Select } from './ui';
 import { api } from '../services/api';
+import { buildContactFormUrl, type PrefillValues } from './contactForm';
 
 /**
  * The one voluntary outbound call this application makes.
@@ -107,9 +108,17 @@ function recordDismissal(how: Outcome) {
     if (how !== 'not-now') writeFlag(BANNER_KEY, how);
 }
 
-/** Reopen the form from the banner or the setup checklist. */
-export function openStayInformed() {
-    window.dispatchEvent(new CustomEvent(OPEN_EVENT));
+/**
+ * Reopen the form from the banner or the setup checklist.
+ *
+ * `immediate` distinguishes "you asked for this" from "we interrupted you",
+ * and the operator's form is loaded from Microsoft the moment it appears -- so
+ * only a click may cause that. A caller whose own button said "Register your
+ * deployment" has already collected the click and passes true; the automatic
+ * first-run prompt does not, and shows an invitation with a button instead.
+ */
+export function openStayInformed(options?: { immediate?: boolean }) {
+    window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: options ?? {} }));
 }
 
 // ---------------------------------------------------------------------------
@@ -191,10 +200,73 @@ function Consent({ checked, onChange, children }: {
 
 /**
  * Shown instead of the built-in form when the operator hosts a registration
- * form of their own. Nothing is collected or transmitted here -- the button is
- * a link, the form lives on Microsoft Forms, and the browser is told so.
+ * form of their own.
+ *
+ * Two states, and the boundary between them is the whole point. The invitation
+ * transmits nothing. Showing the form loads it from Microsoft, carrying
+ * whatever the operator chose to prefill in its URL, so that has to be caused
+ * by somebody clicking -- never by a modal appearing on its own. `startEmbedded`
+ * is how a caller says it already has that click.
+ *
+ * The link out is present in both states rather than only as an error path. A
+ * framed Forms page depends on third-party storage, which a hardened browser or
+ * an organisation-restricted form will refuse, and an iframe that fails renders
+ * as a blank rectangle with no event this side can observe -- so the way out
+ * cannot be something only shown once failure is detected.
  */
-function RegisterLinkOut({ url, onDone }: { url: string; onDone: (how: Outcome) => void }) {
+function RegisterPanel({ url, embedUrl, startEmbedded, onShowForm, onDone }: {
+    url: string;
+    embedUrl: string;
+    startEmbedded: boolean;
+    onShowForm: () => void;
+    onDone: (how: Outcome) => void;
+}) {
+    if (startEmbedded && embedUrl) {
+        return (
+            <div className="space-y-3">
+                <iframe
+                    src={embedUrl}
+                    title="Deployment registration form"
+                    /* Enough for Forms to run: its own scripts, its own storage
+                     * (allow-same-origin is its origin, not this one), the
+                     * submission itself, and the new tab its "done" screen
+                     * sometimes offers. Nothing beyond that. */
+                    sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
+                    /* Microsoft has no need for the address of a town's admin
+                     * console, which is often an internal hostname. */
+                    referrerPolicy="no-referrer"
+                    className="w-full h-[65vh] min-h-[380px] rounded-xl border border-white/10 bg-white"
+                />
+                <p className="text-[11px] text-white/35 leading-relaxed">
+                    This form is hosted by Microsoft Forms. Opening it loaded it from Microsoft, and
+                    your answers go to them when you press Submit there.
+                </p>
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <a
+                        href={url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-xs text-primary-300 hover:text-primary-200 underline underline-offset-2"
+                    >
+                        Open it in a new tab instead
+                        <ExternalLink className="w-3 h-3" />
+                    </a>
+                    <button
+                        type="button"
+                        onClick={() => onDone('opened-form')}
+                        className="px-4 py-2 rounded-xl bg-white/[0.06] hover:bg-white/10 border border-white/12 text-white/70 text-sm transition-colors"
+                    >
+                        Done
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    /* No embed URL, or embedding switched off: the button is a link, and the
+     * only request to Microsoft is the one a new tab makes. */
+    const linkOut = !embedUrl;
+
     return (
         <div className="space-y-5">
             <p className="text-white/65 text-sm leading-relaxed">
@@ -202,19 +274,30 @@ function RegisterLinkOut({ url, onDone }: { url: string; onDone: (how: Outcome) 
                 security fixes, releases, or anything affecting your instance. Registering takes
                 two minutes: who to reach, and where this runs.
             </p>
-            <a
-                href={url}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => onDone('opened-form')}
-                className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-primary-500 to-indigo-500 hover:from-primary-400 hover:to-indigo-400 text-white text-sm font-medium shadow-lg shadow-primary-500/25 transition-colors"
-            >
-                Register your deployment
-                <ExternalLink className="w-4 h-4" />
-            </a>
+            {linkOut ? (
+                <a
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => onDone('opened-form')}
+                    className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-primary-500 to-indigo-500 hover:from-primary-400 hover:to-indigo-400 text-white text-sm font-medium shadow-lg shadow-primary-500/25 transition-colors"
+                >
+                    Register your deployment
+                    <ExternalLink className="w-4 h-4" />
+                </a>
+            ) : (
+                <button
+                    type="button"
+                    onClick={onShowForm}
+                    className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-primary-500 to-indigo-500 hover:from-primary-400 hover:to-indigo-400 text-white text-sm font-medium shadow-lg shadow-primary-500/25 transition-colors"
+                >
+                    Register your deployment
+                </button>
+            )}
             <p className="text-center text-[11px] text-white/35">
-                Opens in a new tab. The form is hosted by Microsoft Forms — nothing is sent from
-                this application.
+                {linkOut
+                    ? 'Opens in a new tab. The form is hosted by Microsoft Forms.'
+                    : 'The form is hosted by Microsoft Forms, and opens here. Nothing reaches them until you open it.'}
             </p>
             <div className="flex flex-col gap-3 pt-1">
                 <button
@@ -459,8 +542,12 @@ function StayInformedForm({ onDone }: { onDone: (how: Outcome) => void }) {
  * `ready` is what says setup is finished rather than in progress -- the caller
  * decides, because only it knows whether somebody is mid-configuration. This
  * component only guarantees that a dismissal is permanent.
+ *
+ * `prefill` is what the console already knows about the town and the person
+ * signed in. None of it goes anywhere unless the operator's CONTACT_FORM_URL
+ * asks for it by name; see contactForm.ts.
  */
-export function StayInformedHost({ ready }: { ready: boolean }) {
+export function StayInformedHost({ ready, prefill }: { ready: boolean; prefill?: PrefillValues }) {
     const [open, setOpen] = useState(false);
     const [dismissed, setDismissed] = useState(() => readFlag(MODAL_KEY));
     const [bannerDismissed, setBannerDismissed] = useState(() => readFlag(BANNER_KEY));
@@ -468,15 +555,34 @@ export function StayInformedHost({ ready }: { ready: boolean }) {
     /* The operator-hosted registration form, if this deployment has one.
      * Empty means it does not, and the modal shows the built-in form. */
     const [contactFormUrl, setContactFormUrl] = useState('');
+    const [embedAllowed, setEmbedAllowed] = useState(true);
+    /* The two facts the deployment knows about itself rather than about the
+     * person: where it answers, and which build it is. */
+    const [deploymentUrl, setDeploymentUrl] = useState<string | null>(null);
+    const [version, setVersion] = useState<string | null>(null);
+    /* Whether the operator's form is on screen, which is the same question as
+     * whether this browser has contacted Microsoft. True from the start only
+     * when the caller collected a click of its own; the automatic first-run
+     * prompt always opens on the invitation. Lives here rather than in the
+     * panel because the dialog has to be wider to hold a form. */
+    const [showForm, setShowForm] = useState(false);
 
     useEffect(() => {
         api.getSystemConfig()
-            .then(cfg => setContactFormUrl((cfg?.contact_form_url ?? '').trim()))
+            .then(cfg => {
+                setContactFormUrl((cfg?.contact_form_url ?? '').trim());
+                setEmbedAllowed(cfg?.contact_form_embed !== false);
+                setDeploymentUrl(cfg?.public_origin ?? null);
+                setVersion(cfg?.app_version ?? null);
+            })
             .catch(() => { /* unknowable reads as unconfigured: the in-app form */ });
     }, []);
 
     useEffect(() => {
-        const reopen = () => setOpen(true);
+        const reopen = (event: Event) => {
+            setShowForm(Boolean((event as CustomEvent).detail?.immediate));
+            setOpen(true);
+        };
         const changed = () => {
             setDismissed(readFlag(MODAL_KEY));
             setBannerDismissed(readFlag(BANNER_KEY));
@@ -490,18 +596,41 @@ export function StayInformedHost({ ready }: { ready: boolean }) {
     }, []);
 
     useEffect(() => {
-        // Once per page load at most, and never after any dismissal.
+        // Once per page load at most, and never after any dismissal. Nobody
+        // asked for this one, so it opens on the invitation rather than on a
+        // form fetched from a third party.
         if (ready && !dismissed && !autoPrompted.current) {
             autoPrompted.current = true;
+            setShowForm(false);
             setOpen(true);
         }
     }, [ready, dismissed]);
+
+    /* Built here rather than in the panel so the panel stays a rendering of
+     * values it was handed. Empty embedUrl is what makes the panel offer a link
+     * out instead: either no form is configured, or the operator switched
+     * framing off. */
+    const values: PrefillValues = {
+        ...prefill,
+        deployment_url: prefill?.deployment_url ?? deploymentUrl,
+        version: prefill?.version ?? version,
+    };
+    const formUrl = buildContactFormUrl(contactFormUrl, values);
+    const formEmbedUrl = embedAllowed
+        ? buildContactFormUrl(contactFormUrl, values, { embed: true })
+        : '';
+    /* An unusable CONTACT_FORM_URL builds to '' and lands here as "no form
+     * configured", so a mistyped setting falls back to the built-in form
+     * rather than taking away the only way to leave a contact. */
+    const hasOperatorForm = Boolean(formUrl);
+    const framing = hasOperatorForm && Boolean(formEmbedUrl) && showForm;
 
     const finish = (how: Outcome) => {
         recordDismissal(how);
         setDismissed(true);
         if (how !== 'not-now') setBannerDismissed(true);
         setOpen(false);
+        setShowForm(false);
     };
 
     return (
@@ -525,10 +654,10 @@ export function StayInformedHost({ ready }: { ready: boolean }) {
                             onClick={(e) => e.stopPropagation()}
                             role="dialog"
                             aria-modal="true"
-                            aria-label={contactFormUrl
+                            aria-label={hasOperatorForm
                                 ? 'Register your deployment'
                                 : 'Stay informed about security updates and new features'}
-                            className="setup-panel w-full max-w-xl my-auto p-7 sm:p-8"
+                            className={`setup-panel w-full my-auto p-7 sm:p-8 ${framing ? 'max-w-3xl' : 'max-w-xl'}`}
                         >
                             <button
                                 type="button"
@@ -546,14 +675,20 @@ export function StayInformedHost({ ready }: { ready: boolean }) {
                                     <Bell className="w-6 h-6 text-white" />
                                 </div>
                                 <h2 className="font-bold text-lg text-white leading-tight">
-                                    {contactFormUrl
+                                    {hasOperatorForm
                                         ? 'Register your deployment'
                                         : 'Stay informed about security updates and new features'}
                                 </h2>
                             </div>
 
-                            {contactFormUrl
-                                ? <RegisterLinkOut url={contactFormUrl} onDone={finish} />
+                            {hasOperatorForm
+                                ? <RegisterPanel
+                                    url={formUrl}
+                                    embedUrl={formEmbedUrl}
+                                    startEmbedded={showForm}
+                                    onShowForm={() => setShowForm(true)}
+                                    onDone={finish}
+                                />
                                 : <StayInformedForm onDone={finish} />}
                         </motion.div>
                     </motion.div>
@@ -589,7 +724,7 @@ function StayInformedBanner({ onDismiss }: { onDismiss: () => void }) {
                     We have no way to reach you about security fixes or updates.{' '}
                     <button
                         type="button"
-                        onClick={openStayInformed}
+                        onClick={() => openStayInformed({ immediate: true })}
                         className="text-primary-300 hover:text-primary-200 underline underline-offset-2"
                     >
                         Register a contact

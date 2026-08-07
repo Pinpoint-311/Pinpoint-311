@@ -5,7 +5,7 @@ import {
     Key, CheckCircle, CircleDashed, Activity,
     AlertCircle, ChevronDown, ChevronUp,
     ExternalLink, Database, BookOpen,
-    ListChecks, Bell,
+    ListChecks, Bell, ChevronRight,
 } from 'lucide-react';
 
 import { Card, Button, Badge, CollapsibleSection } from './ui';
@@ -24,6 +24,7 @@ import StorageStatusLine from './StorageStatusLine';
 import SecretStoreGate, { SECRET_STORE_GATE_ID } from './SecretStoreGate';
 import SecretField from './SecretField';
 import { openStayInformed } from './StayInformed';
+import { buildContactFormUrl } from './contactForm';
 
 
 /* Records retention, on the setup page rather than only on the compliance tab.
@@ -583,9 +584,14 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * than a wrong URL. null means nothing has configured a domain yet, and the
      * browser's origin is the best guess available. */
     const [publicOrigin, setPublicOrigin] = useState<string | null>(null);
-    /* The operator-hosted registration form (CONTACT_FORM_URL), if this
-     * deployment has one. Empty means it does not, and the tracker footer
-     * falls back to the built-in contact form. */
+    /* Whether the operator hosts a registration form (CONTACT_FORM_URL).
+     * Empty means they do not, and the tracker footer falls back to the
+     * built-in contact form.
+     *
+     * Passed through the same builder the modal uses rather than read raw, so
+     * an unusable setting is unconfigured in both places. Otherwise this footer
+     * would invite somebody to register and the modal it opens would show them
+     * the built-in form instead. */
     const [contactFormUrl, setContactFormUrl] = useState('');
     /* Which provider each capability is on, and which are set up.
      *
@@ -677,7 +683,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             .then(cfg => {
                 setManagedMode(!!cfg?.managed_mode);
                 setPublicOrigin(cfg?.public_origin ?? null);
-                setContactFormUrl((cfg?.contact_form_url ?? '').trim());
+                setContactFormUrl(buildContactFormUrl(cfg?.contact_form_url));
             })
             .catch(() => setManagedMode(false));
     }, []);
@@ -1144,16 +1150,19 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                   * been dismissed, which is permanent.
                   *
                   * Two shapes: when the operator hosts a registration form
-                  * (CONTACT_FORM_URL), an invitation that opens it in a new
-                  * tab; otherwise the built-in contact form, so a self-hoster
-                  * without a form loses nothing. */}
+                  * (CONTACT_FORM_URL), an invitation that opens it inside the
+                  * console; otherwise the built-in contact form, so a
+                  * self-hoster without a form loses nothing. */}
                 {contactFormUrl ? (
                     <div className="mt-4 pt-3 border-t border-white/10">
-                        <a
-                            href={contactFormUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="group flex items-center gap-3 rounded-xl border border-indigo-400/25 bg-indigo-500/10 hover:bg-indigo-500/15 px-4 py-3 transition-colors"
+                        {/* A button, not a link. The form opens inside the
+                          * console -- `immediate` tells the host that this click
+                          * is the one that permits fetching it from Microsoft,
+                          * which the automatic first-run prompt never does. */}
+                        <button
+                            type="button"
+                            onClick={() => openStayInformed({ immediate: true })}
+                            className="group w-full text-left flex items-center gap-3 rounded-xl border border-indigo-400/25 bg-indigo-500/10 hover:bg-indigo-500/15 px-4 py-3 transition-colors"
                         >
                             <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shrink-0 shadow-md shadow-indigo-500/20">
                                 <Bell className="w-[18px] h-[18px] text-white" />
@@ -1167,10 +1176,11 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     security fixes, releases, and anything affecting your instance.
                                 </span>
                             </span>
-                            <ExternalLink className="w-4 h-4 text-indigo-300 group-hover:text-indigo-200 shrink-0" />
-                        </a>
+                            <ChevronRight className="w-4 h-4 text-indigo-300 group-hover:text-indigo-200 shrink-0" />
+                        </button>
                         <p className="text-[11px] text-white/35 mt-1.5">
-                            Opens in a new tab. The form is hosted by Microsoft Forms.
+                            The form is hosted by Microsoft Forms and opens here. What this deployment
+                            already knows is filled in for you.
                         </p>
                     </div>
                 ) : (
@@ -1181,7 +1191,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         </span>
                         <button
                             type="button"
-                            onClick={openStayInformed}
+                            onClick={() => openStayInformed({ immediate: true })}
                             className="text-xs text-indigo-300 hover:text-indigo-200 underline underline-offset-2"
                         >
                             Register a contact (optional)
