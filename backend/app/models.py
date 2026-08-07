@@ -510,6 +510,12 @@ class SystemSettings(Base):
     # by deleting the credential. {} means "never answered", which reads as the
     # behaviour that shipped before the switch existed rather than as "off".
     capability_switches = Column(JSON, default=dict)
+    # Which research field packs this town releases: {pack_id: bool}. An absent
+    # key means the pack's own default (see research.RESEARCH_PACKS_DEF) — ON
+    # for the analytical packs so an upgrade changes nothing, OFF for the two
+    # packs whose fields characterize a resident's own message. Enforced
+    # server-side at row build (allowed_research_columns), never in a UI.
+    research_packs = Column(JSON, default=dict)
     # When somebody said they were finished setting this town up. NULL means
     # nobody has, which is what opens the setup guide on sign-in.
     #
@@ -655,7 +661,13 @@ class ResearchAccessLog(Base):
     
     # Whether fuzzed (privacy mode) or exact location was used
     privacy_mode = Column(String(20), default="fuzzed")  # fuzzed, exact
-    
+
+    # Where from. "Who downloaded the dataset" is only half an answer when the
+    # account is shared or compromised — the address and client string are what
+    # an investigation actually correlates against.
+    ip_address = Column(String(45))  # IPv4 or IPv6
+    user_agent = Column(String(500))
+
     # When
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
