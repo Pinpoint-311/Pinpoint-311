@@ -6138,9 +6138,16 @@ async def analytics_chat(
     try:
         from app.api.research import (
             get_infrastructure_category, analyze_sentiment,
-            detect_trust_indicators, generate_zone_id
+            detect_trust_indicators, generate_zone_id, enabled_packs
         )
-        
+
+        # The research pack switches gate GENERATION, not just export: a town
+        # that switched off sentiment_trust decided per-message tone scores
+        # should never exist, and that includes computing them here to feed a
+        # third-party model's prompt. Same for the Census-derived equity
+        # lookups under social_equity.
+        _research_packs = enabled_packs(settings)
+
         # --- Infrastructure category breakdown (lightweight string lookup) ---
         infra_categories = {}
         for r in all_requests:
@@ -6153,7 +6160,11 @@ async def analytics_chat(
             context_used.append("infrastructure_categories")
         
         # --- Sentiment & Trust aggregates (sample ~50 recent with descriptions) ---
-        desc_requests = [r for r in all_requests if r.description and len(r.description.strip()) > 10][:50]
+        # Never computed when the pack is off — not computed-and-withheld.
+        desc_requests = (
+            [r for r in all_requests if r.description and len(r.description.strip()) > 10][:50]
+            if _research_packs.get("sentiment_trust") else []
+        )
         if desc_requests:
             sentiments = [analyze_sentiment(r.description) for r in desc_requests]
             valid_sentiments = [s for s in sentiments if s is not None]
@@ -6179,7 +6190,11 @@ async def analytics_chat(
                 get_housing_tenure_mix
             )
             
-            geo_requests = [r for r in all_requests if r.lat and r.long][:30]
+            # No Census/ACS/CDC call leaves when the equity pack is off.
+            geo_requests = (
+                [r for r in all_requests if r.lat and r.long][:30]
+                if _research_packs.get("social_equity") else []
+            )
             if geo_requests:
                 svi_values = []
                 income_dist = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}

@@ -174,23 +174,41 @@ async def export_requests(
     # columns staff need — exact address/coordinates, assignee, staff notes and
     # the raw description. PII remains behind the existing explicit, admin-gated,
     # audit-logged opt-in; nothing here widens who can see it.
+    #
+    # DECISION — this export honors the research pack switches. A pack an admin
+    # switched off is never computed here either: no sentiment score over the
+    # resident's text, no Census/CDC/weather call, and its columns are dropped
+    # from the file. Rationale: the analytical pack fields are research-only
+    # characterizations, and data generated "just for the staff file" exists all
+    # the same — it can be pulled into a public-records request the moment it is
+    # produced or saved. The OPERATIONAL columns (raw description, exact address,
+    # assignee, staff notes) and the underlying operational records (intake
+    # moderation flags, AI triage) are unaffected: they are governed by their own
+    # feature switches and remain available in the app regardless of pack state.
     from app.api.research import (
-        RESEARCH_COLUMNS, OPERATIONAL_COLUMNS, PII_COLUMNS,
-        build_dataset_row, build_equity_map,
+        OPERATIONAL_COLUMNS, PII_COLUMNS,
+        allowed_research_columns, build_dataset_row, build_equity_map, enabled_packs,
     )
 
-    export_columns = list(RESEARCH_COLUMNS) + list(OPERATIONAL_COLUMNS)
+    packs = enabled_packs(settings)
+    export_columns = list(allowed_research_columns(settings)) + list(OPERATIONAL_COLUMNS)
     if include_pii:
         export_columns += list(PII_COLUMNS)
 
-    # Census/CDC-SVI/weather enrichment, resolved once up front (async).
-    equity_map = await build_equity_map(requests, "exact")
+    # Census/CDC-SVI/weather enrichment, resolved once up front (async) — and
+    # skipped entirely for packs the admin turned off.
+    equity_map = await build_equity_map(requests, "exact", packs)
+
+    _allowed = set(export_columns)
 
     def _row(req):
-        return build_dataset_row(
+        row = build_dataset_row(
             req, equity_map.get(req.id, {}), "exact",
-            operational=True, include_pii=include_pii,
+            packs=packs, operational=True, include_pii=include_pii,
         )
+        # Off-pack keys are None (never computed), but the JSON/GeoJSON formats
+        # dump the dict as-is — filter so switched-off columns don't ship at all.
+        return {k: v for k, v in row.items() if k in _allowed}
 
     if format.lower() == "csv":
         # Generate CSV
