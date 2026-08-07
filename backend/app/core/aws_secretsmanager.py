@@ -16,6 +16,8 @@ import logging
 import os
 from typing import Optional
 
+from app.core.sanitize import sanitize_for_log
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,7 +51,7 @@ def _client():
     try:
         import boto3
     except Exception as e:  # pragma: no cover - boto3 always installed
-        logger.error(f"boto3 unavailable for AWS Secrets Manager: {e}")
+        logger.error("boto3 unavailable for AWS Secrets Manager: %s", sanitize_for_log(str(e)))
         return None
     region = _cfg("AWS_REGION")
     if not region:
@@ -66,7 +68,7 @@ def _client():
     try:
         return boto3.client("secretsmanager", **kwargs)
     except Exception as e:
-        logger.error(f"Could not build AWS Secrets Manager client: {e}")
+        logger.error("Could not build AWS Secrets Manager client: %s", sanitize_for_log(str(e)))
         return None
 
 
@@ -80,7 +82,7 @@ def get_secret(name: str) -> Optional[str]:
     except Exception as e:
         # ResourceNotFoundException is the common, expected path for unset keys.
         if e.__class__.__name__ != "ResourceNotFoundException":
-            logger.warning(f"AWS Secrets Manager read failed for {name}: {e}")
+            logger.warning("AWS Secrets Manager read failed for %s: %s", sanitize_for_log(name), sanitize_for_log(str(e)))
         return None
 
 
@@ -98,9 +100,9 @@ def set_secret(name: str, value: str) -> bool:
                 client.create_secret(Name=sid, SecretString=value)
                 return True
             except Exception as e2:
-                logger.error(f"AWS Secrets Manager create failed for {name}: {e2}")
+                logger.error("AWS Secrets Manager create failed for %s: %s", sanitize_for_log(name), sanitize_for_log(str(e2)))
                 return False
-        logger.error(f"AWS Secrets Manager write failed for {name}: {e}")
+        logger.error("AWS Secrets Manager write failed for %s: %s", sanitize_for_log(name), sanitize_for_log(str(e)))
         return False
 
 
@@ -130,5 +132,5 @@ def delete_secret(name: str) -> bool:
         if e.__class__.__name__ in ("ResourceNotFoundException", "InvalidRequestException"):
             # Already gone, or already scheduled for deletion.
             return True
-        logger.warning(f"AWS Secrets Manager delete failed for {name}: {e}")
+        logger.warning("AWS Secrets Manager delete failed for %s: %s", sanitize_for_log(name), sanitize_for_log(str(e)))
         return False
