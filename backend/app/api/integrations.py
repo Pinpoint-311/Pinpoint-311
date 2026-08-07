@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -170,6 +171,9 @@ def _serialize(integration: IntegrationConfig) -> Dict[str, Any]:
         "config": integration.config or {},
         # Never return secret values — only which keys are set
         "configured_credentials": sorted(credentials.keys()),
+        # A stored refresh token means the admin completed the vendor's own
+        # sign-in, so the UI can say "signed in" instead of asking for one again.
+        "oauth_connected": bool(credentials.get("refresh_token")),
         # Whether the stored credentials are Secret Manager references (the raw
         # secret lives only in the vault, not this database) — the UI's "stored in
         # your Secret Manager" trust line.
@@ -393,6 +397,12 @@ def _friendly_test_error(error: str) -> str:
                 "Secret Manager just now. Nothing here needs re-entering — check "
                 "that the vault is reachable and that this system still has "
                 "permission to read it, then try again.")
+    # Checked ahead of the generic 401/403 branch: a dead refresh token comes
+    # back as a 400 from the token endpoint, and "check your password" is the
+    # wrong advice for a connection that has no password.
+    if "is not signed in" in text or "oauth2 refresh" in text:
+        return ("This connection isn't signed in to Accela any more — the authorization "
+                "may have been revoked or expired there. Open Settings and sign in again.")
     if "http 401" in text or "http 403" in text or "unauthorized" in text or "forbidden" in text:
         return ("The platform refused the sign-in details. Double-check the key or "
                 "username/password — copy and paste them again with no extra spaces.")
@@ -637,6 +647,193 @@ async def refresh_request_work_order(
         # an {ok, detail} pair the staff dashboard renders inline.
         return {"ok": False, "detail": QUEUE_UNAVAILABLE}
     return {"ok": True, "detail": "Refreshing the latest work-order status — updates appear on the request in a moment."}
+
+
+# ---------- Accela authorization-code sign-in ----------
+#
+# Accela's callback lands as a plain browser redirect with no Authorization
+# header, so the callback route cannot be admin-gated the way every other route
+# here is. The signed ``state`` minted by /accela/oauth/start — which *is*
+# admin-gated — is what authorizes it: without a valid, unexpired signature
+# bound to a specific integration, the callback refuses to store anything. That
+# closes the login-CSRF hole where an attacker feeds an admin their own
+# authorization code and quietly binds the town's Accela sync to their account.
+
+class AccelaOAuthStart(BaseModel):
+    integration_id: int
+
+
+@router.get("/accela/oauth/status")
+async def accela_oauth_status(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Whether this deployment can offer Accela sign-in, and the exact callback
+    URL to register on the developer-portal app."""
+    from app.integrations import accela_oauth
+    return {
+        "configured": await accela_oauth.is_configured(),
+        "redirect_uri": await accela_oauth.redirect_uri_for(db, str(request.base_url)),
+        "scope": accela_oauth.DEFAULT_SCOPE,
+    }
+
+
+@router.post("/accela/oauth/start")
+@limiter.limit("10/minute")
+async def accela_oauth_start(
+    request: Request,
+    data: AccelaOAuthStart,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """Begin the Accela authorization-code flow: returns the URL to send the
+    admin's browser to, carrying a signed single-purpose state token."""
+    from app.integrations import accela_oauth
+
+    integration = await _get_integration(db, data.integration_id)
+    if integration.platform != "accela":
+        raise HTTPException(status_code=400, detail="This connection is not an Accela connection")
+
+    client_id, _secret = await accela_oauth.app_credentials()
+    if not await accela_oauth.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail=("Accela sign-in isn't available on this deployment yet — no Accela "
+                    "app is configured. Ask your administrator to set ACCELA_CLIENT_ID "
+                    "and ACCELA_CLIENT_SECRET, or use the username and password option."),
+        )
+
+    agency_name = (integration.config or {}).get("agency_name")
+    if not agency_name:
+        raise HTTPException(status_code=400, detail="Enter your Accela agency name first")
+
+    redirect_uri = await accela_oauth.redirect_uri_for(db, str(request.base_url))
+    state = accela_oauth.sign_state(integration.id, current_user.id, redirect_uri)
+    url = accela_oauth.authorize_url(
+        client_id=client_id,
+        redirect_uri=redirect_uri,
+        state=state,
+        agency_name=str(agency_name),
+        environment=str((integration.config or {}).get("environment") or "PROD"),
+        config=integration.config or {},
+    )
+    from app.core.sanitize import sanitize_for_log
+    logger.info("[Integrations] %s started Accela OAuth sign-in for agency %s",
+                sanitize_for_log(current_user.username), sanitize_for_log(str(agency_name)))
+    return {"authorize_url": url, "redirect_uri": redirect_uri}
+
+
+def _oauth_result_page(ok: bool, message: str) -> HTMLResponse:
+    """The tiny page Accela redirects back into. It tells the opener how things
+    went and closes itself; the wizard behind it picks up from there."""
+    import html as _html
+    safe = _html.escape(message)
+    body = f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>Accela sign-in</title></head>
+<body style="font-family:system-ui,sans-serif;background:#0b1020;color:#e8ecf8;
+             display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+  <div style="max-width:26rem;text-align:center;padding:2rem">
+    <p style="font-size:1.05rem;font-weight:600;margin:0 0 .5rem">
+      {'Accela is connected' if ok else 'Accela sign-in did not finish'}</p>
+    <p style="opacity:.75;font-size:.9rem;margin:0">{safe}</p>
+    <p style="opacity:.5;font-size:.8rem;margin-top:1.5rem">You can close this window.</p>
+  </div>
+  <script>
+    try {{
+      if (window.opener) {{
+        window.opener.postMessage(
+          {{source: "pinpoint-accela-oauth", ok: {str(bool(ok)).lower()}}},
+          window.location.origin
+        );
+        setTimeout(function () {{ window.close(); }}, {1200 if ok else 4000});
+      }}
+    }} catch (e) {{ /* opener gone or cross-origin — the message above stands on its own */ }}
+  </script>
+</body></html>"""
+    return HTMLResponse(content=body, status_code=200 if ok else 400)
+
+
+@router.get("/accela/oauth/callback", include_in_schema=False)
+@limiter.limit("20/minute")
+async def accela_oauth_callback(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+):
+    """Where Accela sends the admin back after they sign in and consent.
+
+    Deliberately unauthenticated — see the note above; the signed state is the
+    authorization. Always answers with a page rather than JSON, because a human
+    browser is what lands here.
+    """
+    from app.integrations import accela_oauth
+
+    if error:
+        return _oauth_result_page(False, "Accela reported that the sign-in was cancelled or refused.")
+    if not code or not state:
+        return _oauth_result_page(False, "Accela's response was missing the sign-in code.")
+
+    payload = accela_oauth.verify_state(state)
+    if not payload:
+        logger.warning("[Integrations] Rejected Accela OAuth callback with an invalid or expired state")
+        return _oauth_result_page(
+            False,
+            "This sign-in link is no longer valid. Start the connection again from "
+            "Settings and finish signing in within ten minutes.",
+        )
+
+    integration = (await db.execute(
+        select(IntegrationConfig).where(IntegrationConfig.id == payload["iid"])
+    )).scalar_one_or_none()
+    if not integration or integration.platform != "accela":
+        return _oauth_result_page(False, "That Accela connection no longer exists.")
+
+    # The redirect URI is signed into the state, so the exchange reuses exactly
+    # the value the authorize request was issued with — Accela rejects any drift.
+    try:
+        tokens = await accela_oauth.exchange_code(
+            code=code,
+            redirect_uri=payload.get("ru") or await accela_oauth.redirect_uri_for(db, str(request.base_url)),
+            config=integration.config or {},
+        )
+    except Exception as e:
+        from app.core.sanitize import sanitize_for_log
+        logger.error("[Integrations] Accela code exchange failed: %s", sanitize_for_log(str(e)))
+        db.add(IntegrationSyncLog(
+            integration_id=integration.id, operation="oauth", status="error", detail=str(e)[:2000]
+        ))
+        await db.commit()
+        return _oauth_result_page(False, str(e)[:300])
+
+    stored = await store_credentials("accela", {"refresh_token": tokens["refresh_token"]})
+    merged = dict(integration.credentials or {})
+    merged.update(stored)
+    # The refresh token supersedes the password fallback — leaving a government
+    # password in the vault after it is no longer needed is exactly what this
+    # flow exists to avoid.
+    for field in ("username", "password"):
+        merged.pop(field, None)
+    integration.credentials = merged
+    integration.config = {
+        **(integration.config or {}),
+        "auth_mode": "authorization_code",
+    }
+    integration.updated_at = datetime.now(timezone.utc)
+    db.add(IntegrationSyncLog(
+        integration_id=integration.id, operation="oauth", status="success",
+        detail=f"Authorized via Accela sign-in (scope: {accela_oauth.scope_for(integration.config)})",
+    ))
+    await db.commit()
+
+    # Any access token cached against the old authorization is now the wrong one.
+    from app.integrations.connectors.accela import _clear_token_cache
+    _clear_token_cache()
+
+    logger.info("[Integrations] Accela authorization stored for integration %s", integration.id)
+    return _oauth_result_page(True, "Pinpoint can now sync with Accela on your behalf.")
 
 
 @router.get("/{integration_id}/logs")

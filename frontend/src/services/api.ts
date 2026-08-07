@@ -37,6 +37,17 @@ export interface IntegrationVendorAsk {
     body: string;
 }
 
+/** A platform where the admin signs in on the vendor's own site instead of
+ *  pasting credentials into our form (currently Accela). */
+export interface IntegrationOAuth {
+    flow: 'authorization_code';
+    start_path: string;
+    button_label: string;
+    explainer: string;
+    fallback_label: string;
+    credential_key: string;
+}
+
 export interface IntegrationPlatform {
     platform: string;
     name: string;
@@ -51,6 +62,7 @@ export interface IntegrationPlatform {
     capabilities: string[];
     credential_fields: IntegrationFieldSpec[];
     config_fields: IntegrationFieldSpec[];
+    oauth?: IntegrationOAuth;
     setup_notes: string;
     // Clerk-friendly guidance
     plain_summary: string;
@@ -89,6 +101,8 @@ export interface IntegrationConfig {
     // vaulted; 'partial' is the state worth naming, because it means at least one
     // secret is in this app's database after all.
     credentials_vaulted_state?: 'all' | 'partial' | 'none';
+    /** True once the admin has completed the vendor's own sign-in. */
+    oauth_connected: boolean;
     webhook_path: string;
     last_sync_at: string | null;
     last_sync_status: string | null;
@@ -737,6 +751,20 @@ class ApiClient {
 
     async syncIntegrationAssets(id: number): Promise<{ message: string }> {
         return this.request<{ message: string }>(`/integrations/${id}/sync-assets`, { method: 'POST' });
+    }
+
+    /** Whether this deployment has an Accela developer app configured, and the
+     *  callback URL registered against it. */
+    async getAccelaOAuthStatus(): Promise<{ configured: boolean; redirect_uri: string; scope: string }> {
+        return this.request('/integrations/accela/oauth/status');
+    }
+
+    /** Mint a signed, ten-minute authorization URL for this connection. */
+    async startAccelaOAuth(integrationId: number): Promise<{ authorize_url: string; redirect_uri: string }> {
+        return this.request('/integrations/accela/oauth/start', {
+            method: 'POST',
+            body: JSON.stringify({ integration_id: integrationId }),
+        });
     }
 
     async getIntegrationLogs(id: number): Promise<IntegrationSyncLog[]> {

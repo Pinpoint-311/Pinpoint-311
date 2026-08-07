@@ -28,11 +28,27 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "docs_url": "https://developer.accela.com",
         "description": "Full two-way sync with Accela Civic Platform via the Construct API v4: records, status, comments, photo attachments, and asset inventory sync into Pinpoint map layers.",
         "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "work_orders", "test"],
+        # Sign-in happens at Accela, not in this form: the admin is redirected to
+        # Accela's own login and consent screen and we keep only the refresh
+        # token it hands back. The credential fields below are the password-grant
+        # fallback for towns whose Accela administrator prefers a service account.
+        "oauth": {
+            "flow": "authorization_code",
+            "start_path": "accela/oauth/start",
+            "button_label": "Sign in with Accela",
+            "explainer": (
+                "You'll be sent to Accela's own sign-in page. Log in as a staff "
+                "member with API access and approve the connection — Pinpoint "
+                "never sees or stores that password."
+            ),
+            "fallback_label": "Use an Accela username and password instead",
+            "credential_key": "refresh_token",
+        },
         "credential_fields": [
-            {"key": "client_id", "label": "Client ID", "secret": False, "required": True},
-            {"key": "client_secret", "label": "Client Secret", "secret": True, "required": True},
-            {"key": "username", "label": "Agency Username", "secret": False, "required": True},
-            {"key": "password", "label": "Agency Password", "secret": True, "required": True},
+            {"key": "client_id", "label": "Client ID (password sign-in only)", "secret": False},
+            {"key": "client_secret", "label": "Client Secret (password sign-in only)", "secret": True},
+            {"key": "username", "label": "Agency Username (password sign-in only)", "secret": False},
+            {"key": "password", "label": "Agency Password (password sign-in only)", "secret": True},
         ],
         "config_fields": [
             {"key": "agency_name", "label": "Agency Name", "placeholder": "YOURAGENCY", "required": True},
@@ -41,7 +57,7 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
             {"key": "sync_assets", "label": "Sync Assets (true/false)", "placeholder": "false", "required": False},
             {"key": "asset_group", "label": "Asset Group Filter", "placeholder": "", "required": False},
         ],
-        "setup_notes": "Create an app at developer.accela.com to get the Client ID/Secret, then use an agency account for the OAuth2 password grant. The record type must exist in your agency configuration.",
+        "setup_notes": "Enter your agency name and environment, then sign in through Accela — Pinpoint's registered app handles the rest and stores only a revocable refresh token. If your Accela administrator would rather issue a service account, the username/password fallback still works with your own Client ID and Secret. The record type must exist in your agency configuration.",
     },
     "arcgis": {
         "name": "Esri ArcGIS (Feature Service)",
@@ -218,20 +234,19 @@ CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
         "plain_summary": "Reports submitted here automatically become Accela records, photos included. Status changes and comments flow both ways, so staff can work in either system.",
         "what_you_need": [
             "Your Accela agency name (staff who log into Accela will know it — it's on the login screen)",
-            "An Accela staff username and password the connection can use",
-            "A 'Client ID' and 'Client Secret' — your Accela administrator or Accela support can create these in about 10 minutes",
+            "An Accela staff login with API access — you'll sign in on Accela's own page, so no password is typed into Pinpoint",
             "The record type to file reports under (e.g. 'Service Request / Complaint') — ask whoever manages Accela",
         ],
         "vendor_ask": {
             "to_hint": "Your Accela administrator, or Accela support (support@accela.com)",
             "subject": "API access for our 311 system (Pinpoint 311)",
-            "body": "Hello,\n\nWe are connecting our resident request system (Pinpoint 311) to our Accela Civic Platform account so resident reports appear in Accela automatically.\n\nCould you please:\n1. Create an API app for us at developer.accela.com and send the Client ID and Client Secret\n2. Confirm our agency name and environment (PROD or TEST)\n3. Provide a staff account (username + password) the connection can use\n4. Tell us the record type resident service requests should be filed under (e.g. ServiceRequest/General/Complaint/NA)\n\nThank you!",
+            "body": "Hello,\n\nWe are connecting our resident request system (Pinpoint 311) to our Accela Civic Platform account so resident reports appear in Accela automatically.\n\nCould you please:\n1. Confirm our agency name and environment (PROD or TEST)\n2. Confirm a staff account that has API access, with the 'records' and 'assets' scopes, so we can sign in and approve the connection\n3. Tell us the record type resident service requests should be filed under (e.g. ServiceRequest/General/Complaint/NA)\n\nWe sign in through Accela's own login page, so no password is shared with us.\n\nThank you!",
         },
         "field_help": {
-            "client_id": "A long code your Accela administrator gives you — looks like random letters and numbers.",
-            "client_secret": "The matching secret code. Treat it like a password.",
-            "username": "The Accela staff account the connection will act as.",
-            "password": "That account's password.",
+            "client_id": "Only for the username-and-password fallback — the app code your Accela administrator gives you.",
+            "client_secret": "Only for the username-and-password fallback. Treat it like a password.",
+            "username": "Only for the username-and-password fallback — the Accela staff account the connection acts as.",
+            "password": "Only for the username-and-password fallback. Signing in through Accela avoids storing this.",
             "agency_name": "Your agency's short name in Accela, usually ALL CAPS (e.g. SPRINGFIELD).",
             "environment": "Leave as PROD unless Accela support says otherwise.",
             "record_type": "Where reports get filed in Accela. Copy this exactly from your Accela administrator.",
@@ -399,4 +414,44 @@ async def build_connector_for(integration: Any) -> BaseConnector:
     """
     from app.integrations.credentials import resolve_credentials
     creds = await resolve_credentials(integration.credentials or {})
-    return build_connector(integration.platform, integration.config or {}, creds)
+    connector = build_connector(integration.platform, integration.config or {}, creds)
+    connector.persist_credentials = _credential_writer(integration.id)
+    return connector
+
+
+def _credential_writer(integration_id: int):
+    """An awaitable a connector calls when the vendor rotates a credential.
+
+    Accela hands back a fresh refresh token on every exchange and retires the
+    old one, so a rotation that isn't written back locks the town out on the
+    next call. This opens its own session rather than borrowing the caller's:
+    the rotation has already happened at the vendor and must be durable even if
+    the surrounding sync transaction later rolls back.
+    """
+    async def _write(new_values: dict) -> None:
+        if not new_values:
+            return
+        from sqlalchemy import select
+        from app.db.session import SessionLocal
+        from app.integrations.credentials import store_credentials
+        from app.models import IntegrationConfig
+
+        try:
+            async with SessionLocal() as db:
+                row = (await db.execute(
+                    select(IntegrationConfig).where(IntegrationConfig.id == integration_id)
+                )).scalar_one_or_none()
+                if not row:
+                    return
+                stored = await store_credentials(row.platform, new_values)
+                row.credentials = {**(row.credentials or {}), **stored}
+                await db.commit()
+        except Exception as e:
+            from app.core.sanitize import sanitize_for_log
+            import logging
+            logging.getLogger(__name__).error(
+                "[Integrations] Failed to persist rotated credentials for "
+                "integration %s: %s", integration_id, sanitize_for_log(str(e)),
+            )
+
+    return _write
