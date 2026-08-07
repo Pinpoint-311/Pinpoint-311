@@ -2,7 +2,6 @@ from app.core.celery_app import celery_app
 from app.db.session import SessionLocal
 from app.models import ServiceRequest
 from app.services.notifications import notification_service
-from app.services.geocoding import get_geocoding_service
 from sqlalchemy import select
 import asyncio
 import os
@@ -192,8 +191,13 @@ def analyze_request(self, request_id: int):
             # cleanly when there's no address to work with.
             if (request.lat is None or request.long is None) and request.address:
                 try:
-                    _key = await get_secret(db, "GOOGLE_MAPS_API_KEY")
-                    _geo = await get_geocoding_service(_key if _key else None).geocode(request.address)
+                    # Through the dispatcher, like /gis/geocode. Reading
+                    # GOOGLE_MAPS_API_KEY directly meant an Esri or Azure town's
+                    # background geocoding ran on Google-or-OSM with no town
+                    # bias, while the interactive path used the provider the
+                    # town actually chose.
+                    from app.services import geocode_dispatch
+                    _geo = await geocode_dispatch.geocode(db, request.address)
                     if _geo:
                         request.lat, request.long = _geo.lat, _geo.lng
                 except Exception:
@@ -332,12 +336,10 @@ def geocode_address(self, request_id: int):
             if not request or not request.address:
                 return {"error": "Request or address not found"}
             
-            # Get Google Maps API key
-            api_key = await get_secret(db, "GOOGLE_MAPS_API_KEY")
-            service = get_geocoding_service(api_key if api_key else None)
-            
-            # Geocode the address
-            geo_result = await service.geocode(request.address)
+            # The town's chosen provider, via the same dispatcher /gis/geocode
+            # uses -- not a hardcoded Google key.
+            from app.services import geocode_dispatch
+            geo_result = await geocode_dispatch.geocode(db, request.address)
             
             if geo_result:
                 request.lat = geo_result.lat

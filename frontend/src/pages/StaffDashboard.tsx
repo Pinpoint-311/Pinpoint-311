@@ -50,7 +50,7 @@ import {
 import { Button, Card, Modal, Input, Textarea, Select, StatusBadge, Badge } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
-import { api, MapLayer } from '../services/api';
+import { api, MapLayer, IntegrationRequestLink } from '../services/api';
 import { ServiceRequest, ServiceRequestDetail, ServiceDefinition, Statistics, AdvancedStatistics, RequestComment, ClosedSubstatus, User as UserType, Department, AuditLogEntry, HeatmapData } from '../types';
 import { XAxis, YAxis, ResponsiveContainer, AreaChart, Area, Tooltip } from 'recharts';
 import StaffDashboardMap from '../components/StaffDashboardMap';
@@ -164,6 +164,14 @@ export default function StaffDashboard() {
     // Closed substatus state
     const [showClosedModal, setShowClosedModal] = useState(false);
     const [woRefresh, setWoRefresh] = useState<{ busy: boolean; msg: string | null }>({ busy: false, msg: null });
+    /* Which external records this request is linked to.
+     *
+     * GET /api/integrations/requests/{id}/links existed with no client function
+     * and no caller, so staff could see *that* a request had gone to Accela --
+     * the refresh button's tooltip names the platform -- but never which record
+     * it became. Reconciling one report against the county's system meant asking
+     * whoever had the county's login. */
+    const [externalRecords, setExternalRecords] = useState<IntegrationRequestLink[]>([]);
     const [closedSubstatus, setClosedSubstatus] = useState<ClosedSubstatus>('resolved');
     const [completionMessage, setCompletionMessage] = useState('');
     const [completionPhotoUrl, setCompletionPhotoUrl] = useState('');
@@ -622,6 +630,14 @@ export default function StaffDashboard() {
             // Load comments and audit log for this request
             loadComments(detail.id);
             loadAuditLog(requestId);
+            setExternalRecords([]);
+            if ((detail.external_links?.length ?? 0) > 0) {
+                api.getRequestIntegrationLinks(requestId)
+                    .then(setExternalRecords)
+                    // Not knowing the external ids is not a reason to fail the
+                    // whole detail view.
+                    .catch(() => setExternalRecords([]));
+            }
         } catch (err) {
             console.error('Failed to load request detail:', err);
         }
@@ -1173,14 +1189,19 @@ export default function StaffDashboard() {
                                         <Sparkles className="w-4 h-4" />
                                         <span>Ask AI</span>
                                     </button>
-                                    <button
-                                        onClick={() => window.location.href = '/research'}
-                                        className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 sm:py-2 bg-white/10 border border-white/20 text-white rounded-lg hover:bg-white/20 transition-all text-xs sm:text-sm font-medium"
-                                    >
-                                        <FlaskConical className="w-4 h-4" />
-                                        <span className="hidden sm:inline">Research Portal</span>
-                                        <span className="sm:hidden">Research</span>
-                                    </button>
+                                    {/* Gated on the same module flag the backend enforces —
+                                        an ungated button on a disabled module is a door
+                                        painted on a wall. */}
+                                    {settings?.modules?.research_portal && (
+                                        <button
+                                            onClick={() => window.location.href = '/research'}
+                                            className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 sm:py-2 bg-white/10 border border-white/20 text-white rounded-lg hover:bg-white/20 transition-all text-xs sm:text-sm font-medium"
+                                        >
+                                            <FlaskConical className="w-4 h-4" />
+                                            <span className="hidden sm:inline">Research Portal</span>
+                                            <span className="sm:hidden">Research</span>
+                                        </button>
+                                    )}
                                     <div className="relative group" onKeyDown={(e) => { if (e.key === 'Escape') setExportOpen(false); }}>
                                         <button
                                             onClick={() => setExportOpen(o => !o)}
@@ -1194,6 +1215,13 @@ export default function StaffDashboard() {
                                         </button>
                                         <div role="menu" className={`absolute right-0 mt-2 w-64 origin-top-right rounded-2xl border border-white/10 bg-slate-900/95 backdrop-blur-xl shadow-2xl shadow-black/50 ring-1 ring-white/5 transition-all duration-200 z-50 overflow-hidden ${exportOpen ? 'opacity-100 visible translate-y-0' : 'opacity-0 invisible translate-y-1'}`}>
                                             <div className="p-2">
+                                                {/* Admin only, like the endpoint behind it. This is the
+                                                    whole-database row-level export — exact addresses, raw
+                                                    descriptions, staff notes — and offering it to every
+                                                    staff login meant any one compromised password was a
+                                                    bulk disclosure. Staff keep the aggregate statistics
+                                                    export below. */}
+                                                {user?.role === 'admin' && <>
                                                 <p className="px-2.5 pt-1.5 pb-1 text-[10px] font-semibold text-white/40 uppercase tracking-wider">Requests</p>
                                                 {[
                                                     { fmt: 'csv', Icon: FileText, label: 'CSV', hint: 'Full analytical dataset', ext: '.csv', fn: () => handleExportRequests('csv') },
@@ -1211,8 +1239,9 @@ export default function StaffDashboard() {
                                                         <span className="text-[10px] font-mono text-white/30">{ext}</span>
                                                     </button>
                                                 ))}
-                                                <p className="px-2.5 pb-1 text-[10px] text-white/30 leading-snug">Same analytical fields as the Research Portal export, plus operational detail (exact address, assignee, notes).</p>
+                                                <p className="px-2.5 pb-1 text-[10px] text-white/30 leading-snug">Same analytical fields as the Research Portal export, plus operational detail (exact address, assignee, notes). Admin only; every export is audit-logged.</p>
                                                 <div className="border-t border-white/10 my-1.5" />
+                                                </>}
                                                 <p className="px-2.5 pt-1.5 pb-1 text-[10px] font-semibold text-white/40 uppercase tracking-wider">Statistics</p>
                                                 {[
                                                     { fmt: 'csv', Icon: BarChart3, label: 'CSV', hint: 'Summary tables', ext: '.csv', fn: () => handleExportStatistics('csv') },
@@ -2148,6 +2177,32 @@ export default function StaffDashboard() {
                                         {woRefresh.msg && (
                                             <div className="mt-1.5 text-[11px] text-white/60 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5">
                                                 {woRefresh.msg}
+                                            </div>
+                                        )}
+
+                                        {/* The external record ids, so this report can be
+                                            reconciled against the other system without
+                                            needing a login to it. */}
+                                        {externalRecords.length > 0 && (
+                                            <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                                {externalRecords.map(link => (
+                                                    <span
+                                                        key={`${link.platform}:${link.external_id}`}
+                                                        title={link.sync_error
+                                                            ? `Last sync problem: ${link.sync_error}`
+                                                            : `${link.direction === 'pulled' ? 'Originated in' : 'Sent to'} ${link.platform_name}`}
+                                                        className={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[10px] sm:text-[11px] border ${link.sync_error
+                                                            ? 'bg-amber-500/10 text-amber-200 border-amber-500/30'
+                                                            : 'bg-white/5 text-white/70 border-white/10'}`}
+                                                    >
+                                                        {link.sync_error && <AlertCircle className="w-3 h-3 shrink-0" aria-hidden="true" />}
+                                                        <span className="text-white/50">{link.platform_name}</span>
+                                                        <span className="font-mono">{link.external_id}</span>
+                                                        {link.external_status && (
+                                                            <span className="text-white/50">· {link.external_status}</span>
+                                                        )}
+                                                    </span>
+                                                ))}
                                             </div>
                                         )}
 

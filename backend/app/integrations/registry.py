@@ -9,6 +9,7 @@ from typing import Any, Dict
 
 from app.integrations.base import BaseConnector
 from app.integrations.connectors.accela import AccelaConnector
+from app.integrations.connectors.arcgis import ArcGISConnector
 from app.integrations.connectors.open311 import Open311Connector
 from app.integrations.connectors.seeclickfix import SeeClickFixConnector
 from app.integrations.connectors.generic_rest import GenericRestConnector
@@ -27,11 +28,27 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "docs_url": "https://developer.accela.com",
         "description": "Full two-way sync with Accela Civic Platform via the Construct API v4: records, status, comments, photo attachments, and asset inventory sync into Pinpoint map layers.",
         "capabilities": ["push", "push_status", "pull", "comments", "documents", "assets", "work_orders", "test"],
+        # Sign-in happens at Accela, not in this form: the admin is redirected to
+        # Accela's own login and consent screen and we keep only the refresh
+        # token it hands back. The credential fields below are the password-grant
+        # fallback for towns whose Accela administrator prefers a service account.
+        "oauth": {
+            "flow": "authorization_code",
+            "start_path": "accela/oauth/start",
+            "button_label": "Sign in with Accela",
+            "explainer": (
+                "You'll be sent to Accela's own sign-in page. Log in as a staff "
+                "member with API access and approve the connection — Pinpoint "
+                "never sees or stores that password."
+            ),
+            "fallback_label": "Use an Accela username and password instead",
+            "credential_key": "refresh_token",
+        },
         "credential_fields": [
-            {"key": "client_id", "label": "Client ID", "secret": False},
-            {"key": "client_secret", "label": "Client Secret", "secret": True},
-            {"key": "username", "label": "Agency Username", "secret": False},
-            {"key": "password", "label": "Agency Password", "secret": True},
+            {"key": "client_id", "label": "Client ID (password sign-in only)", "secret": False},
+            {"key": "client_secret", "label": "Client Secret (password sign-in only)", "secret": True},
+            {"key": "username", "label": "Agency Username (password sign-in only)", "secret": False},
+            {"key": "password", "label": "Agency Password (password sign-in only)", "secret": True},
         ],
         "config_fields": [
             {"key": "agency_name", "label": "Agency Name", "placeholder": "YOURAGENCY", "required": True},
@@ -40,7 +57,45 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
             {"key": "sync_assets", "label": "Sync Assets (true/false)", "placeholder": "false", "required": False},
             {"key": "asset_group", "label": "Asset Group Filter", "placeholder": "", "required": False},
         ],
-        "setup_notes": "Create an app at developer.accela.com to get the Client ID/Secret, then use an agency account for the OAuth2 password grant. The record type must exist in your agency configuration.",
+        "setup_notes": "Enter your agency name and environment, then sign in through Accela — Pinpoint's registered app handles the rest and stores only a revocable refresh token. If your Accela administrator would rather issue a service account, the username/password fallback still works with your own Client ID and Secret. The record type must exist in your agency configuration.",
+    },
+    "arcgis": {
+        "name": "Esri ArcGIS (Feature Service)",
+        "vendor": "Esri",
+        "category": "GIS & mapping",
+        "integration_mode": "public_api",
+        "docs_url": "https://developers.arcgis.com/rest/services-reference/apply-edits-feature-service-.htm",
+        "description": (
+            "Writes each new report into an ArcGIS feature layer with applyEdits — geometry, "
+            "attributes, and resident photos as attachments — and polls the layer's edit date "
+            "for status changes made in ArcGIS. Because Survey123, Field Maps, and Experience "
+            "Builder all read and write the same feature layer, a crew editing a report in the "
+            "field updates Pinpoint too. Works with ArcGIS Online and ArcGIS Enterprise."
+        ),
+        "capabilities": ["push", "push_status", "pull", "documents", "assets", "test"],
+        "credential_fields": [
+            {"key": "api_key", "label": "ArcGIS API Key", "secret": True},
+            {"key": "username", "label": "ArcGIS Username (instead of an API key)", "secret": False},
+            {"key": "password", "label": "ArcGIS Password", "secret": True},
+        ],
+        "config_fields": [
+            {"key": "layer_url", "label": "Feature Layer URL", "placeholder": "https://services1.arcgis.com/AbC123/arcgis/rest/services/Requests/FeatureServer/0", "required": True},
+            {"key": "portal_url", "label": "Portal URL (ArcGIS Enterprise only)", "placeholder": "https://www.arcgis.com", "required": False},
+            {"key": "status_notes_field", "label": "Layer field for status notes", "placeholder": "", "required": False},
+            {"key": "edit_date_field", "label": "Last-edited field (leave blank to detect)", "placeholder": "EditDate", "required": False},
+            {"key": "external_id_field", "label": "Field holding the record id (leave blank for OBJECTID)", "placeholder": "", "required": False},
+            {"key": "reuse_maps_api_key", "label": "Reuse the ArcGIS key from your map settings (true/false)", "placeholder": "true", "required": False},
+            {"key": "sync_assets", "label": "Sync an asset layer onto the Pinpoint map (true/false)", "placeholder": "false", "required": False},
+            {"key": "asset_layer_url", "label": "Asset Layer URL (only if syncing assets)", "placeholder": "", "required": False},
+        ],
+        "setup_notes": (
+            "Point this at one feature LAYER url (it ends in /FeatureServer/0), not the service "
+            "root. The layer needs Create enabled for new reports and Update for status write-back; "
+            "turn on attachments if you want resident photos. Editor tracking (which adds the "
+            "EditDate field) is what makes status polling incremental. If your layer's column names "
+            "differ from Esri's citizen-request template (reqid, reqcategory, details, status), add "
+            "a field_map. Connection check reports the layer name and exactly which of these are on."
+        ),
     },
     "tyler": {
         "name": "Tyler Technologies",
@@ -51,7 +106,7 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "description": "Connects to Tyler's Open311 GeoReport v2 endpoint for your jurisdiction: pushes new requests and polls for status changes.",
         "capabilities": ["push", "pull", "test"],
         "credential_fields": [
-            {"key": "api_key", "label": "Open311 API Key", "secret": True},
+            {"key": "api_key", "label": "Open311 API Key", "secret": True, "required": True},
         ],
         "config_fields": [
             {"key": "base_url", "label": "Open311 Base URL", "placeholder": "https://yourcity.tylerapp.com/open311/v2", "required": True},
@@ -66,18 +121,28 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "category": "311 CRM & citizen requests",
         "integration_mode": "public_api",
         "docs_url": "https://dev.seeclickfix.com",
-        "description": "Two-way sync with CivicPlus SeeClickFix via the public SeeClickFix API v2 — creates issues, polls your place for status changes, and syncs comment threads both ways.",
+        "description": "Two-way sync with CivicPlus SeeClickFix via the public SeeClickFix API v2 — creates issues (filling the request type's report form), polls your place for status changes, and syncs comment threads both ways.",
         "capabilities": ["push", "pull", "comments", "test"],
         "credential_fields": [
-            {"key": "username", "label": "SeeClickFix Username", "secret": False},
-            {"key": "password", "label": "SeeClickFix Password", "secret": True},
-            {"key": "api_key", "label": "API Token (optional, instead of user/pass)", "secret": True},
+            {"key": "api_key", "label": "Personal Access Token", "secret": True},
+            {"key": "username", "label": "SeeClickFix Username (legacy sign-in only)", "secret": False},
+            {"key": "password", "label": "SeeClickFix Password (legacy sign-in only)", "secret": True},
         ],
         "config_fields": [
+            {"key": "request_type_id", "label": "Request Type ID", "placeholder": "1234 (or 'other')", "required": True},
             {"key": "place_url", "label": "Place Slug", "placeholder": "your-town", "required": False},
-            {"key": "request_type", "label": "Request Type ID", "placeholder": "1234", "required": False},
+            {"key": "organization_id", "label": "Organization ID", "placeholder": "1234", "required": False},
+            {"key": "answers", "label": "Extra report-form answers (JSON)", "placeholder": '{"142": "SHALLOW"}', "required": False},
         ],
-        "setup_notes": "Any SeeClickFix account works for read access; issue creation needs an account (or CivicPlus-issued token) with reporting rights in your place.",
+        "setup_notes": (
+            "Authenticate with a Personal Access Token: in SeeClickFix go to Account → Password & "
+            "Security (account.civicplus.com/security) → Personal Access Token, create one, and paste "
+            "it here. Username/password (HTTP Basic) still works for older service accounts but is not "
+            "the documented scheme. Issue creation needs a Request Type ID, and if that request type "
+            "asks required questions Pinpoint can't answer from a resident's report (e.g. 'Depth of "
+            "pothole?'), supply them once under Extra answers — the connection check names any that "
+            "are missing."
+        ),
     },
     "generic_rest": {
         "name": "Other REST System (Generic Connector)",
@@ -86,11 +151,14 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "integration_mode": "generic",
         "docs_url": "https://github.com/Pinpoint-311/Pinpoint-311/blob/main/docs/INTEGRATIONS.md",
         "description": (
-            "One configurable connector for any vendor that exposes a JSON REST API but isn't "
-            "purpose-built above — for example Trimble Cityworks, SDL (Spatial Data Logic), "
-            "Edmunds GovTech / MCSJ, GovPilot, FastTrackGov, or Polimorphic. You supply the base "
-            "URL, auth style, and (if the vendor differs from the common defaults) the endpoint "
-            "paths and field names from your vendor's API docs. "
+            "One configurable connector for any vendor that exposes a JSON REST API with API-key, "
+            "bearer-token, or username/password auth — Polimorphic and FastTrackGov are examples. "
+            "You supply the base URL, auth style, and (if the vendor differs from the common "
+            "defaults) the endpoint paths and field names from your vendor's API docs. "
+            "It will NOT work for vendors without a public JSON API (GovPilot, Edmunds GovTech, "
+            "PubWorks) or whose auth this cannot express (Trimble Cityworks uses a login-for-"
+            "session-token scheme). Spatial Data Logic towns: SDL syncs with ArcGIS Online, which "
+            "is the practical route. "
             "Note: this is a generic client, not certified against any specific vendor's API — "
             "always run the connection check and a test report before relying on it in production."
         ),
@@ -111,12 +179,21 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
             {"key": "id_field", "label": "Response field holding the record id", "placeholder": "id", "required": False},
             {"key": "status_field", "label": "Response field holding status", "placeholder": "status", "required": False},
             {"key": "updated_field", "label": "Response field holding the updated timestamp", "placeholder": "updated_at", "required": False},
+            # These three switch the optional endpoints on. Blank means "this
+            # vendor does not have one", which is why they have no default: the
+            # connector used to claim all three unconditionally and poll paths
+            # that were never there, writing a 404 to the sync log every fifteen
+            # minutes for a connection that was working fine.
+            {"key": "comments_path", "label": "Comments path (leave blank if the vendor has none)", "placeholder": "/requests/{id}/comments", "required": False},
+            {"key": "documents_path", "label": "Attachments path (leave blank if the vendor has none)", "placeholder": "/requests/{id}/documents", "required": False},
+            {"key": "assets_path", "label": "Asset inventory path (leave blank if the vendor has none)", "placeholder": "/assets", "required": False},
+            {"key": "sync_assets", "label": "Copy the asset list onto the map each night (true/false)", "placeholder": "false", "required": False},
         ],
         "setup_notes": (
             "Get your API base URL, key, auth style, and endpoint/field details from your vendor's "
             "API documentation or support team. Defaults follow a common REST convention (Bearer "
             "auth, /requests paths, id/status/updated_at fields); override only what your vendor "
-            "differs on. For a work-order system (e.g. Cityworks), map your work-order fields "
+            "differs on. For a work-order system, map your work-order fields "
             "(WorkOrderId, AssignedTo, Status, ScheduledDate) via id_field/status_field/field_map. "
             "This connector is not vendor-certified — verify with the connection check first."
         ),
@@ -157,25 +234,52 @@ CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
         "plain_summary": "Reports submitted here automatically become Accela records, photos included. Status changes and comments flow both ways, so staff can work in either system.",
         "what_you_need": [
             "Your Accela agency name (staff who log into Accela will know it — it's on the login screen)",
-            "An Accela staff username and password the connection can use",
-            "A 'Client ID' and 'Client Secret' — your Accela administrator or Accela support can create these in about 10 minutes",
+            "An Accela staff login with API access — you'll sign in on Accela's own page, so no password is typed into Pinpoint",
             "The record type to file reports under (e.g. 'Service Request / Complaint') — ask whoever manages Accela",
         ],
         "vendor_ask": {
             "to_hint": "Your Accela administrator, or Accela support (support@accela.com)",
             "subject": "API access for our 311 system (Pinpoint 311)",
-            "body": "Hello,\n\nWe are connecting our resident request system (Pinpoint 311) to our Accela Civic Platform account so resident reports appear in Accela automatically.\n\nCould you please:\n1. Create an API app for us at developer.accela.com and send the Client ID and Client Secret\n2. Confirm our agency name and environment (PROD or TEST)\n3. Provide a staff account (username + password) the connection can use\n4. Tell us the record type resident service requests should be filed under (e.g. ServiceRequest/General/Complaint/NA)\n\nThank you!",
+            "body": "Hello,\n\nWe are connecting our resident request system (Pinpoint 311) to our Accela Civic Platform account so resident reports appear in Accela automatically.\n\nCould you please:\n1. Confirm our agency name and environment (PROD or TEST)\n2. Confirm a staff account that has API access, with the 'records' and 'assets' scopes, so we can sign in and approve the connection\n3. Tell us the record type resident service requests should be filed under (e.g. ServiceRequest/General/Complaint/NA)\n\nWe sign in through Accela's own login page, so no password is shared with us.\n\nThank you!",
         },
         "field_help": {
-            "client_id": "A long code your Accela administrator gives you — looks like random letters and numbers.",
-            "client_secret": "The matching secret code. Treat it like a password.",
-            "username": "The Accela staff account the connection will act as.",
-            "password": "That account's password.",
+            "client_id": "Only for the username-and-password fallback — the app code your Accela administrator gives you.",
+            "client_secret": "Only for the username-and-password fallback. Treat it like a password.",
+            "username": "Only for the username-and-password fallback — the Accela staff account the connection acts as.",
+            "password": "Only for the username-and-password fallback. Signing in through Accela avoids storing this.",
             "agency_name": "Your agency's short name in Accela, usually ALL CAPS (e.g. SPRINGFIELD).",
             "environment": "Leave as PROD unless Accela support says otherwise.",
             "record_type": "Where reports get filed in Accela. Copy this exactly from your Accela administrator.",
             "sync_assets": "Type true to also copy your Accela asset list (hydrants, signs, lights) onto the Pinpoint map each night.",
             "asset_group": "Optional — only sync one group of assets (ask your Accela admin for the group name).",
+        },
+        "recommended_sync_direction": "bidirectional",
+    },
+    "arcgis": {
+        "plain_summary": "Every report submitted here also lands as a point on your town's ArcGIS map, photos and all. When someone changes a report's status in ArcGIS — including from Survey123 or Field Maps out in the field — that change comes back here.",
+        "what_you_need": [
+            "The web address of the ArcGIS layer reports should go into — your GIS staff or county GIS office has this, and it ends in /FeatureServer/0",
+            "An ArcGIS API key, or an ArcGIS username and password the connection can use (if you already set up Esri maps in Pinpoint, that key can be reused — leave the key box blank)",
+            "That layer set to allow editing, so reports can be added to it",
+            "Optional: attachments turned on for that layer, if you want resident photos copied over",
+        ],
+        "vendor_ask": {
+            "to_hint": "Your town or county GIS staff (or whoever manages your ArcGIS Online account)",
+            "subject": "ArcGIS feature layer for our 311 system (Pinpoint 311)",
+            "body": "Hello,\n\nWe are connecting our resident request system (Pinpoint 311) to ArcGIS so resident reports appear on our map automatically and status changes flow both ways.\n\nCould you please:\n1. Send us the URL of the feature layer reports should be written to (the address ending in /FeatureServer/0)\n2. Enable editing on that layer — Create so reports can be added, and Update so status changes write back\n3. Turn on attachments for the layer, so resident photos come across\n4. Turn on editor tracking, so we only poll for what actually changed\n5. Send an API key (or a named account) with editing rights on that layer\n6. Send us the layer's field names for category, description, status, and address if they differ from the standard citizen-request template\n\nThank you!",
+        },
+        "field_help": {
+            "api_key": "A long code from ArcGIS Developers -> Dashboard -> API keys. Leave blank if you already saved an ArcGIS key for your maps — the connection will reuse it — or if you're using a username and password instead.",
+            "username": "Only if you're not using an API key. The ArcGIS account the connection will act as.",
+            "password": "That account's password.",
+            "layer_url": "Open the layer in ArcGIS and copy the URL from its item page. It must end in a number, like /FeatureServer/0 — that number picks the specific layer.",
+            "portal_url": "Leave blank for ArcGIS Online. Only fill this in if your town runs its own ArcGIS Enterprise server, in which case use that server's address.",
+            "status_notes_field": "Optional — if your layer has a notes or comments column, put its name here and status notes will be written into it.",
+            "edit_date_field": "Leave blank. We read this from the layer automatically; only set it if your GIS staff tell you the column has a different name.",
+            "external_id_field": "Leave blank unless your GIS staff want reports tracked by a column other than the layer's built-in ID.",
+            "reuse_maps_api_key": "Leave blank or type true to reuse the ArcGIS key already saved in your map settings. Type false to require a key entered here instead.",
+            "sync_assets": "Type true to also copy an ArcGIS asset layer (hydrants, signs, streetlights) onto the Pinpoint map each night, so residents can pick the exact one they're reporting.",
+            "asset_layer_url": "Only if syncing assets — the /FeatureServer/ address of the layer holding that asset inventory.",
         },
         "recommended_sync_direction": "bidirectional",
     },
@@ -201,25 +305,31 @@ CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
     "civicplus": {
         "plain_summary": "Reports submitted here also appear in SeeClickFix, and SeeClickFix status changes and comments show up here.",
         "what_you_need": [
-            "A SeeClickFix account with permission to report in your town (username + password)",
+            "A Personal Access Token from a SeeClickFix account that can report in your town — "
+            "sign in, open the account menu → Password & Security (account.civicplus.com/security), "
+            "find the 'Personal Access Token' section, and create one. Copy it now; it is shown once.",
+            "The Request Type ID resident reports should be filed under — ask CivicPlus, or use "
+            "'other', which every place has",
             "Optional: your town's SeeClickFix web address (the part after seeclickfix.com/, e.g. 'springfield')",
         ],
         "vendor_ask": {
             "to_hint": "Your CivicPlus / SeeClickFix account manager",
             "subject": "API access for our 311 system (Pinpoint 311)",
-            "body": "Hello,\n\nWe are connecting our resident request system (Pinpoint 311) to our SeeClickFix account.\n\nCould you please confirm:\n1. The account (or API token) we should use for creating issues via the SeeClickFix API v2\n2. Our place URL (the seeclickfix.com/... address for our town)\n3. The request type ID resident reports should use\n\nThank you!",
+            "body": "Hello,\n\nWe are connecting our resident request system (Pinpoint 311) to our SeeClickFix account.\n\nCould you please confirm:\n1. The account we should use for creating issues via the SeeClickFix API v2 (we will generate a Personal Access Token on it)\n2. Our place URL (the seeclickfix.com/... address for our town) and our organization id\n3. The request type ID resident reports should use, and the answers you want for any required questions on that request type\n\nThank you!",
         },
         "field_help": {
-            "username": "The email address of the SeeClickFix account to connect.",
-            "password": "That account's password.",
-            "api_key": "Only needed if CivicPlus gave you a token instead of a username and password.",
+            "api_key": "Your Personal Access Token. In SeeClickFix: account menu → Password & Security (account.civicplus.com/security) → Personal Access Token → create. Copy it straight away — SeeClickFix shows it only once. Treat it like a password.",
+            "username": "Only for older accounts set up before tokens. Leave blank if you pasted a token above.",
+            "password": "That account's password. Leave blank if you pasted a token above.",
             "place_url": "The last part of your town's SeeClickFix page address, e.g. 'springfield' from seeclickfix.com/springfield.",
-            "request_type": "A number CivicPlus can give you. Leave blank to use the default.",
+            "organization_id": "Optional — the account number CivicPlus uses for your organization. Filling it in lets us read your private issues too, instead of only public ones.",
+            "request_type_id": "Which SeeClickFix category new reports are filed under. CivicPlus can tell you the number; 'other' works everywhere if you don't have one yet.",
+            "answers": "Only needed if your request type asks questions we can't answer from a resident's report. The connection check tells you the question id and the allowed answers, e.g. {\"142\": \"SHALLOW\"}.",
         },
         "recommended_sync_direction": "bidirectional",
     },
     "generic_rest": {
-        "plain_summary": "A do-it-yourself connector for a vendor system that isn't listed above (Cityworks, SDL, Edmunds/MCSJ, GovPilot, FastTrackGov, Polimorphic, and others). You paste in the web address and key your vendor gives you, plus a few field names from their API guide if they differ from the common defaults.",
+        "plain_summary": "A do-it-yourself connector for a vendor system that isn't listed above and has a plain JSON API (Polimorphic and FastTrackGov, for example). You paste in the web address and key your vendor gives you, plus a few field names from their API guide if they differ from the common defaults. If your vendor has no public API — GovPilot, Edmunds, PubWorks — this cannot reach it; ask the vendor, or ask us.",
         "what_you_need": [
             "Your vendor's API base URL and an API key (or a username + password) — from their API docs or support team",
             "The auth style they use: most are 'bearer'; some use an API-key header or a basic login",
@@ -244,6 +354,10 @@ CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
             "id_field": "The field in the vendor's response holding the record id. Default 'id'.",
             "status_field": "The field holding the record's status. Default 'status'.",
             "updated_field": "The field holding the last-updated timestamp. Default 'updated_at'.",
+            "comments_path": "Only if your vendor has a comments endpoint. Leave blank and we won't try to sync comment threads.",
+            "documents_path": "Only if your vendor accepts file uploads. Leave blank and photos stay in Pinpoint.",
+            "assets_path": "Only if your vendor publishes an asset list (hydrants, signs, lights). Leave blank to skip.",
+            "sync_assets": "Type true to copy that asset list onto the Pinpoint map each night. You can still run it once from the card without turning this on.",
         },
         "recommended_sync_direction": "bidirectional",
     },
@@ -274,6 +388,7 @@ for _key, _guide in CLERK_GUIDES.items():
 
 _CONNECTOR_CLASSES = {
     "accela": AccelaConnector,
+    "arcgis": ArcGISConnector,
     "tyler": TylerConnector,
     "civicplus": SeeClickFixConnector,
     "generic_rest": GenericRestConnector,
@@ -299,4 +414,44 @@ async def build_connector_for(integration: Any) -> BaseConnector:
     """
     from app.integrations.credentials import resolve_credentials
     creds = await resolve_credentials(integration.credentials or {})
-    return build_connector(integration.platform, integration.config or {}, creds)
+    connector = build_connector(integration.platform, integration.config or {}, creds)
+    connector.persist_credentials = _credential_writer(integration.id)
+    return connector
+
+
+def _credential_writer(integration_id: int):
+    """An awaitable a connector calls when the vendor rotates a credential.
+
+    Accela hands back a fresh refresh token on every exchange and retires the
+    old one, so a rotation that isn't written back locks the town out on the
+    next call. This opens its own session rather than borrowing the caller's:
+    the rotation has already happened at the vendor and must be durable even if
+    the surrounding sync transaction later rolls back.
+    """
+    async def _write(new_values: dict) -> None:
+        if not new_values:
+            return
+        from sqlalchemy import select
+        from app.db.session import SessionLocal
+        from app.integrations.credentials import store_credentials
+        from app.models import IntegrationConfig
+
+        try:
+            async with SessionLocal() as db:
+                row = (await db.execute(
+                    select(IntegrationConfig).where(IntegrationConfig.id == integration_id)
+                )).scalar_one_or_none()
+                if not row:
+                    return
+                stored = await store_credentials(row.platform, new_values)
+                row.credentials = {**(row.credentials or {}), **stored}
+                await db.commit()
+        except Exception as e:
+            from app.core.sanitize import sanitize_for_log
+            import logging
+            logging.getLogger(__name__).error(
+                "[Integrations] Failed to persist rotated credentials for "
+                "integration %s: %s", integration_id, sanitize_for_log(str(e)),
+            )
+
+    return _write

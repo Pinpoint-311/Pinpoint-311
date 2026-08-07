@@ -521,3 +521,24 @@ async def test_photos_past_the_limit_are_carried_through_not_dropped(monkeypatch
     _configure(monkeypatch, "google")
     _, batch = await ir.screen_and_redact([PHOTO] * 5)
     assert len(batch.media) == 5
+
+
+@pytest.mark.asyncio
+async def test_switching_redaction_off_does_not_switch_off_exif_stripping(monkeypatch):
+    """The town's switch is about blurring. The GPS block is a separate
+    exposure that needs no detector to remove -- see strip_exif -- so the off
+    path must still re-encode the photo rather than hand it back untouched."""
+    monkeypatch.setattr(ir, "strip_exif", lambda raw: b"stripped")
+    _configure(monkeypatch, None)  # what settings() returns when the switch is off
+    batch = await ir.redact_media([PHOTO])
+    assert batch.media[0] != PHOTO
+    assert batch.media[0].startswith("data:image/jpeg;base64,")
+
+
+@pytest.mark.asyncio
+async def test_the_combined_path_strips_exif_when_redaction_is_off(spy, monkeypatch):
+    _configure(monkeypatch, None)
+    _, batch = await ir.screen_and_redact([PHOTO])
+    assert spy["screen_images"] == 1, "moderation must still run"
+    assert batch.media[0] != PHOTO
+    assert batch.media[0].startswith("data:image/jpeg;base64,")

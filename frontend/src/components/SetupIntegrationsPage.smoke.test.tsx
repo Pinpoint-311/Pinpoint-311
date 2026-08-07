@@ -59,7 +59,14 @@ const props: any = {
 
 async function mount() {
     const { default: Page } = await import('./SetupIntegrationsPage');
-    await act(async () => { root.render(React.createElement(Page, props)); });
+    // Inside DialogProvider, as App.tsx mounts it. The town-systems section asks
+    // for a confirmation before enabling a connector whose last check failed, and
+    // useDialog throws without the provider -- so rendering the page bare here
+    // would be testing a tree the application never builds.
+    const { DialogProvider } = await import('./DialogProvider');
+    await act(async () => {
+        root.render(React.createElement(DialogProvider, null, React.createElement(Page, props)));
+    });
     return host.textContent || '';
 }
 

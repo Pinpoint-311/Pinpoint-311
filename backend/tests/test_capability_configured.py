@@ -481,6 +481,65 @@ async def test_the_save_endpoint_still_accepts_the_keys_it_declares(store, monke
     assert store["REDACTION_PROVIDER"] == "local"
 
 
+# ---- what the public config tells the resident portal --------------------------
+#
+# GET /system/config is public and the resident portal reads it before drawing
+# the language picker. A picker over a translator that cannot run offers
+# Spanish and then serves English, which is worse than offering nothing.
+
+class _NoDb:
+    async def execute(self, *a, **kw):
+        raise RuntimeError("no database in this test")
+
+
+@pytest.mark.asyncio
+async def test_the_public_config_reports_whether_translation_can_run(store, monkeypatch):
+    from app.api import system
+
+    import app.services.capability_switches as cs
+
+    async def switched_off(capability):
+        return False
+
+    monkeypatch.setattr(cs, "enabled", switched_off)
+    out = await system.get_deployment_config(db=_NoDb())
+    assert out["translation_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_translation_on_and_configured_reads_enabled(store, monkeypatch):
+    from app.api import system
+
+    import app.services.capability_switches as cs
+
+    async def switched_on(capability):
+        return True
+
+    async def is_configured(capability):
+        return True
+
+    monkeypatch.setattr(cs, "enabled", switched_on)
+    monkeypatch.setattr(system, "capability_is_configured", is_configured)
+    out = await system.get_deployment_config(db=_NoDb())
+    assert out["translation_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_failure_working_out_translation_does_not_hide_the_picker(store, monkeypatch):
+    """Only a definite "off" may hide the picker; an error is not evidence
+    that translation is unavailable."""
+    from app.api import system
+
+    import app.services.capability_switches as cs
+
+    async def boom(capability):
+        raise RuntimeError("switch store unreachable")
+
+    monkeypatch.setattr(cs, "enabled", boom)
+    out = await system.get_deployment_config(db=_NoDb())
+    assert out["translation_enabled"] is True
+
+
 # ---- the test endpoint's allow-list -------------------------------------------
 #
 # `POST /providers/{capability}/test` took the path segment unvalidated and

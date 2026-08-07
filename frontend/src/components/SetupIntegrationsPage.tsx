@@ -16,6 +16,7 @@ import GovtechIntegrations from './GovtechIntegrations';
 import ServiceProviders from './ServiceProviders';
 import SetupWizard from './SetupWizard';
 import { buildPlan, summarise, nameList, BACKUP_SECRETS, SENTRY_SECRETS } from './setupPlan';
+import { townSystemHealth } from './integrationState';
 // Registers every provider's setup steps as a side effect, so the guide can
 // render them inline rather than pointing at the cards that do.
 import './setupStepsContent';
@@ -213,12 +214,23 @@ export function seedAnswersFrom(status: ProviderStatusMap | null): SeededAnswers
         value && (allowed as readonly string[]).includes(value) ? (value as T) : null;
 
     const CLOUDS = ['google', 'azure', 'aws'] as const;
+    /* The AI provider names its cloud too, just not by the same word. A town
+     * that keeps its secrets in the encrypted database and never opened the
+     * KMS card still tells us its cloud the moment it sets up Vertex or
+     * Bedrock -- and without this fallback that town's questionnaire opened
+     * on Google, which then drove every provider default below it. */
+    const AI_CLOUD: Record<string, (typeof CLOUDS)[number]> = {
+        vertex: 'google', azure: 'azure', bedrock: 'aws',
+    };
+    const aiProvider = at('ai');
     return {
         /* The cloud is not stored as such: it is whichever one the credentials
          * are in. The secret store answers that most directly, with key
-         * management as the fallback; "database" means no cloud has been chosen
-         * yet, so the default stands. */
-        cloud: pick(at('secrets'), CLOUDS) ?? pick(at('kms'), CLOUDS),
+         * management as the fallback and the AI provider after that;
+         * "database" means no cloud has been chosen yet, so the default
+         * stands. */
+        cloud: pick(at('secrets'), CLOUDS) ?? pick(at('kms'), CLOUDS)
+            ?? (aiProvider ? AI_CLOUD[aiProvider] ?? null : null),
         idp: pick(at('identity'), ['auth0', 'entra', 'okta', 'oidc'] as const),
         maps: pick(at('maps'), ['google', 'esri', 'azure', 'apple'] as const),
         email: pick(at('email'), ['smtp', 'ses', 'acs'] as const),
@@ -491,8 +503,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * than sit there claiming an answer the server does not have. */
     const [wantedFeatures, setWantedFeatures] = useState<Set<string>>(new Set(ALL_FEATURES));
     const [switchError, setSwitchError] = useState<string | null>(null);
-    const toggleFeature = async (f: string) => {
-        const wantedNow = !wantedFeatures.has(f);
+    const setFeature = async (f: string, wantedNow: boolean) => {
         const before = wantedFeatures;
         setWantedFeatures(prev => {
             const next = new Set(prev);
@@ -515,6 +526,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         }
     };
     const wants = (f: string) => wantedFeatures.has(f);
+    const toggleFeature = (f: string) => setFeature(f, !wantedFeatures.has(f));
 
 
     /* The questionnaire's answers, translated into the provider ids the
@@ -587,10 +599,18 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * only say whether a credential is stored, and "stored" is the fact that
      * stays true through a key being revoked. */
     const [connectorHealth, setConnectorHealth] = useState<Record<string, string>>({});
+    /* Which town-system platforms are currently switched on. A govtech health
+     * row outlives the integration that wrote it -- nothing decays a failing
+     * row once its connector is disabled or deleted -- so counting rows alone
+     * kept the badge red forever after the town turned the broken thing off. */
+    const [enabledTownSystems, setEnabledTownSystems] = useState<Set<string>>(new Set());
     const loadHealth = useCallback(() => {
         api.getConnectorHealth()
             .then(r => setConnectorHealth(Object.fromEntries(r.connectors.map(c => [c.connector, c.status]))))
             .catch(() => { /* no health is not the same as bad health */ });
+        api.getIntegrations()
+            .then(rows => setEnabledTownSystems(new Set(rows.filter(r => r.enabled).map(r => r.platform))))
+            .catch(() => { /* keep the last answer; the section below has its own load */ });
     }, []);
     useEffect(() => { loadHealth(); }, [loadHealth, providerRefresh]);
     const loadProviderStatus = useCallback(() => {
@@ -649,8 +669,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         ));
     }, [providerStatus]);
     useEffect(() => {
-        fetch('/api/system/config')
-            .then(r => (r.ok ? r.json() : null))
+        api.getSystemConfig()
             .then(cfg => {
                 setManagedMode(!!cfg?.managed_mode);
                 setPublicOrigin(cfg?.public_origin ?? null);
@@ -753,15 +772,18 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * count can never say something the list inside it does not. Reproducing
      * the arithmetic here instead would be a second implementation of "what is
      * left", and those drift. */
+    const plan = buildPlan({
+        cloud: setupCloud, idp: setupIdp, maps: setupMaps, aiProvider,
+        emailProvider, smsProvider, redactionProvider, wanted: wantedFeatures,
+    });
+    const planItemDone = (item: { id: string; cap?: Capability; provider?: string }) =>
+        (item.cap && item.provider)
+            ? providerStatus?.[item.cap]?.configured?.[item.provider] === true
+            : itemDone(item.id);
     const planSummary = summarise(
-        buildPlan({
-            cloud: setupCloud, idp: setupIdp, maps: setupMaps, aiProvider,
-            emailProvider, smsProvider, redactionProvider, wanted: wantedFeatures,
-        }),
+        plan,
         {
-            isDone: (item) => (item.cap && item.provider)
-                ? providerStatus?.[item.cap]?.configured?.[item.provider] === true
-                : itemDone(item.id),
+            isDone: planItemDone,
             /* Only a real failure counts. `unknown` means nobody has looked and
              * `stale` means not lately -- neither is evidence of a fault, and
              * badging them as one produces a number that never reaches zero on
@@ -772,32 +794,69 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             },
         },
     );
-    const outstanding = planSummary.notSetUp.length + planSummary.notWorking.length;
-
-    // Setup progress calculation. In managed mode the platform-managed steps
-    // (Google Cloud, DB Backups) are excluded — the state handles them, so
-    // counting them would leave progress permanently "incomplete".
-    const setupSteps = [
-        { label: 'Staff sign-in', done: !!signInConfigured, required: false },
-        { label: 'Email', done: !!smtpConfigured, required: false },
-        ...(managedMode ? [] : [{ label: 'Google Cloud', done: !!gcpConfigured, required: false }]),
-        { label: 'Map provider', done: !!mapsConfigured, required: false },
-        { label: 'SMS Alerts', done: smsConfigured, required: false },
-        { label: 'AI triage', done: !!aiConfigured, required: false },
-        { label: 'Translation', done: !!translationConfigured, required: false },
-        { label: 'PII encryption', done: !!kmsConfigured, required: false },
-        { label: 'Photo redaction', done: !!redactionConfigured, required: false },
-        ...(managedMode ? [] : [{ label: 'DB Backups', done: !!backupConfigured, required: false }]),
-    ];
-
-    /* Required first, and counted separately.
+    /* The town's own govtech connections, which ride in the same health table.
      *
-     * "5 of 6 configured" mixes two different questions: can this town take
-     * reports at all, and how much of the optional surface is switched on. A
-     * town with both required items done and nothing else is ready to go live,
-     * and a bar reading 33% told it the opposite. The headline now answers the
-     * first question and the count answers the second. */
+     * They were excluded from this count because their rows were meaningless: a
+     * `govtech:*` row only appeared when a resident's report happened to be
+     * pushed, and the daily sweep never tested them. Now that the sweep does,
+     * an Accela connection that has stopped working is exactly the kind of thing
+     * this badge exists to surface -- and leaving it out would mean the page said
+     * "All set up" while reports were failing to reach the county.
+     *
+     * Same rule as the capabilities above: only a real failure counts. `unknown`
+     * means nobody has looked and `stale` means not lately. And only currently
+     * *enabled* connections count -- their health rows outlive them, and a
+     * connector the town disabled because it was broken is dealt with, not
+     * outstanding. */
+    const { all: townSystems, broken: townSystemsBroken } =
+        townSystemHealth(connectorHealth, enabledTownSystems);
+
+    const outstanding = planSummary.notSetUp.length + planSummary.notWorking.length
+        + townSystemsBroken.length;
+
+    /* The progress chips, from the same plan the wizard renders.
+     *
+     * This was a second, hand-written list of ten. It never consulted the
+     * feature ticks, so a town that switched off text messages kept an
+     * unfillable grey "SMS Alerts" chip and could never reach 100% -- while
+     * the pills on the guide header, fed by buildPlan, said "All set up"
+     * directly underneath. And it carried a "Google Cloud" chip for every
+     * town, including the ones on Azure or AWS, for whom it can never go
+     * green. One source now; the two counts cannot disagree.
+     *
+     * The Google chip survives, but only on a Google town: Google is the one
+     * cloud with an account-level credential to enter (the service-account
+     * file), so it is real work the plan items do not otherwise carry. In
+     * managed mode the platform owns it, and backups, so both drop out. */
+    const seenStep = new Set<string>();
+    const setupSteps = [
+        ...(managedMode || setupCloud !== 'google'
+            ? []
+            : [{ label: 'Google Cloud', done: !!gcpConfigured, required: false }]),
+        ...plan.flatMap(t => t.items)
+            .filter(item => !seenStep.has(item.id) && (seenStep.add(item.id), true))
+            .filter(item => !(managedMode && item.id === 'backups'))
+            .map(item => ({
+                label: item.title,
+                done: planItemDone(item),
+                required: !!item.required,
+            })),
+        /* Only once the town has one. Listing "Town systems" as an outstanding
+           step for every town would mark a complete setup incomplete on the
+           strength of an integration most towns will never want -- the same
+           false-negative the sign-in and email checks above were fixed for. */
+        ...(townSystems.length > 0
+            ? [{ label: 'Town systems', done: townSystemsBroken.length === 0, required: false }]
+            : []),
+    ];
     const completedCount = setupSteps.filter(s => s.done).length;
+
+    /* The numbers on the three conditional questions. They were literals, so
+     * a town that unticked email read 1, 2, 3, 4, 6 -- a gap that looks like
+     * a question the page is hiding from you, which on this page it was. */
+    const askEmail = 5;
+    const askSms = askEmail + (wants('email') ? 1 : 0);
+    const askSafety = askSms + (wants('sms') ? 1 : 0);
 
     useEffect(() => {
         api.getSetupState()
@@ -1114,6 +1173,19 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                             them to the wrong place. Named where the list is
                             short enough to name, because "which ones" is the
                             next question either way. */}
+                        {/* Named separately from the capability failures: a broken
+                            Accela connection needs somebody to open the town-systems
+                            section, not the provider cards, and merging the two
+                            counts sends them to the wrong place. */}
+                        {townSystemsBroken.length > 0 && (
+                            <span
+                                title={`Town systems not working: ${townSystemsBroken.join(', ')}`}
+                                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl text-xs font-semibold border bg-gradient-to-r from-red-500/25 to-rose-500/20 text-red-200 border-red-400/35 shadow-md shadow-red-950/40"
+                            >
+                                <AlertCircle className="w-3.5 h-3.5" aria-hidden="true" />
+                                {townSystemsBroken.length} town system{townSystemsBroken.length === 1 ? '' : 's'} not working
+                            </span>
+                        )}
                         {planSummary.notWorking.length > 0 && (
                             <span
                                 title={nameList(planSummary.notWorking, 99)}
@@ -1278,7 +1350,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                       * so each starts on whatever suits the cloud
                                       * above and can be changed here. */}
                                     {wants('email') && (
-                                        <Ask n={5} label="Who sends your email?"
+                                        <Ask n={askEmail} label="Who sends your email?"
                                             hint="SMTP uses the mail server the town already has. Microsoft 365 and Google Workspace block plain SMTP by default, so SES or Azure Communication Services may be less work than getting an exception.">
                                             <Options
                                                 value={emailProvider}
@@ -1289,7 +1361,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     )}
 
                                     {wants('sms') && (
-                                        <Ask n={6} label="Who sends your text messages?"
+                                        <Ask n={askSms} label="Who sends your text messages?"
                                             hint="Whichever you pick, start the 10DLC carrier registration early — it is not a technical step and it is not immediate.">
                                             <Options
                                                 value={smsProvider}
@@ -1300,7 +1372,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     )}
 
                                     {wants('safety') && (
-                                        <Ask n={7} label="Where should photos be checked and blurred?"
+                                        <Ask n={askSafety} label="Where should photos be checked and blurred?"
                                             hint="On this server needs no account and no photo ever leaves the building; it finds fewer faces than the clouds do.">
                                             <Options
                                                 value={redactionProvider}
@@ -1399,6 +1471,15 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                        fetches its catalog and the section would otherwise have
                        to guess. */
                     statusMap={providerStatus}
+                    /* The same persisted switch the questionnaire ticks flip,
+                       reachable from the card itself. The cards speak
+                       capability ids and the ticks speak feature ids; `safety`
+                       vs `redaction` is the one pair where those differ. */
+                    onSwitch={async (id, on) => {
+                        const feature = Object.entries(FEATURE_TO_CAPABILITY)
+                            .find(([, capability]) => capability === id)?.[0] ?? id;
+                        await setFeature(feature, on);
+                    }}
                     /* Backups and crash reporting are features without a
                        provider catalog, so they are not in CAPS and could never
                        show up as switched off -- which is the pair somebody is

@@ -131,7 +131,13 @@ async def _run_pii_migrations():
         "ALTER TABLE service_requests ALTER COLUMN first_name TYPE VARCHAR(500)",
         "ALTER TABLE service_requests ALTER COLUMN last_name TYPE VARCHAR(500)",
         "ALTER TABLE service_requests ALTER COLUMN email TYPE VARCHAR(500)",
-        "ALTER TABLE service_requests ALTER COLUMN phone TYPE VARCHAR(200)",
+        # 500 like the other three. This ran at every boot saying 200 and
+        # silently *shrank* the column migration e7f8a9b0c1d2 had widened --
+        # Postgres allows the shrink whenever every stored value happens to
+        # fit, which is exactly the state right after the widen, so the first
+        # restart re-broke KMS phone writes. Same number as models.py or it
+        # is not a size fix, it is a tug of war.
+        "ALTER TABLE service_requests ALTER COLUMN phone TYPE VARCHAR(500)",
     ]
     
     try:
@@ -179,8 +185,13 @@ async def _run_schema_migrations():
         "ALTER TABLE request_comments ADD COLUMN IF NOT EXISTS external_ref VARCHAR(200)",
         "CREATE INDEX IF NOT EXISTS ix_request_comments_external_ref ON request_comments (external_ref)",
         "ALTER TABLE integration_links ADD COLUMN IF NOT EXISTS pushed_comment_ids JSON DEFAULT '[]'",
-        "ALTER TABLE integration_links ADD COLUMN IF NOT EXISTS documents_pushed BOOLEAN DEFAULT FALSE",
         "ALTER TABLE integration_links ADD COLUMN IF NOT EXISTS documents_pushed_count INTEGER DEFAULT 0",
+        # One integration per platform. The create endpoint does a
+        # SELECT-then-INSERT, so without this two concurrent connects produce two
+        # enabled rows for one vendor and every report is pushed there twice.
+        # Non-unique index dropped by name first, since this replaces it.
+        "DROP INDEX IF EXISTS ix_integration_configs_platform",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_integration_configs_platform ON integration_configs (platform)",
         # Immutable/tamper-evident request audit log hash chain (added 2026-07-02)
         "ALTER TABLE request_audit_logs ADD COLUMN IF NOT EXISTS previous_hash VARCHAR(64)",
         "ALTER TABLE request_audit_logs ADD COLUMN IF NOT EXISTS entry_hash VARCHAR(64)",

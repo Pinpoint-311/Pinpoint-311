@@ -37,17 +37,32 @@ export interface IntegrationVendorAsk {
     body: string;
 }
 
+/** A platform where the admin signs in on the vendor's own site instead of
+ *  pasting credentials into our form (currently Accela). */
+export interface IntegrationOAuth {
+    flow: 'authorization_code';
+    start_path: string;
+    button_label: string;
+    explainer: string;
+    fallback_label: string;
+    credential_key: string;
+}
+
 export interface IntegrationPlatform {
     platform: string;
     name: string;
     vendor: string;
     category: string;
-    integration_mode: 'public_api' | 'open311' | 'partner_api';
+    // 'generic' is what the registry sends for the configurable REST connector.
+    // It was missing here while the UI carried a label for it, so the value the
+    // backend actually emits was the one the type said could not arrive.
+    integration_mode: 'public_api' | 'open311' | 'partner_api' | 'generic';
     docs_url: string;
     description: string;
     capabilities: string[];
     credential_fields: IntegrationFieldSpec[];
     config_fields: IntegrationFieldSpec[];
+    oauth?: IntegrationOAuth;
     setup_notes: string;
     // Clerk-friendly guidance
     plain_summary: string;
@@ -61,6 +76,14 @@ export interface IntegrationTestResult {
     ok: boolean;
     detail: string;
     friendly?: string;
+    // False when the endpoint answered but nothing exercised the credentials —
+    // an Open311 server that serves /services.json to anybody, or a vendor with
+    // no key saved. Rendering these as "Connected" is what let a clerk walk away
+    // from a connection that had never been authenticated.
+    verified?: boolean;
+    // Things that work today but will stop a report from being filed — e.g. a
+    // SeeClickFix request type asking a required question we cannot answer.
+    warnings?: string[];
 }
 
 export interface IntegrationConfig {
@@ -73,6 +96,13 @@ export interface IntegrationConfig {
     config: Record<string, unknown>;
     configured_credentials: string[];
     credentials_vaulted: boolean;
+    // 'all' | 'partial' | 'none'. `credentials_vaulted` used to be an `any`, so a
+    // vault write that failed for one field still reported the whole set as
+    // vaulted; 'partial' is the state worth naming, because it means at least one
+    // secret is in this app's database after all.
+    credentials_vaulted_state?: 'all' | 'partial' | 'none';
+    /** True once the admin has completed the vendor's own sign-in. */
+    oauth_connected: boolean;
     webhook_path: string;
     last_sync_at: string | null;
     last_sync_status: string | null;
@@ -85,8 +115,23 @@ export interface IntegrationSave {
     display_name?: string;
     enabled?: boolean;
     sync_direction?: string;
+    // A null value deletes that key. The backend merges config and the wizard
+    // skipped empty strings, so between them a wrong jurisdiction_id could never
+    // be blanked — it stayed in every outbound payload forever.
     config?: Record<string, unknown>;
     credentials?: Record<string, string>;
+}
+
+/** An external platform's record for one service request (staff view). */
+export interface IntegrationRequestLink {
+    platform: string;
+    platform_name: string;
+    external_id: string;
+    external_status: string | null;
+    direction: string;
+    last_pushed_at: string | null;
+    last_pulled_at: string | null;
+    sync_error: string | null;
 }
 
 export interface IntegrationSyncLog {
@@ -673,12 +718,53 @@ class ApiClient {
         return this.request<IntegrationTestResult>(`/integrations/${id}/test`, { method: 'POST' });
     }
 
-    async syncIntegration(id: number): Promise<{ message: string }> {
-        return this.request<{ message: string }>(`/integrations/${id}/sync`, { method: 'POST' });
+    async syncIntegration(id: number): Promise<{ message: string; started?: Record<string, boolean> }> {
+        return this.request<{ message: string; started?: Record<string, boolean> }>(
+            `/integrations/${id}/sync`, { method: 'POST' }
+        );
+    }
+
+    async regenerateIntegrationWebhookToken(id: number): Promise<IntegrationConfig & { message: string }> {
+        return this.request<IntegrationConfig & { message: string }>(
+            `/integrations/${id}/regenerate-webhook-token`, { method: 'POST' }
+        );
+    }
+
+    /** Deployment shape the admin UI branches on (managed mode, public origin).
+     *
+     * Was a bare `fetch('/api/system/config')`, which sent no Authorization
+     * header and bypassed the 401 handling every other call gets -- so on an
+     * expired session it failed quietly and the page rendered as an unmanaged
+     * deployment with no public origin, rather than sending anyone to log in. */
+    async getSystemConfig(): Promise<{ managed_mode?: boolean; public_origin?: string | null }> {
+        return this.request<{ managed_mode?: boolean; public_origin?: string | null }>(
+            '/system/config'
+        );
+    }
+
+    /** External platform records linked to one request. Staff-visible. */
+    async getRequestIntegrationLinks(serviceRequestId: string): Promise<IntegrationRequestLink[]> {
+        return this.request<IntegrationRequestLink[]>(
+            `/integrations/requests/${serviceRequestId}/links`
+        );
     }
 
     async syncIntegrationAssets(id: number): Promise<{ message: string }> {
         return this.request<{ message: string }>(`/integrations/${id}/sync-assets`, { method: 'POST' });
+    }
+
+    /** Whether this deployment has an Accela developer app configured, and the
+     *  callback URL registered against it. */
+    async getAccelaOAuthStatus(): Promise<{ configured: boolean; redirect_uri: string; scope: string }> {
+        return this.request('/integrations/accela/oauth/status');
+    }
+
+    /** Mint a signed, ten-minute authorization URL for this connection. */
+    async startAccelaOAuth(integrationId: number): Promise<{ authorize_url: string; redirect_uri: string }> {
+        return this.request('/integrations/accela/oauth/start', {
+            method: 'POST',
+            body: JSON.stringify({ integration_id: integrationId }),
+        });
     }
 
     async getIntegrationLogs(id: number): Promise<IntegrationSyncLog[]> {
@@ -1220,6 +1306,19 @@ class ApiClient {
         return response.blob();
     }
 
+    /** JSON data dictionary — packs and fields as the server actually exports
+     *  them (per-pack switches applied), so the Research Lab renders truth
+     *  rather than a hardcoded copy. */
+    async getResearchDataDictionary(): Promise<ResearchDataDictionary> {
+        return this.request<ResearchDataDictionary>('/research/data-dictionary');
+    }
+
+    /** Admin only: every pack (including disabled ones) with its field list,
+     *  for the Admin Console toggles. */
+    async getResearchPacks(): Promise<ResearchPackSwitch[]> {
+        return this.request<ResearchPackSwitch[]>('/research/packs');
+    }
+
     async exportDataDictionary(): Promise<Blob> {
         const response = await fetch(`${API_BASE}/research/export/data-dictionary`, {
             headers: this.token ? { 'Authorization': `Bearer ${this.token}` } : {},
@@ -1618,6 +1717,45 @@ export interface ResearchStatus {
     enabled: boolean;
     user: string;
     role: string;
+}
+
+export interface ResearchDictionaryField {
+    name: string;
+    type: string;
+    description: string;
+}
+
+export interface ResearchPackInfo {
+    label: string;
+    audience: string;
+    default_on: boolean;
+    enabled: boolean;
+    fields: ResearchDictionaryField[];
+    suggested_analyses: string[];
+    why_default_off?: string;
+}
+
+/** GET /research/data-dictionary — the fields and packs as the server actually
+ *  exports them, per-pack switches already applied. */
+export interface ResearchDataDictionary {
+    version: string;
+    fields: Record<string, { type: string; description: string; research_pack: string }>;
+    core_fields: ResearchDictionaryField[];
+    research_packs: Record<string, ResearchPackInfo>;
+    privacy: { fuzzed_mode: string; exact_mode: string };
+    sentiment_method?: string;
+}
+
+/** GET /research/packs (admin) — every pack including disabled ones, for the
+ *  Admin Console toggles. */
+export interface ResearchPackSwitch {
+    id: string;
+    label: string;
+    audience: string;
+    enabled: boolean;
+    default_on: boolean;
+    contains: string[];
+    why_default_off?: string;
 }
 
 export const api = new ApiClient();

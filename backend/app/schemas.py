@@ -370,6 +370,11 @@ class SystemSettingsBase(BaseModel):
     # were a second answer to a question the setup page also owned, and the two
     # could disagree. See app/services/capability_switches.py.
     modules: Dict[str, bool] = {"unlisted_reports": False, "research_portal": False}
+    # Per-pack research export switches: {pack_id: bool}. None/absent key means
+    # the pack's own default (app/api/research.RESEARCH_PACKS_DEF). Optional so
+    # exclude_unset keeps a settings save that never mentions packs from
+    # clobbering the stored choices.
+    research_packs: Optional[Dict[str, bool]] = None
     social_links: Optional[List[Dict[str, str]]] = []
     privacy_policy: Optional[str] = None  # Custom privacy policy (Markdown)
     terms_of_service: Optional[str] = None  # Custom terms of service (Markdown)

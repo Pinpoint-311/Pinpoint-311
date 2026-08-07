@@ -719,12 +719,15 @@ async def set_secret(key_name: str, value: str) -> bool:
 def delete_secret_sync(key_name: str) -> bool:
     """Remove a key from the configured store. Returns whether it is gone.
 
-    Written for the secret-store round-trip check, which has to be able to take
-    back what it wrote. Nothing else deletes: the setup page clears a credential
-    by storing an empty string, which is the right behaviour for a real key
-    (the row stays, the card still lists it) and the wrong one for a probe --
-    an empty `PINPOINT_SELFTEST_*` left in a bundle forever is exactly the litter
-    an earlier probe left behind in Google as `test-write-check`.
+    Two callers have to be able to take back what was written: the secret-store
+    round-trip check -- an empty `PINPOINT_SELFTEST_*` left in a bundle forever
+    is exactly the litter an earlier probe left behind in Google as
+    `test-write-check` -- and govtech-integration disconnect, which removes the
+    INTEGRATION_<PLATFORM>_<FIELD> values the connection wrote so a vendor
+    client secret an admin believes they revoked by pressing Disconnect does not
+    stay live and unlisted. The setup page still clears a credential by storing
+    an empty string, which is the right behaviour for a real key (the row stays,
+    the card still lists it).
 
     On Google the keys live inside a shared JSON bundle, so this rewrites the
     bundle without that key rather than deleting anything; on Azure and AWS each
@@ -782,6 +785,8 @@ def delete_secret_sync(key_name: str) -> bool:
                 "payload": {"data": json.dumps(bundle).encode("UTF-8")},
             })
             _cache_put(bundle_name, bundle)
+            # The removed value lives on in the superseded versions until these
+            # are retired, which is the whole point of pruning here too.
             _prune_versions(client, secret_path)
         return True
     except Exception as e:
@@ -790,10 +795,39 @@ def delete_secret_sync(key_name: str) -> bool:
 
 
 async def delete_secret(key_name: str) -> bool:
-    """Async wrapper for `delete_secret_sync`."""
+    """Remove a secret from the vault of record and from the database fallback.
+
+    Both, unconditionally: a town that migrated to an external vault may still
+    have an encrypted copy in `system_secrets` from before the migration, and
+    deleting only the one the current provider reads would leave the other
+    readable by the next `get_secret` fallback.
+    """
     import asyncio
+
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, delete_secret_sync, key_name)
+    vault = await loop.run_in_executor(None, delete_secret_sync, key_name)
+    database = await _delete_secret_from_db(key_name)
+    return vault or database
+
+
+async def _delete_secret_from_db(key_name: str) -> bool:
+    """Drop the encrypted-in-database copy of a secret. Never raises."""
+    from sqlalchemy import delete as sql_delete
+
+    from app.db.session import SessionLocal
+    from app.models import SystemSecret
+
+    try:
+        async with SessionLocal() as db:
+            result = await db.execute(
+                sql_delete(SystemSecret).where(SystemSecret.key_name == key_name)
+            )
+            await db.commit()
+            return bool(result.rowcount)
+    except Exception as e:
+        from app.core.sanitize import sanitize_for_log
+        logger.error(f"Failed to remove secret from database: {sanitize_for_log(str(e))}")
+        return False
 
 
 async def migrate_to_secret_manager() -> Dict[str, Any]:

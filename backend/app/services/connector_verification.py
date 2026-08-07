@@ -51,6 +51,7 @@ async def verify_all(
     provider_of: Optional[Callable[[str], Awaitable[Optional[str]]]] = None,
     health=None,
     alerts=None,
+    integrations=None,
 ) -> Dict[str, Any]:
     """Run each capability's live check. Returns a summary; never raises."""
     if checks is None or is_configured is None:
@@ -113,11 +114,26 @@ async def verify_all(
             # over a verdict an administrator had already got by hand.
             checked[capability] = "unverifiable"
         elif outcome.get("ok"):
-            await health.record_success(db, capability, provider=provider)
+            # The message too, not only the timestamp. The manual Test button
+            # stores what the check did (the translated word, the wrapped-key
+            # byte count); a nightly pass that wiped it back to nothing made
+            # the card less transparent every morning.
+            await health.record_success(db, capability, provider=provider,
+                                        detail=outcome.get("detail"))
             checked[capability] = "working"
         else:
             await health.record_failure(db, capability, outcome.get("detail", ""), provider=provider)
             checked[capability] = "failing"
+
+    # The govtech integrations a town connected itself. Same table, same
+    # escalation, same mute -- they were the one group of connectors nothing
+    # ever swept, so a health row appeared only when a resident happened to
+    # file a report, and `FRESH_FOR` (three days, justified by "there is now a
+    # sweep that actively tests every configured connector once a day") was
+    # counting quiet days as evidence of decay. Three quiet days emailed the
+    # town that Accela may stop working when nothing was wrong with it.
+    checked.update(await verify_integrations(
+        db, integrations=integrations, health=health))
 
     failing = sorted(k for k, v in checked.items() if v in ("failing", "error"))
     if failing:
@@ -134,18 +150,201 @@ async def verify_all(
     return {"checked": checked, "failing": failing, "alerted": alerted}
 
 
-async def notify(db, *, health=None, alerts=None) -> Dict[str, Any]:
-    """Send the digest for whatever the sweep just recorded. Never raises."""
+# The name a govtech integration reports health under. Shared with the push
+# paths in tasks/integrations.py and the admin Test button, so one connector has
+# one row rather than one per code path that happens to call it.
+def health_key(platform: str) -> str:
+    return f"govtech:{platform}"
+
+
+async def verify_integrations(db, *, integrations=None, build=None, guard=None,
+                              health=None) -> Dict[str, str]:
+    """Test every enabled govtech integration. Returns {name: outcome}.
+
+    Disabled integrations are skipped, for the same reason the capability sweep
+    skips what is not configured: an amber badge on a connection a town turned
+    off is the noise that teaches people to ignore badges.
+
+    Everything is injected -- the rows, the connector factory, the breaker --
+    so this runs in CI, which has neither a database nor FastAPI.
+    """
+    if health is None:
+        from app.services import connector_health as health
+    if build is None:
+        from app.integrations import build_connector_for as build
+    if guard is None:
+        from app.services.circuit_breaker import guard
+    from app.services.circuit_breaker import CircuitOpen
+
+    if integrations is None:
+        integrations = await _enabled_integrations(db)
+
+    checked: Dict[str, str] = {}
+    for integration in integrations:
+        platform = getattr(integration, "platform", None) or "?"
+        name = health_key(platform)
+        # Building is recorded separately from calling, because `guard` writes
+        # the health row for a call that failed and cannot know about one that
+        # never happened. Recording both here double-counted the failure and
+        # pushed a connector to "down" in two sweeps instead of three.
+        try:
+            connector = await build(integration)
+        except Exception as exc:
+            # A missing base_url or an unresolvable vault reference never
+            # reaches the vendor, and is just as much a reason this does not
+            # work as a rejected password.
+            await health.record_failure(db, name, str(exc)[:300], provider=platform)
+            checked[name] = "error"
+            logger.info("[Health] %s could not be built for the daily check: %s",
+                        sanitize_for_log(name), sanitize_for_log(str(exc)[:200]))
+            continue
+
+        try:
+            # Through the breaker with `db` supplied, so a sweep records the
+            # outcome exactly like a resident-report push does and a vendor that
+            # is already known to be down is not called again on our schedule.
+            result = await guard(name, connector.test_connection, db=db,
+                                 provider=platform)
+        except CircuitOpen:
+            # Deliberately not recorded. The failures that opened the circuit are
+            # already in the row; adding one per sweep for a call we declined to
+            # make would inflate the count with no new evidence behind it.
+            checked[name] = "paused"
+            continue
+        except Exception as exc:
+            checked[name] = "error"
+            logger.info("[Health] %s raised during the daily check: %s",
+                        sanitize_for_log(name), sanitize_for_log(str(exc)[:200]))
+            continue
+
+        if isinstance(result, dict) and result.get("verified") is False:
+            # Reachable, but nothing proved the credential -- an Open311 server
+            # that answers /services.json to anybody, for instance. Recorded as
+            # unverifiable so the card can say so instead of showing a green
+            # tick earned by an anonymous request.
+            await health.record_unverifiable(
+                db, name, str(result.get("detail") or "")[:500], provider=platform)
+            checked[name] = "unverifiable"
+        else:
+            checked[name] = "working"
+    return checked
+
+
+async def check_integration_now(db, integration, *, build=None, guard=None,
+                                health=None, breaker=None) -> Dict[str, Any]:
+    """Run one integration's connection check on an admin's behalf.
+
+    Differs from the sweep in two ways, both because a person is waiting on it:
+
+      * the circuit breaker is cleared rather than obeyed. Somebody pressing
+        Test has usually just changed a credential, and refusing the call would
+        leave them staring at a cooldown earned by the broken one -- which is
+        precisely the case `Breaker.reset` was documented for and had no callers
+        outside its own tests.
+      * a pass clears the cooldown as well, so the next queued report is
+        attempted immediately instead of waiting out a penalty the fix already
+        resolved.
+
+    Returns the connector's own result dict, or an `{ok: False, detail}` one.
+    """
+    if health is None:
+        from app.services import connector_health as health
+    if build is None:
+        from app.integrations import build_connector_for as build
+    if guard is None:
+        from app.services.circuit_breaker import guard
+    if breaker is None:
+        from app.services.circuit_breaker import breaker
+    from app.services.circuit_breaker import CircuitOpen
+
+    platform = getattr(integration, "platform", None) or "?"
+    name = health_key(platform)
+
+    # Building is guarded separately from calling, for the same reason as in the
+    # sweep: `guard` writes the health row for a call that failed, so recording
+    # it again here would count one rejected password twice and take the
+    # connector to "down" a sweep early.
+    try:
+        connector = await build(integration)
+    except Exception as exc:
+        await health.record_failure(db, name, str(exc)[:300], provider=platform)
+        return {"ok": False, "detail": str(exc)}
+
+    try:
+        result = await guard(name, connector.test_connection, db=db, provider=platform)
+    except CircuitOpen:
+        breaker.reset(name)
+        try:
+            result = await guard(name, connector.test_connection, db=db, provider=platform)
+        except Exception as exc:
+            return {"ok": False, "detail": str(exc)}
+    except Exception as exc:
+        return {"ok": False, "detail": str(exc)}
+
+    breaker.reset(name)
+    if isinstance(result, dict) and result.get("verified") is False:
+        await health.record_unverifiable(
+            db, name, str(result.get("detail") or "")[:500], provider=platform)
+    return result if isinstance(result, dict) else {"ok": True, "detail": "OK"}
+
+
+async def _enabled_integrations(db):
+    """The enabled IntegrationConfig rows. Never raises -- a sweep that cannot
+    read them still has seven capabilities to report on."""
+    try:
+        from sqlalchemy import select
+
+        from app.models import IntegrationConfig
+
+        result = await db.execute(
+            select(IntegrationConfig).where(IntegrationConfig.enabled.is_(True))
+        )
+        return list(result.scalars().all())
+    except Exception as exc:
+        logger.warning("[Health] could not list integrations to check: %s",
+                       sanitize_for_log(str(exc)[:300]))
+        return []
+
+
+async def notify(db, *, health=None, alerts=None, dispatch=None) -> Dict[str, Any]:
+    """Send the digest for whatever the sweep just recorded. Never raises.
+
+    `alerts` is the alerting *module* (it is looked up for `.dispatch`);
+    `dispatch` is the dispatcher callable itself, for callers that already hold
+    one. Both spellings are accepted because both are already injected: the
+    sweep hands in the module, the hourly probe hands its `alerts` callable on
+    as `dispatch`. Guessing which one arrived is how the probe's alert path
+    came to call `dispatch(db)` with no `healths` and raise every time.
+    """
     try:
         if health is None:
             from app.services import connector_health as health
-        if alerts is None:
-            from app.services import connector_alerts as alerts
+        if dispatch is None:
+            if alerts is None:
+                from app.services import connector_alerts as alerts
+            dispatch = alerts if callable(alerts) else alerts.dispatch
 
         snapshot = await health.snapshot(db)
-        return await alerts.dispatch(
+        # A connector switched off *after* it started failing keeps its red
+        # health row -- honest history -- but must not keep emailing about it.
+        # The sweep skips switched-off capabilities, so their failure counters
+        # never reset, and without this filter the digest would carry a daily
+        # reminder about a service the town has said it is not using -- with no
+        # card, and therefore no mute button, to stop it.
+        off = await _switched_off(list(snapshot.keys()))
+        # Govtech rows have the same frozen-row problem and their own off
+        # switch: disabling or disconnecting an integration stops the sweep
+        # testing it, so a red govtech:accela row (or a healthy one going
+        # stale after three untested days) would email reminders forever --
+        # and a deleted integration has no card, hence no mute button. Only
+        # rows for currently-enabled integrations may alert.
+        enabled_keys = {health_key(i.platform) for i in await _enabled_integrations(db)}
+        healths = [h for h in snapshot.values()
+                   if h.connector not in off
+                   and (not h.connector.startswith("govtech:") or h.connector in enabled_keys)]
+        return await dispatch(
             db,
-            healths=list(snapshot.values()),
+            healths=healths,
             town=await _town_name(db),
             settings_url=await _settings_url(db),
         )
@@ -153,6 +352,28 @@ async def notify(db, *, health=None, alerts=None) -> Dict[str, Any]:
         logger.warning("[Health] could not send connector alerts: %s",
                        sanitize_for_log(str(exc)[:300]))
         return {"sent": False, "reason": "error"}
+
+
+async def _switched_off(connectors) -> set:
+    """Which of these the town has switched off. Empty on any doubt.
+
+    Doubt resolves toward alerting: a redundant email about a switched-off
+    service is noise, a swallowed email about a wanted one is the original
+    failure mode this whole subsystem exists to prevent.
+    """
+    off = set()
+    try:
+        from app.services import capability_switches
+
+        for connector in connectors:
+            if connector in capability_switches.SWITCHABLE \
+                    and not await capability_switches.enabled(connector):
+                off.add(connector)
+    except Exception as exc:
+        logger.debug("[Health] could not read capability switches: %s",
+                     sanitize_for_log(str(exc)[:200]))
+        return set()
+    return off
 
 
 async def _town_name(db) -> str:
@@ -216,7 +437,16 @@ async def probe_system(db, *, readings=None, health=None, alerts=None):
         except Exception:
             logger.warning("[Probe] could not record %s", sanitize_for_log(connector))
     if alerts is not None:
-        await alerts(db)
+        # `alerts` is `connector_alerts.dispatch`, which requires the health
+        # snapshot as a keyword argument. This used to call `alerts(db)` and so
+        # raised TypeError on every single run -- caught one frame up and logged
+        # as "hourly system probe could not run", which reads like a probe
+        # failure rather than what it was: the readings were recorded fine and
+        # no probe alert email had ever been sent. A full disk was measured
+        # hourly and mentioned to nobody. Routed through notify so the probe
+        # digest gets the same snapshot, town name, settings link and
+        # switched-off filtering as the daily sweep's.
+        await notify(db, health=health, dispatch=alerts)
     return {"probes": recorded, "labels": {k: probes.label_for(k) for k in readings}}
 
 

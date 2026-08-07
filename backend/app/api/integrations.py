@@ -9,10 +9,12 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_admin, get_current_staff
@@ -83,8 +85,82 @@ class WebhookRequestIn(BaseModel):
     media_urls: Optional[List[str]] = None
 
 
+def _allowed_keys(platform: str, field_list: str) -> set:
+    catalog = PLATFORM_CATALOG.get(platform, {})
+    return {f["key"] for f in catalog.get(field_list, []) if isinstance(f, dict) and f.get("key")}
+
+
+def _reject_unknown_keys(platform: str, credentials: Optional[Dict[str, Any]],
+                         config: Optional[Dict[str, Any]]) -> None:
+    """Refuse credential and config keys the platform does not declare.
+
+    `credentials` is unvalidated input that becomes a Secret Manager key name:
+    `store_credentials` writes each field to `INTEGRATION_<PLATFORM>_<FIELD>`.
+    Without an allowlist an admin could name any field they liked and write
+    arbitrary `INTEGRATION_*` entries into the town's vault of record -- next to
+    the ones the platform itself relies on, in the namespace it reads from.
+
+    The same check on `config` is about honesty rather than the vault: config is
+    merged into a JSON blob that the connectors read by key, so an unrecognised
+    key is a setting the admin believes they set and nothing will ever read.
+    """
+    for values, field_list, label in (
+        (credentials, "credential_fields", "credential"),
+        (config, "config_fields", "setting"),
+    ):
+        if not values:
+            continue
+        allowed = _allowed_keys(platform, field_list)
+        unknown = sorted(set(values) - allowed - _EXTRA_CONFIG_KEYS.get(field_list, set()))
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Unknown {label} field(s) for {platform}: {', '.join(unknown)}. "
+                        f"Accepted: {', '.join(sorted(allowed)) or 'none'}"),
+            )
+
+
+# Config keys the connectors read that the wizard does not show as fields --
+# per-vendor mappings and tuning an integrator sets deliberately. Kept as an
+# explicit list so "the catalog does not mention it" stays the default answer.
+_EXTRA_CONFIG_KEYS = {
+    "config_fields": {
+        "share_pii", "import_new_records", "service_code_map",
+        "default_local_service_code", "status_map_in", "status_map_out",
+        "field_map", "static_fields", "max_retries", "max_pull_pages",
+        "list_items_field", "next_field", "comments_path", "comments_items_field",
+        "comment_id_field", "comment_text_field", "comment_author_field",
+        "comment_created_field", "documents_path", "document_file_field",
+        "assets_path", "assets_items_field", "asset_id_field", "asset_name_field",
+        "asset_type_field", "asset_lat_field", "asset_long_field",
+        "asset_layer_id", "asset_service_codes", "assets_on_resident_portal",
+        "work_order_id_field", "priority_field", "assigned_to_field",
+        "assigned_department_field", "scheduled_date_field", "due_date_field",
+        "resolution_field", "auth_query_param", "api_base", "auth_base",
+    },
+}
+
+
+def _vaulted_state(credentials: Dict[str, Any]) -> str:
+    """Whether every stored credential is a vault reference, some, or none."""
+    from app.integrations.credentials import is_reference
+
+    values = list(credentials.values())
+    if not values:
+        return "none"
+    referenced = [v for v in values if is_reference(v)]
+    if len(referenced) == len(values):
+        return "all"
+    return "partial" if referenced else "none"
+
+
 def _serialize(integration: IntegrationConfig) -> Dict[str, Any]:
     catalog = PLATFORM_CATALOG.get(integration.platform, {})
+    # Read once. `credentials` is a hybrid property that Fernet-decrypts on every
+    # access, and this function touched it four times per row -- on a list of
+    # connections that is four decryptions each, for one response.
+    credentials = integration.credentials or {}
+    vaulted = _vaulted_state(credentials)
     return {
         "id": integration.id,
         "platform": integration.platform,
@@ -94,14 +170,23 @@ def _serialize(integration: IntegrationConfig) -> Dict[str, Any]:
         "sync_direction": integration.sync_direction,
         "config": integration.config or {},
         # Never return secret values — only which keys are set
-        "configured_credentials": sorted((integration.credentials or {}).keys()),
-        # True when the stored credentials are Secret Manager references (the raw
-        # secret lives only in the vault, not this database) — lets the UI show a
-        # "stored in your Secret Manager" trust signal for government deployments.
-        "credentials_vaulted": any(
-            isinstance(v, str) and v.startswith("@secret:")
-            for v in (integration.credentials or {}).values()
-        ),
+        "configured_credentials": sorted(credentials.keys()),
+        # A stored refresh token means the admin completed the vendor's own
+        # sign-in, so the UI can say "signed in" instead of asking for one again.
+        "oauth_connected": bool(credentials.get("refresh_token")),
+        # Whether the stored credentials are Secret Manager references (the raw
+        # secret lives only in the vault, not this database) — the UI's "stored in
+        # your Secret Manager" trust line.
+        #
+        # `all`, not `any`. A vault write that failed for one field falls back to
+        # keeping that value encrypted in this database, and `any` reported the
+        # whole set as vaulted on the strength of the fields that succeeded. A
+        # trust signal about where secrets live must not round up.
+        "credentials_vaulted": vaulted == "all",
+        # "all" | "partial" | "none", so the UI can say which rather than only
+        # yes-or-no. Partial is the state worth naming: it means at least one
+        # secret is in the application database after all.
+        "credentials_vaulted_state": vaulted,
         "webhook_path": f"/api/integrations/webhook/{integration.platform}/{integration.webhook_token}",
         "last_sync_at": integration.last_sync_at.isoformat() if integration.last_sync_at else None,
         "last_sync_status": integration.last_sync_status,
@@ -146,6 +231,7 @@ async def create_integration(
 ):
     if data.platform not in PLATFORM_CATALOG:
         raise HTTPException(status_code=400, detail=f"Unknown platform: {data.platform}")
+    _reject_unknown_keys(data.platform, data.credentials, data.config)
 
     existing = (await db.execute(
         select(IntegrationConfig).where(IntegrationConfig.platform == data.platform)
@@ -165,9 +251,26 @@ async def create_integration(
     # store only @secret: references on the row. Falls back to encrypted-in-DB
     # when no external vault is configured (see integrations/credentials.py).
     creds = {k: v for k, v in (data.credentials or {}).items() if v}
-    integration.credentials = await store_credentials(data.platform, creds)
+    try:
+        integration.credentials = await store_credentials(data.platform, creds)
+    except ValueError as exc:
+        # A caller-supplied @secret: reference. Refused there because a stored
+        # pointer at somebody else's vault entry is read by resolve_credentials
+        # and deleted by disconnect -- see store_credentials.
+        raise HTTPException(status_code=422, detail=str(exc))
     db.add(integration)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # The SELECT above is not a lock. Two admins connecting the same vendor
+        # at once both saw "no existing row" and both inserted, giving one
+        # platform two enabled integrations -- after which every resident report
+        # was pushed to the county twice, as two records. The unique index added
+        # in 7d73fe63d6e3 makes the second insert fail; the answer an admin
+        # should see is the same 409 the SELECT would have produced.
+        await db.rollback()
+        raise HTTPException(
+            status_code=409, detail=f"An integration for {data.platform} already exists")
     await db.refresh(integration)
     from app.core.sanitize import sanitize_for_log
     logger.info(f"[Integrations] {sanitize_for_log(current_user.username)} created integration {sanitize_for_log(data.platform)}")
@@ -182,6 +285,7 @@ async def update_integration(
     current_user: User = Depends(get_current_admin),
 ):
     integration = await _get_integration(db, integration_id)
+    _reject_unknown_keys(integration.platform, data.credentials, data.config)
 
     if data.display_name is not None:
         integration.display_name = data.display_name
@@ -190,7 +294,13 @@ async def update_integration(
     if data.sync_direction is not None:
         integration.sync_direction = data.sync_direction
     if data.config is not None:
-        integration.config = {**(integration.config or {}), **data.config}
+        # An explicit null deletes the key. Config was merged and the frontend
+        # skipped empty strings, so between them there was no way to blank a
+        # setting at all: a jurisdiction_id typed by mistake stayed in the
+        # payload of every push forever, and the only remedy was disconnecting
+        # the integration and re-entering every credential.
+        merged = {**(integration.config or {}), **data.config}
+        integration.config = {k: v for k, v in merged.items() if v is not None}
     if data.credentials:
         # Only the fields the admin actually filled in are (re)written to the
         # vault; blanks mean "keep existing" and untouched fields keep their
@@ -198,7 +308,11 @@ async def update_integration(
         # what it wrote to the vault, raw values only as an encrypted-DB fallback.
         changed = {k: v for k, v in data.credentials.items() if v}
         if changed:
-            stored = await store_credentials(integration.platform, changed)
+            try:
+                stored = await store_credentials(integration.platform, changed)
+            except ValueError as exc:
+                # A caller-supplied @secret: reference — same refusal as create.
+                raise HTTPException(status_code=422, detail=str(exc))
             merged = dict(integration.credentials or {})
             merged.update(stored)
             integration.credentials = merged
@@ -219,10 +333,54 @@ async def delete_integration(
 ):
     integration = await _get_integration(db, integration_id)
     platform = integration.platform
+    # Read before the delete: after it, the row is gone and so is the only record
+    # of which vault entries belonged to it.
+    stored = dict(integration.credentials or {})
     await db.delete(integration)
     await db.commit()
+    # Disconnecting left the vendor's client secret and agency password sitting
+    # in the town's Secret Manager under INTEGRATION_<PLATFORM>_<FIELD>, with
+    # nothing left in the UI referring to them -- so a credential an admin
+    # believes they revoked by pressing Disconnect stayed live and unlisted.
+    # Best-effort: the integration is already gone, and failing the request now
+    # would tell the admin the disconnect did not happen when it did.
+    await _forget_vault_secrets(platform, stored)
     logger.info(f"[Integrations] {current_user.username} deleted integration {platform}")
     return {"message": "Integration deleted", "platform": platform}
+
+
+async def _forget_vault_secrets(platform: str, stored: Dict[str, Any]) -> None:
+    """Delete the Secret Manager entries a disconnected integration wrote.
+
+    Only the entries it *wrote*: names are recomputed from the platform and
+    field, never taken from wherever a stored reference happens to point. A
+    reference is a pointer, and a row that carried
+    ``@secret:GCP_SERVICE_ACCOUNT_JSON`` would otherwise turn Disconnect into
+    deleting the platform key -- outside the reject_platform_key_writes gate,
+    because this path talks to the vault directly.
+    """
+    from app.core.sanitize import sanitize_for_log
+    from app.integrations.credentials import owned_secret_names
+
+    names = owned_secret_names(platform, stored)
+    if not names:
+        return
+    try:
+        from app.services.secret_manager import clear_cache, delete_secret
+    except Exception:
+        logger.warning("[Integrations] no secret manager available to clean up "
+                       "%s credentials", sanitize_for_log(platform))
+        return
+    for name in sorted(names):
+        try:
+            await delete_secret(name)
+            clear_cache(key_name=name)
+            logger.info("[Integrations] removed vault entry %s on disconnect",
+                        sanitize_for_log(name))
+        except Exception as exc:
+            # Named, so somebody can remove it by hand. Never the value.
+            logger.warning("[Integrations] could not remove vault entry %s: %s",
+                           sanitize_for_log(name), sanitize_for_log(str(exc)))
 
 
 # ---------- Actions ----------
@@ -231,6 +389,20 @@ def _friendly_test_error(error: str) -> str:
     """Translate a technical connection error into plain language a
     non-technical admin can act on."""
     text = error.lower()
+    # Before the credential-specific advice below: the fields are not blank, and
+    # telling somebody to re-enter them here overwrites working vault references
+    # with whatever they retype.
+    if "secret manager" in text and "could not read" in text:
+        return ("The credentials are saved, but we couldn't read them from your "
+                "Secret Manager just now. Nothing here needs re-entering — check "
+                "that the vault is reachable and that this system still has "
+                "permission to read it, then try again.")
+    # Checked ahead of the generic 401/403 branch: a dead refresh token comes
+    # back as a 400 from the token endpoint, and "check your password" is the
+    # wrong advice for a connection that has no password.
+    if "is not signed in" in text or "oauth2 refresh" in text:
+        return ("This connection isn't signed in to Accela any more — the authorization "
+                "may have been revoked or expired there. Open Settings and sign in again.")
     if "http 401" in text or "http 403" in text or "unauthorized" in text or "forbidden" in text:
         return ("The platform refused the sign-in details. Double-check the key or "
                 "username/password — copy and paste them again with no extra spaces.")
@@ -255,6 +427,12 @@ def _friendly_test_error(error: str) -> str:
                 "starts with https:// — if it does, ask the vendor about their certificate.")
     if "requires config.base_url" in text or "no api base url" in text:
         return "The web address (base URL) is missing. Paste the one the vendor sent you."
+    if "no feature layer url" in text:
+        return ("The feature layer address is missing. Paste the layer URL from ArcGIS — "
+                "it ends in a number, like /FeatureServer/0.")
+    if "arcgis rejected the credentials" in text:
+        return ("ArcGIS refused the key or account. Check that it has editing rights on "
+                "that layer, and that the layer is shared with it.")
     if "credentials missing" in text or "requires agency_name" in text or "requires record_type" in text:
         return "Some required fields are still blank — go back one step and fill them in."
     return ("Something didn't work. The technical details below may help the vendor's "
@@ -270,13 +448,40 @@ async def test_integration(
     _: User = Depends(get_current_admin),
 ):
     integration = await _get_integration(db, integration_id)
+    from app.services.connector_verification import check_integration_now
+
+    # The check itself lives in a service so it records health and clears the
+    # breaker the same way wherever it is called from. This endpoint used to
+    # write an IntegrationSyncLog row and nothing else, so an admin could watch
+    # a test pass while the card still said "not checked yet" -- the only writer
+    # of govtech health was the resident-report push path.
+    result = await check_integration_now(db, integration)
+    # The provider test endpoint does the same before it writes, and for the same
+    # reason: a check that failed part-way can leave this session in a failed
+    # transaction, and every statement after that raises PendingRollbackError --
+    # so the sync-log write below would be lost and the 500 would replace a
+    # perfectly good "here is what went wrong". Health is written on its own
+    # session and is already safe from this.
     try:
-        connector = await build_connector_for(integration)
-        result = await connector.test_connection()
-        log_status, detail = "success", result.get("detail", "OK")
-    except Exception as e:
-        result = {"ok": False, "detail": str(e), "friendly": _friendly_test_error(str(e))}
-        log_status, detail = "error", str(e)
+        await db.rollback()
+    except Exception:
+        pass
+    if result.get("ok"):
+        # `verifiable` alongside `verified`, so the admin UI can derive a card's
+        # state with one function for both surfaces rather than two that drift.
+        if result.get("verified") is not None:
+            result = {**result, "verifiable": result["verified"]}
+        log_status, detail = "success", str(result.get("detail") or "OK")
+        # A warning means the credentials are fine but something still blocks a
+        # report. Keeping it out of the activity trail is how it gets forgotten
+        # between the wizard closing and the first rejected report.
+        if result.get("warnings"):
+            log_status = "warning"
+            detail = detail + " — " + " ".join(result["warnings"])
+    else:
+        detail = str(result.get("detail") or "")
+        result = {**result, "friendly": _friendly_test_error(detail)}
+        log_status = "error"
 
     db.add(IntegrationSyncLog(
         integration_id=integration.id, operation="test", status=log_status, detail=detail[:2000]
@@ -300,10 +505,35 @@ async def trigger_sync(
     # a broker that cannot take it is a failed request, not a quiet log line --
     # otherwise an admin watches nothing happen and has no way to tell whether
     # the sync ran and found nothing or never ran at all.
+    #
+    # Scoped to the clicked integration. It used to enqueue the global beat
+    # tasks, so pressing the button on one card polled every vendor the town
+    # uses.
     from app.tasks.integrations import pull_integration_comments, pull_integration_updates
-    if not enqueue(pull_integration_updates) or not enqueue(pull_integration_comments):
+    # Both are enqueued before either result is judged. Written as
+    # `enqueue(a) or enqueue(b)`, a first failure short-circuited and never
+    # queued the second, and a second failure returned 503 after the first job
+    # had already started -- so "this job did not start. Nothing has been
+    # changed." was untrue in exactly the case it was meant to cover.
+    started = {
+        "updates": enqueue(pull_integration_updates, integration.id),
+        "comments": enqueue(pull_integration_comments, integration.id),
+    }
+    if not any(started.values()):
         raise HTTPException(status_code=503, detail=QUEUE_UNAVAILABLE)
-    return {"message": "Sync started", "platform": integration.platform}
+    if all(started.values()):
+        return {"message": "Sync started", "platform": integration.platform,
+                "started": started}
+    # Partly started, which is neither of the two answers this endpoint had.
+    # Naming what did run beats a 503 whose text says nothing has been changed,
+    # in the one case where something has.
+    ran = ", ".join(sorted(k for k, ok in started.items() if ok))
+    return {
+        "message": f"Sync partly started ({ran}). The rest could not be queued — "
+                   f"check that the worker and Redis are running, then try again.",
+        "platform": integration.platform,
+        "started": started,
+    }
 
 
 @router.post("/{integration_id}/sync-assets")
@@ -321,14 +551,72 @@ async def trigger_asset_sync(
     catalog = PLATFORM_CATALOG.get(integration.platform, {})
     if "assets" not in catalog.get("capabilities", []):
         raise HTTPException(status_code=400, detail=f"{integration.platform} does not support asset sync")
-    from app.tasks.integrations import _flag
-    if not _flag(integration.config, "sync_assets"):
-        integration.config = {**(integration.config or {}), "sync_assets": True}
-        await db.commit()
+    # The catalog says what the platform *can* do; the built connector says what
+    # this configuration actually does. For generic_rest they differ: asset sync
+    # needs an assets_path, and without one the task would skip the run after
+    # this endpoint had already answered "Asset sync started".
+    try:
+        connector = await build_connector_for(integration)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=_friendly_test_error(str(e)))
+    if "assets" not in connector.capabilities:
+        raise HTTPException(
+            status_code=400,
+            detail=("This connection has no asset endpoint configured, so there is "
+                    "nothing to sync. Add the asset inventory path from your "
+                    "vendor's API docs and try again."),
+        )
+    # Deliberately does not touch config. Pressing this button used to set
+    # config["sync_assets"] = True, which enrolled the integration in the nightly
+    # beat job permanently -- from one click, with nothing on screen saying so and
+    # no way to undo it. `sync_assets` is a config field in the wizard now, so
+    # opting into the nightly sync is a choice somebody makes and can see.
     from app.tasks.integrations import sync_integration_assets
-    if not enqueue(sync_integration_assets):
+    if not enqueue(sync_integration_assets, integration.id):
         raise HTTPException(status_code=503, detail=QUEUE_UNAVAILABLE)
     return {"message": "Asset sync started", "platform": integration.platform}
+
+
+@router.post("/{integration_id}/regenerate-webhook-token")
+@limiter.limit("6/minute")
+async def regenerate_webhook_token(
+    request: Request,
+    integration_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """Issue a new inbound webhook token, invalidating the old one.
+
+    The token is in the URL path, which is where a URL's secrets are least well
+    kept: it lands in reverse-proxy access logs, in the vendor's own outbound
+    request logs, and in any screenshot of the setup page. There was no way to
+    rotate it -- so a token disclosed that way was disclosed permanently, and the
+    only remedy was deleting the integration and re-entering every credential.
+
+    The old token stops working the moment this returns, so the vendor has to be
+    given the new URL. That is stated plainly in the response rather than left
+    for somebody to discover from a silent gap in inbound records.
+    """
+    integration = await _get_integration(db, integration_id)
+    integration.webhook_token = pysecrets.token_urlsafe(32)
+    integration.updated_at = datetime.now(timezone.utc)
+    db.add(IntegrationSyncLog(
+        integration_id=integration.id, operation="webhook_token_rotated",
+        status="success",
+        detail=f"Rotated by {current_user.username}. The previous URL no longer works.",
+    ))
+    await db.commit()
+    await db.refresh(integration)
+    from app.core.sanitize import sanitize_for_log
+    logger.info("[Integrations] %s rotated the webhook token for %s",
+                sanitize_for_log(current_user.username),
+                sanitize_for_log(integration.platform))
+    return {
+        **_serialize(integration),
+        "message": ("New webhook address issued. The previous one stopped working "
+                    "immediately — send the new address to your vendor, or they will "
+                    "keep posting to an address that now refuses them."),
+    }
 
 
 @router.post("/requests/{request_id}/refresh")
@@ -359,6 +647,193 @@ async def refresh_request_work_order(
         # an {ok, detail} pair the staff dashboard renders inline.
         return {"ok": False, "detail": QUEUE_UNAVAILABLE}
     return {"ok": True, "detail": "Refreshing the latest work-order status — updates appear on the request in a moment."}
+
+
+# ---------- Accela authorization-code sign-in ----------
+#
+# Accela's callback lands as a plain browser redirect with no Authorization
+# header, so the callback route cannot be admin-gated the way every other route
+# here is. The signed ``state`` minted by /accela/oauth/start — which *is*
+# admin-gated — is what authorizes it: without a valid, unexpired signature
+# bound to a specific integration, the callback refuses to store anything. That
+# closes the login-CSRF hole where an attacker feeds an admin their own
+# authorization code and quietly binds the town's Accela sync to their account.
+
+class AccelaOAuthStart(BaseModel):
+    integration_id: int
+
+
+@router.get("/accela/oauth/status")
+async def accela_oauth_status(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Whether this deployment can offer Accela sign-in, and the exact callback
+    URL to register on the developer-portal app."""
+    from app.integrations import accela_oauth
+    return {
+        "configured": await accela_oauth.is_configured(),
+        "redirect_uri": await accela_oauth.redirect_uri_for(db, str(request.base_url)),
+        "scope": accela_oauth.DEFAULT_SCOPE,
+    }
+
+
+@router.post("/accela/oauth/start")
+@limiter.limit("10/minute")
+async def accela_oauth_start(
+    request: Request,
+    data: AccelaOAuthStart,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """Begin the Accela authorization-code flow: returns the URL to send the
+    admin's browser to, carrying a signed single-purpose state token."""
+    from app.integrations import accela_oauth
+
+    integration = await _get_integration(db, data.integration_id)
+    if integration.platform != "accela":
+        raise HTTPException(status_code=400, detail="This connection is not an Accela connection")
+
+    client_id, _secret = await accela_oauth.app_credentials()
+    if not await accela_oauth.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail=("Accela sign-in isn't available on this deployment yet — no Accela "
+                    "app is configured. Ask your administrator to set ACCELA_CLIENT_ID "
+                    "and ACCELA_CLIENT_SECRET, or use the username and password option."),
+        )
+
+    agency_name = (integration.config or {}).get("agency_name")
+    if not agency_name:
+        raise HTTPException(status_code=400, detail="Enter your Accela agency name first")
+
+    redirect_uri = await accela_oauth.redirect_uri_for(db, str(request.base_url))
+    state = accela_oauth.sign_state(integration.id, current_user.id, redirect_uri)
+    url = accela_oauth.authorize_url(
+        client_id=client_id,
+        redirect_uri=redirect_uri,
+        state=state,
+        agency_name=str(agency_name),
+        environment=str((integration.config or {}).get("environment") or "PROD"),
+        config=integration.config or {},
+    )
+    from app.core.sanitize import sanitize_for_log
+    logger.info("[Integrations] %s started Accela OAuth sign-in for agency %s",
+                sanitize_for_log(current_user.username), sanitize_for_log(str(agency_name)))
+    return {"authorize_url": url, "redirect_uri": redirect_uri}
+
+
+def _oauth_result_page(ok: bool, message: str) -> HTMLResponse:
+    """The tiny page Accela redirects back into. It tells the opener how things
+    went and closes itself; the wizard behind it picks up from there."""
+    import html as _html
+    safe = _html.escape(message)
+    body = f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>Accela sign-in</title></head>
+<body style="font-family:system-ui,sans-serif;background:#0b1020;color:#e8ecf8;
+             display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+  <div style="max-width:26rem;text-align:center;padding:2rem">
+    <p style="font-size:1.05rem;font-weight:600;margin:0 0 .5rem">
+      {'Accela is connected' if ok else 'Accela sign-in did not finish'}</p>
+    <p style="opacity:.75;font-size:.9rem;margin:0">{safe}</p>
+    <p style="opacity:.5;font-size:.8rem;margin-top:1.5rem">You can close this window.</p>
+  </div>
+  <script>
+    try {{
+      if (window.opener) {{
+        window.opener.postMessage(
+          {{source: "pinpoint-accela-oauth", ok: {str(bool(ok)).lower()}}},
+          window.location.origin
+        );
+        setTimeout(function () {{ window.close(); }}, {1200 if ok else 4000});
+      }}
+    }} catch (e) {{ /* opener gone or cross-origin — the message above stands on its own */ }}
+  </script>
+</body></html>"""
+    return HTMLResponse(content=body, status_code=200 if ok else 400)
+
+
+@router.get("/accela/oauth/callback", include_in_schema=False)
+@limiter.limit("20/minute")
+async def accela_oauth_callback(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+):
+    """Where Accela sends the admin back after they sign in and consent.
+
+    Deliberately unauthenticated — see the note above; the signed state is the
+    authorization. Always answers with a page rather than JSON, because a human
+    browser is what lands here.
+    """
+    from app.integrations import accela_oauth
+
+    if error:
+        return _oauth_result_page(False, "Accela reported that the sign-in was cancelled or refused.")
+    if not code or not state:
+        return _oauth_result_page(False, "Accela's response was missing the sign-in code.")
+
+    payload = accela_oauth.verify_state(state)
+    if not payload:
+        logger.warning("[Integrations] Rejected Accela OAuth callback with an invalid or expired state")
+        return _oauth_result_page(
+            False,
+            "This sign-in link is no longer valid. Start the connection again from "
+            "Settings and finish signing in within ten minutes.",
+        )
+
+    integration = (await db.execute(
+        select(IntegrationConfig).where(IntegrationConfig.id == payload["iid"])
+    )).scalar_one_or_none()
+    if not integration or integration.platform != "accela":
+        return _oauth_result_page(False, "That Accela connection no longer exists.")
+
+    # The redirect URI is signed into the state, so the exchange reuses exactly
+    # the value the authorize request was issued with — Accela rejects any drift.
+    try:
+        tokens = await accela_oauth.exchange_code(
+            code=code,
+            redirect_uri=payload.get("ru") or await accela_oauth.redirect_uri_for(db, str(request.base_url)),
+            config=integration.config or {},
+        )
+    except Exception as e:
+        from app.core.sanitize import sanitize_for_log
+        logger.error("[Integrations] Accela code exchange failed: %s", sanitize_for_log(str(e)))
+        db.add(IntegrationSyncLog(
+            integration_id=integration.id, operation="oauth", status="error", detail=str(e)[:2000]
+        ))
+        await db.commit()
+        return _oauth_result_page(False, str(e)[:300])
+
+    stored = await store_credentials("accela", {"refresh_token": tokens["refresh_token"]})
+    merged = dict(integration.credentials or {})
+    merged.update(stored)
+    # The refresh token supersedes the password fallback — leaving a government
+    # password in the vault after it is no longer needed is exactly what this
+    # flow exists to avoid.
+    for field in ("username", "password"):
+        merged.pop(field, None)
+    integration.credentials = merged
+    integration.config = {
+        **(integration.config or {}),
+        "auth_mode": "authorization_code",
+    }
+    integration.updated_at = datetime.now(timezone.utc)
+    db.add(IntegrationSyncLog(
+        integration_id=integration.id, operation="oauth", status="success",
+        detail=f"Authorized via Accela sign-in (scope: {accela_oauth.scope_for(integration.config)})",
+    ))
+    await db.commit()
+
+    # Any access token cached against the old authorization is now the wrong one.
+    from app.integrations.connectors.accela import _clear_token_cache
+    _clear_token_cache()
+
+    logger.info("[Integrations] Accela authorization stored for integration %s", integration.id)
+    return _oauth_result_page(True, "Pinpoint can now sync with Accela on your behalf.")
 
 
 @router.get("/{integration_id}/logs")
@@ -423,8 +898,33 @@ async def get_request_links(
 
 # ---------- Inbound webhook (no session auth — token in path) ----------
 
+def _webhook_rate_key(request: Request) -> str:
+    """Rate-limit inbound webhooks per connection *and* source address.
+
+    One vendor's egress IP serves every event for every town on their platform,
+    so a bucket keyed on the IP alone meant a busy neighbour's traffic could
+    exhaust the budget for ours -- and one misconfigured integration could not
+    be throttled without throttling every connection sharing that IP. The path
+    identifies the connection, so the token digest stays in the key.
+
+    The address stays in it too. Keyed on the token alone, every *guessed*
+    token minted a fresh bucket with a fresh budget -- an attacker
+    brute-forcing this unauthenticated endpoint was never rate-limited at all,
+    and each miss grew the limiter's in-memory store by one bucket, forever.
+    """
+    parts = [p for p in request.url.path.split("/") if p]
+    # .../webhook/{platform}/{token} -- a digest of the token, so the bucket
+    # name is per-connection without a credential ending up in the limiter's
+    # store or its log lines.
+    if len(parts) >= 2 and parts[-2]:
+        import hashlib
+        digest = hashlib.sha256(parts[-1].encode("utf-8", "replace")).hexdigest()[:16]
+        return f"webhook:{parts[-2]}:{digest}:{get_remote_address(request)}"
+    return f"webhook:{get_remote_address(request)}"
+
+
 @router.post("/webhook/{platform}/{token}", status_code=status.HTTP_201_CREATED)
-@limiter.limit("60/minute")
+@limiter.limit("60/minute", key_func=_webhook_rate_key)
 async def integration_webhook(
     request: Request,
     platform: str,
@@ -437,15 +937,36 @@ async def integration_webhook(
     Creates a new service request (or updates the status of the already-linked
     one when the same external_id is posted again). Authenticated by the
     per-integration webhook token."""
+    # Fetched by platform, then compared in Python with compare_digest. Matching
+    # the token inside the SQL predicate makes the comparison the database's
+    # byte-by-byte one, whose duration depends on how many leading characters are
+    # right -- and this endpoint is unauthenticated and remotely timeable, which
+    # is the whole precondition for extracting a token that way.
+    # Catalog membership too, not only an enabled row. A platform removed from
+    # the catalog (the practice sandbox, deleted 2026-07-20) can leave enabled
+    # rows behind with live webhook tokens, and this endpoint is
+    # unauthenticated -- an orphaned row must not stay a valid way in.
+    if platform not in PLATFORM_CATALOG:
+        raise HTTPException(status_code=404, detail="Unknown platform")
     integration = (await db.execute(
         select(IntegrationConfig).where(
             IntegrationConfig.platform == platform,
-            IntegrationConfig.webhook_token == token,
             IntegrationConfig.enabled == True,  # noqa: E712
         )
     )).scalar_one_or_none()
-    if not integration:
+    if not integration or not pysecrets.compare_digest(
+            str(integration.webhook_token or ""), str(token)):
         raise HTTPException(status_code=401, detail="Invalid webhook token")
+    # A push-only connection is one the town configured to send and not receive.
+    # Accepting inbound creates on it anyway meant a vendor could open service
+    # requests in a town that had deliberately not asked them to -- and the
+    # sync_direction setting the admin chose did nothing on this path.
+    if integration.sync_direction == "push":
+        raise HTTPException(
+            status_code=403,
+            detail=("This connection is set to send only. Change its sync direction "
+                    "to 'pull' or 'bidirectional' to accept incoming records."),
+        )
 
     async def _import_webhook_comments(service_request_pk: int) -> int:
         """Attach comments carried in the payload, deduped by external comment id."""

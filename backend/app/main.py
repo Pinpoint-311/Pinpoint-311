@@ -543,6 +543,12 @@ app.include_router(provisioning.router, prefix="/api/provisioning", tags=["Provi
 app.include_router(telemetry.router, prefix="/api/telemetry", tags=["Telemetry (orchestrator)"])
 app.include_router(api_usage.router, prefix="/api/system/api-usage", tags=["API Usage"])
 
+# Mounted at /api because the router declares its own /export prefix --
+# FastAPI concatenates the two, so the served paths are /api/export/requests
+# and /api/export/statistics, exactly what the frontend calls. A "fix" here
+# once moved this mount to /api/export on the theory the paths were off by a
+# level; the result was /api/export/export/* and two dead buttons. The route
+# table, not the mount line, is the fact to check.
 app.include_router(data_export.router, prefix="/api", tags=["Data Export"])
 app.include_router(integrations.router, prefix="/api/integrations", tags=["GovTech Integrations"])
 

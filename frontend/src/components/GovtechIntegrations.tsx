@@ -1,18 +1,38 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
-    Landmark, CheckCircle, AlertCircle, ExternalLink, RefreshCw,
+    Landmark, CheckCircle, AlertCircle, ExternalLink,
     Plug, Trash2, Copy, Check, Mail, ClipboardList, Loader2, ArrowLeft,
     ChevronDown, ChevronUp, PartyPopper, Sparkles, Search,
     ArrowUpRight, ArrowDownLeft, MessageSquare, Image as ImageIcon, MapPin, ClipboardCheck,
-    ShieldCheck,
+    ShieldCheck, LogIn, KeyRound,
 } from 'lucide-react';
 
 import { Button, Modal, CollapsibleSection } from './ui';
 import SecretField from './SecretField';
+import { useDialog } from './DialogProvider';
 import {
     api, IntegrationPlatform, IntegrationConfig, IntegrationSyncLog, IntegrationTestResult,
 } from '../services/api';
+// The decisions worth checking directly live next door, with no JSX around them.
+import {
+    alreadyStored as alreadyStoredIn,
+    buildSavePayload,
+    connectionState,
+    connectionStateLabel,
+    healthKey,
+    needsEnableConfirmation,
+    requiredMissing as missingRequired,
+    truncate,
+    type ConnectorHealthRow,
+} from './integrationState';
+// The same tile, pill and buttons the capability cards use. These were
+// hand-rolled here from utility classes, so the town-system cards and the
+// provider cards drifted into looking like two different products -- and the
+// pill said "Connected" off `enabled && last_sync_status !== 'error'`, which is
+// the credentials-are-stored question this whole health system exists to stop
+// badges from answering.
+import { StatusPill, CapabilityTile, Action, hasAlert } from './capabilityUI';
 
 const MODE_LABELS: Record<string, { label: string; className: string }> = {
     public_api: { label: 'Works with your account login', className: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
@@ -41,17 +61,41 @@ const SYNC_CHOICES = (name: string) => [
 type WizardStep = 'intro' | 'details' | 'finish';
 
 export default function GovtechIntegrations() {
+    const dialog = useDialog();
     const [catalog, setCatalog] = useState<IntegrationPlatform[]>([]);
     const [configs, setConfigs] = useState<IntegrationConfig[]>([]);
-    const [busy, setBusy] = useState<string | null>(null);
+    // Keyed by integration id. One global string meant every card's controls
+    // disabled while any one of them was working, so checking Accela greyed out
+    // the Tyler card the clerk was about to look at.
+    const [busy, setBusy] = useState<Record<number, string>>({});
+    // Genuine connection checks only. cardResult feeds connectionState and the
+    // enable-confirmation, so writing anything else into it repaints the pill:
+    // "Check for updates" used to put `{ok: true}` here and turn a failing
+    // connector green "Working" until reload.
     const [cardResult, setCardResult] = useState<Record<string, IntegrationTestResult>>({});
+    // Feedback from actions that verify nothing -- an enqueued sync, a new
+    // webhook address. Rendered in the same spot as a check result but never
+    // handed to connectionState or needsEnableConfirmation: "the queue took the
+    // job" is not evidence the connection works, and "the enqueue failed" is
+    // not evidence it is broken.
+    const [cardNotice, setCardNotice] = useState<Record<string, { ok: boolean; detail?: string }>>({});
+    // The govtech rows out of the shared connector-health table, keyed by
+    // connector name. Same source the provider cards read, so both surfaces
+    // answer "is it working" from the same evidence.
+    const [healthRows, setHealth] = useState<Record<string, ConnectorHealthRow>>({});
+    // A mute taken in this session, which is fresher than the row we loaded.
+    const [muted, setMuted] = useState<Record<string, string | null>>({});
+    const [muting, setMuting] = useState<string | null>(null);
     const [logs, setLogs] = useState<Record<string, IntegrationSyncLog[]>>({});
     const [logsOpen, setLogsOpen] = useState<string | null>(null);
     const [copied, setCopied] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [query, setQuery] = useState('');
-    // Which connector cards are expanded. With 11 platforms, showing every card
-    // fully expanded is a wall — collapse to a compact row and open on demand.
+    // Distinguishes "nothing matches" from "we have not asked yet". Without it
+    // the first paint rendered `No platforms match ""` under the search box.
+    const [loaded, setLoaded] = useState(false);
+    // Which connector cards are expanded. With this many platforms, showing every
+    // card fully expanded is a wall — collapse to a compact row and open on demand.
     const [openCards, setOpenCards] = useState<Set<string>>(new Set());
     const initialized = useRef(false);
 
@@ -59,23 +103,63 @@ export default function GovtechIntegrations() {
     const [wizard, setWizard] = useState<IntegrationPlatform | null>(null);
     const [step, setStep] = useState<WizardStep>('intro');
     const [values, setValues] = useState<Record<string, string>>({});
+    // Config keys the admin has asked to blank on save, sent as explicit nulls.
+    const [cleared, setCleared] = useState<Set<string>>(new Set());
     const [syncChoice, setSyncChoice] = useState('bidirectional');
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState<IntegrationTestResult | null>(null);
     const [showTechnical, setShowTechnical] = useState(false);
-    const testStarted = useRef(false);
+    // Errors from inside the wizard. The shared `error` banner renders behind the
+    // modal, so a failed save made "Save & check the connection" look like a
+    // button that does nothing at all.
+    const [wizardError, setWizardError] = useState<string | null>(null);
+
+    const busyOf = (existing?: IntegrationConfig | null) =>
+        (existing && busy[existing.id]) || null;
+
+    const setBusyFor = (id: number, action: string | null) =>
+        setBusy(prev => {
+            const next = { ...prev };
+            if (action) next[id] = action; else delete next[id];
+            return next;
+        });
+
+    const loadHealth = useCallback(async () => {
+        try {
+            const report = await api.getConnectorHealth();
+            setHealth(Object.fromEntries(
+                report.connectors
+                    .filter(c => c.connector.startsWith('govtech:'))
+                    .map(c => [c.connector, c as unknown as ConnectorHealthRow]),
+            ));
+        } catch {
+            // No health is not the same as bad health. The cards fall back to
+            // "not checked yet", which is the honest answer when we cannot ask.
+        }
+    }, []);
+
+    // Vendor sign-in (Accela): the admin authenticates on the vendor's own site
+    // in a popup, so nothing here holds their password.
+    const [oauthStatus, setOauthStatus] = useState<{ configured: boolean; redirect_uri: string } | null>(null);
+    const [oauthBusy, setOauthBusy] = useState(false);
+    const [oauthError, setOauthError] = useState<string | null>(null);
+    const [showPasswordFallback, setShowPasswordFallback] = useState(false);
+    const oauthPopup = useRef<Window | null>(null);
 
     const load = useCallback(async () => {
         try {
             const [cat, cfgs] = await Promise.all([api.getIntegrationCatalog(), api.getIntegrations()]);
             setCatalog(cat);
             setConfigs(cfgs);
+            loadHealth();
         } catch (err: any) {
             setError(err?.message || 'Could not load the connections list. Try refreshing the page.');
+        } finally {
+            setLoaded(true);
         }
-    }, []);
+    }, [loadHealth]);
 
     useEffect(() => { load(); }, [load]);
 
@@ -102,10 +186,16 @@ export default function GovtechIntegrations() {
     const webhookUrl = (existing?: IntegrationConfig) =>
         existing ? `${window.location.origin}${existing.webhook_path}` : null;
 
+    // Clipboard writes reject on a denied permission or a non-secure context, and
+    // an unhandled rejection there left the button silently claiming "Copied".
     const copyText = (key: string, text: string) => {
-        navigator.clipboard.writeText(text);
-        setCopied(key);
-        setTimeout(() => setCopied(null), 2000);
+        navigator.clipboard.writeText(text).then(
+            () => {
+                setCopied(key);
+                setTimeout(() => setCopied(null), 2000);
+            },
+            () => setError('Your browser blocked the copy. Select the text and copy it manually.'),
+        );
     };
 
     // ---------- Wizard ----------
@@ -115,34 +205,40 @@ export default function GovtechIntegrations() {
         setWizard(platform);
         setStep(startAt);
         setValues({});
+        setCleared(new Set());
         setSyncChoice(existing?.sync_direction || platform.recommended_sync_direction || 'bidirectional');
         setShowAdvanced(false);
         setTestResult(null);
         setShowTechnical(false);
-        testStarted.current = false;
+        setWizardError(null);
+        setOauthError(null);
+        setOauthBusy(false);
+        setOauthStatus(null);
+        // Only pre-open the password fields for a town already using them — a
+        // fresh setup should see the sign-in button, not four secret boxes.
+        setShowPasswordFallback(
+            !!platform.oauth && !!existing && !existing.oauth_connected
+            && existing.configured_credentials.includes('password'),
+        );
+        if (platform.oauth) {
+            api.getAccelaOAuthStatus()
+                .then(setOauthStatus)
+                .catch(() => setOauthStatus({ configured: false, redirect_uri: '' }));
+        }
     };
 
     const closeWizard = () => { setWizard(null); load(); };
 
-    const requiredMissing = (platform: IntegrationPlatform): string[] => {
-        const existing = configFor(platform.platform);
-        return platform.config_fields
-            .filter(f => f.required)
-            .filter(f => !values[f.key] && (existing?.config as Record<string, unknown> | undefined)?.[f.key] === undefined)
-            .map(f => f.label);
-    };
+    const requiredMissing = (platform: IntegrationPlatform): string[] =>
+        missingRequired(platform, values, configFor(platform.platform), cleared);
 
     const saveWizard = async (platform: IntegrationPlatform): Promise<IntegrationConfig | null> => {
         const existing = configFor(platform.platform);
-        const credentials: Record<string, string> = {};
-        const config: Record<string, unknown> = {};
-        // Trim on save — a stray copy-paste space is the most common reason a
-        // correct key or URL is rejected by the vendor.
-        platform.credential_fields.forEach(f => { const v = (values[f.key] || '').trim(); if (v) credentials[f.key] = v; });
-        platform.config_fields.forEach(f => { const v = (values[f.key] ?? '').trim(); if (v !== '') config[f.key] = v; });
+        const { credentials, config } = buildSavePayload(platform, values, cleared);
 
         setSaving(true);
         setError(null);
+        setWizardError(null);
         try {
             let saved: IntegrationConfig;
             if (existing) {
@@ -154,9 +250,10 @@ export default function GovtechIntegrations() {
                 });
             }
             setConfigs(prev => [...prev.filter(c => c.platform !== platform.platform), saved]);
+            setCleared(new Set());
             return saved;
         } catch (err: any) {
-            setError(err?.message || 'Could not save. Please try again.');
+            setWizardError(err?.message || 'Could not save. Please try again.');
             return null;
         } finally {
             setSaving(false);
@@ -165,7 +262,17 @@ export default function GovtechIntegrations() {
 
     const runFinishTest = async (platform: IntegrationPlatform, saved?: IntegrationConfig | null) => {
         const existing = saved || configFor(platform.platform);
-        if (!existing) return;
+        if (!existing) {
+            // The finish step renders nothing at all when there is neither a
+            // spinner nor a result, so returning silently here left an empty
+            // modal with no explanation and no way forward but Back.
+            setTestResult({
+                ok: false,
+                detail: 'No saved connection to check.',
+                friendly: 'We could not find the saved connection to check. Go back a step and save it again.',
+            });
+            return;
+        }
         setTesting(true);
         setTestResult(null);
         setShowTechnical(false);
@@ -183,75 +290,255 @@ export default function GovtechIntegrations() {
         }
     };
 
-    const goToFinish = async (platform: IntegrationPlatform) => {
+    // ---------- Vendor sign-in (OAuth authorization code) ----------
+
+    /** Save what the admin has typed (the agency name is needed to build the
+     *  authorize URL), then hand them to the vendor's login in a popup. */
+    const startVendorSignIn = async (platform: IntegrationPlatform) => {
+        setOauthError(null);
         const saved = await saveWizard(platform);
         if (!saved) return;
+        setOauthBusy(true);
+        try {
+            const { authorize_url } = await api.startAccelaOAuth(saved.id);
+            const popup = window.open(authorize_url, 'pinpoint-vendor-signin', 'width=560,height=760');
+            if (!popup) {
+                setOauthBusy(false);
+                setOauthError('Your browser blocked the sign-in window. Allow pop-ups for this site and try again.');
+                return;
+            }
+            oauthPopup.current = popup;
+        } catch (err: any) {
+            setOauthBusy(false);
+            setOauthError(err?.message || 'Could not start the sign-in. Please try again.');
+        }
+    };
+
+    // The callback page posts back to us and closes itself. Origin is checked
+    // because any site can postMessage into an opener.
+    useEffect(() => {
+        if (!wizard?.oauth) return;
+        const platform = wizard;
+
+        const onMessage = async (event: MessageEvent) => {
+            if (event.origin !== window.location.origin) return;
+            if (event.data?.source !== 'pinpoint-accela-oauth') return;
+            setOauthBusy(false);
+            if (!event.data.ok) {
+                setOauthError(`${platform.name} did not finish the sign-in. You can try again, or use a username and password instead.`);
+                return;
+            }
+            try {
+                const cfgs = await api.getIntegrations();
+                setConfigs(cfgs);
+                const saved = cfgs.find(c => c.platform === platform.platform) || null;
+                setStep('finish');
+                runFinishTest(platform, saved);
+            } catch {
+                setOauthError('Signed in, but we could not refresh this page. Close and reopen Settings.');
+            }
+        };
+
+        // A popup the admin simply closes sends nothing — without this the
+        // button would spin forever.
+        const poll = window.setInterval(() => {
+            if (oauthPopup.current?.closed) {
+                oauthPopup.current = null;
+                setOauthBusy(false);
+                window.clearInterval(poll);
+            }
+        }, 800);
+
+        window.addEventListener('message', onMessage);
+        return () => {
+            window.removeEventListener('message', onMessage);
+            window.clearInterval(poll);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [wizard]);
+
+    const goToFinish = async (platform: IntegrationPlatform) => {
+        const saved = await saveWizard(platform);
+        if (!saved) return;  // wizardError is rendered in the modal
         setStep('finish');
-        testStarted.current = true;
         runFinishTest(platform, saved);
     };
 
     // ---------- Card actions ----------
 
-    const handleToggle = async (existing: IntegrationConfig) => {
-        setBusy(`toggle:${existing.platform}`);
+    /** Reload configs, and the Activity drawer if it happens to be open.
+     *
+     * Every card action changes server state -- a test now writes a health row and
+     * clears the breaker, a sync writes log entries -- and none of them reloaded,
+     * so the card kept showing the state from page load until somebody refreshed
+     * the browser. */
+    const refreshAfterAction = async (existing: IntegrationConfig) => {
+        await load();          // reloads health too
+
+        if (logsOpen === existing.platform) {
+            try {
+                const entries = await api.getIntegrationLogs(existing.id);
+                setLogs(prev => ({ ...prev, [existing.platform]: entries }));
+            } catch { /* the drawer keeps what it had */ }
+        }
+    };
+
+    const handleToggle = async (existing: IntegrationConfig, name: string) => {
+        // Turning a connector *on* is the consequential direction, and the wizard
+        // promises the connection stays off until a check passes. The toggle
+        // bypassed that entirely, so a connector whose last check failed could be
+        // switched on with one click and start dropping resident reports.
+        {
+            const lastResult = cardResult[existing.platform];
+            if (needsEnableConfirmation(existing, lastResult)) {
+                const detail = existing.last_sync_error || lastResult?.detail || '';
+                const confirmed = await dialog.confirm({
+                    title: `Turn on ${name} anyway?`,
+                    message: `The last check on this connection failed${detail ? `:\n\n${truncate(detail, 300)}` : '.'}\n\n`
+                        + 'Reports sent while it is broken are not queued and retried — they '
+                        + 'are logged as failed. Run "Check connection" first unless you know '
+                        + 'the problem is already fixed.',
+                    variant: 'warning',
+                    confirmText: 'Turn it on anyway',
+                });
+                if (!confirmed) return;
+            }
+        }
+        setBusyFor(existing.id, 'toggle');
         try {
             await api.updateIntegration(existing.id, { enabled: !existing.enabled });
             await load();
         } catch (err: any) {
             setError(err?.message || 'Could not update the connection.');
         } finally {
-            setBusy(null);
+            setBusyFor(existing.id, null);
         }
     };
 
     const handleCardTest = async (existing: IntegrationConfig) => {
-        setBusy(`test:${existing.platform}`);
+        setBusyFor(existing.id, 'test');
+        // A fresh verdict supersedes "update check started…" — leaving the old
+        // notice next to it reads as two answers to one question.
+        setCardNotice(prev => {
+            const next = { ...prev };
+            delete next[existing.platform];
+            return next;
+        });
         try {
             const result = await api.testIntegration(existing.id);
             setCardResult(prev => ({ ...prev, [existing.platform]: result }));
+            await refreshAfterAction(existing);
         } catch (err: any) {
             setCardResult(prev => ({ ...prev, [existing.platform]: { ok: false, detail: err?.message || 'Test failed' } }));
         } finally {
-            setBusy(null);
+            setBusyFor(existing.id, null);
         }
     };
 
     const handleSync = async (existing: IntegrationConfig) => {
-        setBusy(`sync:${existing.platform}`);
+        setBusyFor(existing.id, 'sync');
         try {
-            await api.syncIntegration(existing.id);
-            setCardResult(prev => ({ ...prev, [existing.platform]: { ok: true, detail: 'Update check started — new activity will appear within a minute or two.' } }));
+            const response = await api.syncIntegration(existing.id);
+            const partly = response.started
+                && Object.values(response.started).some(started => !started);
+            setCardNotice(prev => ({
+                ...prev,
+                [existing.platform]: {
+                    // A partial start is not a success. The endpoint says which
+                    // half ran; repeating its message beats replacing it with a
+                    // reassurance the server did not give.
+                    ok: !partly,
+                    detail: partly
+                        ? response.message
+                        : 'Update check started — new activity will appear within a minute or two.',
+                },
+            }));
+            await refreshAfterAction(existing);
         } catch (err: any) {
-            setCardResult(prev => ({ ...prev, [existing.platform]: { ok: false, detail: err?.message || 'Could not start the update check.' } }));
+            setCardNotice(prev => ({ ...prev, [existing.platform]: { ok: false, detail: err?.message || 'Could not start the update check.' } }));
         } finally {
-            setBusy(null);
+            setBusyFor(existing.id, null);
         }
     };
 
     const handleSyncAssets = async (existing: IntegrationConfig) => {
-        setBusy(`assets:${existing.platform}`);
+        setBusyFor(existing.id, 'assets');
         try {
             await api.syncIntegrationAssets(existing.id);
-            setCardResult(prev => ({ ...prev, [existing.platform]: { ok: true, detail: 'Copying their asset list (hydrants, lights, signs…) onto your map. This can take a few minutes.' } }));
+            setCardNotice(prev => ({ ...prev, [existing.platform]: { ok: true, detail: 'Copying their asset list (hydrants, lights, signs…) onto your map. This can take a few minutes.' } }));
+            await refreshAfterAction(existing);
         } catch (err: any) {
-            setCardResult(prev => ({ ...prev, [existing.platform]: { ok: false, detail: err?.message || 'Could not start the asset copy.' } }));
+            setCardNotice(prev => ({ ...prev, [existing.platform]: { ok: false, detail: err?.message || 'Could not start the asset copy.' } }));
         } finally {
-            setBusy(null);
+            setBusyFor(existing.id, null);
+        }
+    };
+
+    /** Stop (or resume) the alert emails about one connection.
+     *
+     * The mute endpoint has always accepted any connector name, including
+     * `govtech:accela`, and nothing here offered it -- so the daily digest could
+     * name a town system and the only place to silence it was a provider card
+     * for something else entirely. Silences the email and nothing else: the card
+     * keeps whatever colour the connection has earned. */
+    const handleMute = async (existing: IntegrationConfig, currentlyMuted: boolean) => {
+        const key = healthKey(existing.platform);
+        setMuting(key);
+        try {
+            const r = await api.muteConnectorAlerts(key, currentlyMuted ? 0 : undefined);
+            setMuted(prev => ({ ...prev, [key]: r.muted_until }));
+        } catch (err: any) {
+            // Leaving the button as it was is the honest failure: claiming a
+            // mute that did not take would produce silence nobody asked for.
+            setError(err?.message || 'Could not change the alert setting.');
+        } finally {
+            setMuting(null);
+        }
+    };
+
+    const handleRegenerateToken = async (existing: IntegrationConfig, name: string) => {
+        const confirmed = await dialog.confirm({
+            title: `Issue a new address for ${name}?`,
+            message: 'The current address stops working immediately. Anything the vendor '
+                + 'sends to it will be refused until you give them the new one.\n\n'
+                + 'Do this if the address may have been shared or logged somewhere it '
+                + 'should not have been.',
+            variant: 'warning',
+            confirmText: 'Issue a new address',
+        });
+        if (!confirmed) return;
+        setBusyFor(existing.id, 'rotate');
+        try {
+            const updated = await api.regenerateIntegrationWebhookToken(existing.id);
+            setConfigs(prev => [...prev.filter(c => c.platform !== existing.platform), updated]);
+            setCardNotice(prev => ({ ...prev, [existing.platform]: { ok: true, detail: updated.message } }));
+        } catch (err: any) {
+            setError(err?.message || 'Could not issue a new address.');
+        } finally {
+            setBusyFor(existing.id, null);
         }
     };
 
     const handleDelete = async (existing: IntegrationConfig, name: string) => {
-        if (!window.confirm(`Disconnect ${name}? Reports already sent will stay in both systems, but nothing new will sync.`)) return;
-        setBusy(`delete:${existing.platform}`);
+        const confirmed = await dialog.confirm({
+            title: `Disconnect ${name}?`,
+            message: 'Reports already sent will stay in both systems, but nothing new will '
+                + 'sync. The credentials are removed from your Secret Manager too, so '
+                + 'reconnecting means entering them again.',
+            variant: 'danger',
+            confirmText: 'Disconnect',
+        });
+        if (!confirmed) return;
+        setBusyFor(existing.id, 'delete');
         try {
             await api.deleteIntegration(existing.id);
+            // closeWizard already reloads; a second load() raced the first and
+            // could paint the pre-delete list over the post-delete one.
             closeWizard();
-            await load();
         } catch (err: any) {
-            setError(err?.message || 'Could not disconnect.');
+            setWizardError(err?.message || 'Could not disconnect.');
         } finally {
-            setBusy(null);
+            setBusyFor(existing.id, null);
         }
     };
 
@@ -268,24 +555,58 @@ export default function GovtechIntegrations() {
 
     const renderField = (platform: IntegrationPlatform, field: { key: string; label: string; secret?: boolean; placeholder?: string; required?: boolean }, isCredential: boolean) => {
         const existing = configFor(platform.platform);
-        const alreadySet = isCredential
-            ? !!existing?.configured_credentials.includes(field.key)
-            : existing !== undefined && (existing.config as Record<string, unknown>)[field.key] !== undefined;
+        // Deliberately without `cleared`: a field marked for clearing must keep
+        // showing its Clear/Keep-it control so the choice can be undone.
+        const alreadySet = alreadyStoredIn(existing, field.key, isCredential);
         // Config (non-secret) fields show their current value as the placeholder;
         // secrets show a masked "leave blank to keep" and get a reveal toggle.
         const currentConfigVal = !isCredential ? String((existing?.config as Record<string, unknown>)?.[field.key] ?? '') : '';
+        const isCleared = cleared.has(field.key);
         return (
-            <SecretField
-                key={field.key}
-                label={field.label}
-                secret={!!field.secret}
-                required={field.required}
-                value={values[field.key] || ''}
-                onChange={(v) => setValues(p => ({ ...p, [field.key]: v }))}
-                placeholder={!isCredential && alreadySet ? currentConfigVal : (field.placeholder || '')}
-                help={platform.field_help?.[field.key]}
-                savedHint={!!(isCredential && alreadySet)}
-            />
+            <div key={field.key}>
+                <SecretField
+                    label={field.label}
+                    secret={!!field.secret}
+                    required={field.required}
+                    value={values[field.key] || ''}
+                    onChange={(v) => setValues(p => ({ ...p, [field.key]: v }))}
+                    placeholder={!isCredential && alreadySet && !isCleared ? currentConfigVal : (field.placeholder || '')}
+                    help={platform.field_help?.[field.key]}
+                    savedHint={!!(isCredential && alreadySet)}
+                />
+                {/* Blank means "keep what is stored", so emptying the box cannot
+                    delete a setting. A wrong jurisdiction_id was therefore
+                    permanent. Clearing is asked for by name instead. */}
+                {!isCredential && alreadySet && !field.required && (
+                    isCleared ? (
+                        <p className="text-[11px] text-amber-300/80 mt-1 flex items-center gap-2">
+                            Will be cleared when you save.
+                            <button
+                                type="button"
+                                className="underline hover:text-amber-200"
+                                onClick={() => setCleared(prev => {
+                                    const next = new Set(prev);
+                                    next.delete(field.key);
+                                    return next;
+                                })}
+                            >
+                                Keep it
+                            </button>
+                        </p>
+                    ) : (
+                        <button
+                            type="button"
+                            className="text-[11px] text-white/45 hover:text-white/70 mt-1 underline"
+                            onClick={() => {
+                                setValues(p => ({ ...p, [field.key]: '' }));
+                                setCleared(prev => new Set(prev).add(field.key));
+                            }}
+                        >
+                            Clear this setting
+                        </button>
+                    )
+                )}
+            </div>
         );
     };
 
@@ -298,7 +619,23 @@ export default function GovtechIntegrations() {
         );
     };
 
-    const connectedCount = (configs || []).filter(c => c.enabled).length;
+    /** The sync directions this connector can actually offer. */
+    const syncOptionsFor = (platform: IntegrationPlatform) =>
+        SYNC_CHOICES(platform.name).filter(c => c.value === 'bidirectional'
+            ? platform.capabilities.includes('push') && platform.capabilities.includes('pull')
+            : platform.capabilities.includes(c.value));
+
+    // A single possible direction is not a choice, so the panel is hidden and the
+    // value pinned. Pinning it happened during render, which is a state update in
+    // a render body -- React warns, and under StrictMode it runs twice.
+    useEffect(() => {
+        if (!wizard) return;
+        const options = syncOptionsFor(wizard);
+        if (options.length === 1 && syncChoice !== options[0].value) {
+            setSyncChoice(options[0].value);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [wizard, syncChoice]);
 
     // Filter by the clerk's search and surface connected platforms first.
     const q = query.trim().toLowerCase();
@@ -313,17 +650,26 @@ export default function GovtechIntegrations() {
 
     return (
         <>
+        {/* id so the setup page's status rail can link here, the way it does for
+            every other section. Without it the rail's "town systems" entry had
+            nowhere to scroll to. */}
+        <div id="sec-town-systems">
         <CollapsibleSection
             title="Connect Your Other Town Systems"
             icon={Landmark}
-            subtitle={`${(visibleCatalog || []).length || (catalog || []).length} platforms available — Accela, Tyler, CivicPlus, Open311, or a generic connector for anything else`}
+            // Counts the catalog, not the filtered view. It read off
+            // `visibleCatalog`, so typing in the search box rewrote the heading
+            // to "1 platforms available" -- which reads as the town only having
+            // one option rather than as a filter being applied.
+            subtitle={`${(catalog || []).length} platforms available — Accela, Tyler, CivicPlus, Open311, or a generic connector for anything else`}
             defaultOpen={true}
-            badge={connectedCount > 0 ? (
-                <span className="inline-flex items-center gap-2 rounded-full bg-emerald-500/15 border border-emerald-400/30 pl-2.5 pr-3 py-1 text-[11px] font-semibold text-emerald-200 whitespace-nowrap">
-                    <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400 shrink-0" aria-hidden="true" />
-                    {connectedCount} connected
-                </span>
-            ) : undefined}
+            /* No connected-count badge. It counted `enabled` rows, and an
+             * enabled row is a fact about our database, not about a working
+             * connection -- a leftover test row that never synced once showed
+             * "1 connected" over a grid of cards that all said otherwise. The
+             * cards themselves carry the honest per-platform state, and a
+             * headline number that can disagree with every card under it is
+             * worse than no number. */
         >
             <p className="text-white/60 text-sm max-w-2xl leading-relaxed mb-4">
                 Full two-way connectors for the platforms your town already runs. Reports, photos, comments,
@@ -350,9 +696,20 @@ export default function GovtechIntegrations() {
                 </div>
             )}
 
-            {(visibleCatalog || []).length === 0 && (
+            {/* "Nothing matches" and "we have not asked yet" are different
+                answers. This rendered `No platforms match ""` on first paint. */}
+            {!loaded && (
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-8 text-center text-white/50 text-sm flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                    Loading the platforms your town can connect to…
+                </div>
+            )}
+
+            {loaded && (visibleCatalog || []).length === 0 && (
                 <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-8 text-center text-white/50 text-sm">
-                    No platforms match “{query}”. Don’t see yours? The <span className="text-white/70">Generic Open311</span> connector works with many systems.
+                    {query
+                        ? <>No platforms match “{query}”. Don’t see yours? The <span className="text-white/70">Generic Open311</span> connector works with many systems.</>
+                        : 'No platforms are available to connect.'}
                 </div>
             )}
 
@@ -361,10 +718,20 @@ export default function GovtechIntegrations() {
                     const existing = configFor(platform.platform);
                     const mode = MODE_LABELS[platform.integration_mode] || MODE_LABELS.partner_api;
                     const result = cardResult[platform.platform];
+                    const notice = cardNotice[platform.platform];
                     const platformLogs = logs[platform.platform];
-                    const isWorking = existing?.enabled && existing.last_sync_status !== 'error';
-                    const needsAttention = existing?.enabled && existing.last_sync_status === 'error';
                     const isOpen = openCards.has(platform.platform);
+                    // One word, from the same evidence and the same rules the
+                    // capability cards use. Was `enabled && last_sync_status !==
+                    // 'error'`, which drew a green "Connected" for a connection
+                    // whose credentials had been revoked months ago.
+                    const row = existing ? healthRows[healthKey(platform.platform)] : undefined;
+                    const state = connectionState(existing, row, result);
+                    const needsAttention = state === 'failing';
+                    const muteKey = healthKey(platform.platform);
+                    const mutedUntil = muteKey in muted
+                        ? muted[muteKey]
+                        : (row?.alerts_muted_until ?? null);
 
                     return (
                         <motion.div
@@ -386,37 +753,18 @@ export default function GovtechIntegrations() {
                                 className="relative w-full flex items-center justify-between gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 rounded-xl"
                             >
                                 <div className="flex items-center gap-3.5 min-w-0">
-                                    <div className="relative shrink-0">
-                                        {existing?.enabled && (
-                                            <div className="absolute -inset-1 rounded-2xl bg-gradient-to-br from-primary-400/40 to-primary-600/20 blur-md" aria-hidden="true" />
-                                        )}
-                                        <div className={`relative w-11 h-11 rounded-2xl flex items-center justify-center shadow-lg ${existing?.enabled
-                                            ? 'bg-gradient-to-br from-primary-500/30 to-primary-700/20 border border-primary-400/30 shadow-primary-900/40'
-                                            : 'bg-white/[0.06] border border-white/10 shadow-black/20'
-                                            }`}>
-                                            <Plug className={`w-5 h-5 ${existing?.enabled ? 'text-primary-200' : 'text-white/60'}`} />
-                                        </div>
-                                    </div>
+                                    <CapabilityTile
+                                        icon={Plug}
+                                        tone={needsAttention ? 'alert' : state === 'working' ? 'done' : 'normal'}
+                                    />
                                     <div className="min-w-0">
                                         <h3 className="font-semibold text-white tracking-tight">{platform.name}</h3>
                                         <p className="text-white/60 text-xs truncate">{platform.category}</p>
                                     </div>
                                 </div>
                                 <div className="shrink-0 flex items-center gap-2">
-                                    {isWorking ? (
-                                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-200 border border-emerald-400/30">
-                                            <span className="live-dot inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 text-emerald-400" aria-hidden="true" /> Connected
-                                        </span>
-                                    ) : needsAttention ? (
-                                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                                            <AlertCircle className="w-3 h-3" /> Needs attention
-                                        </span>
-                                    ) : existing ? (
-                                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-medium bg-white/10 text-white/50 border border-white/10">
-                                            Turned off
-                                        </span>
-                                    ) : (
-                                        <span className="text-white/60 text-xs">Not connected</span>
+                                    {state && (
+                                        <StatusPill state={state} label={connectionStateLabel(existing, state)} />
                                     )}
                                     <motion.span animate={{ rotate: isOpen ? 180 : 0 }} transition={{ duration: 0.3 }} aria-hidden="true" className="text-white/60">
                                         <ChevronDown className="w-4 h-4" />
@@ -445,26 +793,160 @@ export default function GovtechIntegrations() {
                                 ))}
                             </div>
 
-                            {existing?.last_sync_at && (
-                                <p className={`relative text-[11px] mt-2 ${existing.last_sync_status === 'error' ? 'text-amber-300' : 'text-white/60'}`}>
-                                    {existing.last_sync_status === 'error'
-                                        ? 'The last update check hit a problem — press "Check connection" for a plain-language explanation.'
-                                        : `Last checked ${new Date(existing.last_sync_at).toLocaleString()} — all good.`}
+                            {/* What the last check actually found, from the same
+                                health row the provider cards read. The card had
+                                only ever shown sync outcomes, so a connection
+                                whose credentials were rejected an hour ago could
+                                still show nothing but "Last checked … all good". */}
+                            {row && (row.last_result || row.summary) && (
+                                <p className={`relative text-[11px] mt-2 ${
+                                    needsAttention ? 'text-red-200/85' : 'text-white/60'}`}>
+                                    {truncate(row.last_result || row.summary || '')}
                                 </p>
                             )}
 
-                            {existing?.credentials_vaulted && (
-                                <p className="relative text-[11px] mt-2 flex items-center gap-1.5 text-emerald-300/80">
-                                    <ShieldCheck className="w-3 h-3 shrink-0" aria-hidden="true" />
-                                    Credentials stored in your Secret Manager — not in this app's database.
+                            {mutedUntil && (
+                                <p className="relative text-[11px] mt-2 text-amber-200/85">
+                                    Nobody is being emailed about this until{' '}
+                                    {new Date(mutedUntil).toLocaleDateString()}.
+                                    {needsAttention ? ' It is still not working.' : ''}
                                 </p>
+                            )}
+
+                            {existing?.oauth_connected && (
+                                <p className="relative text-[11px] mt-2 flex items-center gap-1.5 text-emerald-300/80">
+                                    <LogIn className="w-3 h-3 shrink-0" aria-hidden="true" />
+                                    Signed in through {platform.name} — no {platform.name} password is stored here.
+                                </p>
+                            )}
+
+                            {existing?.last_sync_at && (
+                                <div className={`relative text-[11px] mt-2 ${existing.last_sync_status === 'error' ? 'text-amber-300' : 'text-white/60'}`}>
+                                    {existing.last_sync_status === 'error' ? (
+                                        <>
+                                            <p>The last update check hit a problem:</p>
+                                            {/* The vendor's own words. `last_sync_error` was
+                                                fetched and never rendered, so the card said
+                                                "hit a problem" and the only way to find out
+                                                which problem was to press another button. */}
+                                            {existing.last_sync_error && (
+                                                <p className="text-amber-200/70 mt-0.5 break-words">
+                                                    {truncate(existing.last_sync_error)}
+                                                </p>
+                                            )}
+                                            <p className="text-amber-300/60 mt-0.5">
+                                                Open Activity for the full message, or press “Check connection”
+                                                for a plain-language explanation.
+                                            </p>
+                                        </>
+                                    ) : (
+                                        <p>Last checked {new Date(existing.last_sync_at).toLocaleString()} — all good.</p>
+                                    )}
+                                </div>
+                            )}
+
+                            {existing && existing.credentials_vaulted_state !== 'none' && (
+                                existing.credentials_vaulted_state === 'partial' ? (
+                                    /* Said plainly, because the reassuring version of this
+                                       line used to appear whenever *any* field made it to
+                                       the vault -- over-claiming exactly where a government
+                                       deployment is relying on the claim. */
+                                    <p className="relative text-[11px] mt-2 flex items-center gap-1.5 text-amber-300/80">
+                                        <AlertCircle className="w-3 h-3 shrink-0" aria-hidden="true" />
+                                        Some credentials are in your Secret Manager and some are stored
+                                        encrypted in this app's database. Re-save them to move the rest.
+                                    </p>
+                                ) : (
+                                    <p className="relative text-[11px] mt-2 flex items-center gap-1.5 text-emerald-300/80">
+                                        <ShieldCheck className="w-3 h-3 shrink-0" aria-hidden="true" />
+                                        Credentials stored in your Secret Manager — not in this app's database.
+                                    </p>
+                                )
                             )}
 
                             {result && (
-                                <div className={`relative mt-2 rounded-lg px-3 py-2 text-xs border ${result.ok
+                                <div className={`relative mt-2 rounded-lg px-3 py-2 text-xs border ${!result.ok
+                                    ? 'bg-amber-500/10 border-amber-500/25 text-amber-200'
+                                    : result.verified === false
+                                        ? 'bg-sky-500/10 border-sky-500/25 text-sky-200'
+                                        : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-200'}`}>
+                                    {/* A pass that verified nothing is not a pass in the sense a
+                                        clerk reads "Connected" as. Open311 has no authenticated
+                                        endpoint at all, so saying so is the only honest option. */}
+                                    {result.ok && result.verified === false && (
+                                        <span className="font-semibold block mb-0.5">Reachable — credentials not checked</span>
+                                    )}
+                                    {result.ok ? result.detail : (result.friendly || result.detail)}
+                                </div>
+                            )}
+
+                            {/* Action feedback (sync enqueued, address reissued).
+                                Same spot as a check result, deliberately not the
+                                same state: this never reaches connectionState, so
+                                enqueueing a job cannot repaint the pill. */}
+                            {notice && (
+                                <div className={`relative mt-2 rounded-lg px-3 py-2 text-xs border ${notice.ok
                                     ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-200'
                                     : 'bg-amber-500/10 border-amber-500/25 text-amber-200'}`}>
-                                    {result.ok ? result.detail : (result.friendly || result.detail)}
+                                    {notice.detail}
+                                </div>
+                            )}
+
+                            {/* A connection can sign in fine and still be unable to file a
+                                report. That gap is invisible until a resident's report is
+                                rejected, so it gets its own line rather than a green tick. */}
+                            {(result?.warnings || []).length > 0 && (
+                                <div className="relative mt-2 rounded-lg px-3 py-2 text-xs border bg-amber-500/10 border-amber-500/25 text-amber-200 space-y-1.5">
+                                    {result!.warnings!.map((w, i) => (
+                                        <p key={i} className="flex items-start gap-1.5">
+                                            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" aria-hidden="true" />
+                                            <span>{w}</span>
+                                        </p>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* The inbound address and the vendor email were reachable
+                                only inside the wizard -- the address on its success
+                                screen, the email on an intro step you could get back to
+                                only by pressing Back. Both are things somebody needs
+                                weeks later, when the vendor finally replies. */}
+                            {existing && (
+                                <div className="relative mt-3 space-y-2">
+                                    {(() => {
+                                        const url = webhookUrl(existing);
+                                        if (!url) return null;
+                                        return (
+                                            <div className="rounded-lg bg-white/[0.03] border border-white/10 p-2.5">
+                                                <p className="text-white/60 text-[11px] mb-1.5">
+                                                    Inbound address for {platform.name} — the mailbox only they drop into.
+                                                </p>
+                                                <div className="flex items-center gap-2">
+                                                    <code className="flex-1 bg-black/30 rounded px-2 py-1.5 text-[10px] text-indigo-200 break-all">{url}</code>
+                                                    <Button size="sm" variant="ghost" onClick={() => copyText(`hook:${platform.platform}`, url)} aria-label="Copy the inbound address">
+                                                        {copied === `hook:${platform.platform}` ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                                                    </Button>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRegenerateToken(existing, platform.name)}
+                                                    disabled={busyOf(existing) !== null}
+                                                    className="text-[10px] text-white/40 hover:text-white/70 underline mt-1.5 disabled:opacity-50"
+                                                >
+                                                    {busyOf(existing) === 'rotate' ? 'Issuing…' : 'Issue a new address'}
+                                                </button>
+                                            </div>
+                                        );
+                                    })()}
+                                    {platform.vendor_ask && (
+                                        <Button
+                                            size="sm" variant="ghost" className="text-xs"
+                                            onClick={() => copyText(`mail:${platform.platform}`, `Subject: ${platform.vendor_ask!.subject}\n\n${emailBody(platform)}`)}
+                                            leftIcon={copied === `mail:${platform.platform}` ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Mail className="w-3.5 h-3.5" />}
+                                        >
+                                            {copied === `mail:${platform.platform}` ? 'Copied — paste it into an email' : 'Copy the vendor request email'}
+                                        </Button>
+                                    )}
                                 </div>
                             )}
 
@@ -478,30 +960,51 @@ export default function GovtechIntegrations() {
                                     </button>
                                 ) : (
                                     <>
-                                        <Button size="sm" variant="ghost" className="text-xs" onClick={() => openWizard(platform, 'details')}>
+                                        <Action size="sm" variant="primary" onClick={() => openWizard(platform, 'details')} chevron>
                                             Settings
-                                        </Button>
-                                        <Button size="sm" variant="ghost" className="text-xs" onClick={() => handleCardTest(existing)} disabled={busy !== null}>
-                                            {busy === `test:${platform.platform}` ? 'Checking…' : 'Check connection'}
-                                        </Button>
+                                        </Action>
+                                        <Action size="sm" onClick={() => handleCardTest(existing)}
+                                            busy={busyOf(existing) === 'test'} disabled={busyOf(existing) !== null}>
+                                            {busyOf(existing) === 'test' ? 'Checking…' : 'Check connection'}
+                                        </Action>
+                                        {/* Only where something is actually alerting, and where
+                                            a mute is already in force. Same rule as the provider
+                                            cards: offering to silence a connector nobody is being
+                                            emailed about is offering to stop a sound that was
+                                            never going to be made. */}
+                                        {(hasAlert(row?.status) || !!mutedUntil) && (
+                                            <Action size="sm" onClick={() => handleMute(existing, !!mutedUntil)}
+                                                busy={muting === muteKey} disabled={muting !== null}
+                                                title={mutedUntil
+                                                    ? 'Start emailing administrators about this again'
+                                                    : 'Stop emailing administrators about this for a week. The card stays as it is.'}>
+                                                {mutedUntil ? 'Unmute' : 'Mute alerts'}
+                                            </Action>
+                                        )}
                                         {existing.enabled && platform.capabilities.includes('pull') && (
-                                            <Button size="sm" variant="ghost" className="text-xs" onClick={() => handleSync(existing)} disabled={busy !== null} leftIcon={<RefreshCw className="w-3 h-3" />}>
-                                                Check for updates
-                                            </Button>
+                                            <Action size="sm" onClick={() => handleSync(existing)}
+                                                busy={busyOf(existing) === 'sync'} disabled={busyOf(existing) !== null}>
+                                                {/* The only button here that never said it was
+                                                    working, so pressing it looked like nothing
+                                                    happened -- which is also what a broken one
+                                                    looks like. */}
+                                                {busyOf(existing) === 'sync' ? 'Checking…' : 'Check for updates'}
+                                            </Action>
                                         )}
                                         {existing.enabled && platform.capabilities.includes('assets') && (
-                                            <Button size="sm" variant="ghost" className="text-xs" onClick={() => handleSyncAssets(existing)} disabled={busy !== null}>
-                                                {busy === `assets:${platform.platform}` ? 'Copying…' : 'Copy their assets to my map'}
-                                            </Button>
+                                            <Action size="sm" onClick={() => handleSyncAssets(existing)}
+                                                busy={busyOf(existing) === 'assets'} disabled={busyOf(existing) !== null}>
+                                                {busyOf(existing) === 'assets' ? 'Copying…' : 'Copy their assets to my map'}
+                                            </Action>
                                         )}
-                                        <Button size="sm" variant="ghost" className="text-xs" onClick={() => toggleLogs(existing)} rightIcon={logsOpen === platform.platform ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}>
+                                        <Action size="sm" onClick={() => toggleLogs(existing)} chevron>
                                             Activity
-                                        </Button>
+                                        </Action>
                                         <label className="flex items-center gap-2 ml-auto text-[11px] text-white/60 cursor-pointer select-none">
                                             {existing.enabled ? 'On' : 'Off'}
                                             <button
-                                                onClick={() => handleToggle(existing)}
-                                                disabled={busy !== null}
+                                                onClick={() => handleToggle(existing, platform.name)}
+                                                disabled={busyOf(existing) !== null}
                                                 role="switch"
                                                 aria-checked={existing.enabled}
                                                 aria-label={`Turn ${platform.name} connection ${existing.enabled ? 'off' : 'on'}`}
@@ -519,6 +1022,17 @@ export default function GovtechIntegrations() {
 
                             {logsOpen === platform.platform && platformLogs && (
                                 <div className="relative mt-3 rounded-lg border border-white/10 divide-y divide-white/5 max-h-48 overflow-y-auto">
+                                    {/* The current error in full, pinned above the history.
+                                        Somebody who opened this drawer opened it to read the
+                                        message, and the card only had room to clip it. */}
+                                    {existing?.last_sync_status === 'error' && existing.last_sync_error && (
+                                        <div className="px-3 py-2 bg-amber-500/[0.06]">
+                                            <p className="text-amber-200 text-[11px] font-semibold">Most recent problem</p>
+                                            <p className="text-amber-100/70 text-[11px] mt-0.5 break-words whitespace-pre-wrap">
+                                                {existing.last_sync_error}
+                                            </p>
+                                        </div>
+                                    )}
                                     {(platformLogs || []).length === 0 && (
                                         <p className="text-white/60 text-xs px-3 py-2">Nothing has synced yet. Activity will show up here once reports start flowing.</p>
                                     )}
@@ -541,6 +1055,7 @@ export default function GovtechIntegrations() {
                 })}
             </div>
         </CollapsibleSection>
+        </div>
 
         {/* ---------- Setup wizard ---------- */}
         {wizard && (
@@ -550,12 +1065,35 @@ export default function GovtechIntegrations() {
                     title={step === 'intro' ? `Connect ${wizard.name}` : step === 'details' ? `Connect ${wizard.name} — enter the details` : `Connect ${wizard.name} — final check`}
                     size="lg"
                 >
-                    {/* Step dots */}
-                    <div className="flex items-center gap-2 mb-4" aria-hidden="true">
-                        {(['intro', 'details', 'finish'] as WizardStep[]).map((s) => (
-                            <div key={s} className={`h-1.5 rounded-full transition-all ${step === s ? 'w-8 bg-indigo-400' : 'w-4 bg-white/15'}`} />
-                        ))}
+                    {/* Step dots, plus the same thing in words.
+                        The dots were aria-hidden with no textual equivalent, so a
+                        screen-reader user had no way to know this was step 2 of 3 --
+                        the one piece of orientation a multi-step form owes them. */}
+                    <div className="flex items-center justify-between gap-3 mb-4">
+                        <div className="flex items-center gap-2" aria-hidden="true">
+                            {(['intro', 'details', 'finish'] as WizardStep[]).map((s) => (
+                                <div key={s} className={`h-1.5 rounded-full transition-all ${step === s ? 'w-8 bg-indigo-400' : 'w-4 bg-white/15'}`} />
+                            ))}
+                        </div>
+                        <p className="text-white/50 text-[11px]">
+                            Step {step === 'intro' ? 1 : step === 'details' ? 2 : 3} of 3
+                            <span className="sr-only">
+                                {step === 'intro' ? ': what you need' : step === 'details' ? ': enter the details' : ': final check'}
+                            </span>
+                        </p>
                     </div>
+
+                    {/* Inside the modal, because the shared banner renders behind it.
+                        A failed save made "Save & check the connection" appear to do
+                        nothing at all: the error was written, the step did not
+                        advance, and the only visible change was the spinner
+                        stopping. */}
+                    {wizardError && (
+                        <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200 flex items-start gap-2">
+                            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+                            <span className="break-words">{wizardError}</span>
+                        </div>
+                    )}
 
                     {step === 'intro' && (
                         <div className="space-y-4">
@@ -619,8 +1157,93 @@ export default function GovtechIntegrations() {
 
                             <div className="space-y-3">
                                 {wizard.config_fields.filter(f => f.required).map(f => renderField(wizard, f, false))}
-                                {wizard.credential_fields.map(f => renderField(wizard, f, true))}
+                                {!wizard.oauth && wizard.credential_fields.map(f => renderField(wizard, f, true))}
                             </div>
+
+                            {/* Sign-in on the vendor's own site, for platforms that
+                                support it. The password fields stay available, but
+                                behind a disclosure — they are the exception now. */}
+                            {wizard.oauth && (
+                                <div className="space-y-3">
+                                    {configFor(wizard.platform)?.oauth_connected && !oauthError ? (
+                                        <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.07] p-4">
+                                            <p className="text-emerald-200 text-sm font-semibold flex items-center gap-2">
+                                                <CheckCircle className="w-4 h-4 shrink-0" /> Signed in to {wizard.name}
+                                            </p>
+                                            <p className="text-white/60 text-xs mt-1">
+                                                Pinpoint holds a revocable access token — no {wizard.name} password is
+                                                stored here. Your {wizard.name} administrator can withdraw it at any time.
+                                            </p>
+                                            <Button
+                                                size="sm" variant="ghost" className="mt-2 text-xs"
+                                                onClick={() => startVendorSignIn(wizard)}
+                                                disabled={oauthBusy || saving}
+                                            >
+                                                {oauthBusy ? 'Waiting for sign-in…' : 'Sign in again'}
+                                            </Button>
+                                        </div>
+                                    ) : oauthStatus && !oauthStatus.configured ? (
+                                        <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.07] p-4">
+                                            <p className="text-amber-200 text-sm font-semibold flex items-center gap-2">
+                                                <AlertCircle className="w-4 h-4 shrink-0" /> {wizard.name} sign-in isn't set up on this system
+                                            </p>
+                                            <p className="text-amber-100/70 text-xs mt-1">
+                                                Whoever runs this Pinpoint installation needs to register its {wizard.name} app
+                                                first. Until then, use the username and password option below.
+                                            </p>
+                                        </div>
+                                    ) : (
+                                        <div className="rounded-xl border border-indigo-500/25 bg-indigo-500/[0.06] p-4">
+                                            <p className="text-white font-semibold text-sm flex items-center gap-2">
+                                                <ShieldCheck className="w-4 h-4 text-indigo-300 shrink-0" /> Sign in — no password to type here
+                                            </p>
+                                            <p className="text-white/60 text-xs mt-1 leading-relaxed">{wizard.oauth.explainer}</p>
+                                            <button
+                                                type="button"
+                                                onClick={() => startVendorSignIn(wizard)}
+                                                disabled={oauthBusy || saving || requiredMissing(wizard).length > 0}
+                                                className="mt-3 inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-900/40 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                                            >
+                                                {oauthBusy
+                                                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Waiting for {wizard.name}…</>
+                                                    : <><LogIn className="w-4 h-4" /> {wizard.oauth.button_label}</>}
+                                            </button>
+                                            {requiredMissing(wizard).length > 0 && (
+                                                <p className="text-white/60 text-[11px] mt-2">
+                                                    Fill in the fields above first — we need them to open the right sign-in page.
+                                                </p>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {oauthError && (
+                                        <p className="text-amber-300/90 text-xs flex items-start gap-1.5">
+                                            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" /> {oauthError}
+                                        </p>
+                                    )}
+
+                                    <div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPasswordFallback(v => !v)}
+                                            className="text-white/60 text-xs hover:text-white/70 inline-flex items-center gap-1"
+                                        >
+                                            {showPasswordFallback ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                                            <KeyRound className="w-3 h-3" /> {wizard.oauth.fallback_label}
+                                        </button>
+                                        {showPasswordFallback && (
+                                            <div className="space-y-3 mt-3">
+                                                <p className="text-white/50 text-xs leading-relaxed">
+                                                    Only if your {wizard.name} administrator would rather issue a service
+                                                    account. This stores that account's password in your credential vault,
+                                                    and it keeps working until someone changes it.
+                                                </p>
+                                                {wizard.credential_fields.map(f => renderField(wizard, f, true))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
 
                             {wizard.config_fields.some(f => !f.required) && (
                                 <div>
@@ -640,15 +1263,11 @@ export default function GovtechIntegrations() {
                             )}
 
                             {(() => {
-                                const syncOptions = SYNC_CHOICES(wizard.name).filter(c => c.value === 'bidirectional'
-                                    ? wizard.capabilities.includes('push') && wizard.capabilities.includes('pull')
-                                    : wizard.capabilities.includes(c.value));
-                                // A single possible direction isn't a choice — don't ask. Just
-                                // pin it so the payload is correct and skip the redundant panel.
-                                if ((syncOptions || []).length <= 1) {
-                                    if (syncOptions[0] && syncChoice !== syncOptions[0].value) setSyncChoice(syncOptions[0].value);
-                                    return null;
-                                }
+                                const syncOptions = syncOptionsFor(wizard);
+                                // A single possible direction isn't a choice — don't ask. The
+                                // value is pinned by an effect above, not here: setting state
+                                // during render is what React warns about.
+                                if ((syncOptions || []).length <= 1) return null;
                                 return (
                             <div className="rounded-xl bg-white/[0.04] border border-white/10 p-4">
                                 <h4 className="text-white font-semibold text-sm mb-3">How should the two systems work together?</h4>
@@ -730,16 +1349,68 @@ export default function GovtechIntegrations() {
 
                             {!testing && testResult?.ok && (
                                 <div className="space-y-4">
+                                    {/* Two different outcomes, and they were shown identically.
+                                        "The connection works" is a claim about the credentials;
+                                        for Open311, or a vendor with no key saved, nothing here
+                                        has tested them and the first thing to find out otherwise
+                                        would be a report that never arrived. */}
                                     <div className="flex flex-col items-center py-4 text-center">
-                                        <div className="w-14 h-14 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mb-3">
-                                            <PartyPopper className="w-7 h-7 text-emerald-300" />
-                                        </div>
-                                        <h4 className="text-white font-semibold">You're connected!</h4>
-                                        <p className="text-white/50 text-sm mt-1 max-w-sm">
-                                            The connection works and has been turned on. New resident reports will
-                                            now flow to {wizard.name} automatically — nothing else to do.
-                                        </p>
+                                        {testResult.verified === false ? (
+                                            <>
+                                                <div className="w-14 h-14 rounded-full bg-sky-500/20 border border-sky-500/40 flex items-center justify-center mb-3">
+                                                    <CheckCircle className="w-7 h-7 text-sky-300" />
+                                                </div>
+                                                <h4 className="text-white font-semibold">Reachable — and switched on</h4>
+                                                <p className="text-white/50 text-sm mt-1 max-w-sm">
+                                                    We reached {wizard.name} and turned the connection on. Nothing here
+                                                    could test your credentials, though:
+                                                </p>
+                                                <p className="text-sky-200/80 text-xs mt-2 max-w-sm">{testResult.detail}</p>
+                                                <p className="text-white/40 text-xs mt-2 max-w-sm">
+                                                    Send yourself a test report to confirm it arrives at their end.
+                                                </p>
+                                            </>
+                                        ) : (testResult.warnings || []).length > 0 ? (
+                                            /* Signed in, but something still blocks a report —
+                                               e.g. a SeeClickFix request type with a required
+                                               question nobody has answered. Amber, not a party. */
+                                            <>
+                                                <div className="w-14 h-14 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center mb-3">
+                                                    <AlertCircle className="w-7 h-7 text-amber-300" />
+                                                </div>
+                                                <h4 className="text-white font-semibold">Almost there</h4>
+                                                <p className="text-white/50 text-sm mt-1 max-w-sm">
+                                                    The sign-in works and the connection is on — but {wizard.name} still
+                                                    needs the details below before reports will go through.
+                                                </p>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <div className="w-14 h-14 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mb-3">
+                                                    <PartyPopper className="w-7 h-7 text-emerald-300" />
+                                                </div>
+                                                <h4 className="text-white font-semibold">You're connected!</h4>
+                                                <p className="text-white/50 text-sm mt-1 max-w-sm">
+                                                    The credentials were accepted and the connection has been turned on.
+                                                    New resident reports will now flow to {wizard.name} automatically.
+                                                </p>
+                                            </>
+                                        )}
                                     </div>
+
+                                    {(testResult.warnings || []).length > 0 && (
+                                        <div className="rounded-xl bg-amber-500/10 border border-amber-500/25 p-4 space-y-2">
+                                            <h4 className="text-amber-200 font-semibold text-sm flex items-center gap-2">
+                                                <AlertCircle className="w-4 h-4" /> Finish this before the first report
+                                            </h4>
+                                            {testResult.warnings!.map((w, i) => (
+                                                <p key={i} className="text-amber-100/80 text-sm">{w}</p>
+                                            ))}
+                                            <Button variant="ghost" size="sm" onClick={() => setStep('details')} leftIcon={<ArrowLeft className="w-3.5 h-3.5" />}>
+                                                Go back and fill this in
+                                            </Button>
+                                        </div>
+                                    )}
 
                                     {(() => {
                                         const existing = configFor(wizard.platform);

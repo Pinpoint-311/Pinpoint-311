@@ -42,9 +42,10 @@ class FakeHealth:
         # it ran, which nothing recorded.
         self.providers = []
 
-    async def record_success(self, db, connector, provider=None):
+    async def record_success(self, db, connector, provider=None, detail=None):
         self.successes.append(connector)
         self.providers.append((connector, provider))
+        self.details = getattr(self, "details", []) + [(connector, detail)]
 
     async def record_failure(self, db, connector, error, provider=None):
         self.failures.append((connector, str(error)))
@@ -297,3 +298,125 @@ def test_the_sweep_still_runs_without_the_api_package(sweep):
         None, checks={"maps": ok()}, is_configured=is_configured,
         health=health, alerts=FakeAlerts()))
     assert result["checked"]["maps"] == "working"
+
+
+def test_a_switched_off_connector_does_not_keep_emailing(monkeypatch):
+    """A connector switched off after it started failing keeps its failing
+    health row -- the sweep no longer runs it, so the counters never reset --
+    and that frozen row must not generate a reminder email forever. There is
+    no card for a switched-off capability, so there is no mute button either;
+    the switch itself has to be the thing that stops the mail."""
+    from types import SimpleNamespace
+
+    from app.services import capability_switches
+    from app.services.connector_verification import notify
+
+    rows = {
+        "sms": SimpleNamespace(connector="sms"),
+        "email": SimpleNamespace(connector="email"),
+    }
+
+    class SnapshotHealth(FakeHealth):
+        async def snapshot(self, db):
+            return rows
+
+    async def enabled(capability):
+        return capability != "sms"
+
+    monkeypatch.setattr(capability_switches, "enabled", enabled)
+
+    alerts = FakeAlerts()
+    asyncio.run(notify(None, health=SnapshotHealth(), alerts=alerts))
+
+    dispatched = [h.connector for h in alerts.calls[0]]
+    assert dispatched == ["email"]
+
+
+def test_a_broken_switch_lookup_still_alerts(monkeypatch):
+    """Doubt resolves toward alerting: if the switches cannot be read, every
+    row goes to dispatch rather than none of them."""
+    from types import SimpleNamespace
+
+    from app.services import capability_switches
+    from app.services.connector_verification import notify
+
+    class SnapshotHealth(FakeHealth):
+        async def snapshot(self, db):
+            return {"sms": SimpleNamespace(connector="sms")}
+
+    async def explode(capability):
+        raise RuntimeError("settings table unreadable")
+
+    monkeypatch.setattr(capability_switches, "enabled", explode)
+
+    alerts = FakeAlerts()
+    asyncio.run(notify(None, health=SnapshotHealth(), alerts=alerts))
+
+    assert [h.connector for h in alerts.calls[0]] == ["sms"]
+
+
+def test_the_probe_alert_hook_gets_the_dispatcher_signature():
+    """probe_system routes its `alerts` callable through notify, which calls
+    it as a dispatcher: `healths` supplied, town and settings link alongside.
+    So the callable the celery task wires in is `connector_alerts.dispatch`
+    itself, and this pins the shape it is called with -- the original wiring
+    called dispatch as `alerts(db)` and raised TypeError on the email step of
+    every hourly probe, so the full disk was recorded, the dashboard showed
+    it, and the email the task exists to send never was."""
+    from app.services.connector_verification import probe_system
+
+    calls = []
+
+    async def alerts(db, *, healths, **kwargs):
+        calls.append(list(healths))
+        return {"sent": False}
+
+    health = FakeHealth()
+    result = asyncio.run(probe_system(
+        None, readings={"disk": {"ok": False, "detail": "98% full"}},
+        health=health, alerts=alerts))
+
+    assert len(calls) == 1, "the probe recorded a failure and told nobody"
+    assert result["probes"]["disk"] == "failing"
+
+
+def test_a_disconnected_town_system_does_not_keep_emailing(monkeypatch):
+    """Disabling or deleting a govtech integration stops the sweep testing it,
+    so its health row freezes red (or drifts to stale, which alerts as
+    at-risk). There is no card for a deleted integration and therefore no mute
+    button; the off switch itself has to stop the mail. Only rows for
+    currently-enabled integrations may reach dispatch."""
+    from types import SimpleNamespace
+
+    from app.services import connector_verification as cv
+
+    rows = {
+        "govtech:accela": SimpleNamespace(connector="govtech:accela"),
+        "govtech:open311": SimpleNamespace(connector="govtech:open311"),
+        "email": SimpleNamespace(connector="email"),
+    }
+
+    class SnapshotHealth(FakeHealth):
+        async def snapshot(self, db):
+            return rows
+
+    async def enabled_integrations(db):
+        return [SimpleNamespace(platform="open311")]
+
+    monkeypatch.setattr(cv, "_enabled_integrations", enabled_integrations)
+
+    # Pin the capability switches on, like the neighbouring tests: this test
+    # is about the govtech filter, and the legacy EMAIL_ENABLED opt-in would
+    # otherwise swallow the email row in an environment with no database.
+    from app.services import capability_switches
+
+    async def everything_on(capability):
+        return True
+
+    monkeypatch.setattr(capability_switches, "enabled", everything_on)
+
+    alerts = FakeAlerts()
+    asyncio.run(cv.notify(None, health=SnapshotHealth(), alerts=alerts))
+
+    dispatched = sorted(h.connector for h in alerts.calls[0])
+    assert dispatched == ["email", "govtech:open311"]

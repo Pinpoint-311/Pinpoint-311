@@ -70,12 +70,30 @@ class Open311Connector(BaseConnector):
         )
 
     async def test_connection(self) -> Dict[str, Any]:
+        """Confirm the endpoint is a GeoReport v2 server we can read.
+
+        Deliberately reports `verified: False`. GeoReport v2 has no
+        authenticated read endpoint -- `/services.json` answers anonymously on
+        essentially every server, and the `api_key` only starts mattering on the
+        POST that creates a record, which a connection check must not do. So the
+        honest result is "we reached them, and nothing here has exercised your
+        key". Returning a bare `ok` made the UI say "Connected", which a clerk
+        reads as "the credentials work", and the first thing to discover
+        otherwise would have been a resident's report failing to arrive.
+        """
         async with self._client() as client:
             resp = await client.get(f"{self.base_url}/services.json", params=self._common_params())
             self._raise_for_status(resp, "Open311 services list")
             services = resp.json()
             count = len(services) if isinstance(services, list) else 0
-            return {"ok": True, "detail": f"Connected — endpoint advertises {count} service(s)"}
+        detail = f"Server reachable — it advertises {count} service type(s). "
+        if self.credentials.get("api_key"):
+            detail += ("Open311 has no way to check an API key without filing a real "
+                       "record, so your key is only exercised on the first push.")
+        else:
+            detail += ("No API key is saved. Most Open311 servers need one to create "
+                       "records, so pushes may be refused until you add it.")
+        return {"ok": True, "verified": False, "detail": detail}
 
     async def push_request(self, payload: Dict[str, Any]) -> ExternalRecord:
         data = dict(self._common_params())

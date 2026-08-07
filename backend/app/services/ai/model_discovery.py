@@ -94,7 +94,8 @@ async def _discover_vertex(creds: Dict[str, str]) -> Optional[List[Dict[str, str
         from google.auth.transport.requests import Request
         from google.oauth2 import service_account
 
-        from app.services.ai.vertex_publishers import ANTHROPIC, GOOGLE, SUPPORTED_PUBLISHERS
+        from app.services.ai.vertex_publishers import (
+            ANTHROPIC, GOOGLE, MAAS_PUBLISHERS, META, SUPPORTED_PUBLISHERS)
 
         scopes = ["https://www.googleapis.com/auth/cloud-platform"]
         if sa_json:
@@ -109,13 +110,21 @@ async def _discover_vertex(creds: Dict[str, str]) -> Optional[List[Dict[str, str
         seen = set()
         failures = []
         for publisher in SUPPORTED_PUBLISHERS:
-            # Anthropic models are not listed from the global endpoint.
+            # Anthropic models are not listed from the global endpoint, and
+            # neither are the MaaS publishers (Meta's global listing is empty;
+            # observed live). Same fallback regions endpoint_for uses to call.
             region = location
             if publisher == ANTHROPIC and region in ("", "global"):
                 region = "us-east5"
+            if publisher in MAAS_PUBLISHERS and region in ("", "global"):
+                region = "us-central1"
             host = ("aiplatform.googleapis.com" if region in ("", "global")
                     else f"{region}-aiplatform.googleapis.com")
-            url = f"https://{host}/v1/publishers/{publisher}/models"
+            # v1beta1, deliberately. ListPublisherModels does not exist under
+            # /v1 -- Google answers it with an HTML 404 -- so every publisher
+            # "failed" and the picker silently fell back to the curated list
+            # on every deployment, which read as discovery not working at all.
+            url = f"https://{host}/v1beta1/publishers/{publisher}/models"
             page_token = None
             try:
                 for _ in range(5):  # bound pagination
@@ -130,10 +139,27 @@ async def _discover_vertex(creds: Dict[str, str]) -> Optional[List[Dict[str, str
                         mid = name.split("/")[-1] if name else m.get("modelId", "")
                         if not mid or mid in seen:
                             continue
-                        # Text generation only. An embedding or image model in
-                        # a triage picker is a choice that fails at request
-                        # time rather than at selection.
-                        if any(x in mid.lower() for x in ("embedding", "aqa", "imagen", "veo")):
+                        # Text generation only. An embedding, image, speech or
+                        # live-audio model in a triage picker is a choice that
+                        # fails at request time rather than at selection --
+                        # Google's publisher list carries all of them side by
+                        # side with the text models.
+                        if any(x in mid.lower() for x in (
+                                "embedding", "aqa", "imagen", "veo",
+                                "tts", "image", "audio", "-live-",
+                                # Observed in the live Mistral listing: an OCR
+                                # model and a deploy-it-yourself Codestral,
+                                # neither callable through the MaaS endpoint.
+                                "ocr", "-self-deploy")):
+                            continue
+                        # Meta's listing is mostly self-deploy Model Garden
+                        # cards -- faster-r-cnn, segment-anything, roberta,
+                        # bare llama2/3/4, llama-guard/prompt-guard -- with no
+                        # serving endpoint behind them. Only the `-maas` ids
+                        # (observed: llama-3.3-70b-instruct-maas,
+                        # llama-4-maverick-17b-128e-instruct-maas) answer the
+                        # chat/completions endpoint this caller speaks.
+                        if publisher == META and not mid.endswith("-maas"):
                             continue
                         seen.add(mid)
                         label = m.get("displayName") or mid

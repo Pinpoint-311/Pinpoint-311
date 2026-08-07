@@ -16,10 +16,10 @@ import base64
 import hashlib
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.core.celery_app import celery_app
 from app.db.session import SessionLocal
@@ -33,6 +33,9 @@ from app.models import (
     ServiceDefinition,
     ServiceRequest,
 )
+from app.services import connector_health
+from app.services.circuit_breaker import CircuitOpen, guard
+from app.services.connector_verification import health_key
 from app.tasks.service_requests import run_async
 
 logger = logging.getLogger(__name__)
@@ -49,6 +52,48 @@ def _flag(config: dict, key: str, default: bool = False) -> bool:
     if value is None:
         return default
     return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+# How far back a poll reaches beyond the last recorded sync.
+#
+# These timestamps are not ours and are not transactionally ordered: a vendor
+# writes `updated_at` from its own clock, at the moment it edits the row, and
+# makes it visible to a query some time later. A poll that asks for "everything
+# after the exact instant the last one started" therefore drops records whose
+# stamp falls before that instant but which only became queryable after it.
+#
+# Overlapping re-reads a few records every run, which costs nothing: every
+# record is matched to an IntegrationLink by external id and applied only if
+# something actually changed, so a replay is a no-op.
+PULL_OVERLAP = timedelta(minutes=5)
+
+
+def _pull_since(integration) -> Optional[datetime]:
+    """The window a poll should ask the vendor for."""
+    last = integration.last_sync_at
+    if last is None:
+        return None
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    return last - PULL_OVERLAP
+
+
+def _newest_change(records) -> Optional[datetime]:
+    """The most recent `updated_at` in a batch, for the sync log.
+
+    Every connector populates `ExternalRecord.updated_at` and nothing read it.
+    It is reported rather than used as the watermark on purpose: a vendor whose
+    clock runs fast would push the watermark into the future, and every change
+    between now and then would be skipped -- a worse failure than the one being
+    fixed here, and a silent one. `started_at` is a clock we own.
+    """
+    stamps = []
+    for record in records:
+        stamp = getattr(record, "updated_at", None)
+        if stamp is None:
+            continue
+        stamps.append(stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp)
+    return max(stamps) if stamps else None
 
 
 _DATA_URI_RE = re.compile(r"^data:(image/[a-zA-Z0-9.+-]+);base64,(.+)$", re.DOTALL)
@@ -227,7 +272,6 @@ async def _push_documents(db, connector, integration, link, sr):
     documents = await _decode_media(sr)
     new_docs = documents[already:]
     if not new_docs:
-        link.documents_pushed = True
         return
     pushed = 0
     try:
@@ -235,7 +279,6 @@ async def _push_documents(db, connector, integration, link, sr):
             await connector.push_document(link.external_id, filename, content, mime)
             pushed += 1
         link.documents_pushed_count = already + pushed
-        link.documents_pushed = True
         await _log(db, integration.id, "push_documents", "success",
                    f"{sr.service_request_id}: {pushed} photo(s) attached", pushed)
     except Exception as e:
@@ -360,10 +403,9 @@ def push_request_to_integrations(self, request_id: int):
                     # service that is not coming back this minute. This also
                     # records the outcome, so the admin badge reflects real
                     # pushes rather than only whenever someone pressed Test.
-                    from app.services.circuit_breaker import guard
                     payload = _build_payload(sr, integration.config or {}, await _dept_name(db, sr))
                     record = await guard(
-                        f"govtech:{integration.platform}",
+                        health_key(integration.platform),
                         lambda: connector.push_request(payload),
                         db=db,
                         provider=integration.platform,
@@ -384,6 +426,11 @@ def push_request_to_integrations(self, request_id: int):
                     await _push_documents(db, connector, integration, link, sr)
                     await db.commit()
                 except Exception as e:
+                    # Without this a DB-level failure leaves the session in
+                    # PendingRollbackError, so `_log`'s own commit raises too and
+                    # the remaining integrations in this loop are never tried --
+                    # one vendor's problem silently becoming every vendor's.
+                    await db.rollback()
                     await _log(db, integration.id, "push", "error",
                                f"{sr.service_request_id}: {e}")
                     logger.warning(f"[Integrations] Push to {integration.platform} failed: {e}")
@@ -414,13 +461,17 @@ def push_status_to_integrations(self, request_id: int, notes: str = None):
             )).all()
 
             for link, integration in links:
+                # Read while the session is certainly usable. After a rollback
+                # the instance is expired, and building an UPDATE from it would
+                # need to re-read the primary key -- a lazy load, which under the
+                # async engine raises rather than quietly querying.
+                link_id = link.id
                 try:
                     connector = await build_connector_for(integration)
                     if "push_status" not in connector.capabilities:
                         continue
-                    from app.services.circuit_breaker import guard
                     await guard(
-                        f"govtech:{integration.platform}",
+                        health_key(integration.platform),
                         lambda: connector.push_status(link.external_id, sr.status, notes),
                         db=db,
                         provider=integration.platform,
@@ -433,7 +484,17 @@ def push_status_to_integrations(self, request_id: int, notes: str = None):
                     # Attach any photos added since the last push (idempotent).
                     await _push_documents(db, connector, integration, link, sr)
                 except Exception as e:
-                    link.sync_error = str(e)[:1000]
+                    # Same reason as the create path: a poisoned session makes
+                    # `_log` raise on its commit and abandons every integration
+                    # after this one.
+                    await db.rollback()
+                    # By id rather than through the expired instance, and issued
+                    # after the rollback so it is not discarded by it.
+                    await db.execute(
+                        update(IntegrationLink)
+                        .where(IntegrationLink.id == link_id)
+                        .values(sync_error=str(e)[:1000])
+                    )
                     await _log(db, integration.id, "push_status", "error",
                                f"{sr.service_request_id}: {e}")
                     logger.warning(f"[Integrations] Status push to {integration.platform} failed: {e}")
@@ -443,25 +504,65 @@ def push_status_to_integrations(self, request_id: int, notes: str = None):
 
 
 @celery_app.task
-def pull_integration_updates():
-    """Beat task: poll pull-enabled platforms and mirror external status changes."""
+def pull_integration_updates(integration_id: Optional[int] = None):
+    """Poll pull-enabled platforms and mirror external status changes.
+
+    Runs on the beat over every enabled integration, or over one of them when an
+    admin presses "Check for updates" on a card. Scoping matters beyond
+    tidiness: the unscoped version meant pressing the button on a newly
+    configured connector also polled every other vendor the town uses, so a
+    broken one wrote an error row to its sync log at a moment nobody had asked
+    it to do anything -- and the admin watching a different card had no way to
+    connect the two.
+    """
     from app.integrations import build_connector_for
 
     async def _pull():
         async with SessionLocal() as db:
-            integrations = (await db.execute(
-                select(IntegrationConfig).where(
-                    IntegrationConfig.enabled == True,  # noqa: E712
-                    IntegrationConfig.sync_direction.in_(["pull", "bidirectional"]),
-                )
-            )).scalars().all()
+            query = select(IntegrationConfig).where(
+                IntegrationConfig.enabled == True,  # noqa: E712
+                IntegrationConfig.sync_direction.in_(["pull", "bidirectional"]),
+            )
+            if integration_id is not None:
+                query = query.where(IntegrationConfig.id == integration_id)
+            integrations = (await db.execute(query)).scalars().all()
 
             for integration in integrations:
+                # Read while the session is certainly usable; see the error
+                # handler below for why they cannot be read from the instance
+                # after a rollback.
+                # `row_id`, not `integration_id`. Reassigning the task's
+                # parameter name here makes it local to this whole closure, so
+                # the `if integration_id is not None` filter above raised
+                # UnboundLocalError before the first query -- every beat tick
+                # and every manual "Check for updates" died at the top.
+                row_id, platform = integration.id, integration.platform
                 try:
                     connector = await build_connector_for(integration)
                     if "pull" not in connector.capabilities:
                         continue
-                    records = await connector.pull_updates(since=integration.last_sync_at)
+                    # Stamped before the fetch, not after it. `last_sync_at` used
+                    # to be set to now() once the records were in hand, so
+                    # anything the vendor changed *while* we were fetching --
+                    # a poll spanning several pages of a slow API can take
+                    # tens of seconds -- fell into a window that the next run
+                    # started after. Those updates were skipped forever, and
+                    # nothing anywhere would ever have said so.
+                    started_at = datetime.now(timezone.utc)
+                    # Behind the same breaker, and recorded to the same health
+                    # row, as a resident-report push. The poll used to call the
+                    # connector directly, so a vendor that had stopped answering
+                    # failed here every fifteen minutes and the only trace was
+                    # `last_sync_error` -- which nothing reads. Health said
+                    # "working" on the strength of whatever push last succeeded,
+                    # the daily sweep was the first thing to notice, and until it
+                    # ran the badge was green while nothing came back.
+                    records = await guard(
+                        health_key(platform),
+                        lambda: connector.pull_updates(since=_pull_since(integration)),
+                        db=db,
+                        provider=platform,
+                    )
                     updated = 0
                     imported = 0
                     for record in records:
@@ -518,22 +619,45 @@ def pull_integration_updates():
                         ))
                         updated += 1
 
-                    integration.last_sync_at = datetime.now(timezone.utc)
+                    integration.last_sync_at = started_at
                     integration.last_sync_status = "success"
                     integration.last_sync_error = None
+                    newest = _newest_change(records)
                     await _log(db, integration.id, "pull", "success",
                                f"{len(records)} record(s) fetched, {updated} status change(s) applied, "
-                               f"{imported} new request(s) imported",
+                               f"{imported} new request(s) imported"
+                               + (f", newest change {newest.isoformat()}" if newest else ""),
                                len(records))
+                except CircuitOpen as e:
+                    # Already known to be down; `guard` declined the call rather
+                    # than making it. Not recorded as a new failure -- the
+                    # failures that opened the circuit are in the row already,
+                    # and counting a call we chose not to make would inflate the
+                    # number that decides blip from outage.
+                    await db.rollback()
+                    await _log(db, row_id, "pull", "skipped", str(e))
+                    continue
                 except Exception as e:
                     # Clear any pending-rollback state before writing the error
                     # log, so one bad record can't poison the whole beat cycle.
                     await db.rollback()
-                    integration.last_sync_at = datetime.now(timezone.utc)
-                    integration.last_sync_status = "error"
-                    integration.last_sync_error = str(e)[:1000]
-                    await _log(db, integration.id, "pull", "error", str(e))
-                    logger.warning(f"[Integrations] Pull from {integration.platform} failed: {e}")
+                    # `last_sync_at` is deliberately left where it was. It is the
+                    # watermark the next poll reads from, and moving it after a
+                    # failed fetch would step over the very window that failed --
+                    # so a vendor outage of one beat interval would permanently
+                    # lose every change made during it. The status and error
+                    # below are what tell the admin the last attempt failed.
+                    #
+                    # Written by id: after the rollback the instance is expired,
+                    # and assembling an UPDATE from it needs a lazy re-read of
+                    # the primary key, which raises under the async engine.
+                    await db.execute(
+                        update(IntegrationConfig)
+                        .where(IntegrationConfig.id == row_id)
+                        .values(last_sync_status="error", last_sync_error=str(e)[:1000])
+                    )
+                    await _log(db, row_id, "pull", "error", str(e))
+                    logger.warning(f"[Integrations] Pull from {platform} failed: {e}")
             await db.commit()
 
     run_async(_pull())
@@ -654,20 +778,31 @@ def push_comment_to_integrations(self, comment_id: int):
 
 
 @celery_app.task
-def pull_integration_comments():
-    """Beat task: import new external comments on linked, active requests."""
+def pull_integration_comments(integration_id: Optional[int] = None):
+    """Import new external comments on linked, active requests.
+
+    Scoped to one integration when an admin asked for one; see
+    pull_integration_updates for why that matters.
+    """
     from app.integrations import build_connector_for
 
     async def _pull_comments():
         async with SessionLocal() as db:
-            integrations = (await db.execute(
-                select(IntegrationConfig).where(
-                    IntegrationConfig.enabled == True,  # noqa: E712
-                    IntegrationConfig.sync_direction.in_(["pull", "bidirectional"]),
-                )
-            )).scalars().all()
+            query = select(IntegrationConfig).where(
+                IntegrationConfig.enabled == True,  # noqa: E712
+                IntegrationConfig.sync_direction.in_(["pull", "bidirectional"]),
+            )
+            if integration_id is not None:
+                query = query.where(IntegrationConfig.id == integration_id)
+            integrations = (await db.execute(query)).scalars().all()
 
             for integration in integrations:
+                # Read while the session is certainly usable. The rollback in
+                # the error handler expires the instance, and attribute access
+                # on an expired instance raises under the async engine.
+                # Same scoping trap as the pull loop above: the name must not
+                # shadow the task parameter read a few lines up.
+                row_id, platform = integration.id, integration.platform
                 try:
                     connector = await build_connector_for(integration)
                     if "comments" not in connector.capabilities:
@@ -717,31 +852,55 @@ def pull_integration_comments():
                                    imported)
                 except Exception as e:
                     await db.rollback()
-                    await _log(db, integration.id, "pull_comments", "error", str(e))
-                    logger.warning(f"[Integrations] Comment pull from {integration.platform} failed: {e}")
+                    # Recorded, like every other real call to this vendor. A
+                    # connector whose comment poll fails every fifteen minutes is
+                    # a connector that is not working, and this path used to
+                    # write a sync-log line no health surface reads.
+                    await connector_health.record_failure(
+                        db, health_key(platform), e, provider=platform)
+                    await _log(db, row_id, "pull_comments", "error", str(e))
+                    logger.warning(f"[Integrations] Comment pull from {platform} failed: {e}")
             await db.commit()
 
     run_async(_pull_comments())
 
 
 @celery_app.task
-def sync_integration_assets():
-    """Beat task: mirror external asset inventories into Pinpoint map layers.
+def sync_integration_assets(integration_id: Optional[int] = None):
+    """Mirror external asset inventories into Pinpoint map layers.
 
     Synced assets become a point layer usable for asset-linked request intake
     (residents pick the exact hydrant/streetlight/sign the report is about).
-    Enabled per integration via config.sync_assets = true."""
+
+    On the nightly beat this covers every integration with config.sync_assets
+    set. Called with an `integration_id` it runs that one regardless of the flag:
+    an admin pressing "Sync assets now" is asking for this run and only this run.
+    The endpoint used to grant the request by *setting* the flag, which enrolled
+    the integration in the nightly job permanently, with no UI indication and no
+    way back.
+    """
     from app.integrations import build_connector_for
 
     async def _sync_assets():
         async with SessionLocal() as db:
-            integrations = (await db.execute(
-                select(IntegrationConfig).where(IntegrationConfig.enabled == True)  # noqa: E712
-            )).scalars().all()
+            query = select(IntegrationConfig).where(
+                IntegrationConfig.enabled == True  # noqa: E712
+            )
+            if integration_id is not None:
+                query = query.where(IntegrationConfig.id == integration_id)
+            integrations = (await db.execute(query)).scalars().all()
 
             for integration in integrations:
                 config = integration.config or {}
-                if not _flag(config, "sync_assets"):
+                # Read while the session is certainly usable. The rollback in
+                # the error handler expires the instance, and attribute access
+                # on an expired instance raises under the async engine. Not
+                # named `integration_id`: the loop still consults that argument
+                # to tell a one-off run from the nightly pass.
+                row_id, platform = integration.id, integration.platform
+                # The flag governs the unattended nightly pass only. A one-off
+                # asked for by name does not need permission to be asked for.
+                if integration_id is None and not _flag(config, "sync_assets"):
                     continue
                 try:
                     connector = await build_connector_for(integration)
@@ -781,8 +940,10 @@ def sync_integration_assets():
                                len(features))
                 except Exception as e:
                     await db.rollback()
-                    await _log(db, integration.id, "sync_assets", "error", str(e))
-                    logger.warning(f"[Integrations] Asset sync from {integration.platform} failed: {e}")
+                    await connector_health.record_failure(
+                        db, health_key(platform), e, provider=platform)
+                    await _log(db, row_id, "sync_assets", "error", str(e))
+                    logger.warning(f"[Integrations] Asset sync from {platform} failed: {e}")
             await db.commit()
 
     run_async(_sync_assets())

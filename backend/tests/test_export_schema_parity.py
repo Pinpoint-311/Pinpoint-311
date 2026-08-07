@@ -51,8 +51,8 @@ def _request():
     r.source = "resident_portal"
     r.assigned_department_id = 3
     r.ai_analysis = {"priority_score": 7.0}
-    r.vertex_ai_summary = "Road damage"
-    r.vertex_ai_analyzed_at = t
+    r.ai_summary = "Road damage"
+    r.ai_analyzed_at = t
     r.manual_priority_score = 8.0
     r.flagged, r.flag_reason = False, None
     r.first_name, r.last_name = "Sarah", "Whitman"
@@ -101,10 +101,35 @@ def test_research_export_never_contains_operational_or_pii_columns():
 
 def test_research_mode_redacts_and_fuzzes():
     row = build_dataset_row(_request(), _EQ, "fuzzed")
-    assert "Sarah Whitman" not in row["description_sanitized"]
-    assert "609-555-1212" not in row["description_sanitized"]
-    assert "12 Maple Ave" not in row["description_sanitized"]
     assert row["latitude"] != 40.3573          # grid-snapped
+    # Street name AND house number are withheld now, not just the number.
+    assert "Maple" not in row["address_anonymized"]
+    # Timestamps coarsen to the day outside exact mode — a full-second
+    # timestamp is a quasi-identifier.
+    assert row["submitted_datetime"] == "2026-07-01"
+
+
+def test_free_text_is_deliberately_out_of_the_schema():
+    """Pinned schema change (2026-08 hardening): `description_sanitized` and
+    `ai_summary_sanitized` were removed on purpose. Pattern redaction over
+    resident free text is best-effort, and one miss ships a name or address in
+    a file that leaves the building; researchers get description_word_count
+    and the derived scores instead. Do not re-add the prose columns."""
+    assert "description_sanitized" not in RESEARCH_COLUMNS
+    assert "ai_summary_sanitized" not in RESEARCH_COLUMNS
+    row = build_dataset_row(_request(), _EQ, "fuzzed")
+    assert "description_sanitized" not in row
+    assert row["description_word_count"] == len(_request().description.split())
+
+
+def test_moderation_flag_reason_is_redacted():
+    """The wordlist quotes the offending text into the reason, so the reason
+    passes through the same PII redaction as any other free text."""
+    r = _request()
+    r.flagged, r.flag_reason = True, "Auto-flagged: call Sarah Whitman 609-555-1212"
+    row = build_dataset_row(r, _EQ, "fuzzed")
+    assert "609-555-1212" not in row["moderation_flag_reason"]
+    assert "Sarah Whitman" not in row["moderation_flag_reason"]
 
 
 def test_staff_mode_keeps_operational_detail():

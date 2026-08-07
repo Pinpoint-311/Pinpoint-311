@@ -188,7 +188,13 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
                 texts.forEach((text, idx) => {
                     const translation = data.translations?.[idx] || text;
                     results.set(text, translation);
-                    setCachedTranslation(text, translation, 'en', targetLang);
+                    // The backend answers with the source text unchanged when
+                    // translation is off or unconfigured. Caching that would
+                    // persist English into the Spanish cache in localStorage,
+                    // where it keeps winning after translation starts working.
+                    if (translation !== text) {
+                        setCachedTranslation(text, translation, 'en', targetLang);
+                    }
                 });
                 saveCacheToStorage();
                 return results;

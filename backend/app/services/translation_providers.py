@@ -143,10 +143,19 @@ TRANSLATION_CATALOG: Dict[str, Dict[str, Any]] = {
     "google": {
         "name": "Google Cloud Translation",
         "description": "Google Translate — the default; ~100+ languages.",
-        "credential_fields": [
-            {"key": "GOOGLE_CLOUD_PROJECT", "label": "GCP Project (uses the same GCP creds)", "secret": False},
+        # Dispatch authenticates with the service account
+        # (translation._get_auth_headers reads GCP_SERVICE_ACCOUNT_JSON); the
+        # project id is never read on this path. This card used to collect
+        # GOOGLE_CLOUD_PROJECT as its required credential, so "configured"
+        # meant "typed a project name" on a translator that could not
+        # authenticate. The service account is a bootstrap credential the
+        # first-run setup collects, so it is declared in `requires` -- the
+        # badge sees it -- rather than offered as a second box writing the
+        # same secret.
+        "credential_fields": [],
+        "requires": [
+            {"key": "GCP_SERVICE_ACCOUNT_JSON", "label": "Google service account", "where": "Setup"},
         ],
-        "field_help": {"GOOGLE_CLOUD_PROJECT": "Uses your existing Google Cloud credentials; no extra key needed if GCP is already set up."},
     },
     "azure": {
         "name": "Azure AI Translator",
@@ -200,6 +209,12 @@ async def get_translation_provider() -> Optional[TranslationProvider]:
 
     provider = (await get_secret(TRANSLATION_PROVIDER_KEY)) or "google"
     provider = provider.strip().lower()
+    # A stored "none" is a choice, not a missing value -- the same words
+    # image_redaction.resolve_provider honours. Falling through to the Google
+    # default here dispatched translations for a town whose status page said
+    # translation was off.
+    if provider in ("none", "off", "disabled"):
+        return None
     if provider == "azure":
         key = await get_secret("AZURE_TRANSLATOR_KEY")
         if not key:
