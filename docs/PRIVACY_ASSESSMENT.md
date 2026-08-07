@@ -52,6 +52,34 @@ Data is used solely for:
 
 **No data sold to third parties.**
 
+### 4.1 Research pack switches — what they do and do not control
+
+The Research & Analytics Lab groups its export columns into packs
+(Social Equity, Environmental Context, Sentiment & Trust, Bureaucratic
+Friction, AI/ML Research, Moderation) that an administrator can switch on
+or off per town.
+
+- **Pack off = never exported AND never computed.** A disabled pack's data
+  is not generated and then hidden — it is never generated at all. No
+  sentiment score is computed over a resident's message, no request leaves
+  for the Census Bureau, CDC SVI, or weather APIs, and nothing derived for
+  that pack is written to the database or to disk. Because the data never
+  comes into existence, there is no record of it to disclose under
+  public-records (e.g. OPRA) requests. This holds for the researcher
+  exports, the admin staff export, and the AI analytics chat alike.
+- **Enabled packs cache only in process memory.** Census/ACS, CDC SVI, and
+  geocoder results for *enabled* packs are memoized in in-process
+  dictionaries to limit repeated API calls; they are never persisted to the
+  database or filesystem and vanish on restart.
+- **Operational records are governed by their own switches.** Intake
+  content-moderation flags (`flagged`/`flag_reason`) and AI triage results
+  (`ai_summary`, `ai_analysis`) are stored by those day-to-day operational
+  features under their own feature switches (the moderation wordlist at
+  intake; the "ai" capability switch). The research pack switches control
+  only whether exports **disclose** those stored fields. The stored
+  operational records themselves remain in the database and are subject to
+  records requests like any other operational record.
+
 ---
 
 ## 5. Data Protection Measures

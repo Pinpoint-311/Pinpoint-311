@@ -621,7 +621,7 @@ async def get_housing_tenure_mix(census_geoid: str) -> Optional[float]:
     return None
 
 
-async def build_equity_map(requests, privacy_mode: str = "fuzzed") -> dict:
+async def build_equity_map(requests, privacy_mode: str = "fuzzed", packs: Optional[dict] = None) -> dict:
     """Resolve the Census-derived equity fields for a set of requests, up front.
 
     These lookups are async (real Census Geocoder + ACS calls), but the CSV
@@ -636,13 +636,29 @@ async def build_equity_map(requests, privacy_mode: str = "fuzzed") -> dict:
     Weather is resolved here too, for the same reason (its API call is async now,
     and it previously blocked the event loop from inside the request loop).
 
+    `packs` is the {pack_id: bool} map from enabled_packs(). Off = the data is
+    NEVER GENERATED, not generated-then-hidden: with social_equity off no call
+    leaves for the Census geocoder, ACS or CDC SVI at all; with
+    environmental_context off no weather lookup fires. Anything computed here
+    exists in memory (and in third-party request logs) even if a column filter
+    later drops it, and under public-records law data that exists can be
+    requested — so a disabled pack's data must simply never come into being.
+    None (the default) means "all packs on" for callers outside the export
+    paths; both exports always pass the admin's real switches.
+
     Returns {request.id: {census_geoid, income_band, population_density,
                           social_vulnerability_index, housing_tenure_renter_pct,
                           weather}}.
     """
+    equity_on = packs is None or packs.get("social_equity", True)
+    weather_on = packs is None or packs.get("environmental_context", True)
+
     by_coord: dict = {}
     by_weather: dict = {}
     out: dict = {}
+
+    if not equity_on and not weather_on:
+        return {req.id: {} for req in requests}
 
     for req in requests:
         if req.lat is None or req.long is None:
@@ -654,7 +670,7 @@ async def build_equity_map(requests, privacy_mode: str = "fuzzed") -> dict:
         # from these calls (tract, daily weather) is coarser than the snap.
         f_lat, f_long = fuzz_location(req.lat, req.long)
         key = (round(f_lat, 4), round(f_long, 4))
-        if key not in by_coord:
+        if equity_on and key not in by_coord:
             geoid = await get_census_tract_geoid(f_lat, f_long)
             zone = generate_zone_id(req.lat, req.long)
 
@@ -681,14 +697,15 @@ async def build_equity_map(requests, privacy_mode: str = "fuzzed") -> dict:
                 "svi_themes": svi_themes,
                 "housing_tenure_renter_pct": await get_housing_tenure_mix(geoid),
             }
-        entry = dict(by_coord[key])
+        entry = dict(by_coord.get(key, {}))
 
         # One weather lookup per (date, rounded location) — a day's worth of
         # requests in one neighborhood costs a single call, not one per row.
-        wkey = (req.requested_datetime.date() if req.requested_datetime else None, key)
-        if wkey not in by_weather:
-            by_weather[wkey] = await get_weather_context(req.requested_datetime, f_lat, f_long)
-        entry["weather"] = by_weather[wkey]
+        if weather_on:
+            wkey = (req.requested_datetime.date() if req.requested_datetime else None, key)
+            if wkey not in by_weather:
+                by_weather[wkey] = await get_weather_context(req.requested_datetime, f_lat, f_long)
+            entry["weather"] = by_weather[wkey]
 
         out[req.id] = entry
 
@@ -1331,14 +1348,20 @@ async def export_csv(
         len(requests), privacy_mode, request=request
     )
 
+    # Pack switches, enforced server-side at BOTH layers: a pack the admin
+    # turned off is never computed (packs= short-circuits inside
+    # build_equity_map/build_dataset_row — no Census/weather call fires, no
+    # sentiment score is produced) AND its columns never enter the file
+    # (fieldnames + extrasaction="ignore"). Never-computed is the load-bearing
+    # half: generated data exists and can be records-requested even if a
+    # column filter hid it.
+    system_settings = await get_system_settings(db)
+    packs = enabled_packs(system_settings)
+    columns = allowed_research_columns(system_settings)
+
     # Resolve the async Census/equity lookups before streaming — the generator
     # below is synchronous and cannot await (see build_equity_map).
-    equity_map = await build_equity_map(requests, privacy_mode)
-
-    # Pack switches, enforced server-side: columns whose pack the admin turned
-    # off never enter the file. build_dataset_row still computes them; the
-    # DictWriter's fieldnames + extrasaction="ignore" is the gate.
-    columns = allowed_research_columns(await get_system_settings(db))
+    equity_map = await build_equity_map(requests, privacy_mode, packs)
 
     def generate_csv():
         output = io.StringIO()
@@ -1349,7 +1372,7 @@ async def export_csv(
         output.truncate(0)
 
         for req in requests:
-            writer.writerow(build_dataset_row(req, equity_map.get(req.id, {}), privacy_mode))
+            writer.writerow(build_dataset_row(req, equity_map.get(req.id, {}), privacy_mode, packs=packs))
             yield output.getvalue()
             output.seek(0)
             output.truncate(0)
@@ -1415,12 +1438,15 @@ async def export_geojson(
         len(requests), privacy_mode, request=request
     )
 
-    # Real awaited Census/equity lookups, deduplicated by coordinate.
-    equity_map = await build_equity_map(requests, privacy_mode)
-
     system_settings = await get_system_settings(db)
-    # Pack switches, enforced server-side — same gate as the CSV.
+    # Pack switches, enforced server-side — same double gate as the CSV:
+    # off-pack data is never computed AND its columns never ship.
+    packs = enabled_packs(system_settings)
     columns = allowed_research_columns(system_settings)
+
+    # Real awaited Census/equity lookups, deduplicated by coordinate — skipped
+    # entirely for packs the admin turned off.
+    equity_map = await build_equity_map(requests, privacy_mode, packs)
     property_columns = [c for c in columns if c not in ("latitude", "longitude")]
 
     features = []
@@ -1434,7 +1460,7 @@ async def export_geojson(
         if lat is None or long is None:
             continue
 
-        row = build_dataset_row(req, equity_map.get(req.id, {}), privacy_mode)
+        row = build_dataset_row(req, equity_map.get(req.id, {}), privacy_mode, packs=packs)
         features.append({
             "type": "Feature",
             "geometry": {
@@ -1520,6 +1546,19 @@ async def get_data_dictionary(
             ),
             "exact_mode": "Admin only, audit-logged: full coordinates, addresses and timestamps.",
         },
+        "pack_switches": (
+            "What the research pack switches do and do not control: a pack an "
+            "administrator has switched OFF is never exported AND never computed "
+            "— no sentiment score is produced, no Census/CDC or weather lookup "
+            "is made, and nothing derived for that pack is stored anywhere, so "
+            "no record of it exists to be disclosed under public-records law. "
+            "Fields that exist for day-to-day operations (intake moderation "
+            "flags, AI triage results) are stored by those operational features "
+            "under their own feature switches; the pack switches control only "
+            "whether research exports DISCLOSE those stored fields, and the "
+            "stored operational records remain subject to records requests like "
+            "any other operational record."
+        ),
     }
     # Which sentiment implementation produced sentiment_score — only meaningful
     # when the pack is on.
@@ -2309,11 +2348,20 @@ RESEARCH_COLUMNS = [
 ]
 
 
-def build_dataset_row(req, _eq, privacy_mode, *, operational=False, include_pii=False) -> dict:
+def build_dataset_row(req, _eq, privacy_mode, *, packs=None, operational=False, include_pii=False) -> dict:
     """Build one analytical row.
 
     Shared by the privacy-preserving research export and the staff operational
     export. `_eq` is this request's entry from build_equity_map().
+
+    `packs` is the {pack_id: bool} map from enabled_packs(). A pack that is OFF
+    is never computed here — analyze_sentiment never runs over the resident's
+    text, the friction metrics are never derived, the AI/moderation fields are
+    never read out of the record — its keys are simply emitted as None (and the
+    column filter drops them from the file). Compute-then-omit is not enough:
+    a characterization that was generated exists, and anything that exists can
+    be pulled into a records request. None (the default) means "all packs on";
+    both export paths always pass the admin's real switches.
 
     operational=True adds the columns staff legitimately need for their work
     (raw description, exact address/coordinates, assignee, staff notes) on top of
@@ -2321,6 +2369,9 @@ def build_dataset_row(req, _eq, privacy_mode, *, operational=False, include_pii=
     details — that path is admin-gated and audit-logged by the caller, exactly as
     before; nothing here widens who can see PII.
     """
+    def _on(pack_id):
+        return packs is None or packs.get(pack_id, True)
+
     lat, long = (req.lat, req.long) if privacy_mode == "exact" else fuzz_location(req.lat, req.long)
     address_anon = anonymize_address(req.address, privacy_mode)
 
@@ -2338,32 +2389,67 @@ def build_dataset_row(req, _eq, privacy_mode, *, operational=False, include_pii=
     asset_type = None
     if req.matched_asset and isinstance(req.matched_asset, dict):
         asset_type = req.matched_asset.get('asset_type') or req.matched_asset.get('layer_name')
-    asset_attributes = get_matched_asset_attributes(req.matched_asset)
-    asset_age = get_asset_age_years(req.matched_asset)
     zone_id = generate_zone_id(req.lat, req.long)
-    season = get_season(req.requested_datetime)
     time_info = get_time_period(req.requested_datetime)
-    weather = (_eq or {}).get("weather") or {}
-    sentiment = analyze_sentiment(req.description)
-    trust = detect_trust_indicators(req.description)
+
+    # Environmental Context Pack — derived only when the pack is on.
+    if _on("environmental_context"):
+        asset_attributes = get_matched_asset_attributes(req.matched_asset)
+        asset_age = get_asset_age_years(req.matched_asset)
+        season = get_season(req.requested_datetime)
+        weather = (_eq or {}).get("weather") or {}
+    else:
+        asset_attributes, asset_age, season, weather = None, None, None, {}
+
+    # Sentiment & Trust Pack — the town's own characterization of a resident's
+    # message. Pack off = the scores are never produced, not produced-and-hidden.
+    if _on("sentiment_trust"):
+        sentiment = analyze_sentiment(req.description)
+        trust = detect_trust_indicators(req.description)
+    else:
+        sentiment, trust = None, {}
+
     total_comments = len(req.comments) if req.comments else 0
     public_comments = len([c for c in req.comments if c.visibility == 'external']) if req.comments else 0
-    resolution_hours = None
-    if req.closed_datetime and req.requested_datetime:
-        resolution_hours = round((req.closed_datetime - req.requested_datetime).total_seconds() / 3600, 2)
-    business_hours = calculate_business_hours(req.requested_datetime, req.closed_datetime)
-    time_to_triage = calculate_time_to_triage(req.requested_datetime, req.audit_logs)
-    reassignments = count_reassignments(req.audit_logs)
-    off_hours = is_off_hours_submission(req.requested_datetime)
-    escalation = calculate_escalation_occurred(req.audit_logs)
-    status_changes = count_status_changes(req)
-    days_to_first_update = days_to_first_staff_action(req)
-    ai_analysis = req.ai_analysis if isinstance(req.ai_analysis, dict) else {}
-    ai_priority = ai_analysis.get("priority_score")
-    ai_priority_diff = (
-        round(req.manual_priority_score - ai_priority, 2)
-        if (ai_priority is not None and req.manual_priority_score is not None) else None
-    )
+
+    # Bureaucratic Friction Pack — derived from the audit log only when on.
+    if _on("bureaucratic_friction"):
+        resolution_hours = None
+        if req.closed_datetime and req.requested_datetime:
+            resolution_hours = round((req.closed_datetime - req.requested_datetime).total_seconds() / 3600, 2)
+        business_hours = calculate_business_hours(req.requested_datetime, req.closed_datetime)
+        time_to_triage = calculate_time_to_triage(req.requested_datetime, req.audit_logs)
+        reassignments = count_reassignments(req.audit_logs)
+        off_hours = is_off_hours_submission(req.requested_datetime)
+        escalation = calculate_escalation_occurred(req.audit_logs)
+        status_changes = count_status_changes(req)
+        days_to_first_update = days_to_first_staff_action(req)
+    else:
+        resolution_hours = business_hours = time_to_triage = None
+        reassignments = off_hours = escalation = status_changes = None
+        days_to_first_update = None
+
+    # AI/ML Research Pack — read out of the stored triage record only when on.
+    if _on("ai_ml_research"):
+        ai_analysis = req.ai_analysis if isinstance(req.ai_analysis, dict) else {}
+        ai_priority = ai_analysis.get("priority_score")
+        ai_priority_diff = (
+            round(req.manual_priority_score - ai_priority, 2)
+            if (ai_priority is not None and req.manual_priority_score is not None) else None
+        )
+        ai_analyzed = bool(req.ai_analyzed_at)
+    else:
+        ai_priority = ai_priority_diff = ai_analyzed = None
+
+    # Moderation Pack — the stored intake flag is disclosed (redacted) only when on.
+    if _on("moderation"):
+        moderation_flagged = req.flagged
+        # The wordlist quotes the offending text into the reason, so it can
+        # carry the same PII as the description — redact before it ships.
+        moderation_flag_reason = sanitize_description(req.flag_reason) if req.flag_reason else req.flag_reason
+    else:
+        moderation_flagged = moderation_flag_reason = None
+
     resolution_outcome = None
     if req.status == 'closed':
         resolution_outcome = {
@@ -2374,11 +2460,15 @@ def build_dataset_row(req, _eq, privacy_mode, *, operational=False, include_pii=
         resolution_outcome = 'in_progress'
     else:
         resolution_outcome = 'pending'
-    census_geoid = (_eq or {}).get("census_geoid")
-    svi = (_eq or {}).get("social_vulnerability_index")
-    housing_tenure = (_eq or {}).get("housing_tenure_renter_pct")
-    income_quintile = (_eq or {}).get("income_band")
-    pop_density = (_eq or {}).get("population_density")
+    # Social Equity Pack — build_equity_map already made no Census/CDC calls
+    # when the pack is off, so _eq carries no equity keys; the extra gate here
+    # keeps the row clean even if a caller hands in a pre-built map.
+    _eq = _eq if (_eq and _on("social_equity")) else {}
+    census_geoid = _eq.get("census_geoid")
+    svi = _eq.get("social_vulnerability_index")
+    housing_tenure = _eq.get("housing_tenure_renter_pct")
+    income_quintile = _eq.get("income_band")
+    pop_density = _eq.get("population_density")
 
     row = {
         "request_id": req.service_request_id,
@@ -2390,12 +2480,10 @@ def build_dataset_row(req, _eq, privacy_mode, *, operational=False, include_pii=
         "description_word_count": desc_word_count,
         "has_photos": has_photos,
         "photo_count": photo_count,
-        "moderation_flagged": req.flagged,
-        # The wordlist quotes the offending text into the reason, so it can
-        # carry the same PII as the description — redact before it ships.
-        "moderation_flag_reason": sanitize_description(req.flag_reason) if req.flag_reason else req.flag_reason,
+        "moderation_flagged": moderation_flagged,
+        "moderation_flag_reason": moderation_flag_reason,
         "ai_priority_score": ai_priority,
-        "ai_analyzed": bool(req.ai_analyzed_at),
+        "ai_analyzed": ai_analyzed,
         "ai_vs_manual_priority_diff": ai_priority_diff,
         "status": req.status,
         "closed_substatus": req.closed_substatus,
