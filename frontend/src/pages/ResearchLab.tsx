@@ -34,148 +34,20 @@ import {
 import { Button, Card } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
-import { api, ResearchAnalytics, ResearchCodeSnippets } from '../services/api';
+import { api, ResearchAnalytics, ResearchCodeSnippets, ResearchDataDictionary, ResearchPackInfo } from '../services/api';
 
-// Research pack definitions with all fields
-const RESEARCH_PACKS = [
-    {
-        id: 'social_equity',
-        name: 'Social Equity Pack',
-        icon: Users,
-        color: 'purple',
-        audience: 'Equity Analysts, Social Researchers',
-        fields: [
-            { name: 'census_tract_geoid', type: 'string', description: '11-digit FIPS code for Census dataset joins', source: 'US Census Geocoder API (real)' },
-            { name: 'social_vulnerability_index', type: 'float (0-1)', description: 'Social vulnerability percentile (0=least, 1=most) — official CDC/ATSDR SVI when available', source: 'CDC/ATSDR SVI' },
-            { name: 'svi_source', type: 'string', description: "'cdc_svi_official' or 'acs_approximation' — check before pooling values", source: 'Provenance marker' },
-            { name: 'housing_tenure_renter_pct', type: 'float (0-1)', description: 'Renter % in zone (ownership patterns)', source: 'Derived from GEOID' },
-            { name: 'income_quintile', type: 'int (1-5)', description: 'Income band from fixed national cutoffs (not true population quintiles)', source: 'Census ACS median income' },
-            { name: 'population_density', type: 'string', description: 'low / medium / high — banded from tract population (land area not used)', source: 'Census ACS population' },
-        ],
-        suggestedAnalyses: [
-            'Join with Census ACS for demographic correlation',
-            'SVI vs response time regression',
-            'Renter vs owner reporting rate comparison',
-            'Income quintile service disparity analysis',
-        ],
-    },
-    {
-        id: 'environmental',
-        name: 'Environmental Context Pack',
-        icon: Cloud,
-        color: 'blue',
-        audience: 'Planners, Engineers, Operations Staff',
-        fields: [
-            { name: 'weather_precip_24h_mm', type: 'float', description: 'Precipitation in 24h before report (mm)', source: 'Open-Meteo Archive API' },
-            { name: 'weather_temp_max_c', type: 'float', description: 'Max temperature on report day (°C)', source: 'Open-Meteo Archive API' },
-            { name: 'weather_temp_min_c', type: 'float', description: 'Min temperature on report day (°C)', source: 'Open-Meteo Archive API' },
-            { name: 'weather_code', type: 'int', description: 'WMO weather code (e.g., 61=rain)', source: 'Open-Meteo Archive API' },
-            { name: 'nearby_asset_age_years', type: 'float', description: 'Age of matched infrastructure asset', source: 'Asset properties (real)' },
-            { name: 'matched_asset_attributes', type: 'JSON string', description: 'Full properties of matched asset', source: 'GeoJSON layer (real)' },
-            { name: 'season', type: 'string', description: 'winter / spring / summer / fall', source: 'Calculated' },
-        ],
-        suggestedAnalyses: [
-            'Freeze-thaw cycle pothole correlation',
-            'Asset age survival analysis',
-            'Precipitation-drainage issue linkage',
-            'Seasonal maintenance optimization',
-        ],
-    },
-    {
-        id: 'sentiment_trust',
-        name: 'Sentiment & Trust Pack',
-        icon: MessageSquare,
-        color: 'pink',
-        audience: 'Civic Engagement Analysts, Administrators',
-        fields: [
-            { name: 'sentiment_score', type: 'float (-1 to +1)', description: 'Sentiment (-1=angry, +1=grateful) — handles negation and intensifiers', source: 'VADER (rule-based)' },
-            { name: 'is_repeat_report', type: 'boolean', description: 'Text indicates prior report of same issue', source: 'Regex detection (real)' },
-            { name: 'prior_report_mentioned', type: 'boolean', description: 'References ticket/case number', source: 'Regex detection (real)' },
-            { name: 'frustration_expressed', type: 'boolean', description: 'Trust erosion indicators present', source: 'Regex detection (real)' },
-        ],
-        suggestedAnalyses: [
-            'Sentiment vs income quintile correlation',
-            'Repeat report resolution success rates',
-            'Trust erosion indicators over time',
-            'Politeness variation by submission channel',
-        ],
-    },
-    {
-        id: 'bureaucratic_friction',
-        name: 'Bureaucratic Friction Pack',
-        icon: Building2,
-        color: 'orange',
-        audience: 'Operations Managers, Process Analysts',
-        fields: [
-            { name: 'time_to_triage_hours', type: 'float', description: 'Hours from submission to first "In Progress"', source: 'Audit logs (real)' },
-            { name: 'reassignment_count', type: 'int', description: 'Times request bounced between departments', source: 'Audit logs (real)' },
-            { name: 'off_hours_submission', type: 'boolean', description: 'Submitted before 6am or after 10pm', source: 'Timestamp (real)' },
-            { name: 'escalation_occurred', type: 'boolean', description: 'Priority was manually increased by staff', source: 'Audit logs (real)' },
-            { name: 'total_hours_to_resolve', type: 'float', description: 'Total hours from submission to closure', source: 'Calculated (real)' },
-            { name: 'business_hours_to_resolve', type: 'float', description: 'Business hours only (Mon-Fri 8am-5pm)', source: 'Calculated (real)' },
-            { name: 'days_to_first_update', type: 'float', description: 'Days to the first staff action', source: 'Audit logs' },
-            { name: 'status_change_count', type: 'int', description: 'Number of status changes', source: 'Audit logs' },
-        ],
-        suggestedAnalyses: [
-            'Triage time vs resolution outcome',
-            'Department routing efficiency audit',
-            'Off-hours urgent issue patterns',
-            'AI escalation accuracy study',
-        ],
-    },
-    {
-        id: 'ai_ml',
-        name: 'AI/ML Research Pack',
-        icon: Brain,
-        color: 'green',
-        audience: 'Data Scientists, AI/ML Engineers',
-        fields: [
-            { name: 'moderation_flagged', type: 'boolean', description: 'Flagged for staff review by the content-moderation wordlist (not AI)', source: 'Moderation wordlist' },
-            { name: 'moderation_flag_reason', type: 'string', description: 'Flag reason, e.g. "Auto-flagged: profanity"', source: 'Moderation wordlist' },
-            { name: 'ai_priority_score', type: 'float (1-10)', description: 'AI-suggested priority (10=highest); blank when AI never ran', source: 'AI provider' },
-            { name: 'ai_summary_sanitized', type: 'string', description: 'AI summary with PII patterns redacted', source: 'AI provider' },
-            { name: 'ai_analyzed', type: 'boolean', description: 'Whether AI processed this request', source: 'System (real)' },
-            { name: 'ai_vs_manual_priority_diff', type: 'float', description: 'manual_priority - ai_priority', source: 'Calculated (real)' },
-        ],
-        suggestedAnalyses: [
-            'AI-human priority alignment study',
-            'Flagging accuracy and false positive rates',
-            'Classification accuracy compared to final service_code',
-            'NLP summarization quality assessment',
-        ],
-    },
-];
-
-// Core fields always included
-const CORE_FIELDS = [
-    { name: 'request_id', type: 'string', description: 'Unique identifier for the service request' },
-    { name: 'service_code', type: 'string', description: 'Category code (e.g., pothole, streetlight)' },
-    { name: 'service_name', type: 'string', description: 'Human-readable category name' },
-    { name: 'infrastructure_category', type: 'string', description: 'Grouped infrastructure type' },
-    { name: 'matched_asset_type', type: 'string', description: 'Type of matched infrastructure asset' },
-    { name: 'description_sanitized', type: 'string', description: 'Issue description (PII redacted)' },
-    { name: 'description_word_count', type: 'int', description: 'Word count of description' },
-    { name: 'has_photos', type: 'boolean', description: 'Request includes photo attachments' },
-    { name: 'photo_count', type: 'int', description: 'Number of photos attached' },
-    { name: 'status', type: 'string', description: 'Current status (open, in_progress, closed)' },
-    { name: 'closed_substatus', type: 'string', description: 'Resolution type (resolved, no_action, etc.)' },
-    { name: 'priority', type: 'int (1-10)', description: 'Priority level (10=highest)' },
-    { name: 'resolution_outcome', type: 'string', description: 'Standardized resolution category' },
-    { name: 'address_anonymized', type: 'string', description: 'Generalized address (street only)' },
-    { name: 'latitude', type: 'float', description: 'Latitude (fuzzed in privacy mode)' },
-    { name: 'longitude', type: 'float', description: 'Longitude (fuzzed in privacy mode)' },
-    { name: 'zone_id', type: 'string', description: 'Geographic zone identifier' },
-    { name: 'submitted_datetime', type: 'ISO datetime', description: 'When request was submitted' },
-    { name: 'closed_datetime', type: 'ISO datetime', description: 'When request was closed' },
-    { name: 'submission_hour', type: 'int (0-23)', description: 'Hour of submission' },
-    { name: 'submission_day_of_week', type: 'int (0-6)', description: 'Day of week (0=Monday)' },
-    { name: 'is_weekend_submission', type: 'boolean', description: 'Submitted on weekend' },
-    { name: 'is_business_hours_submission', type: 'boolean', description: 'Submitted 8am-5pm Mon-Fri' },
-    { name: 'submission_channel', type: 'string', description: 'How submitted (portal, phone)' },
-    { name: 'department_id', type: 'int', description: 'Assigned department ID' },
-    { name: 'comment_count', type: 'int', description: 'Total comments on request' },
-    { name: 'public_comment_count', type: 'int', description: 'Public/external comments' },
-];
+// Presentation-only metadata (icon + color) keyed by pack id. The packs
+// themselves — labels, audiences, field lists — come from the server's
+// /research/data-dictionary, which applies the admin's per-pack switches. A
+// hardcoded pack list here used to promise fields the export could withhold.
+const PACK_PRESENTATION: Record<string, { icon: React.ElementType; color: string }> = {
+    social_equity: { icon: Users, color: 'purple' },
+    environmental_context: { icon: Cloud, color: 'blue' },
+    sentiment_trust: { icon: MessageSquare, color: 'pink' },
+    bureaucratic_friction: { icon: Building2, color: 'orange' },
+    ai_ml_research: { icon: Brain, color: 'green' },
+    moderation: { icon: Shield, color: 'purple' },
+};
 
 export const ResearchLab: React.FC = () => {
     const navigate = useNavigate();
@@ -207,6 +79,7 @@ export const ResearchLab: React.FC = () => {
     // Data state
     const [analytics, setAnalytics] = useState<ResearchAnalytics | null>(null);
     const [codeSnippets, setCodeSnippets] = useState<ResearchCodeSnippets | null>(null);
+    const [dictionary, setDictionary] = useState<ResearchDataDictionary | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [isEnabled, setIsEnabled] = useState<boolean | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -259,6 +132,7 @@ export const ResearchLab: React.FC = () => {
             if (status.enabled) {
                 loadAnalytics();
                 loadCodeSnippets();
+                loadDictionary();
             }
         } catch {
             setIsEnabled(false);
@@ -279,6 +153,15 @@ export const ResearchLab: React.FC = () => {
             setError(err.message || 'Failed to load analytics');
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const loadDictionary = async () => {
+        try {
+            const dict = await api.getResearchDataDictionary();
+            setDictionary(dict);
+        } catch (err) {
+            console.error('Failed to load data dictionary', err);
         }
     };
 
@@ -359,8 +242,14 @@ export const ResearchLab: React.FC = () => {
         return colors[color] || colors.purple;
     };
 
-    // Count total fields
-    const totalFields = CORE_FIELDS.length + RESEARCH_PACKS.reduce((sum, pack) => sum + pack.fields.length, 0);
+    // Packs and fields as the server actually exports them (pack switches applied)
+    const researchPacks: ({ id: string } & ResearchPackInfo)[] = dictionary
+        ? Object.entries(dictionary.research_packs).map(([id, p]) => ({ id, ...p }))
+        : [];
+    const coreFields = dictionary?.core_fields ?? [];
+    // Count of columns the export will really contain for this town
+    const totalFields = dictionary ? Object.keys(dictionary.fields).length : 0;
+    const packFieldCount = researchPacks.reduce((sum, pack) => sum + pack.fields.length, 0);
 
     // Not enabled state
     if (isEnabled === false) {
@@ -461,13 +350,14 @@ export const ResearchLab: React.FC = () => {
                 <section className="mb-8" aria-labelledby="research-packs-heading">
                     <h2 id="research-packs-heading" className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
                         <Database className="w-5 h-5 text-amber-400" aria-hidden="true" />
-                        Research Field Packs ({RESEARCH_PACKS.reduce((sum, p) => sum + p.fields.length, 0)} specialized fields)
+                        Research Field Packs ({packFieldCount} specialized fields)
                     </h2>
                     <div className="space-y-3">
-                        {RESEARCH_PACKS.map((pack) => {
-                            const colors = getPackColorClasses(pack.color);
+                        {researchPacks.map((pack) => {
+                            const presentation = PACK_PRESENTATION[pack.id] ?? { icon: Database, color: 'purple' };
+                            const colors = getPackColorClasses(presentation.color);
                             const isExpanded = expandedPack === pack.id;
-                            const Icon = pack.icon;
+                            const Icon = presentation.icon;
 
                             return (
                                 <motion.div
@@ -487,7 +377,7 @@ export const ResearchLab: React.FC = () => {
                                                 <Icon className={`w-5 h-5 ${colors.text}`} />
                                             </div>
                                             <div className="text-left">
-                                                <h3 className={`font-semibold ${colors.text}`}>{pack.name}</h3>
+                                                <h3 className={`font-semibold ${colors.text}`}>{pack.label}</h3>
                                                 <p className="text-sm text-white/50">
                                                     {pack.audience} • {pack.fields.length} fields
                                                 </p>
@@ -518,8 +408,7 @@ export const ResearchLab: React.FC = () => {
                                                                 <tr className="text-left text-white/50 border-b border-white/10">
                                                                     <th className="pb-2 pr-4">Field Name</th>
                                                                     <th className="pb-2 pr-4">Type</th>
-                                                                    <th className="pb-2 pr-4">Description</th>
-                                                                    <th className="pb-2">Data Source</th>
+                                                                    <th className="pb-2">Description</th>
                                                                 </tr>
                                                             </thead>
                                                             <tbody>
@@ -533,11 +422,8 @@ export const ResearchLab: React.FC = () => {
                                                                         <td className="py-2 pr-4 text-white/70 font-mono text-xs">
                                                                             {field.type}
                                                                         </td>
-                                                                        <td className="py-2 pr-4 text-white/60">
+                                                                        <td className="py-2 text-white/60">
                                                                             {field.description}
-                                                                        </td>
-                                                                        <td className="py-2 text-white/50 text-xs">
-                                                                            {field.source}
                                                                         </td>
                                                                     </tr>
                                                                 ))}
@@ -549,7 +435,7 @@ export const ResearchLab: React.FC = () => {
                                                     <div>
                                                         <h4 className="text-sm font-medium text-white/70 mb-2">Suggested Analyses:</h4>
                                                         <div className="flex flex-wrap gap-2">
-                                                            {pack.suggestedAnalyses.map((analysis, i) => (
+                                                            {pack.suggested_analyses.map((analysis, i) => (
                                                                 <span
                                                                     key={i}
                                                                     className="px-3 py-1 rounded-full bg-white/10 text-white/60 text-xs"
@@ -584,7 +470,7 @@ export const ResearchLab: React.FC = () => {
                                     <div className="text-left">
                                         <h3 className="font-semibold text-white/80">Core Request Fields</h3>
                                         <p className="text-sm text-white/50">
-                                            Standard fields included in all exports • {CORE_FIELDS.length} fields
+                                            Standard fields included in all exports • {coreFields.length} fields
                                         </p>
                                     </div>
                                 </div>
@@ -606,7 +492,7 @@ export const ResearchLab: React.FC = () => {
                                     >
                                         <div className="p-5 bg-white/5 border-t border-white/10 max-h-64 overflow-y-auto">
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                                {CORE_FIELDS.map((field) => (
+                                                {coreFields.map((field) => (
                                                     <div key={field.name} className="flex items-start gap-2 text-sm">
                                                         <code className="px-2 py-0.5 rounded bg-white/10 text-white/70 text-xs shrink-0">
                                                             {field.name}
@@ -871,12 +757,17 @@ export const ResearchLab: React.FC = () => {
                     </p>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2.5 text-xs">
                         {[
-                            ['US Census Bureau Geocoder + ACS', 'Live API (free, no key). Tract, income, tenure.'],
-                            ['Open-Meteo Archive API', 'Live API. Blank when the call fails — never estimated.'],
-                            ['Sentiment & trust indicators', 'VADER rule-based scoring in-app — handles negation.'],
+                            ['US Census Bureau Geocoder + ACS', 'Live API (free, no key). Coordinates are grid-snapped BEFORE any external lookup. Tract, income, tenure.'],
+                            ['Open-Meteo Archive API', 'Live API, ~1km-rounded coordinates. Blank when the call fails — never estimated.'],
                             ['Social vulnerability', 'Official CDC/ATSDR SVI; local ACS fallback is marked in svi_source.'],
                             ['AI analysis fields', 'From stored model output; blank when AI never ran.'],
-                            ['Flags', 'Content-moderation wordlist at intake, not AI.'],
+                            // Rows for switchable packs only appear when the town exports them.
+                            ...(dictionary?.research_packs?.sentiment_trust
+                                ? [['Sentiment & trust indicators', 'VADER rule-based scoring in-app — handles negation.']]
+                                : []),
+                            ...(dictionary?.research_packs?.moderation
+                                ? [['Flags', 'Content-moderation wordlist at intake, not AI. Reasons are PII-redacted.']]
+                                : []),
                         ].map(([name, detail]) => (
                             <div key={name} className="flex items-start gap-2">
                                 <div className="w-1.5 h-1.5 rounded-full bg-white/30 mt-1.5 shrink-0" />
@@ -924,7 +815,7 @@ export const ResearchLab: React.FC = () => {
                             <div className="px-4 py-3 border-b border-white/5 flex flex-wrap gap-2">
                                 {[
                                     'What fields measure social vulnerability?',
-                                    'How is sentiment calculated?',
+                                    'Which research packs are available?',
                                     'Best analyses for equity research?',
                                     'Explain the privacy modes',
                                 ].map(q => (

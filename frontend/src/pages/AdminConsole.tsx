@@ -81,7 +81,7 @@ import { Button, Card, Modal, Input, Select, Badge, AccordionSection } from '../
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { useDialog } from '../components/DialogProvider';
-import { api, MapLayer } from '../services/api';
+import { api, MapLayer, ResearchPackSwitch } from '../services/api';
 import { User, ServiceDefinition, SystemSettings, SystemSecret, Department, RoutingContact } from '../types';
 import { usePageNavigation } from '../hooks/usePageNavigation';
 import ClientErrorPanel from '../components/ClientErrorPanel';
@@ -838,6 +838,11 @@ export default function AdminConsole() {
      * Instructions; what is left here has no provider, no credentials and
      * nothing to switch off at the dispatch layer. */
     const [modules, setModules] = useState({ research_portal: false, unlisted_reports: false });
+    // Research pack switches: catalog (labels, field lists) from the server so
+    // the "contains:" disclosure can never disagree with the export, plus the
+    // editable on/off state saved alongside `modules`.
+    const [researchPacks, setResearchPacks] = useState<ResearchPackSwitch[]>([]);
+    const [packSwitches, setPackSwitches] = useState<Record<string, boolean>>({});
 
     // Maps tab state
     const [mapsRaw, setMapsRaw] = useState<RawMapsConfig | null>(null);
@@ -1029,6 +1034,17 @@ export default function AdminConsole() {
             });
         }
     }, [settings]);
+
+    useEffect(() => {
+        // Pack toggles render regardless of whether the portal module is on —
+        // an admin decides what a town releases BEFORE enabling the portal.
+        api.getResearchPacks()
+            .then((packs) => {
+                setResearchPacks(packs);
+                setPackSwitches(Object.fromEntries(packs.map((p) => [p.id, p.enabled])));
+            })
+            .catch((err) => console.error('Failed to load research pack switches:', err));
+    }, []);
 
     useEffect(() => {
         // Always load maps config & township boundary so map features work on any tab
@@ -1460,7 +1476,10 @@ export default function AdminConsole() {
     const handleSaveModules = async () => {
         setIsLoading(true);
         try {
-            await api.updateSettings({ modules });
+            // Pack switches ride with the module flags — one Save button for
+            // the whole screen. The server treats absent keys as pack defaults,
+            // so we always send the full map the toggles show.
+            await api.updateSettings({ modules, research_packs: packSwitches });
             await refreshSettings();
             setSaveMessage('Modules saved successfully');
             setTimeout(() => setSaveMessage(null), 3000);
@@ -2482,6 +2501,49 @@ export default function AdminConsole() {
                                                             />
                                                         </button>
                                                     </div>
+
+                                                    {/* Per-pack export switches, under the Research Portal
+                                                        toggle they govern. Field lists come from the server's
+                                                        COLUMN_DICTIONARY, so the disclosure cannot drift from
+                                                        what the export actually ships; enforcement is
+                                                        server-side at row build, this is just the switch. */}
+                                                    {mod.key === 'research_portal' && researchPacks.length > 0 && (
+                                                        <div className="mt-4 space-y-2 border-l-2 border-violet-500/20 pl-4 ml-1">
+                                                            <p className="text-[11px] font-semibold text-white/40 uppercase tracking-wider">Research field packs</p>
+                                                            {researchPacks.map((pack) => {
+                                                                const packOn = packSwitches[pack.id] ?? pack.enabled;
+                                                                return (
+                                                                    <div key={pack.id} className="flex items-start justify-between gap-3 py-1.5">
+                                                                        <div className="min-w-0">
+                                                                            <p className="text-xs font-medium text-white/80">{pack.label}</p>
+                                                                            <p className="text-[11px] text-white/40">
+                                                                                contains: {pack.contains.join(', ')}
+                                                                            </p>
+                                                                            {pack.why_default_off && (
+                                                                                <p className="text-[11px] text-amber-300/80 mt-0.5">
+                                                                                    Off by default: {pack.why_default_off}
+                                                                                </p>
+                                                                            )}
+                                                                        </div>
+                                                                        <button
+                                                                            onClick={() => setPackSwitches((p) => ({ ...p, [pack.id]: !packOn }))}
+                                                                            className={`relative inline-flex items-center rounded-full transition-colors duration-300 shrink-0 mt-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 ${packOn ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-slate-600'}`}
+                                                                            style={{ width: 36, height: 20, minHeight: 20, maxHeight: 20, padding: 0 }}
+                                                                            role="switch"
+                                                                            aria-checked={packOn}
+                                                                            aria-label={`Toggle ${pack.label}`}
+                                                                        >
+                                                                            <span
+                                                                                className={`inline-block rounded-full bg-white shadow-md transition-transform duration-300 ${packOn ? 'translate-x-5' : 'translate-x-1'}`}
+                                                                                style={{ width: 13, height: 13 }}
+                                                                                aria-hidden="true"
+                                                                            />
+                                                                        </button>
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    )}
                                                 </motion.div>
                                             );
                                         })}

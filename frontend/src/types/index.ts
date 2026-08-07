@@ -310,6 +310,11 @@ export interface SystemSettings {
         research_portal?: boolean;
         unlisted_reports?: boolean;
     };
+    /* Per-pack research export switches: {pack_id: bool}. An absent key means
+     * the pack's own server-side default (analytical packs on; sentiment and
+     * moderation off). Enforced at row build on the server — this is display
+     * and editing state only. */
+    research_packs?: Record<string, boolean> | null;
     social_links?: SocialLink[];
     privacy_policy?: string | null;  // Custom privacy policy (Markdown)
     terms_of_service?: string | null;  // Custom terms of service (Markdown)
