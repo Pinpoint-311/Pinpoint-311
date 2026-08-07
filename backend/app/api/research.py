@@ -15,7 +15,7 @@ All endpoints:
 - Query sanitized data (no PII)
 - Log all access for audit purposes
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, extract
@@ -33,7 +33,7 @@ from app.services.cdc_svi import get_cdc_svi
 
 from app.db.session import get_db
 from app.models import ServiceRequest, SystemSettings, ResearchAccessLog
-from app.core.auth import get_current_researcher
+from app.core.auth import get_current_admin, get_current_researcher
 from app.core.config import get_settings
 
 router = APIRouter()
@@ -60,17 +60,54 @@ INFRASTRUCTURE_CATEGORIES = {
 }
 
 
-async def check_research_enabled(db: AsyncSession):
-    """Check if research portal is enabled via Admin Console modules"""
-    if getattr(settings, 'enable_research_suite', False):
-        return True
-
+async def get_system_settings(db: AsyncSession) -> Optional[SystemSettings]:
+    """The single settings row — module flags and per-pack switches live here."""
     result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
-    system_settings = result.scalar_one_or_none()
+    return result.scalar_one_or_none()
+
+
+async def check_research_enabled(db: AsyncSession):
+    """Check if research portal is enabled via Admin Console modules.
+
+    The Admin Console flag is the ONLY switch. There used to be an
+    `enable_research_suite` env short-circuit ahead of it, which meant an
+    environment variable could silently overrule what the admin screen showed —
+    an admin who turned the portal off had no way to see it was still on.
+    """
+    system_settings = await get_system_settings(db)
     if system_settings and system_settings.modules:
         return system_settings.modules.get("research_portal", False)
-    
+
     return False
+
+
+def research_visibility_conditions():
+    """The row filter every research query must apply.
+
+    Research outputs are public-facing (exports leave the building); a resident
+    who asked for an unlisted report asked for it to stay off every public
+    surface, and that includes the researcher CSV, not just the map. Soft-deleted
+    rows are excluded for the same reason they are everywhere else.
+
+    One function rather than four copies of the same two conditions, so a new
+    research endpoint cannot forget one of them.
+    """
+    return (
+        ServiceRequest.deleted_at.is_(None),
+        ServiceRequest.is_public.is_(True),
+    )
+
+
+def client_info(request: Optional[Request]) -> tuple:
+    """(ip, user_agent) for the access log, honouring the proxy header."""
+    if request is None:
+        return None, None
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        ip = forwarded_for.split(",")[0].strip()
+    else:
+        ip = request.client.host if request.client else None
+    return ip, (request.headers.get("User-Agent") or "")[:500] or None
 
 
 async def log_research_access(
@@ -80,16 +117,20 @@ async def log_research_access(
     action: str,
     parameters: dict,
     record_count: int,
-    privacy_mode: str = "fuzzed"
+    privacy_mode: str = "fuzzed",
+    request: Optional[Request] = None,
 ):
     """Log research data access for audit purposes"""
+    ip_address, user_agent = client_info(request)
     log_entry = ResearchAccessLog(
         user_id=user_id,
         username=username,
         action=action,
         parameters=parameters,
         record_count=record_count,
-        privacy_mode=privacy_mode
+        privacy_mode=privacy_mode,
+        ip_address=ip_address,
+        user_agent=user_agent,
     )
     db.add(log_entry)
     await db.commit()
@@ -168,26 +209,33 @@ def fuzz_location(lat: float, long: float, grid_size: float = 0.0003) -> tuple:
 
 
 def anonymize_address(address: str, privacy_mode: str) -> str:
-    """Anonymize address based on privacy mode"""
+    """Anonymize address based on privacy mode.
+
+    Fuzzed mode drops the STREET NAME as well as the house number. The previous
+    form ("Main Street (Block), West Windsor") kept the street, and a named
+    street joined against the ~100ft-snapped coordinates in the same row
+    narrows a report to a handful of houses — the street name added
+    re-identification risk while the coordinates already carried the research
+    signal. What survives is the locality after the first comma:
+
+        "123 Main Street, West Windsor" -> "Block near West Windsor"
+
+    Admin `exact` mode is unchanged.
+    """
     if not address:
         return ""
-    
+
     if privacy_mode == "exact":
         return address
-    
-    # For fuzzed mode: remove house numbers, keep street name and area
-    # "123 Main Street, West Windsor" -> "Main Street Block, West Windsor"
-    result = re.sub(r'^\d+\s+', '', address)  # Remove leading house number
-    result = re.sub(r'\d+', 'X', result)  # Replace any remaining numbers
-    
-    # Add "Block" indicator if we removed a house number
-    if result != address:
-        parts = result.split(',')
-        if len(parts) > 0:
-            parts[0] = parts[0].strip() + " (Block)"
-            result = ', '.join(parts)
-    
-    return result
+
+    parts = address.split(',')
+    locality = ','.join(parts[1:]).strip()
+    # Mask any digits that survive in the locality (ZIPs, route numbers).
+    locality = re.sub(r'\d+', 'X', locality)
+    if locality:
+        return f"Block near {locality}"
+    # Single-segment address: nothing safely coarse enough to keep.
+    return "Block (street withheld)"
 
 
 def get_infrastructure_category(service_code: str) -> str:
@@ -453,7 +501,14 @@ async def get_census_tract_geoid(lat: float, lng: float) -> Optional[str]:
     # plausible-looking tract for one that failed to resolve.
     if lat is None or lng is None:
         return None
-    
+
+    # Fuzz before egress: exact coordinates never leave for the Census geocoder,
+    # in any privacy mode. A ~100ft grid snap almost never changes which tract a
+    # point falls in, and the tract is the only thing we keep — so sending the
+    # raw point bought nothing and disclosed a resident's location to a third
+    # party. Snapped here, at the boundary, so no caller can forget.
+    lat, lng = fuzz_location(lat, lng)
+
     # Round to reduce cache key variations (within ~100m)
     cache_key = f"{round(lat, 3)},{round(lng, 3)}"
     
@@ -593,9 +648,14 @@ async def build_equity_map(requests, privacy_mode: str = "fuzzed") -> dict:
         if req.lat is None or req.long is None:
             out[req.id] = {}
             continue
-        key = (round(req.lat, 4), round(req.long, 4))
+        # Fuzz before egress: every external lookup below (Census geocoder, and
+        # weather further down) gets the ~100ft-snapped point, never the raw
+        # one — regardless of the export's privacy mode, because what we KEEP
+        # from these calls (tract, daily weather) is coarser than the snap.
+        f_lat, f_long = fuzz_location(req.lat, req.long)
+        key = (round(f_lat, 4), round(f_long, 4))
         if key not in by_coord:
-            geoid = await get_census_tract_geoid(req.lat, req.long)
+            geoid = await get_census_tract_geoid(f_lat, f_long)
             zone = generate_zone_id(req.lat, req.long)
 
             # Prefer the OFFICIAL CDC/ATSDR SVI (nationally ranked, 16 variables,
@@ -627,7 +687,7 @@ async def build_equity_map(requests, privacy_mode: str = "fuzzed") -> dict:
         # requests in one neighborhood costs a single call, not one per row.
         wkey = (req.requested_datetime.date() if req.requested_datetime else None, key)
         if wkey not in by_weather:
-            by_weather[wkey] = await get_weather_context(req.requested_datetime, req.lat, req.long)
+            by_weather[wkey] = await get_weather_context(req.requested_datetime, f_lat, f_long)
         entry["weather"] = by_weather[wkey]
 
         out[req.id] = entry
@@ -723,7 +783,13 @@ async def get_weather_context(requested_datetime: datetime, lat: float, lng: flo
     """
     if not requested_datetime or lat is None or lng is None:
         return {"precip_24h_mm": None, "temp_max_c": None, "temp_min_c": None, "weather_code": None}
-    
+
+    # Fuzz before egress: daily weather is nearest-city-scale data, so two
+    # decimals (~1 km) is all the precision the answer can use. Sending the
+    # exact report coordinates to Open-Meteo disclosed a resident's location
+    # for zero gain in accuracy. Rounded here, at the boundary.
+    lat, lng = round(lat, 2), round(lng, 2)
+
     # Format date for API
     date_str = requested_datetime.strftime("%Y-%m-%d")
     
@@ -1108,6 +1174,7 @@ async def research_status(
 
 @router.get("/analytics")
 async def get_analytics(
+    request: Request,
     start_date: Optional[date] = Query(None, description="Start date filter"),
     end_date: Optional[date] = Query(None, description="End date filter"),
     service_code: Optional[str] = Query(None, description="Filter by service category"),
@@ -1117,9 +1184,9 @@ async def get_analytics(
     """Get aggregate analytics (no PII exposed)"""
     if not await check_research_enabled(db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Research Suite is not enabled")
-    
-    base_conditions = [ServiceRequest.deleted_at.is_(None)]
-    
+
+    base_conditions = list(research_visibility_conditions())
+
     if start_date:
         base_conditions.append(ServiceRequest.requested_datetime >= datetime.combine(start_date, datetime.min.time()))
     if end_date:
@@ -1196,7 +1263,7 @@ async def get_analytics(
     await log_research_access(
         db, current_user.id, current_user.username, "view_analytics",
         {"start_date": str(start_date), "end_date": str(end_date), "service_code": service_code},
-        total_count
+        total_count, request=request
     )
     
     return {
@@ -1217,6 +1284,7 @@ async def get_analytics(
 
 @router.get("/export/csv")
 async def export_csv(
+    request: Request,
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     service_code: Optional[str] = Query(None),
@@ -1226,258 +1294,66 @@ async def export_csv(
 ):
     """
     Export sanitized request data as CSV for research analysis.
-    
-    Includes fields for:
-    - Civil Engineering: infrastructure_category, matched_asset_type
-    - Equity Studies: zone_id, response_time_hours, business_hours_to_resolve
-    - Civics: submission_channel, is_weekend_submission, is_business_hours
+
+    Rows come from build_dataset_row — the same builder the staff export uses —
+    and columns from allowed_research_columns, so the admin's per-pack switches
+    are enforced here at row build, not in any UI.
     """
     if not await check_research_enabled(db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Research Suite is not enabled")
-    
+
     if privacy_mode == "exact" and current_user.role != "admin":
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="Exact location export requires admin privileges"
         )
-    
+
     query = select(ServiceRequest).options(
         selectinload(ServiceRequest.comments),
         selectinload(ServiceRequest.audit_logs)
-    ).where(ServiceRequest.deleted_at.is_(None))
-    
+    ).where(*research_visibility_conditions())
+
     if start_date:
         query = query.where(ServiceRequest.requested_datetime >= datetime.combine(start_date, datetime.min.time()))
     if end_date:
         query = query.where(ServiceRequest.requested_datetime <= datetime.combine(end_date, datetime.max.time()))
     if service_code:
         query = query.where(ServiceRequest.service_code == service_code)
-    
+
     query = query.order_by(ServiceRequest.requested_datetime.desc())
-    
+
     result = await db.execute(query)
     requests = result.scalars().all()
-    
+
     await log_research_access(
         db, current_user.id, current_user.username, "export_csv",
         {"start_date": str(start_date), "end_date": str(end_date), "service_code": service_code},
-        len(requests), privacy_mode
+        len(requests), privacy_mode, request=request
     )
-    
+
     # Resolve the async Census/equity lookups before streaming — the generator
     # below is synchronous and cannot await (see build_equity_map).
     equity_map = await build_equity_map(requests, privacy_mode)
 
+    # Pack switches, enforced server-side: columns whose pack the admin turned
+    # off never enter the file. build_dataset_row still computes them; the
+    # DictWriter's fieldnames + extrasaction="ignore" is the gate.
+    columns = allowed_research_columns(await get_system_settings(db))
+
     def generate_csv():
         output = io.StringIO()
-        writer = csv.writer(output)
-
-        # Enhanced headers for research
-        writer.writerow([
-            # Identifiers
-            "request_id",
-            # Category & Infrastructure
-            "service_code", "service_name", "infrastructure_category", "matched_asset_type",
-            "matched_asset_attributes",  # Full JSON of asset properties
-            # Issue Details (sanitized)
-            "description_sanitized", "description_word_count", "has_photos", "photo_count",
-            # AI Analysis (for ML/NLP research)
-            "moderation_flagged", "moderation_flag_reason", "ai_priority_score",
-            "ai_summary_sanitized", "ai_analyzed", "ai_vs_manual_priority_diff",
-            # Status & Resolution
-            "status", "closed_substatus", "priority", "resolution_outcome",
-            # Location (privacy-aware)
-            "address_anonymized", "latitude", "longitude", "zone_id",
-            # SOCIAL EQUITY PACK (Sociologists)
-            "census_tract_geoid", "social_vulnerability_index", "svi_source", "housing_tenure_renter_pct",
-            "income_quintile", "population_density",
-            # ENVIRONMENTAL CONTEXT PACK (Urban Planners)
-            "weather_precip_24h_mm", "weather_temp_max_c", "weather_temp_min_c", "weather_code",
-            "nearby_asset_age_years",
-            # SENTIMENT & TRUST PACK (Political Science)
-            "sentiment_score", "is_repeat_report", "prior_report_mentioned", "frustration_expressed",
-            # Temporal (for equity/civics research)
-            "submitted_datetime", "closed_datetime", "updated_datetime",
-            "submission_hour", "submission_day_of_week", "submission_month", "submission_year",
-            "is_weekend_submission", "is_business_hours_submission", "season",
-            # BUREAUCRATIC FRICTION PACK (Public Admin)
-            "time_to_triage_hours", "reassignment_count", "off_hours_submission",
-            "escalation_occurred", "total_hours_to_resolve", "business_hours_to_resolve",
-            "days_to_first_update", "status_change_count",
-            # Civic Engagement
-            "submission_channel", "department_id", "comment_count", "public_comment_count",
-        ])
+        writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
+        writer.writeheader()
         yield output.getvalue()
         output.seek(0)
         output.truncate(0)
-        
+
         for req in requests:
-            # Privacy-aware location
-            if privacy_mode == "fuzzed":
-                lat, long = fuzz_location(req.lat, req.long)
-            else:
-                lat, long = req.lat, req.long
-            
-            # Calculate metrics
-            resolution_hours = None
-            business_hours = None
-            if req.closed_datetime and req.requested_datetime:
-                delta = req.closed_datetime - req.requested_datetime
-                resolution_hours = round(delta.total_seconds() / 3600, 2)
-                business_hours = calculate_business_hours(req.requested_datetime, req.closed_datetime)
-            
-            # Temporal data
-            time_info = get_time_period(req.requested_datetime)
-            
-            # Infrastructure category
-            infra_category = get_infrastructure_category(req.service_code)
-            
-            # Matched asset info
-            asset_type = None
-            if req.matched_asset and isinstance(req.matched_asset, dict):
-                asset_type = req.matched_asset.get('asset_type') or req.matched_asset.get('layer_name')
-            
-            # AI analysis data
-            # AI priority is now in ai_analysis JSON, not a separate column
-            ai_summary = sanitize_description(req.ai_summary) if req.ai_summary else None
-            ai_priority = req.ai_analysis.get('priority_score') if req.ai_analysis else None
-            ai_priority_diff = None
-            if ai_priority and req.manual_priority_score:
-                ai_priority_diff = round(req.manual_priority_score - ai_priority, 2)
-            
-            # Description metrics
-            desc_word_count = len(req.description.split()) if req.description else 0
-            
-            # Media presence
-            has_photos = bool(req.media_urls and len(req.media_urls) > 0)
-            photo_count = len(req.media_urls) if req.media_urls else 0
-            
-            # Resolution outcome classification
-            resolution_outcome = None
-            if req.status == 'closed':
-                if req.closed_substatus == 'resolved':
-                    resolution_outcome = 'completed'
-                elif req.closed_substatus == 'no_action':
-                    resolution_outcome = 'no_action_needed'
-                elif req.closed_substatus == 'third_party':
-                    resolution_outcome = 'referred_external'
-                else:
-                    resolution_outcome = 'closed_other'
-            elif req.status == 'in_progress':
-                resolution_outcome = 'in_progress'
-            else:
-                resolution_outcome = 'pending'
-            
-            # Days to the first STAFF action (from the audit log, not updated_datetime)
-            days_to_first_update = days_to_first_staff_action(req)
-            
-            # Zone-based demographic proxies (for equity research)
-            zone_id = generate_zone_id(req.lat, req.long)
-            
-            # SOCIAL EQUITY PACK — resolved before streaming (see build_equity_map);
-            # these are real awaited Census lookups, not coroutines.
-            _eq = equity_map.get(req.id, {})
-            census_geoid = _eq.get("census_geoid")
-            income_quintile = _eq.get("income_band")
-            pop_density = _eq.get("population_density")
-            svi = _eq.get("social_vulnerability_index")
-            housing_tenure = _eq.get("housing_tenure_renter_pct")
-            
-            # ENVIRONMENTAL CONTEXT PACK - Real weather data
-            weather = _eq.get("weather") or {}
-            asset_age = get_asset_age_years(req.matched_asset)
-            asset_attributes = get_matched_asset_attributes(req.matched_asset)
-            
-            # SENTIMENT & TRUST PACK
-            sentiment = analyze_sentiment(req.description)
-            trust = detect_trust_indicators(req.description)
-            
-            # Season for infrastructure/weather research
-            season = get_season(req.requested_datetime)
-            
-            # Comment counts for civic engagement research  
-            total_comments = len(req.comments) if req.comments else 0
-            public_comments = len([c for c in req.comments if c.visibility == 'external']) if req.comments else 0
-            
-            # BUREAUCRATIC FRICTION PACK
-            time_to_triage = calculate_time_to_triage(req.requested_datetime, req.audit_logs)
-            reassignments = count_reassignments(req.audit_logs)
-            off_hours = is_off_hours_submission(req.requested_datetime)
-            escalation = calculate_escalation_occurred(req.audit_logs)
-            status_changes = count_status_changes(req)
-            
-            writer.writerow([
-                req.service_request_id,
-                req.service_code,
-                req.service_name,
-                infra_category,
-                asset_type,
-                asset_attributes,  # Full JSON of asset properties
-                sanitize_description(req.description),
-                desc_word_count,
-                has_photos,
-                photo_count,
-                req.flagged,
-                req.flag_reason,
-                ai_priority,  # Now from ai_analysis.priority_score
-                ai_summary,
-                bool(req.ai_analyzed_at),
-                ai_priority_diff,
-                req.status,
-                req.closed_substatus,
-                req.priority,
-                resolution_outcome,
-                anonymize_address(req.address, privacy_mode),
-                lat,
-                long,
-                zone_id,
-                # Social Equity Pack
-                census_geoid,
-                svi,
-                _eq.get("svi_source"),
-                housing_tenure,
-                income_quintile,
-                pop_density,
-                # Environmental Context Pack
-                weather.get('precip_24h_mm'),
-                weather.get('temp_max_c'),
-                weather.get('temp_min_c'),
-                weather.get('weather_code'),
-                asset_age,
-                # Sentiment & Trust Pack
-                sentiment,
-                trust.get('is_repeat_report'),
-                trust.get('prior_report_mentioned'),
-                trust.get('frustration_expressed'),
-                # Temporal
-                req.requested_datetime.isoformat() if req.requested_datetime else None,
-                req.closed_datetime.isoformat() if req.closed_datetime else None,
-                req.updated_datetime.isoformat() if req.updated_datetime else None,
-                time_info.get('hour_of_day'),
-                time_info.get('day_of_week'),
-                time_info.get('month'),
-                time_info.get('year'),
-                time_info.get('is_weekend'),
-                time_info.get('is_business_hours'),
-                season,
-                # Bureaucratic Friction Pack
-                time_to_triage,
-                reassignments,
-                off_hours,
-                escalation,
-                resolution_hours,
-                business_hours,
-                days_to_first_update,
-                status_changes,
-                # Civic Engagement
-                req.source,
-                req.assigned_department_id,
-                total_comments,
-                public_comments,
-            ])
+            writer.writerow(build_dataset_row(req, equity_map.get(req.id, {}), privacy_mode))
             yield output.getvalue()
             output.seek(0)
             output.truncate(0)
+
     
     filename = f"research_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     
@@ -1490,6 +1366,7 @@ async def export_csv(
 
 @router.get("/export/geojson")
 async def export_geojson(
+    request: Request,
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     service_code: Optional[str] = Query(None),
@@ -1499,234 +1376,74 @@ async def export_geojson(
 ):
     """
     Export sanitized request data as GeoJSON for GIS analysis.
-    
-    Includes properties for:
-    - Spatial clustering and hotspot analysis
-    - Infrastructure categorization
-    - Response time equity metrics
-    - Temporal patterns for civic engagement research
+
+    Properties are the SAME rows the CSV emits (build_dataset_row, filtered by
+    the admin's pack switches); coordinates live in the geometry, so the
+    latitude/longitude columns are dropped from properties.
     """
     if not await check_research_enabled(db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Research Suite is not enabled")
-    
+
     if privacy_mode == "exact" and current_user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Exact location export requires admin privileges"
         )
-    
+
     query = select(ServiceRequest).options(
         selectinload(ServiceRequest.comments),
         selectinload(ServiceRequest.audit_logs)
     ).where(
-        ServiceRequest.deleted_at.is_(None),
+        *research_visibility_conditions(),
         ServiceRequest.lat.isnot(None),
         ServiceRequest.long.isnot(None)
     )
-    
+
     if start_date:
         query = query.where(ServiceRequest.requested_datetime >= datetime.combine(start_date, datetime.min.time()))
     if end_date:
         query = query.where(ServiceRequest.requested_datetime <= datetime.combine(end_date, datetime.max.time()))
     if service_code:
         query = query.where(ServiceRequest.service_code == service_code)
-    
+
     result = await db.execute(query)
     requests = result.scalars().all()
-    
+
     await log_research_access(
         db, current_user.id, current_user.username, "export_geojson",
         {"start_date": str(start_date), "end_date": str(end_date), "service_code": service_code},
-        len(requests), privacy_mode
+        len(requests), privacy_mode, request=request
     )
-    
+
     # Real awaited Census/equity lookups, deduplicated by coordinate.
     equity_map = await build_equity_map(requests, privacy_mode)
 
+    system_settings = await get_system_settings(db)
+    # Pack switches, enforced server-side — same gate as the CSV.
+    columns = allowed_research_columns(system_settings)
+    property_columns = [c for c in columns if c not in ("latitude", "longitude")]
+
     features = []
     for req in requests:
-        # Privacy-aware location
+        # Privacy-aware location for the geometry.
         if privacy_mode == "fuzzed":
             lat, long = fuzz_location(req.lat, req.long)
         else:
             lat, long = req.lat, req.long
-        
+
         if lat is None or long is None:
             continue
-        
-        # Calculate metrics
-        resolution_hours = None
-        business_hours = None
-        if req.closed_datetime and req.requested_datetime:
-            delta = req.closed_datetime - req.requested_datetime
-            resolution_hours = round(delta.total_seconds() / 3600, 2)
-            business_hours = calculate_business_hours(req.requested_datetime, req.closed_datetime)
-        
-        time_info = get_time_period(req.requested_datetime)
-        infra_category = get_infrastructure_category(req.service_code)
-        
-        asset_type = None
-        if req.matched_asset and isinstance(req.matched_asset, dict):
-            asset_type = req.matched_asset.get('asset_type') or req.matched_asset.get('layer_name')
-        
-        # AI priority is now in ai_analysis JSON, not a separate column
-        ai_summary = sanitize_description(req.ai_summary) if req.ai_summary else None
-        ai_priority = req.ai_analysis.get('priority_score') if req.ai_analysis else None
-        ai_priority_diff = None
-        if ai_priority and req.manual_priority_score:
-            ai_priority_diff = round(req.manual_priority_score - ai_priority, 2)
-        
-        # Description metrics
-        desc_word_count = len(req.description.split()) if req.description else 0
-        has_photos = bool(req.media_urls and len(req.media_urls) > 0)
-        
-        # Resolution outcome
-        resolution_outcome = None
-        if req.status == 'closed':
-            if req.closed_substatus == 'resolved':
-                resolution_outcome = 'completed'
-            elif req.closed_substatus == 'no_action':
-                resolution_outcome = 'no_action_needed'
-            elif req.closed_substatus == 'third_party':
-                resolution_outcome = 'referred_external'
-            else:
-                resolution_outcome = 'closed_other'
-        elif req.status == 'in_progress':
-            resolution_outcome = 'in_progress'
-        else:
-            resolution_outcome = 'pending'
-        
-        # Zone-based fields
-        zone_id = generate_zone_id(req.lat, req.long)
-        season = get_season(req.requested_datetime)
-        
-        # Comment counts
-        total_comments = len(req.comments) if req.comments else 0
-        public_comments = len([c for c in req.comments if c.visibility == 'external']) if req.comments else 0
-        
-        # SOCIAL EQUITY PACK — resolved up front by build_equity_map (real awaited
-        # Census lookups); previously these were un-awaited coroutines, which made
-        # json.dumps below raise and 500 the whole export.
-        _eq = equity_map.get(req.id, {})
-        census_geoid = _eq.get("census_geoid")
-        income_quintile = _eq.get("income_band")
-        pop_density = _eq.get("population_density")
-        svi = _eq.get("social_vulnerability_index")
-        housing_tenure = _eq.get("housing_tenure_renter_pct")
-        
-        # ENVIRONMENTAL CONTEXT PACK - Real weather data
-        weather = _eq.get("weather") or {}
-        asset_age = get_asset_age_years(req.matched_asset)
-        asset_attributes = get_matched_asset_attributes(req.matched_asset)
-        
-        # SENTIMENT & TRUST PACK
-        sentiment = analyze_sentiment(req.description)
-        trust = detect_trust_indicators(req.description)
-        
-        # BUREAUCRATIC FRICTION PACK
-        time_to_triage = calculate_time_to_triage(req.requested_datetime, req.audit_logs)
-        reassignments = count_reassignments(req.audit_logs)
-        off_hours = is_off_hours_submission(req.requested_datetime)
-        escalation = calculate_escalation_occurred(req.audit_logs)
 
-        # Fields the CSV emits that the GeoJSON was silently omitting, so the two
-        # exports (and the published data dictionary) now agree.
-        desc_sanitized = sanitize_description(req.description)
-        photo_count = len(req.media_urls) if req.media_urls else 0
-        address_anon = anonymize_address(req.address, privacy_mode)
-        days_to_first_update = days_to_first_staff_action(req)
-        status_changes = count_status_changes(req)
-        
+        row = build_dataset_row(req, equity_map.get(req.id, {}), privacy_mode)
         features.append({
             "type": "Feature",
             "geometry": {
                 "type": "Point",
                 "coordinates": [long, lat]
             },
-            "properties": {
-                # Identifiers
-                "request_id": req.service_request_id,
-                "zone_id": zone_id,
-                
-                # Category & Infrastructure
-                "service_code": req.service_code,
-                "service_name": req.service_name,
-                "infrastructure_category": infra_category,
-                "matched_asset_type": asset_type,
-                "matched_asset_attributes": asset_attributes,  # Full JSON of asset properties
-                
-                # Issue Details
-                "description_sanitized": desc_sanitized,
-                "description_word_count": desc_word_count,
-                "has_photos": has_photos,
-                "photo_count": photo_count,
-                "address_anonymized": address_anon,
-                
-                # AI Analysis (for ML/NLP research)
-                "moderation_flagged": req.flagged,
-                "moderation_flag_reason": req.flag_reason,
-                "ai_priority_score": ai_priority,  # Now from ai_analysis.priority_score
-                "ai_summary_sanitized": ai_summary,
-                "ai_analyzed": bool(req.ai_analyzed_at),
-                "ai_vs_manual_priority_diff": ai_priority_diff,
-                
-                # Status & Resolution
-                "status": req.status,
-                "closed_substatus": req.closed_substatus,
-                "priority": req.priority,
-                "resolution_outcome": resolution_outcome,
-                
-                # SOCIAL EQUITY PACK
-                "census_tract_geoid": census_geoid,
-                "social_vulnerability_index": svi,
-                "svi_source": _eq.get("svi_source"),
-                "housing_tenure_renter_pct": housing_tenure,
-                "income_quintile": income_quintile,
-                "population_density": pop_density,
-                
-                # ENVIRONMENTAL CONTEXT PACK
-                "weather_precip_24h_mm": weather.get('precip_24h_mm'),
-                "weather_temp_max_c": weather.get('temp_max_c'),
-                "weather_temp_min_c": weather.get('temp_min_c'),
-                "weather_code": weather.get('weather_code'),
-                "nearby_asset_age_years": asset_age,
-                
-                # SENTIMENT & TRUST PACK
-                "sentiment_score": sentiment,
-                "is_repeat_report": trust.get('is_repeat_report'),
-                "prior_report_mentioned": trust.get('prior_report_mentioned'),
-                "frustration_expressed": trust.get('frustration_expressed'),
-                
-                # Temporal
-                "submitted_datetime": req.requested_datetime.isoformat() if req.requested_datetime else None,
-                "closed_datetime": req.closed_datetime.isoformat() if req.closed_datetime else None,
-                "submission_hour": time_info.get('hour_of_day'),
-                "submission_day_of_week": time_info.get('day_of_week'),
-                "submission_month": time_info.get('month'),
-                "submission_year": time_info.get('year'),
-                "updated_datetime": req.updated_datetime.isoformat() if req.updated_datetime else None,
-                "days_to_first_update": days_to_first_update,
-                "status_change_count": status_changes,
-                "is_weekend_submission": time_info.get('is_weekend'),
-                "is_business_hours_submission": time_info.get('is_business_hours'),
-                "season": season,
-                
-                # BUREAUCRATIC FRICTION PACK
-                "time_to_triage_hours": time_to_triage,
-                "reassignment_count": reassignments,
-                "off_hours_submission": off_hours,
-                "escalation_occurred": escalation,
-                "total_hours_to_resolve": resolution_hours,
-                "business_hours_to_resolve": business_hours,
-                
-                # Civic Engagement
-                "submission_channel": req.source,
-                "department_id": req.assigned_department_id,
-                "comment_count": total_comments,
-                "public_comment_count": public_comments,
-            }
+            "properties": {k: row.get(k) for k in property_columns},
         })
-    
+
     geojson = {
         "type": "FeatureCollection",
         "features": features,
@@ -1743,19 +1460,17 @@ async def export_geojson(
                          f"{K_ANONYMITY_THRESHOLD} records in this export."}
                 if privacy_mode != "exact" else {"applied": False}
             ),
+            # Derived from COLUMN_DICTIONARY (enabled packs only) — the previous
+            # hand-written copy had already drifted from the dictionary.
             "research_packs": {
-                "social_equity": ["social_vulnerability_index", "housing_tenure_renter_pct", "income_quintile", "population_density"],
-                "environmental_context": ["weather_precip_24h_mm", "weather_temp_max_c", "weather_temp_min_c", "nearby_asset_age_years", "season"],
-                "sentiment_trust": ["sentiment_score", "is_repeat_report", "prior_report_mentioned", "frustration_expressed"],
-                "bureaucratic_friction": ["time_to_triage_hours", "reassignment_count", "off_hours_submission", "escalation_occurred"],
-                "civil_engineering": ["infrastructure_category", "matched_asset_type"],
-                "ai_ml_research": ["ai_priority_score", "ai_summary_sanitized", "ai_vs_manual_priority_diff"], "moderation": ["moderation_flagged", "moderation_flag_reason"]
-            }
+                pack_id: [f["name"] for f in meta["fields"]]
+                for pack_id, meta in packs_with_fields(system_settings).items()
+            },
         }
     }
-    
+
     filename = f"research_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.geojson"
-    
+
     return StreamingResponse(
         iter([json.dumps(geojson, indent=2)]),
         media_type="application/geo+json",
@@ -1771,379 +1486,193 @@ async def get_data_dictionary(
     """
     Get data dictionary explaining all fields in exports.
     Essential for research documentation and analysis reproducibility.
+
+    Derived entirely from COLUMN_DICTIONARY and the pack switch table — this
+    used to be a second hand-written copy of the schema and had already
+    drifted from what the exports actually emit. Columns whose pack the admin
+    turned off are omitted here exactly as they are from the files.
     """
     if not await check_research_enabled(db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Research Suite is not enabled")
-    
-    return {
-        "version": "1.0",
+
+    system_settings = await get_system_settings(db)
+    allowed = set(allowed_research_columns(system_settings))
+    packs = packs_with_fields(system_settings)
+
+    response = {
+        "version": "2.0",
         "fields": {
-            "request_id": {
-                "type": "string",
-                "description": "Unique identifier for the service request",
-                "example": "SR-2024-001234"
-            },
-            "service_code": {
-                "type": "string",
-                "description": "Category code for the type of issue",
-                "example": "pothole"
-            },
-            "service_name": {
-                "type": "string",
-                "description": "Human-readable name of the service category",
-                "example": "Pothole Repair"
-            },
-            "infrastructure_category": {
-                "type": "string",
-                "description": "Grouped infrastructure type for civil engineering research",
-                "values": list(set(INFRASTRUCTURE_CATEGORIES.values())),
-                "example": "roads_pavement"
-            },
-            "matched_asset_type": {
-                "type": "string",
-                "description": "Type of infrastructure asset linked to request (if any)",
-                "example": "storm_drain"
-            },
-            "description_sanitized": {
-                "type": "string",
-                "description": "Issue description with PII removed (phone, email, names)",
-                "note": "Phone numbers replaced with [PHONE REDACTED]"
-            },
-            "status": {
-                "type": "string",
-                "values": ["open", "in_progress", "closed"],
-                "description": "Current status of the request"
-            },
-            "closed_substatus": {
-                "type": "string",
-                "values": ["resolved", "no_action", "third_party"],
-                "description": "How the request was closed"
-            },
-            "priority": {
-                "type": "integer",
-                "range": "1-10",
-                "description": "Priority level (1-10 scale, 10=highest)"
-            },
-            "address_anonymized": {
-                "type": "string",
-                "description": "Street address with house numbers removed (fuzzed mode)",
-                "example": "Main Street (Block), West Windsor"
-            },
-            "latitude": {
-                "type": "float",
-                "description": "Latitude coordinate (snapped to ~100ft grid in fuzzed mode)"
-            },
-            "longitude": {
-                "type": "float",
-                "description": "Longitude coordinate (snapped to ~100ft grid in fuzzed mode)"
-            },
-            "zone_id": {
-                "type": "string",
-                "description": "Anonymous geographic zone (~0.5 mile cells) for clustering without revealing exact location",
-                "example": "ZONE-A1B2C3D4"
-            },
-            "submitted_datetime": {
-                "type": "ISO8601",
-                "description": "When the request was submitted"
-            },
-            "closed_datetime": {
-                "type": "ISO8601",
-                "description": "When the request was closed (if applicable)"
-            },
-            "submission_hour": {
-                "type": "integer",
-                "range": "0-23",
-                "description": "Hour of day when submitted (for temporal analysis)"
-            },
-            "submission_day_of_week": {
-                "type": "string",
-                "description": "Day of week when submitted",
-                "values": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-            },
-            "is_weekend_submission": {
-                "type": "boolean",
-                "description": "Whether submitted on Saturday or Sunday"
-            },
-            "is_business_hours_submission": {
-                "type": "boolean",
-                "description": "Whether submitted during 8am-5pm on weekdays"
-            },
-            "total_hours_to_resolve": {
-                "type": "float",
-                "description": "Total clock hours from submission to closure"
-            },
-            "business_hours_to_resolve": {
-                "type": "float",
-                "description": "Business hours (Mon-Fri 8am-5pm) from submission to closure",
-                "note": "Useful for fair comparison of response times"
-            },
-            "submission_channel": {
-                "type": "string",
-                "values": ["resident_portal", "phone", "walk_in", "email"],
-                "description": "How the request was submitted (for digital equity research)"
-            },
-            "department_id": {
-                "type": "integer",
-                "description": "ID of assigned department"
-            },
-            "description_word_count": {
-                "type": "integer",
-                "description": "Number of words in the issue description",
-                "note": "Useful for text complexity analysis"
-            },
-            "has_photos": {
-                "type": "boolean",
-                "description": "Whether the request includes photo attachments"
-            },
-            "photo_count": {
-                "type": "integer",
-                "description": "Number of photos attached to the request",
-                "note": "Useful for studying documentation quality impact on resolution"
-            },
-            "moderation_flagged": {
-                "type": "boolean",
-                "description": "Whether the request was flagged for staff review by the content-moderation wordlist at intake (AI vision can also add to it). Not an AI classification."
-            },
-            "moderation_flag_reason": {
-                "type": "string",
-                "description": "Flag reason, e.g. \"Auto-flagged: profanity\""
-            },
-            "ai_priority_score": {
-                "type": "float",
-                "range": "1-10",
-                "description": "AI-generated priority score (1-10 scale, 10=highest priority)",
-                "note": "Use with ai_vs_manual_priority_diff to study AI-human alignment"
-            },
-            "ai_summary_sanitized": {
-                "type": "string",
-                "description": "AI-generated summary of the issue (PII redacted)",
-                "note": "Useful for NLP/text summarization research"
-            },
-            "ai_analyzed": {
-                "type": "boolean",
-                "description": "Whether this request was processed by the AI analysis system"
-            },
-            "ai_vs_manual_priority_diff": {
-                "type": "float",
-                "description": "Difference between manual override priority and AI priority (manual - AI)",
-                "note": "Positive = staff rated higher priority than AI. Useful for AI calibration research"
-            },
-            "resolution_outcome": {
-                "type": "string",
-                "values": ["completed", "no_action_needed", "referred_external", "closed_other", "in_progress", "pending"],
-                "description": "Standardized resolution outcome for cross-system comparison"
-            },
-            "days_to_first_update": {
-                "type": "float",
-                "description": "Days from submission to first staff action",
-                "note": "Measures initial response time separate from full resolution"
-            },
-            "status_change_count": {
-                "type": "integer",
-                "description": "Number of status changes (audit entries with action=status_change)",
-                "note": "Indicator of issue complexity or workflow efficiency"
-            },
-            "season": {
-                "type": "string",
-                "values": ["winter", "spring", "summer", "fall"],
-                "description": "Season when request was submitted",
-                "note": "Useful for correlating infrastructure issues with weather patterns"
-            },
-            "income_quintile": {
-                "type": "integer",
-                "range": "1-5",
-                "description": "Anonymized income quintile based on geographic zone (1=lowest, 5=highest)",
-                "note": "Privacy-preserving proxy for socioeconomic equity research"
-            },
-            "population_density": {
-                "type": "string",
-                "values": ["low", "medium", "high"],
-                "description": "Population density category of the zone",
-                "note": "Useful for urban vs suburban service equity analysis"
-            },
-            "comment_count": {
-                "type": "integer",
-                "description": "Total number of comments on the request",
-                "note": "Measures engagement depth and issue complexity"
-            },
-            "public_comment_count": {
-                "type": "integer",
-                "description": "Number of public/external comments visible to reporter",
-                "note": "Measures transparency and citizen communication"
-            },
-            
-            # ===============================================
-            # SOCIAL EQUITY PACK (For Sociologists)
-            # ===============================================
-            "census_tract_geoid": {
-                "type": "string",
-                "format": "11-digit FIPS code (SSCCCTTTTTT)",
-                "description": "Census Tract GEOID for joining with US Census datasets",
-                "note": "Holy grail for equity research - links to education, demographics, income data",
-                "source": "US Census Bureau Geocoder API"
-            },
-            "social_vulnerability_index": {
-                "type": "float",
-                "range": "0.0-1.0",
-                "description": "Social vulnerability percentile (0=least, 1=most vulnerable). Prefers the official CDC/ATSDR SVI (RPL_THEMES, nationally ranked across 16 variables in 4 themes). Falls back to a local ACS-derived approximation ranked within this export only. ALWAYS check svi_source before pooling values.",
-                "note": "Calculated from Census ACS income, housing tenure, and population data",
-                "source": "Census Bureau ACS 5-year estimates (B19013, B25003, B01003)"
-            },
-            "housing_tenure_renter_pct": {
-                "type": "float",
-                "range": "0.0-1.0",
-                "description": "Percentage of renters in the census tract (0.0=all owners, 1.0=all renters)",
-                "note": "Hypothesis: Renters may under-report infrastructure issues vs owners",
-                "source": "Census Bureau ACS 5-year estimates (B25003)"
-            },
-            
-            # ===============================================
-            # ENVIRONMENTAL CONTEXT PACK (For Urban Planners)
-            # ===============================================
-            "weather_precip_24h_mm": {
-                "type": "float",
-                "description": "Precipitation in 24 hours before report (millimeters)",
-                "note": "Correlates with flooding, pothole formation, drainage issues",
-                "source": "Open-Meteo API (free, no key required) with seasonal fallback"
-            },
-            "weather_temp_max_c": {
-                "type": "float",
-                "description": "Maximum temperature on report day (Celsius)",
-                "note": "Freeze-thaw cycles cause road damage",
-                "source": "Open-Meteo API (free, no key required) with seasonal fallback"
-            },
-            "weather_temp_min_c": {
-                "type": "float",
-                "description": "Minimum temperature on report day (Celsius)",
-                "note": "Sub-freezing temperatures indicate potential pothole conditions",
-                "source": "Open-Meteo API (free, no key required) with seasonal fallback"
-            },
-            "nearby_asset_age_years": {
-                "type": "float",
-                "description": "Age of matched infrastructure asset in years",
-                "note": "Enables 'Survival Analysis' on infrastructure lifecycle",
-                "source": "Extracted from matched_asset.properties.install_date"
-            },
-            
-            # ===============================================
-            # SENTIMENT & TRUST PACK (For Political Science)
-            # ===============================================
-            "sentiment_score": {
-                "type": "float",
-                "range": "-1.0 to +1.0",
-                "description": "Sentiment score (-1=angry, 0=neutral, +1=grateful) from VADER, a published rule-based model handling negation and intensifiers. Falls back to a simple keyword scorer if VADER is unavailable",
-                "note": "Research Q: 'Are wealthier neighborhoods more polite in requests?'",
-                "source": "Word-based sentiment analysis"
-            },
-            "is_repeat_report": {
-                "type": "boolean",
-                "description": "Whether text indicates this issue was reported before",
-                "note": "Detected via patterns like 'third time', 'reported before', 'same issue'",
-                "patterns": ["third time", "reported before", "still waiting", "same problem"]
-            },
-            "prior_report_mentioned": {
-                "type": "boolean",
-                "description": "Whether text references a prior ticket/case number",
-                "note": "Indicates institutional memory and tracking awareness",
-                "patterns": ["ticket #", "case #", "previous request"]
-            },
-            "frustration_expressed": {
-                "type": "boolean",
-                "description": "Whether text contains frustration indicators",
-                "note": "Signals eroding public trust in government responsiveness",
-                "patterns": ["unacceptable", "waste of time", "when will", "do nothing"]
-            },
-            
-            # ===============================================
-            # BUREAUCRATIC FRICTION PACK (For Public Admin)
-            # ===============================================
-            "time_to_triage_hours": {
-                "type": "float",
-                "description": "Hours from submission to first status change (In Progress)",
-                "note": "Measures government responsiveness vs 'Time to Close' which measures workload",
-                "calculation": "First 'in_progress' status change timestamp - submission timestamp"
-            },
-            "reassignment_count": {
-                "type": "integer",
-                "description": "Number of times request bounced between departments",
-                "note": "Measures bureaucratic inefficiency and unclear routing",
-                "calculation": "Count of 'department_assigned' audit log entries minus 1"
-            },
-            "off_hours_submission": {
-                "type": "boolean",
-                "description": "Submitted outside normal hours (before 6am or after 10pm)",
-                "note": "Implies high urgency or shift-worker population",
-                "threshold": "hour < 6 OR hour >= 22"
-            },
-            "escalation_occurred": {
-                "type": "boolean",
-                "description": "Whether priority was manually increased by staff",
-                "note": "Indicates AI under-prioritized or situation worsened",
-                "calculation": "Detected via 'priority_change' audit logs where new < old"
-            }
+            name: {"type": col_type, "description": desc, "research_pack": pack}
+            for name, col_type, desc, pack in COLUMN_DICTIONARY
+            if name in allowed
         },
-        "research_packs": {
-            "social_equity": {
-                "audience": "Equity Analysts, Social Researchers",
-                "fields": ["census_tract_geoid", "social_vulnerability_index", "housing_tenure_renter_pct", "income_quintile", "population_density"],
-                "suggested_analyses": [
-                    "Join with Census ACS for demographic correlation",
-                    "SVI vs response time regression",
-                    "Renter vs owner reporting rate comparison",
-                    "Income quintile service disparity analysis"
-                ]
-            },
-            "environmental_context": {
-                "audience": "Planners, Engineers, Operations Staff",
-                "fields": ["weather_precip_24h_mm", "weather_temp_max_c", "weather_temp_min_c", "nearby_asset_age_years", "season"],
-                "suggested_analyses": [
-                    "Freeze-thaw cycle pothole correlation",
-                    "Asset age survival analysis",
-                    "Precipitation-drainage issue linkage",
-                    "Seasonal maintenance optimization"
-                ]
-            },
-            "sentiment_trust": {
-                "audience": "Civic Engagement Analysts, Administrators",
-                "fields": ["sentiment_score", "is_repeat_report", "prior_report_mentioned", "frustration_expressed"],
-                "suggested_analyses": [
-                    "Sentiment vs income quintile correlation",
-                    "Repeat report resolution success rates",
-                    "Trust erosion indicators over time",
-                    "Politeness variation by submission channel"
-                ]
-            },
-            "bureaucratic_friction": {
-                "audience": "Operations Managers, Process Analysts",
-                "fields": ["time_to_triage_hours", "reassignment_count", "off_hours_submission", "escalation_occurred"],
-                "suggested_analyses": [
-                    "Triage time vs resolution outcome",
-                    "Department routing efficiency audit",
-                    "Off-hours urgent issue patterns",
-                    "AI escalation accuracy study"
-                ]
-            },
-            "civil_engineering": {
-                "audience": "Planners, Engineers, Operations Staff",
-                "fields": ["infrastructure_category", "matched_asset_type", "nearby_asset_age_years", "season", "has_photos"],
-                "suggested_analyses": [
-                    "Infrastructure maintenance patterns by category",
-                    "Asset lifecycle and failure prediction",
-                    "Photo documentation impact on resolution"
-                ]
-            },
-            "ai_ml_research": {
-                "audience": "Data Scientists, AI/ML Engineers",
-                "fields": ["ai_priority_score", "ai_summary_sanitized", "ai_vs_manual_priority_diff", "ai_analyzed", "moderation_flagged", "moderation_flag_reason"],
-                "suggested_analyses": [
-                    "AI-human priority alignment study",
-                    "Flagging accuracy and false positive rates",
-                    "Classification accuracy compared to final service_code",
-                    "NLP summarization quality assessment"
-                ]
-            }
-        }
+        "core_fields": [
+            {"name": name, "type": col_type, "description": desc}
+            for name, col_type, desc, pack in COLUMN_DICTIONARY
+            if pack == "Core"
+        ],
+        "research_packs": packs,
+        "privacy": {
+            "fuzzed_mode": (
+                "Coordinates snapped to ~100ft grid; house number and street "
+                "name withheld; timestamps at day precision; census-tract fields "
+                f"suppressed below {K_ANONYMITY_THRESHOLD} records per tract."
+            ),
+            "exact_mode": "Admin only, audit-logged: full coordinates, addresses and timestamps.",
+        },
     }
+    # Which sentiment implementation produced sentiment_score — only meaningful
+    # when the pack is on.
+    if packs.get("sentiment_trust", {}).get("enabled"):
+        response["sentiment_method"] = sentiment_method()
+    return response
+
+
+# The pack switch table — the ONE place a pack's identity and default live.
+# `id` is the key in system_settings.research_packs; an absent key means the
+# pack's `default_on`. Two packs default OFF: their fields are town-authored
+# characterizations of a resident's own message (tone scores, "possibly
+# abusive" flags), which carry real OPRA/litigation exposure — a town enables
+# those deliberately, it does not discover it shipped them.
+RESEARCH_PACKS_DEF = {
+    "social_equity": {
+        "label": "Social Equity Pack",
+        "audience": "Equity Analysts, Social Researchers",
+        "default_on": True,
+        "suggested_analyses": [
+            "Join with Census ACS for demographic correlation",
+            "SVI vs response time regression",
+            "Renter vs owner reporting rate comparison",
+            "Income quintile service disparity analysis",
+        ],
+    },
+    "environmental_context": {
+        "label": "Environmental Context Pack",
+        "audience": "Planners, Engineers, Operations Staff",
+        "default_on": True,
+        "suggested_analyses": [
+            "Freeze-thaw cycle pothole correlation",
+            "Asset age survival analysis",
+            "Precipitation-drainage issue linkage",
+            "Seasonal maintenance optimization",
+        ],
+    },
+    "sentiment_trust": {
+        "label": "Sentiment & Trust Pack",
+        "audience": "Civic Engagement Analysts, Administrators",
+        "default_on": False,
+        "why_default_off": (
+            "Per-row tone and behavior labels are the town's own characterization "
+            "of a resident's message. Enable deliberately."
+        ),
+        "suggested_analyses": [
+            "Repeat report resolution success rates",
+            "Trust erosion indicators over time",
+            "Politeness variation by submission channel",
+        ],
+    },
+    "bureaucratic_friction": {
+        "label": "Bureaucratic Friction Pack",
+        "audience": "Operations Managers, Process Analysts",
+        "default_on": True,
+        "suggested_analyses": [
+            "Triage time vs resolution outcome",
+            "Department routing efficiency audit",
+            "Off-hours urgent issue patterns",
+            "AI escalation accuracy study",
+        ],
+    },
+    "ai_ml_research": {
+        "label": "AI/ML Research Pack",
+        "audience": "Data Scientists, AI/ML Engineers",
+        "default_on": True,
+        "suggested_analyses": [
+            "AI-human priority alignment study",
+            "Classification accuracy compared to final service_code",
+        ],
+    },
+    "moderation": {
+        "label": "Moderation Pack",
+        "audience": "Data Scientists, Trust & Safety Researchers",
+        "default_on": False,
+        "why_default_off": (
+            "A per-row record that the town's filter deemed a resident's message "
+            "possibly abusive is a town-authored accusation. Enable deliberately."
+        ),
+        "suggested_analyses": [
+            "Flagging accuracy and false positive rates",
+        ],
+    },
+}
+
+# pack label (as written in COLUMN_DICTIONARY) -> pack id
+_PACK_LABEL_TO_ID = {meta["label"]: pack_id for pack_id, meta in RESEARCH_PACKS_DEF.items()}
+
+
+def enabled_packs(system_settings) -> dict:
+    """{pack_id: bool} resolved against the stored per-pack switches.
+
+    Absent/NULL key = the pack's own default, so an upgrade changes nothing for
+    the always-on packs while the two liability packs stay off until enabled.
+    """
+    stored = {}
+    if system_settings is not None and getattr(system_settings, "research_packs", None):
+        stored = system_settings.research_packs or {}
+    return {
+        pack_id: bool(stored.get(pack_id, meta["default_on"]))
+        for pack_id, meta in RESEARCH_PACKS_DEF.items()
+    }
+
+
+def column_pack_id(column_name: str) -> Optional[str]:
+    """Pack id a column belongs to, or None for Core/unlisted (always ships)."""
+    for name, _type, _desc, pack in COLUMN_DICTIONARY:
+        if name == column_name:
+            return _PACK_LABEL_TO_ID.get(pack)
+    return None
+
+
+def allowed_research_columns(system_settings) -> list:
+    """RESEARCH_COLUMNS filtered by the admin's pack switches.
+
+    This is THE enforcement point semantics: every research output (CSV,
+    GeoJSON properties, data dictionary, codebook, chat prompt) selects its
+    columns through this, so a pack switched off disappears everywhere at once.
+    Core identification/timing columns are in no pack and always ship.
+    """
+    packs = enabled_packs(system_settings)
+    return [
+        c for c in RESEARCH_COLUMNS
+        if column_pack_id(c) is None or packs.get(column_pack_id(c), True)
+    ]
+
+
+def packs_with_fields(system_settings=None, include_disabled: bool = False) -> dict:
+    """Pack metadata with field lists, derived from COLUMN_DICTIONARY.
+
+    The one derivation the /data-dictionary block, the GeoJSON metadata, the
+    admin toggles and the frontend pack display all share — the previous
+    hand-written copies had already drifted apart on has_photos/moderation.
+    """
+    packs = enabled_packs(system_settings)
+    out = {}
+    for pack_id, meta in RESEARCH_PACKS_DEF.items():
+        if not include_disabled and not packs[pack_id]:
+            continue
+        out[pack_id] = {
+            "label": meta["label"],
+            "audience": meta["audience"],
+            "default_on": meta["default_on"],
+            "enabled": packs[pack_id],
+            "fields": [
+                {"name": name, "type": col_type, "description": desc}
+                for name, col_type, desc, pack in COLUMN_DICTIONARY
+                if _PACK_LABEL_TO_ID.get(pack) == pack_id
+            ],
+            "suggested_analyses": meta.get("suggested_analyses", []),
+            **({"why_default_off": meta["why_default_off"]} if "why_default_off" in meta else {}),
+        }
+    return out
 
 
 # Single source of truth for exported columns: (name, type, description, pack).
@@ -2158,17 +1687,19 @@ COLUMN_DICTIONARY = [
     ("matched_asset_type", "string", "Type of linked infrastructure asset from GIS layer", "Core"),
     ("matched_asset_attributes", "JSON string", "Full properties of matched asset (pressure_psi, install_year, etc.)", "Environmental Context Pack"),
     
-    # Issue details
-    ("description_sanitized", "string", "Issue description with PII removed (phone/email/names redacted)", "Core"),
-    ("description_word_count", "integer", "Word count of original description", "Core"),
+    # Issue details. `description_sanitized` is deliberately NOT here: pattern
+    # redaction over resident free text is best-effort, and one miss ships a
+    # name or address in a file that leaves the building. Researchers get the
+    # word count and the derived scores instead of the prose.
+    ("description_word_count", "integer", "Word count of the resident's description (the text itself is not exported)", "Core"),
     ("has_photos", "boolean", "Whether request includes photo attachments", "Core"),
     ("photo_count", "integer", "Number of photos attached to request", "Core"),
-    
-    # AI Analysis
+
+    # AI Analysis. `ai_summary_sanitized` removed for the same reason as the
+    # description: model-written prose can restate the PII it summarized.
     ("moderation_flagged", "boolean", "Flagged for staff review by the content-moderation wordlist at intake (not AI)", "Moderation Pack"),
-    ("moderation_flag_reason", "string", "Flag reason, e.g. \"Auto-flagged: profanity\"", "Moderation Pack"),
+    ("moderation_flag_reason", "string", "Flag reason, e.g. \"Auto-flagged: profanity\" (PII patterns redacted)", "Moderation Pack"),
     ("ai_priority_score", "float (1-10)", "AI-generated priority score (10=highest)", "AI/ML Research Pack"),
-    ("ai_summary_sanitized", "string", "AI-generated summary (PII redacted)", "AI/ML Research Pack"),
     ("ai_analyzed", "boolean", "Whether AI has processed this request", "AI/ML Research Pack"),
     ("ai_vs_manual_priority_diff", "float", "manual_priority - ai_priority (positive = human prioritized higher)", "AI/ML Research Pack"),
     
@@ -2179,7 +1710,7 @@ COLUMN_DICTIONARY = [
     ("resolution_outcome", "string", "Standardized outcome: completed, no_action_needed, referred_external, etc.", "Core"),
     
     # Location (privacy-aware)
-    ("address_anonymized", "string", "Street address with house numbers removed in fuzzed mode", "Core"),
+    ("address_anonymized", "string", "Locality only in fuzzed mode (\"Block near <area>\" — house number AND street name withheld)", "Core"),
     ("latitude", "float", "Latitude coordinate (snapped to ~100ft grid in fuzzed mode)", "Core"),
     ("longitude", "float", "Longitude coordinate (snapped to ~100ft grid in fuzzed mode)", "Core"),
     ("zone_id", "string", "Anonymous geographic zone (~0.5 mile cells) for clustering", "Core"),
@@ -2205,10 +1736,13 @@ COLUMN_DICTIONARY = [
     ("prior_report_mentioned", "boolean", "Text references a prior ticket/case number", "Sentiment & Trust Pack"),
     ("frustration_expressed", "boolean", "Text contains trust erosion indicators", "Sentiment & Trust Pack"),
     
-    # Temporal fields
-    ("submitted_datetime", "ISO8601", "When the request was submitted", "Core"),
-    ("closed_datetime", "ISO8601", "When the request was closed (null if still open)", "Core"),
-    ("updated_datetime", "ISO8601", "When the request was last updated", "Core"),
+    # Temporal fields. Day precision in fuzzed mode: an exact submission second
+    # is a quasi-identifier (join it with a social post or a call log and the
+    # reporter falls out), while the hour/day-of-week columns below already
+    # carry the temporal signal research actually uses.
+    ("submitted_datetime", "ISO8601", "When the request was submitted (day precision in fuzzed mode)", "Core"),
+    ("closed_datetime", "ISO8601", "When the request was closed (null if still open; day precision in fuzzed mode)", "Core"),
+    ("updated_datetime", "ISO8601", "When the request was last updated (day precision in fuzzed mode)", "Core"),
     ("submission_hour", "integer (0-23)", "Hour of day when submitted", "Core"),
     ("submission_day_of_week", "integer (0-6)", "Day of week when submitted (0=Monday)", "Core"),
     ("submission_month", "integer (1-12)", "Month when submitted", "Core"),
@@ -2237,6 +1771,7 @@ COLUMN_DICTIONARY = [
 
 @router.get("/export/data-dictionary")
 async def export_data_dictionary_csv(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_researcher)
 ):
@@ -2247,23 +1782,33 @@ async def export_data_dictionary_csv(
     """
     if not await check_research_enabled(db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Research Suite is not enabled")
-    
-    # Define all columns in export order with their documentation
+
     # Column documentation lives at module scope (COLUMN_DICTIONARY) so the
     # dictionary export and the chat assistant report the SAME field counts.
-    
+    # Filtered by the pack switches: a codebook describing columns the export
+    # withholds would read as a bug (or an invitation) to the researcher.
+    allowed = set(allowed_research_columns(await get_system_settings(db)))
+    rows = [r for r in COLUMN_DICTIONARY if r[0] in allowed]
+
+    # The codebook download is research access like any other — it discloses
+    # exactly what this town exports, so it leaves the same audit trail.
+    await log_research_access(
+        db, current_user.id, current_user.username, "export_data_dictionary",
+        {}, len(rows), "n/a", request=request
+    )
+
     def generate_csv():
         output = io.StringIO()
         writer = csv.writer(output)
-        
+
         # Header row
         writer.writerow(["column_name", "data_type", "description", "research_pack"])
         yield output.getvalue()
         output.seek(0)
         output.truncate(0)
-        
+
         # Data rows
-        for col_name, col_type, description, pack in COLUMN_DICTIONARY:
+        for col_name, col_type, description, pack in rows:
             writer.writerow([col_name, col_type, description, pack])
             yield output.getvalue()
             output.seek(0)
@@ -2389,6 +1934,34 @@ plot(gdf["infrastructure_category"])
     }
 
 
+@router.get("/packs")
+async def get_research_pack_switches(
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_admin)
+):
+    """Pack switch metadata for the Admin Console toggles.
+
+    Admin-only, and deliberately NOT gated on the research_portal module flag:
+    an admin decides which packs a town releases BEFORE turning the portal on,
+    and the toggles have to render either way. Field lists come from
+    COLUMN_DICTIONARY so the "contains:" disclosure can never disagree with
+    what the export actually ships.
+    """
+    packs = packs_with_fields(await get_system_settings(db), include_disabled=True)
+    return [
+        {
+            "id": pack_id,
+            "label": meta["label"],
+            "audience": meta["audience"],
+            "enabled": meta["enabled"],
+            "default_on": meta["default_on"],
+            "contains": [f["name"] for f in meta["fields"]],
+            **({"why_default_off": meta["why_default_off"]} if "why_default_off" in meta else {}),
+        }
+        for pack_id, meta in packs.items()
+    ]
+
+
 @router.get("/access-logs")
 async def get_access_logs(
     limit: int = Query(100, le=1000),
@@ -2417,6 +1990,8 @@ async def get_access_logs(
             "parameters": log.parameters,
             "record_count": log.record_count,
             "privacy_mode": log.privacy_mode,
+            "ip_address": log.ip_address,
+            "user_agent": log.user_agent,
             "created_at": log.created_at.isoformat() if log.created_at else None
         }
         for log in logs
@@ -2445,6 +2020,7 @@ class ResearchChatResponse(BaseModel):
 
 @router.post("/chat", response_model=ResearchChatResponse)
 async def research_chat(
+    request: Request,
     body: ResearchChatRequest,
     db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_researcher)
@@ -2460,14 +2036,14 @@ async def research_chat(
     context_used = []
 
     # Get township info
-    settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
-    sys_settings = settings_result.scalar_one_or_none()
+    sys_settings = await get_system_settings(db)
     township_name = getattr(sys_settings, 'township_name', 'the municipality') or 'the municipality'
     context_used.append("system_settings")
 
-    # Get basic analytics for context
+    # Get basic analytics for context. Same visibility rule as every research
+    # query: unlisted reports stay out of the counts quoted to researchers.
     all_requests_result = await db.execute(
-        select(ServiceRequest).where(ServiceRequest.deleted_at.is_(None))
+        select(ServiceRequest).where(*research_visibility_conditions())
     )
     all_requests = all_requests_result.scalars().all()
     total = len(all_requests)
@@ -2481,12 +2057,37 @@ async def research_chat(
 
     context_used.append("request_analytics")
 
-    # Count fields from the actual exported-column dictionary rather than
-    # hardcoding. The hardcoded 26/30 disagreed with what the export really
-    # produced, so researchers were told a field count that wasn't true.
-    core_field_count = sum(1 for c in COLUMN_DICTIONARY if c[3] == "Core")
-    research_field_count = sum(1 for c in COLUMN_DICTIONARY if c[3] != "Core")
-    total_field_count = len(COLUMN_DICTIONARY)
+    # Field tables generated from COLUMN_DICTIONARY, filtered by the admin's
+    # pack switches — the chat must describe exactly what the export ships, no
+    # more. The previous hand-written tables had drifted (they still promised
+    # ai_flagged/ai_flag_reason, which no export emits).
+    allowed = set(allowed_research_columns(sys_settings))
+    packs = packs_with_fields(sys_settings)
+    core_rows = [c for c in COLUMN_DICTIONARY if c[3] == "Core"]
+    core_field_count = len(core_rows)
+    total_field_count = len(allowed)
+
+    def _field_lines(rows):
+        return chr(10).join(f"| {name} | {col_type} | {desc} |" for name, col_type, desc in rows)
+
+    core_fields_section = (
+        f"## CORE FIELDS ({core_field_count} fields, always included)\n"
+        "| Field | Type | Description |\n|-------|------|-------------|\n"
+        + _field_lines([(n, t, d) for n, t, d, _p in core_rows])
+    )
+    suggested_analyses_lines = [
+        f"- {analysis}"
+        for meta in packs.values()
+        for analysis in meta.get("suggested_analyses", [])
+    ]
+    suggested_analyses_section = chr(10).join(suggested_analyses_lines) or "- Response-time and category distribution studies"
+
+    pack_sections = chr(10).join(
+        f"## RESEARCH PACK: {meta['label']} ({meta['audience']})\n"
+        "| Field | Type | Description |\n|-------|------|-------------|\n"
+        + _field_lines([(f["name"], f["type"], f["description"]) for f in meta["fields"]])
+        for meta in packs.values()
+    )
 
     system_prompt = f"""You are a data assistant for the {township_name} Pinpoint 311 Research & Analytics Lab. You help researchers and municipal staff understand the available data, methodology, and analysis techniques.
 
@@ -2496,6 +2097,7 @@ async def research_chat(
 - Suggest analyses and statistical approaches
 - Answer questions about data formats, privacy modes, and export options
 - Be precise about field definitions — users need exact specifications
+- Only describe the fields listed below; packs an administrator has switched off are not exported and must not be promised
 
 ## CURRENT DATASET
 - **Township:** {township_name}
@@ -2503,84 +2105,13 @@ async def research_chat(
 - **Open:** {open_count} | **Closed:** {closed_count}
 - **Categories:** {json.dumps(dict(sorted(categories.items(), key=lambda x: x[1], reverse=True)[:10]))}
 
-## CORE FIELDS ({core_field_count} fields, always included)
-| Field | Type | Description |
-|-------|------|-------------|
-| request_id | string | Unique identifier |
-| service_code | string | Category code (e.g., pothole) |
-| service_name | string | Human-readable category |
-| infrastructure_category | string | Grouped type (roads_pavement, lighting, etc.) |
-| matched_asset_type | string | Type of matched infrastructure asset |
-| description_sanitized | string | Issue description (PII redacted) |
-| description_word_count | int | Word count |
-| has_photos / photo_count | bool/int | Photo attachments |
-| status | string | open, in_progress, closed |
-| closed_substatus | string | Resolution type |
-| priority | int (1-10) | Priority level (10=highest) |
-| resolution_outcome | string | Standardized resolution category |
-| address_anonymized | string | Generalized address |
-| latitude / longitude | float | Coordinates (fuzzed in privacy mode) |
-| zone_id | string | Geographic zone identifier |
-| submitted_datetime / closed_datetime | ISO | Timestamps |
-| submission_hour / day_of_week | int | Temporal fields |
-| is_weekend / is_business_hours | bool | Temporal flags |
-| submission_channel | string | How submitted |
-| department_id | int | Assigned department |
-| comment_count / public_comment_count | int | Comment counts |
+{core_fields_section}
 
-## RESEARCH PACK: Social Equity (Equity Analysts, Social Researchers)
-| Field | Type | Source |
-|-------|------|--------|
-| census_tract_geoid | string | US Census Geocoder API (real) — 11-digit FIPS code |
-| social_vulnerability_index | float (0-1) | Official CDC/ATSDR SVI when available; else local approximation |
-| svi_source | string | `cdc_svi_official` or `acs_approximation` — check before pooling |
-| housing_tenure_renter_pct | float (0-1) | Census ACS B25003 |
-| income_quintile | int (1-5) | Census ACS B19013 median household income |
-| population_density | string (low/medium/high) | Census ACS B01003 |
-
-## RESEARCH PACK: Environmental Context (Planners, Engineers, Operations Staff)
-| Field | Type | Source |
-|-------|------|--------|
-| weather_precip_24h_mm | float | Open-Meteo Archive API |
-| weather_temp_max_c / min_c | float | Open-Meteo Archive API |
-| weather_code | int | WMO weather code |
-| nearby_asset_age_years | float | GeoJSON asset properties |
-| matched_asset_attributes | JSON string | Full asset properties |
-| season | string | Calculated from timestamp |
-
-## RESEARCH PACK: Sentiment & Trust (Civic Engagement Analysts)
-| Field | Type | Source |
-|-------|------|--------|
-| sentiment_score | float (-1 to +1) | Word-based NLP analysis |
-| is_repeat_report | bool | Regex detection |
-| prior_report_mentioned | bool | Regex — references ticket/case numbers |
-| frustration_expressed | bool | Regex — trust erosion indicators |
-
-## RESEARCH PACK: Bureaucratic Friction (Operations Managers, Process Analysts)
-| Field | Type | Source |
-|-------|------|--------|
-| time_to_triage_hours | float | Audit logs — submission to first "In Progress" |
-| reassignment_count | int | Audit logs — department bounces |
-| off_hours_submission | bool | Before 6am or after 10pm |
-| escalation_occurred | bool | Priority manually increased |
-| total_hours_to_resolve | float | Submission to closure |
-| business_hours_to_resolve | float | Mon-Fri 8am-5pm only |
-| days_to_first_update | float | Days to the first staff action |
-| status_change_count | int | Number of status changes |
-
-## RESEARCH PACK: AI/ML Research (Data Scientists, AI/ML Engineers)
-| Field | Type | Source |
-|-------|------|--------|
-| ai_flagged | bool | Vertex AI flagged for review |
-| ai_flag_reason | string | Safety, urgent, etc. |
-| ai_priority_score | float (1-10) | AI-generated priority |
-| ai_summary_sanitized | string | AI summary (PII redacted) |
-| ai_analyzed | bool | Whether AI processed this request |
-| ai_vs_manual_priority_diff | float | manual - ai priority difference |
+{pack_sections}
 
 ## PRIVACY MODES
-- **Fuzzed (default):** Coordinates snapped to ~100ft grid, house numbers removed. Safe for most research.
-- **Exact (admin only):** Full precision coordinates and full addresses. Use with appropriate data governance approval.
+- **Fuzzed (default):** Coordinates snapped to ~100ft grid, house number AND street name withheld, timestamps at day precision. Safe for most research.
+- **Exact (admin only):** Full precision coordinates, addresses and timestamps. Use with appropriate data governance approval.
 
 ## EXPORT FORMATS
 - **CSV:** Standard tabular format with all {total_field_count} fields. UTF-8 encoded.
@@ -2588,20 +2119,15 @@ async def research_chat(
 - **Data Dictionary:** Column descriptions CSV for codebook generation.
 
 ## METHODOLOGY NOTES
-- Sentiment analysis uses word-based NLP (not LLM) — scores are deterministic and reproducible
+- Resident free text (description, AI summary) is never exported — only derived metrics (word count, scores)
 - Census data uses ACS 5-year estimates (most stable for tract-level analysis)
-- SVI is a simplified 3-component approximation of the CDC's 16-variable index
+- Official CDC/ATSDR SVI is used when available; the local ACS approximation is marked in svi_source
 - Location fuzzing uses grid-snapping (not random noise) — maintains relative spatial patterns
 - Weather data from Open-Meteo Archive API (free, reliable for historical dates)
 - Infrastructure categories are mapped from service_code via keyword matching
 
 ## SUGGESTED ANALYSES
-- SVI vs response time regression (equity analysis)
-- Freeze-thaw cycle pothole correlation (infrastructure planning)
-- Sentiment vs income quintile (civic engagement analysis)
-- AI-human priority alignment study (AI/ML evaluation)
-- Department routing efficiency audit (operations management)
-- Renter vs owner reporting rate comparison (housing analysis)
+{suggested_analyses_section}
 
 ## RESPONSE RULES
 - Be precise about field definitions and data types
@@ -2701,7 +2227,7 @@ async def research_chat(
         await log_research_access(
             db, current_user.id, current_user.username,
             "ai_chat", {"message_preview": body.message[:100]},
-            0, "n/a"
+            0, "n/a", request=request
         )
 
         return ResearchChatResponse(response=ai_response, context_used=context_used)
@@ -2724,14 +2250,15 @@ RESEARCH_COLUMNS = [
     "infrastructure_category",
     "matched_asset_type",
     "matched_asset_attributes",
-    "description_sanitized",
+    # `description_sanitized` and `ai_summary_sanitized` are deliberately absent:
+    # resident free text (and model prose derived from it) no longer ships in
+    # analytical exports — redaction is best-effort and one miss is a disclosure.
     "description_word_count",
     "has_photos",
     "photo_count",
     "moderation_flagged",
     "moderation_flag_reason",
     "ai_priority_score",
-    "ai_summary_sanitized",
     "ai_analyzed",
     "ai_vs_manual_priority_diff",
     "status",
@@ -2795,8 +2322,15 @@ def build_dataset_row(req, _eq, privacy_mode, *, operational=False, include_pii=
     before; nothing here widens who can see PII.
     """
     lat, long = (req.lat, req.long) if privacy_mode == "exact" else fuzz_location(req.lat, req.long)
-    desc_sanitized = sanitize_description(req.description)
     address_anon = anonymize_address(req.address, privacy_mode)
+
+    def _timestamp(dt):
+        # Day precision outside exact mode: a full-second timestamp is a
+        # quasi-identifier; the hour/day-of-week columns carry the signal.
+        if not dt:
+            return None
+        return dt.isoformat() if privacy_mode == "exact" else dt.date().isoformat()
+
     photo_count = len(req.media_urls) if req.media_urls else 0
     has_photos = bool(req.media_urls and len(req.media_urls) > 0)
     desc_word_count = len(req.description.split()) if req.description else 0
@@ -2826,7 +2360,6 @@ def build_dataset_row(req, _eq, privacy_mode, *, operational=False, include_pii=
     days_to_first_update = days_to_first_staff_action(req)
     ai_analysis = req.ai_analysis if isinstance(req.ai_analysis, dict) else {}
     ai_priority = ai_analysis.get("priority_score")
-    ai_summary = sanitize_description(req.ai_summary) if req.ai_summary else None
     ai_priority_diff = (
         round(req.manual_priority_score - ai_priority, 2)
         if (ai_priority is not None and req.manual_priority_score is not None) else None
@@ -2854,21 +2387,21 @@ def build_dataset_row(req, _eq, privacy_mode, *, operational=False, include_pii=
         "infrastructure_category": infra_category,
         "matched_asset_type": asset_type,
         "matched_asset_attributes": asset_attributes,
-        "description_sanitized": sanitize_description(req.description),
         "description_word_count": desc_word_count,
         "has_photos": has_photos,
         "photo_count": photo_count,
         "moderation_flagged": req.flagged,
-        "moderation_flag_reason": req.flag_reason,
+        # The wordlist quotes the offending text into the reason, so it can
+        # carry the same PII as the description — redact before it ships.
+        "moderation_flag_reason": sanitize_description(req.flag_reason) if req.flag_reason else req.flag_reason,
         "ai_priority_score": ai_priority,
-        "ai_summary_sanitized": ai_summary,
         "ai_analyzed": bool(req.ai_analyzed_at),
         "ai_vs_manual_priority_diff": ai_priority_diff,
         "status": req.status,
         "closed_substatus": req.closed_substatus,
         "priority": req.priority,
         "resolution_outcome": resolution_outcome,
-        "address_anonymized": anonymize_address(req.address, privacy_mode),
+        "address_anonymized": address_anon,
         "latitude": lat,
         "longitude": long,
         "zone_id": zone_id,
@@ -2887,9 +2420,9 @@ def build_dataset_row(req, _eq, privacy_mode, *, operational=False, include_pii=
         "is_repeat_report": trust.get('is_repeat_report'),
         "prior_report_mentioned": trust.get('prior_report_mentioned'),
         "frustration_expressed": trust.get('frustration_expressed'),
-        "submitted_datetime": req.requested_datetime.isoformat() if req.requested_datetime else None,
-        "closed_datetime": req.closed_datetime.isoformat() if req.closed_datetime else None,
-        "updated_datetime": req.updated_datetime.isoformat() if req.updated_datetime else None,
+        "submitted_datetime": _timestamp(req.requested_datetime),
+        "closed_datetime": _timestamp(req.closed_datetime),
+        "updated_datetime": _timestamp(req.updated_datetime),
         "submission_hour": time_info.get('hour_of_day'),
         "submission_day_of_week": time_info.get('day_of_week'),
         "submission_month": time_info.get('month'),
