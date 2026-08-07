@@ -274,17 +274,31 @@ def probe_backend() -> str:
     Returns "unknown" if the wrap fails outright -- which is itself a positive
     finding, since a KMS in that state is not encrypting anything.
     """
+    return probe_wrap()["backend"]
+
+
+def probe_wrap() -> dict:
+    """`probe_backend`, keeping the evidence.
+
+    Same single wrap of a throwaway key, but the caller gets what actually came
+    back -- which backend's tag, how many bytes, and a peek at the ciphertext --
+    so the setup page can show the round trip instead of asserting it happened.
+    The blob itself is discarded with the key; the peek is eight bytes of
+    ciphertext of a key that no longer exists, which identifies the event
+    without disclosing anything.
+    """
     try:
         dek = AESGCM.generate_key(bit_length=256)
-        tag = _wrap_dek(dek)[:1]
-        return {_WRAP_GOOGLE: "google", _WRAP_AZURE: "azure",
-                _WRAP_AWS: "aws", _WRAP_LOCAL: "local"}.get(tag, "unknown")
+        blob = _wrap_dek(dek)
+        backend = {_WRAP_GOOGLE: "google", _WRAP_AZURE: "azure",
+                   _WRAP_AWS: "aws", _WRAP_LOCAL: "local"}.get(blob[:1], "unknown")
+        return {"backend": backend, "wrapped_len": len(blob), "peek": blob[1:9].hex()}
     except Exception:
         # REQUIRE_KMS raises here rather than falling back, which is the point
         # of that setting. Either way the honest answer is that the configured
         # key is not usable.
         logger.debug("KMS probe failed", exc_info=True)
-        return "unknown"
+        return {"backend": "unknown", "wrapped_len": 0, "peek": ""}
 
 
 def clear_caches() -> None:

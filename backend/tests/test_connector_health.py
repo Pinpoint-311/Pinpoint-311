@@ -138,6 +138,62 @@ def test_error_text_goes_through_the_log_sanitiser():
     assert "sanitize_for_log" in inspect.getsource(ch.clean_error)
 
 
+def test_a_url_query_string_never_reaches_the_stored_error():
+    """httpx's raise_for_status message quotes the full request URL -- and for
+    a key-in-query provider (Google Translate's ?key=...) the full URL *is* the
+    credential. This column lands on the setup cards and in the alert emails."""
+    msg = ("Client error '403 Forbidden' for url "
+           "'https://translation.googleapis.com/v2?key=AIzaSECRET123&q=hi'")
+    cleaned = ch.clean_error(msg)
+    assert "AIzaSECRET123" not in cleaned
+    # The diagnosable parts survive: the verdict and the host.
+    assert "403 Forbidden" in cleaned
+    assert "translation.googleapis.com" in cleaned
+
+
+def test_credential_shaped_params_are_redacted_outside_urls_too():
+    """Vendors echo form fields and config back in error bodies. The value
+    goes; the name stays, so support can still tell which field to look at."""
+    cleaned = ch.clean_error(
+        "rejected: api_key=sk-live-123 password=hunter2 Subscription-Key=abc")
+    for secret in ("sk-live-123", "hunter2", "abc"):
+        assert secret not in cleaned
+    assert "api_key=" in cleaned
+    assert "password=" in cleaned
+
+
+def test_a_normal_error_passes_through_readable():
+    """The scrub must not garble the message a clerk is meant to read."""
+    msg = "HTTP 500 from vendor: internal server error (request id 12345)"
+    assert ch.clean_error(msg) == msg
+
+
+async def test_a_success_detail_is_scrubbed_before_it_is_stored():
+    """record_success stores what the check found, and what a check found is a
+    vendor string like any other -- same column, same cards, same emails."""
+    stored = Row()
+
+    class Result:
+        def scalar_one_or_none(self):
+            return stored
+
+    class Session:
+        async def execute(self, *a, **kw):
+            return Result()
+
+        def add(self, *a):
+            pass
+
+        async def commit(self):
+            pass
+
+    await ch.record_success(
+        Session(), "govtech:accela",
+        detail="reached https://api.example.com/v4/ping?token=SECRETVALUE fine")
+    assert "SECRETVALUE" not in (stored.last_result or "")
+    assert "api.example.com" in (stored.last_result or "")
+
+
 # ---- ordering ----------------------------------------------------------------
 
 def test_problems_sort_above_healthy_connectors():

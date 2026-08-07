@@ -84,7 +84,12 @@ async function mount(props: Record<string, unknown> = {}) {
         onUpdateModules: vi.fn().mockResolvedValue(undefined),
         ...props,
     };
-    await act(async () => { root.render(React.createElement(Page, all)); });
+    // Inside DialogProvider, as App.tsx mounts it: the town-systems section
+    // calls useDialog, which throws without the provider.
+    const { DialogProvider } = await import('./DialogProvider');
+    await act(async () => {
+        root.render(React.createElement(DialogProvider, null, React.createElement(Page, all)));
+    });
     return host.textContent || '';
 }
 

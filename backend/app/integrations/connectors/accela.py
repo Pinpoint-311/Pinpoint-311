@@ -4,30 +4,75 @@ Uses Accela's documented public REST API (https://developer.accela.com):
   - OAuth2 token:  POST https://auth.accela.com/oauth2/token
   - Records:       https://apis.accela.com/v4/records
 
+Two ways to authenticate, in preference order:
+
+  1. **Authorization code + refresh token.** The admin signs in at Accela once
+     (see app/integrations/accela_oauth.py) and we store only the refresh token.
+     Every access token comes from exchanging it; Accela rotates the refresh
+     token on each exchange, so the new one is written back to the vault
+     immediately or the next call is locked out.
+  2. **Password grant.** The historical path, kept for towns whose Accela
+     administrator prefers issuing a service account. Needs client_id,
+     client_secret, username and password in the vault.
+
 Config:
     agency_name       Accela agency identifier (required)
     environment       e.g. PROD / TEST / SUPP (default PROD)
     record_type       Accela record type alias/id for created records
                       (e.g. "ServiceRequest/General/Complaint/NA")
+    scope             override the requested scope groups (default "records assets")
     api_base          override, default https://apis.accela.com
     auth_base         override, default https://auth.accela.com
 Credentials:
-    client_id, client_secret        from your Accela developer app
-    username, password              agency citizen/agency account for password grant
+    refresh_token                   from the authorization-code sign-in
+    client_id, client_secret        only for the password-grant fallback (or to
+                                    override the deployment-level app)
+    username, password              only for the password-grant fallback
 """
 
+import asyncio
 import logging
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+import time
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 import json
 
+from app.integrations import accela_oauth
 from app.integrations.base import BaseConnector, ConnectorError, ExternalComment, ExternalRecord
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_API_BASE = "https://apis.accela.com"
 DEFAULT_AUTH_BASE = "https://auth.accela.com"
+
+# Access tokens are cached per agency/environment for their advertised lifetime.
+# This is not just a latency win: a refresh rotates the refresh token, so an
+# uncached connector would rotate once per operation, and two operations
+# overlapping would race — the slower one's token invalidated mid-flight. The
+# lock serializes refreshes for a given agency within the process.
+_token_cache: Dict[str, Tuple[str, float]] = {}
+_token_locks: Dict[str, asyncio.Lock] = {}
+
+# Refresh a little before the advertised expiry so a token doesn't die in transit.
+_TOKEN_EXPIRY_SKEW = 120.0
+
+
+def _clear_token_cache() -> None:
+    """Drop cached access tokens (used by tests and after a re-authorization)."""
+    _token_cache.clear()
+
+
+def _accela_window(since: datetime) -> str:
+    """Format a pull window boundary for Accela's date parameters.
+
+    `YYYY-MM-DD HH:MM:SS`, in UTC. Accela's Construct API accepts a time
+    component here; sending date-only granularity meant a fifteen-minute poll
+    asked for the whole day on every run.
+    """
+    if since.tzinfo is not None:
+        since = since.astimezone(timezone.utc)
+    return since.strftime("%Y-%m-%d %H:%M:%S")
 
 
 class AccelaConnector(BaseConnector):
@@ -49,35 +94,119 @@ class AccelaConnector(BaseConnector):
     def auth_base(self) -> str:
         return (self.config.get("auth_base") or DEFAULT_AUTH_BASE).rstrip("/")
 
+    @property
+    def scope(self) -> str:
+        return accela_oauth.scope_for(self.config)
+
+    @property
+    def _cache_key(self) -> str:
+        return "|".join([
+            self.auth_base,
+            str(self.config.get("agency_name") or ""),
+            str(self.config.get("environment") or "PROD").upper(),
+            self.scope,
+        ])
+
     async def _get_token(self) -> str:
-        required = ["client_id", "client_secret", "username", "password"]
-        missing = [k for k in required if not self.credentials.get(k)]
-        if missing:
-            raise ConnectorError(f"Accela credentials missing: {', '.join(missing)}")
         if not self.config.get("agency_name"):
             raise ConnectorError("Accela config requires agency_name")
 
-        data = {
+        key = self._cache_key
+        cached = _token_cache.get(key)
+        if cached and cached[1] > time.time():
+            return cached[0]
+
+        lock = _token_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            # Another coroutine may have refreshed while we waited on the lock.
+            cached = _token_cache.get(key)
+            if cached and cached[1] > time.time():
+                return cached[0]
+
+            if self.credentials.get("refresh_token"):
+                token, expires_in = await self._token_from_refresh()
+            else:
+                token, expires_in = await self._token_from_password()
+
+            _token_cache[key] = (token, time.time() + max(60.0, expires_in - _TOKEN_EXPIRY_SKEW))
+            return token
+
+    async def _post_token(self, data: Dict[str, str], context: str) -> Dict[str, Any]:
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        if data.get("client_id"):
+            headers["x-accela-appid"] = data["client_id"]
+        async with self._client() as client:
+            resp = await client.post(
+                f"{self.auth_base}/oauth2/token", data=data, headers=headers
+            )
+            self._raise_for_status(resp, context)
+            return resp.json()
+
+    async def _app_credentials(self) -> Tuple[str, str]:
+        """The developer-portal app to authenticate as: the town's own if it
+        supplied one, otherwise this deployment's registered Pinpoint app."""
+        client_id = self.credentials.get("client_id")
+        client_secret = self.credentials.get("client_secret")
+        if client_id and client_secret:
+            return client_id, client_secret
+        client_id, client_secret = await accela_oauth.app_credentials()
+        if not (client_id and client_secret):
+            raise ConnectorError(
+                "Accela credentials missing: no client_id/client_secret, and this "
+                "deployment has no Accela app configured (ACCELA_CLIENT_ID / "
+                "ACCELA_CLIENT_SECRET)."
+            )
+        return client_id, client_secret
+
+    async def _token_from_refresh(self) -> Tuple[str, float]:
+        client_id, client_secret = await self._app_credentials()
+        result = await self._post_token({
+            "grant_type": "refresh_token",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": self.credentials["refresh_token"],
+        }, "Accela OAuth2 refresh")
+
+        token = result.get("access_token")
+        if not token:
+            raise ConnectorError("Accela refresh returned no access_token")
+
+        # Accela hands back a *new* refresh token and retires the old one. If we
+        # don't persist it, this connection works exactly once more.
+        rotated = result.get("refresh_token")
+        if rotated and rotated != self.credentials.get("refresh_token"):
+            self.credentials["refresh_token"] = rotated
+            if self.persist_credentials:
+                await self.persist_credentials({"refresh_token": rotated})
+            else:
+                logger.warning(
+                    "[Accela] Refresh token rotated but no persistence hook is "
+                    "attached — the stored token is now stale."
+                )
+        return token, float(result.get("expires_in") or 3600)
+
+    async def _token_from_password(self) -> Tuple[str, float]:
+        required = ["client_id", "client_secret", "username", "password"]
+        missing = [k for k in required if not self.credentials.get(k)]
+        if missing:
+            raise ConnectorError(
+                "Accela is not signed in. Reconnect it from Settings, or fill in "
+                f"the username/password fallback (missing: {', '.join(missing)})."
+            )
+        result = await self._post_token({
             "grant_type": "password",
             "client_id": self.credentials["client_id"],
             "client_secret": self.credentials["client_secret"],
             "username": self.credentials["username"],
             "password": self.credentials["password"],
-            "scope": "records",
+            "scope": self.scope,
             "agency_name": self.config["agency_name"],
             "environment": self.config.get("environment", "PROD"),
-        }
-        async with self._client() as client:
-            resp = await client.post(
-                f"{self.auth_base}/oauth2/token",
-                data=data,
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
-            self._raise_for_status(resp, "Accela OAuth2 token")
-            token = resp.json().get("access_token")
+        }, "Accela OAuth2 token")
+        token = result.get("access_token")
         if not token:
             raise ConnectorError("Accela token endpoint returned no access_token")
-        return token
+        return token, float(result.get("expires_in") or 3600)
 
     def _headers(self, token: str) -> Dict[str, str]:
         return {"Authorization": token, "Content-Type": "application/json"}
@@ -127,7 +256,12 @@ class AccelaConnector(BaseConnector):
                 f"{self.api_base}/v4/records", params={"limit": 1}, headers=self._headers(token)
             )
             self._raise_for_status(resp, "Accela records probe")
-        return {"ok": True, "detail": f"Authenticated with agency {self.config['agency_name']}"}
+        # `verified` is stated rather than implied: reaching this line means
+        # _get_token succeeded — either the OAuth refresh-token exchange or the
+        # password grant was accepted by Accela.
+        how = "signed in with Accela" if self.credentials.get("refresh_token") else "using the saved username and password"
+        return {"ok": True, "verified": True,
+                "detail": f"Connected to agency {self.config['agency_name']} — {how}."}
 
     async def push_request(self, payload: Dict[str, Any]) -> ExternalRecord:
         record_type = self.config.get("record_type")
@@ -184,17 +318,51 @@ class AccelaConnector(BaseConnector):
             self._raise_for_status(resp, "Accela update record status")
 
     async def pull_updates(self, since: Optional[datetime] = None) -> List[ExternalRecord]:
+        """Every record changed since `since`, across as many pages as it takes.
+
+        Two bugs lived in the previous four lines. It sent `limit: 100` with no
+        offset loop, so a busy agency's 101st changed record was silently
+        dropped -- and the one place that would have shown it, the record count
+        in the sync log, said "100 record(s) fetched", which looks like a
+        complete answer. `pull_assets` in this same file already paged properly.
+
+        And `updateDateFrom` was formatted `%Y-%m-%d`, so a poll every fifteen
+        minutes re-fetched the entire day, every time, all day: ninety-six
+        requests for the same widening set of records, each one paying the full
+        page walk. Accela's Construct API takes a time component on these
+        parameters, so the window can be the window.
+        """
         token = await self._get_token()
-        params: Dict[str, Any] = {"limit": 100}
-        if since:
-            params["updateDateFrom"] = since.strftime("%Y-%m-%d")
+        records: List[ExternalRecord] = []
+        seen: set = set()
+        offset = 0
         async with self._client() as client:
-            resp = await client.get(
-                f"{self.api_base}/v4/records", params=params, headers=self._headers(token)
-            )
-            self._raise_for_status(resp, "Accela list records")
-            result = resp.json().get("result") or []
-        return [self._record_from_accela(item) for item in result if item.get("id")]
+            while offset < 10000:  # hard ceiling, matching pull_assets
+                params: Dict[str, Any] = {"limit": 100, "offset": offset}
+                if since:
+                    params["updateDateFrom"] = _accela_window(since)
+                resp = await client.get(
+                    f"{self.api_base}/v4/records", params=params, headers=self._headers(token)
+                )
+                self._raise_for_status(resp, "Accela list records")
+                result = resp.json().get("result") or []
+                if not result:
+                    break
+                for item in result:
+                    if not item.get("id"):
+                        continue
+                    record = self._record_from_accela(item)
+                    # A record edited between two page requests shifts position
+                    # and can arrive twice; applying it twice is harmless but
+                    # counting it twice makes the sync log lie.
+                    if record.external_id in seen:
+                        continue
+                    seen.add(record.external_id)
+                    records.append(record)
+                if len(result) < 100:
+                    break
+                offset += 100
+        return records
 
     async def fetch_record(self, external_id: str) -> Optional[ExternalRecord]:
         token = await self._get_token()

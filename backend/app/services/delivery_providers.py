@@ -50,10 +50,19 @@ EMAIL_CATALOG: Dict[str, Dict[str, Any]] = {
             {"key": "SMTP_PASSWORD", "label": "Password", "secret": True, "required": True},
             {"key": "SMTP_FROM_EMAIL", "label": "From address", "required": True},
             {"key": "SMTP_FROM_NAME", "label": "From name (optional)", "required": False},
+            {"key": "SMTP_USE_TLS", "label": "Use STARTTLS (optional)", "required": False},
         ],
         "field_help": {
             "SMTP_PASSWORD": "For Microsoft 365 or Google Workspace this is an app password, not the account password.",
             "SMTP_FROM_EMAIL": "Residents reply to this address, so use one somebody reads.",
+            # The sender treats only the literal string "false" as off; blank
+            # and every other value mean STARTTLS. The help says so because a
+            # value like "no" or "0" would silently still negotiate TLS.
+            "SMTP_USE_TLS": (
+                "Leave blank for STARTTLS, which is what port 587 expects. Enter exactly "
+                "\"false\" only for a server using implicit SSL on port 465, or a relay that "
+                "does neither — any other value still means STARTTLS."
+            ),
         },
     },
     "ses": {
@@ -141,6 +150,9 @@ SMS_CATALOG: Dict[str, Dict[str, Any]] = {
         "credential_fields": [
             {"key": "SMS_HTTP_API_URL", "label": "POST URL", "required": True},
             {"key": "SMS_HTTP_API_KEY", "label": "API key", "secret": True, "required": False},
+            # Read by the dispatch path and previously offered by no card, so a
+            # gateway that needs a sender could never be given one.
+            {"key": "SMS_FROM_NUMBER", "label": "From number (optional)", "required": False},
             # The only card on this page that cannot be checked without doing
             # the thing it exists to do. Every other provider has some read-only
             # call; "any gateway that accepts a POST" has, by definition, no
@@ -150,6 +162,10 @@ SMS_CATALOG: Dict[str, Dict[str, Any]] = {
             {"key": "SMS_HTTP_TEST_URL", "label": "Status URL to check the key (optional)", "required": False},
         ],
         "field_help": {
+            "SMS_FROM_NUMBER": (
+                "Sent to the gateway as the message's sender, if yours needs one. Leave blank "
+                "when the gateway sets the sender itself."
+            ),
             "SMS_HTTP_TEST_URL": (
                 "A URL we can GET to confirm the key is live, if your gateway publishes one — "
                 "a balance or quota endpoint, for example. Leave blank and the card will say it "

@@ -273,16 +273,30 @@ export function buildPlan(input: PlanInput): PlanTask[] {
                     ? 'Both of these use the same login.'
                     : items[0].blurb,
             foundation: isCloud ? (vendor as Cloud) : null,
-            items,
+            /* Key management first inside its task (sort is stable, so nothing
+             * else moves). A credential saved before the key service and the
+             * secret store are reachable falls back to the encrypted database
+             * -- reported, but quietly second-best -- so the guide asks for
+             * the thing every later save depends on before the things that
+             * depend on it. */
+            items: [...items].sort((a, b) => Number(b.id === 'kms') - Number(a.id === 'kms')),
             required: items.some(i => i.required),
         });
     }
 
-    /* Whatever carries a required item goes first, whichever vendor it is. A
-     * town cannot take a report without sign-in and a map, and burying those
-     * under an optional cloud task would make the first thing on the page the
-     * wrong thing. */
-    return tasks.sort((a, b) => Number(b.required) - Number(a.required));
+    /* The task carrying key management goes first, then whatever carries a
+     * required item, then the rest.
+     *
+     * Required-first used to win outright, which put Auth0 sign-in ahead of
+     * the cloud task on a town that keeps its secrets in that cloud -- so the
+     * very first credential the guide asked for was saved before the store it
+     * belongs in was reachable. The cloud task's foundation walk (project,
+     * service account) is what makes the store reachable, and it travels with
+     * the kms item; doing it first means everything after it lands where the
+     * town said credentials go. */
+    const rank = (t: PlanTask) =>
+        t.items.some(i => i.id === 'kms') ? 0 : t.required ? 1 : 2;
+    return tasks.sort((a, b) => rank(a) - rank(b));
 }
 
 /** The first task not yet finished, which is where the wizard should be. */

@@ -70,13 +70,27 @@ describe('what the town asked for is what it gets', () => {
         expect(list.length).toBeGreaterThan(0);
     });
 
-    it('puts whatever carries a required item first', () => {
-        // Auth0 sign-in on an Azure town: the Auth0 task has to come before the
-        // big optional Azure one, or the first thing on the page is the wrong
-        // thing to do first.
+    it('puts key management first, then whatever carries a required item', () => {
+        /* The cloud task's foundation walk is what makes the key service and
+         * the secret store reachable, and every credential saved before that
+         * falls back to the encrypted database. So the Azure task (carrying
+         * kms) beats even required sign-in on a town whose sign-in is a
+         * separate login -- everything entered after it lands where the town
+         * said credentials go. */
         const list = ids({ idp: 'auth0' });
-        expect(list.indexOf('auth0')).toBeLessThan(list.indexOf('azure'));
+        expect(list.indexOf('azure')).toBeLessThan(list.indexOf('auth0'));
         expect(plan({ idp: 'auth0' }).find(t => t.id === 'auth0')!.required).toBe(true);
+        // And with key management unticked, required-first still wins.
+        const noKms = new Set([...base.wanted].filter(f => f !== 'kms'));
+        const withoutKms = ids({ idp: 'auth0', wanted: noKms });
+        expect(withoutKms.indexOf('auth0')).toBeLessThan(withoutKms.indexOf('azure'));
+    });
+
+    it('puts key management before the other items inside its task', () => {
+        /* Within the one trip, the key service comes before the things whose
+         * credentials it will protect. Everything else keeps its order. */
+        const azure = task('azure')!;
+        expect(azure.items[0].id).toBe('kms');
     });
 
     it('screening and blurring are one item, not two', () => {

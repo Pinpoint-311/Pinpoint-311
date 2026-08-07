@@ -126,6 +126,12 @@ services:
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
       GOOGLE_VERTEX_PROJECT: ${GOOGLE_VERTEX_PROJECT:-}
       GOOGLE_VERTEX_LOCATION: ${GOOGLE_VERTEX_LOCATION:-us-central1}
+      # Accela sign-in: one developer-portal app serves every deployment, so the
+      # client credentials are set here rather than typed in by a clerk. Unset
+      # is fine — the wizard then offers the username/password fallback.
+      ACCELA_CLIENT_ID: ${ACCELA_CLIENT_ID:-}
+      ACCELA_CLIENT_SECRET: ${ACCELA_CLIENT_SECRET:-}
+      ACCELA_REDIRECT_URI: ${ACCELA_REDIRECT_URI:-}
       PROJECT_ROOT: /project
     depends_on:
       db:
@@ -174,6 +180,11 @@ services:
       GOOGLE_VERTEX_PROJECT: ${GOOGLE_VERTEX_PROJECT:-}
       GOOGLE_VERTEX_LOCATION: ${GOOGLE_VERTEX_LOCATION:-us-central1}
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      # The worker runs the nightly Accela syncs, so it needs the same app
+      # credentials to exchange refresh tokens.
+      ACCELA_CLIENT_ID: ${ACCELA_CLIENT_ID:-}
+      ACCELA_CLIENT_SECRET: ${ACCELA_CLIENT_SECRET:-}
+      ACCELA_REDIRECT_URI: ${ACCELA_REDIRECT_URI:-}
     depends_on:
       db:
         condition: service_healthy

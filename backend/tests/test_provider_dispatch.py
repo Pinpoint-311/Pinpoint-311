@@ -58,6 +58,15 @@ async def test_translation_defaults_to_google(monkeypatch):
     assert isinstance(provider, tp.GoogleTranslationProvider)
 
 
+@pytest.mark.parametrize("word", ["none", "off", "disabled"])
+async def test_translation_none_is_off_not_the_google_default(monkeypatch, word):
+    # A stored "none" used to fall through to Google, so translation ran for a
+    # town whose status page reported it off. translate_batch already treats a
+    # missing provider as "return the text unchanged", so None is safe here.
+    monkeypatch.setattr(sm, "get_secret", _fake_secrets({"TRANSLATION_PROVIDER": word}))
+    assert await tp.get_translation_provider() is None
+
+
 # --------------------------- Notification selection --------------------------
 
 def test_sms_configures_sns():

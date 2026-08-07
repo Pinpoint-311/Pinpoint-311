@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models import ServiceRequest, User, SystemSettings
-from app.core.auth import get_current_staff
+from app.core.auth import get_current_admin, get_current_staff
 from app.core.encryption import decrypt_pii
 
 router = APIRouter(prefix="/export", tags=["data-export"])
@@ -49,8 +49,21 @@ async def get_requests_for_export(
     service_code: Optional[str] = None
 ) -> List[ServiceRequest]:
     """Fetch requests with optional filters."""
-    query = select(ServiceRequest).order_by(ServiceRequest.requested_datetime.desc())
-    
+    from sqlalchemy.orm import selectinload
+
+    # Eager-loaded, like the research export (research.py). The shared row
+    # builder reads req.comments always and req.audit_logs for the friction
+    # metrics, and a lazy load on an AsyncSession instance raises
+    # MissingGreenlet -- so without these, any non-empty export 500s.
+    query = (
+        select(ServiceRequest)
+        .options(
+            selectinload(ServiceRequest.comments),
+            selectinload(ServiceRequest.audit_logs),
+        )
+        .order_by(ServiceRequest.requested_datetime.desc())
+    )
+
     conditions = [ServiceRequest.deleted_at.is_(None)]  # Exclude soft-deleted
     if start_date:
         conditions.append(ServiceRequest.requested_datetime >= start_date)
@@ -66,6 +79,33 @@ async def get_requests_for_export(
     
     result = await db.execute(query)
     return result.scalars().all()
+
+
+def export_audit_details(
+    *, format: str, row_count: int,
+    start_date=None, end_date=None,
+    status: Optional[str] = None, service_code: Optional[str] = None,
+    include_pii: bool = False,
+) -> dict:
+    """The audit-log `details` for a bulk export.
+
+    A pure function so the shape is testable: it must say how much left and
+    under what filters, and must never carry record contents. The staff export
+    always includes the operational columns (exact address, staff notes, raw
+    description) — that fact is recorded explicitly rather than inferred.
+    """
+    return {
+        "format": format,
+        "row_count": row_count,
+        "filters": {
+            "start_date": start_date.isoformat() if start_date else None,
+            "end_date": end_date.isoformat() if end_date else None,
+            "status": status or "all",
+            "service_code": service_code or "all",
+        },
+        "include_pii": include_pii,
+        "operational_columns": True,
+    }
 
 
 # NOTE: the former request_to_dict / request_to_geojson_feature helpers were
@@ -84,7 +124,7 @@ async def export_requests(
     service_code: Optional[str] = Query(None, description="Service code filter"),
     include_pii: bool = Query(False, description="Include reporter PII (name, email, phone). Defaults off; explicit opt-in is audit-logged."),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_staff)
+    current_user: User = Depends(get_current_admin)
 ):
     """
     Export 311 requests as CSV, JSON, or GeoJSON.
@@ -95,34 +135,45 @@ async def export_requests(
     - **status**: Optional status filter (open, in_progress, closed)
     - **include_pii**: Include reporter PII or redact it (default: false — must be explicitly requested)
 
-    Requires staff or admin authentication. Bulk PII exports require admin
-    and are audit-logged.
+    Admin only. This is the whole-database row-level export — exact addresses,
+    raw descriptions, staff notes — and any staff account holding it is one
+    compromised password away from a bulk disclosure. Staff still have the
+    aggregate statistics export; every call here is audit-logged.
     """
-    # Bulk PII exfiltration is a sensitive action — admin only, and recorded.
-    if include_pii:
-        if current_user.role != "admin":
-            raise HTTPException(
-                status_code=403,
-                detail="Bulk exports that include resident PII require an admin account.",
-            )
-        try:
-            from app.services.audit_service import AuditService
-            await AuditService.log_event(
-                db,
-                event_type="data_export_pii",
-                success=True,
-                username=current_user.username,
-                user_id=getattr(current_user, "id", None),
-                details={
-                    "format": format,
-                    "status": status or "all",
-                    "service_code": service_code or "all",
-                },
-            )
-        except Exception as e:
-            logging.getLogger(__name__).warning(f"Failed to write PII-export audit log: {e}")
+    # Bulk PII exfiltration is a sensitive action — admin only.
+    if include_pii and current_user.role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Bulk exports that include resident PII require an admin account.",
+        )
 
     requests = await get_requests_for_export(db, start_date, end_date, status, service_code)
+
+    # EVERY bulk export leaves a trace, not just the PII ones. "Which records
+    # left this building, when, and who took them" is the first question an
+    # audit of a records process asks, and a non-PII export still carries exact
+    # addresses, staff notes and raw descriptions. Details name counts and
+    # filters only — never record contents.
+    try:
+        from app.services.audit_service import AuditService
+        await AuditService.log_event(
+            db,
+            event_type="records_export",
+            success=True,
+            username=current_user.username,
+            user_id=getattr(current_user, "id", None),
+            details=export_audit_details(
+                format=format,
+                row_count=len(requests),
+                start_date=start_date,
+                end_date=end_date,
+                status=status,
+                service_code=service_code,
+                include_pii=include_pii,
+            ),
+        )
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Failed to write export audit log: {e}")
     
     # Get township name for filename
     settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
@@ -136,23 +187,41 @@ async def export_requests(
     # columns staff need — exact address/coordinates, assignee, staff notes and
     # the raw description. PII remains behind the existing explicit, admin-gated,
     # audit-logged opt-in; nothing here widens who can see it.
+    #
+    # DECISION — this export honors the research pack switches. A pack an admin
+    # switched off is never computed here either: no sentiment score over the
+    # resident's text, no Census/CDC/weather call, and its columns are dropped
+    # from the file. Rationale: the analytical pack fields are research-only
+    # characterizations, and data generated "just for the staff file" exists all
+    # the same — it can be pulled into a public-records request the moment it is
+    # produced or saved. The OPERATIONAL columns (raw description, exact address,
+    # assignee, staff notes) and the underlying operational records (intake
+    # moderation flags, AI triage) are unaffected: they are governed by their own
+    # feature switches and remain available in the app regardless of pack state.
     from app.api.research import (
-        RESEARCH_COLUMNS, OPERATIONAL_COLUMNS, PII_COLUMNS,
-        build_dataset_row, build_equity_map,
+        OPERATIONAL_COLUMNS, PII_COLUMNS,
+        allowed_research_columns, build_dataset_row, build_equity_map, enabled_packs,
     )
 
-    export_columns = list(RESEARCH_COLUMNS) + list(OPERATIONAL_COLUMNS)
+    packs = enabled_packs(settings)
+    export_columns = list(allowed_research_columns(settings)) + list(OPERATIONAL_COLUMNS)
     if include_pii:
         export_columns += list(PII_COLUMNS)
 
-    # Census/CDC-SVI/weather enrichment, resolved once up front (async).
-    equity_map = await build_equity_map(requests, "exact")
+    # Census/CDC-SVI/weather enrichment, resolved once up front (async) — and
+    # skipped entirely for packs the admin turned off.
+    equity_map = await build_equity_map(requests, "exact", packs)
+
+    _allowed = set(export_columns)
 
     def _row(req):
-        return build_dataset_row(
+        row = build_dataset_row(
             req, equity_map.get(req.id, {}), "exact",
-            operational=True, include_pii=include_pii,
+            packs=packs, operational=True, include_pii=include_pii,
         )
+        # Off-pack keys are None (never computed), but the JSON/GeoJSON formats
+        # dump the dict as-is — filter so switched-off columns don't ship at all.
+        return {k: v for k, v in row.items() if k in _allowed}
 
     if format.lower() == "csv":
         # Generate CSV

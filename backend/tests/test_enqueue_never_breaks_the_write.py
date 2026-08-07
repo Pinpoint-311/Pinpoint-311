@@ -143,10 +143,18 @@ def test_a_job_somebody_asked_for_is_not_reported_as_started_when_it_is_not():
     # searched for "Sync started" and matched the sentence in the comment
     # explaining the guard, which sits *above* it -- so the test failed on
     # correct code. Prose about a behaviour is not the behaviour.
+    #
+    # Two shapes of guard count, because "Sync now" enqueues two jobs. Raising
+    # QUEUE_UNAVAILABLE on the first failure was itself a version of this bug:
+    # written `enqueue(a) or enqueue(b)`, a failure of the second returned "this
+    # job did not start. Nothing has been changed." after the first had already
+    # started. So that endpoint now enqueues both and only claims the unqualified
+    # "Sync started" when every one of them went.
+    guards = ("QUEUE_UNAVAILABLE", "all(started.values())")
     for claim in ('"message": "Sync started"', '"message": "Asset sync started"'):
         before = integrations[:integrations.index(claim)]
         # The check must be the thing immediately guarding the claim.
-        assert "QUEUE_UNAVAILABLE" in before[-400:], (
+        assert any(guard in before[-400:] for guard in guards), (
             f'{claim} is returned without confirming the job was queued'
         )
 
