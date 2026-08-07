@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models import ServiceRequest, User, SystemSettings
-from app.core.auth import get_current_staff
+from app.core.auth import get_current_admin, get_current_staff
 from app.core.encryption import decrypt_pii
 
 router = APIRouter(prefix="/export", tags=["data-export"])
@@ -111,7 +111,7 @@ async def export_requests(
     service_code: Optional[str] = Query(None, description="Service code filter"),
     include_pii: bool = Query(False, description="Include reporter PII (name, email, phone). Defaults off; explicit opt-in is audit-logged."),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_staff)
+    current_user: User = Depends(get_current_admin)
 ):
     """
     Export 311 requests as CSV, JSON, or GeoJSON.
@@ -122,8 +122,10 @@ async def export_requests(
     - **status**: Optional status filter (open, in_progress, closed)
     - **include_pii**: Include reporter PII or redact it (default: false — must be explicitly requested)
 
-    Requires staff or admin authentication. Bulk PII exports require admin
-    and are audit-logged.
+    Admin only. This is the whole-database row-level export — exact addresses,
+    raw descriptions, staff notes — and any staff account holding it is one
+    compromised password away from a bulk disclosure. Staff still have the
+    aggregate statistics export; every call here is audit-logged.
     """
     # Bulk PII exfiltration is a sensitive action — admin only.
     if include_pii and current_user.role != "admin":

@@ -1215,6 +1215,13 @@ export default function StaffDashboard() {
                                         </button>
                                         <div role="menu" className={`absolute right-0 mt-2 w-64 origin-top-right rounded-2xl border border-white/10 bg-slate-900/95 backdrop-blur-xl shadow-2xl shadow-black/50 ring-1 ring-white/5 transition-all duration-200 z-50 overflow-hidden ${exportOpen ? 'opacity-100 visible translate-y-0' : 'opacity-0 invisible translate-y-1'}`}>
                                             <div className="p-2">
+                                                {/* Admin only, like the endpoint behind it. This is the
+                                                    whole-database row-level export — exact addresses, raw
+                                                    descriptions, staff notes — and offering it to every
+                                                    staff login meant any one compromised password was a
+                                                    bulk disclosure. Staff keep the aggregate statistics
+                                                    export below. */}
+                                                {user?.role === 'admin' && <>
                                                 <p className="px-2.5 pt-1.5 pb-1 text-[10px] font-semibold text-white/40 uppercase tracking-wider">Requests</p>
                                                 {[
                                                     { fmt: 'csv', Icon: FileText, label: 'CSV', hint: 'Full analytical dataset', ext: '.csv', fn: () => handleExportRequests('csv') },
@@ -1232,8 +1239,9 @@ export default function StaffDashboard() {
                                                         <span className="text-[10px] font-mono text-white/30">{ext}</span>
                                                     </button>
                                                 ))}
-                                                <p className="px-2.5 pb-1 text-[10px] text-white/30 leading-snug">Same analytical fields as the Research Portal export, plus operational detail (exact address, assignee, notes).</p>
+                                                <p className="px-2.5 pb-1 text-[10px] text-white/30 leading-snug">Same analytical fields as the Research Portal export, plus operational detail (exact address, assignee, notes). Admin only; every export is audit-logged.</p>
                                                 <div className="border-t border-white/10 my-1.5" />
+                                                </>}
                                                 <p className="px-2.5 pt-1.5 pb-1 text-[10px] font-semibold text-white/40 uppercase tracking-wider">Statistics</p>
                                                 {[
                                                     { fmt: 'csv', Icon: BarChart3, label: 'CSV', hint: 'Summary tables', ext: '.csv', fn: () => handleExportStatistics('csv') },

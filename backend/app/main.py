@@ -543,7 +543,12 @@ app.include_router(provisioning.router, prefix="/api/provisioning", tags=["Provi
 app.include_router(telemetry.router, prefix="/api/telemetry", tags=["Telemetry (orchestrator)"])
 app.include_router(api_usage.router, prefix="/api/system/api-usage", tags=["API Usage"])
 
-app.include_router(data_export.router, prefix="/api", tags=["Data Export"])
+# /api/export, not /api. The frontend has always called /api/export/requests
+# and /api/export/statistics; the router was mounted one level up, so both
+# Export buttons on the staff dashboard 404ed on every click since the day
+# they shipped -- and the mismatch also meant the bulk-export endpoint sat at
+# /api/requests, a name indistinguishable from the request CRUD surface.
+app.include_router(data_export.router, prefix="/api/export", tags=["Data Export"])
 app.include_router(integrations.router, prefix="/api/integrations", tags=["GovTech Integrations"])
 
 # Mount uploads directory for serving uploaded files
