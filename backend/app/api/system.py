@@ -5941,6 +5941,18 @@ class AnalyticsChatResponse(BaseModel):
     context_used: List[str]
 
 
+def staff_role_labels(names) -> dict:
+    """{assignee name -> "staff member N"} with a stable, sorted numbering.
+
+    Staff names are employee data the model has no need for: the question the
+    chat answers is about workload shape, not about which named person is slow.
+    Sorting before numbering keeps the labels stable across the tables in one
+    prompt (and across calls while the roster is unchanged), so "staff member 2"
+    means the same person in the workload and resolution lists.
+    """
+    return {name: f"staff member {i + 1}" for i, name in enumerate(sorted(names))}
+
+
 @router.post("/analytics-chat", response_model=AnalyticsChatResponse)
 @_cost_limiter.limit("20/minute")
 async def analytics_chat(
@@ -5953,9 +5965,27 @@ async def analytics_chat(
     Conversational AI analytics — chat with Vertex AI about all system data.
     Gathers comprehensive context from across the platform (excluding resident PII)
     and uses Gemini 3.1 Flash-Lite to answer questions.
+
+    Data minimization: what goes to the model is what the question needs —
+    addresses are anonymized to block level, staff names become role labels,
+    and free-text snippets pass through the research module's PII redaction.
     """
     from datetime import datetime, timezone
-    
+
+    # The town's AI switch governs every model call, including this one — an
+    # admin who turned AI off must not find staff still chatting with Gemini.
+    from app.services import capability_switches
+    if not await capability_switches.enabled("ai"):
+        raise HTTPException(
+            status_code=403,
+            detail="AI features are switched off for this town. An administrator can turn them on under Setup & Integrations.",
+        )
+
+    # Address anonymization + free-text redaction come from the research
+    # module so the analytics chat and the research exports apply the SAME
+    # minimization, not two drifting copies.
+    from app.api.research import anonymize_address, sanitize_description
+
     context_used = []
     now = datetime.now(timezone.utc)
     
@@ -6014,31 +6044,36 @@ async def analytics_chat(
     busiest_day = max(daily, key=daily.get) if daily else "N/A"
     context_used.append("temporal_patterns")
     
-    # ========== 4. Geographic Data — Addresses + Hotspots ==========
-    # Top addresses by request count (no resident names)
+    # ========== 4. Geographic Data — Anonymized Hotspots ==========
+    # Counted by ANONYMIZED address: an exact street address in a prompt is a
+    # resident's location handed to a third-party model. Block-level areas
+    # answer "where are the hotspots" just as well.
     address_counts = {}
     for r in all_requests:
         if r.address:
-            address_counts[r.address] = address_counts.get(r.address, 0) + 1
+            area = anonymize_address(r.address, "fuzzed")
+            address_counts[area] = address_counts.get(area, 0) + 1
     top_addresses = sorted(address_counts.items(), key=lambda x: x[1], reverse=True)[:15]
     context_used.append("geographic_data")
     
-    # ========== 5. Staff Data (No personal info beyond names/roles) ==========
-    staff_result = await db.execute(
-        select(User).where(User.role.in_(["staff", "admin"]))
-    )
-    staff_result.scalars().all()  # Materialize query results
-    
-    # Staff workload
+    # ========== 5. Staff Data (role labels, not names) ==========
+    # Staff names stay out of the prompt: the model needs the workload SHAPE,
+    # not which named employee it belongs to. Stable "staff member N" labels
+    # keep the two tables cross-referencable.
     staff_workload = {}
     staff_resolutions = {}
+    assignees = set()
     for r in all_requests:
         assigned = getattr(r, 'assigned_to', None) or getattr(r, 'agency_responsible', None)
         if assigned:
+            assignees.add(assigned)
             if r.status in ("open", "in_progress"):
                 staff_workload[assigned] = staff_workload.get(assigned, 0) + 1
             if r.status == "closed":
                 staff_resolutions[assigned] = staff_resolutions.get(assigned, 0) + 1
+    role_labels = staff_role_labels(assignees)
+    staff_workload = {role_labels[k]: v for k, v in staff_workload.items()}
+    staff_resolutions = {role_labels[k]: v for k, v in staff_resolutions.items()}
     context_used.append("staff_data")
     
     # ========== 6. Department Data ==========
@@ -6049,6 +6084,8 @@ async def analytics_chat(
     context_used.append("departments")
     
     # ========== 7. AI Analysis Summaries ==========
+    # Summaries and flag reasons quote resident text, so they pass through the
+    # same PII redaction the research exports use; addresses go block-level.
     ai_summaries = []
     flagged_requests = []
     for r in all_requests:
@@ -6056,17 +6093,17 @@ async def analytics_chat(
             ai_summaries.append({
                 "id": r.service_request_id,
                 "category": r.service_name,
-                "address": r.address or "Unknown",
-                "summary": r.ai_summary[:200],
+                "address": anonymize_address(r.address, "fuzzed") or "Unknown",
+                "summary": sanitize_description(r.ai_summary)[:200],
                 "classification": r.ai_classification,
                 "priority": (r.ai_analysis or {}).get("priority_score") if isinstance(r.ai_analysis, dict) else None
             })
         if r.flagged:
             flagged_requests.append({
                 "id": r.service_request_id,
-                "reason": r.flag_reason,
+                "reason": sanitize_description(r.flag_reason) if r.flag_reason else None,
                 "category": r.service_name,
-                "address": r.address or "Unknown"
+                "address": anonymize_address(r.address, "fuzzed") or "Unknown"
             })
     context_used.append("ai_analysis")
     
@@ -6077,10 +6114,15 @@ async def analytics_chat(
         lats = [r.lat for r in all_requests if r.lat]
         lngs = [r.long for r in all_requests if r.long]
         if lats and lngs:
-            center_lat = sum(lats) / len(lats)
-            center_lng = sum(lngs) / len(lngs)
+            # Town centroid at ~1km precision — weather is city-scale data and
+            # the exact centroid of everyone's reports shouldn't leave either.
+            # (get_weather_context also rounds defensively at the boundary.)
+            center_lat = round(sum(lats) / len(lats), 2)
+            center_lng = round(sum(lngs) / len(lngs), 2)
             from app.api.research import get_weather_context
-            weather = get_weather_context(now, center_lat, center_lng)
+            # This call was missing its await — the coroutine's .get() raised
+            # and the except swallowed it, so weather context never worked.
+            weather = await get_weather_context(now, center_lat, center_lng)
             if weather.get("temp_max_c") is not None:
                 weather_summary = f"Recent weather: High {weather['temp_max_c']}°C, Low {weather['temp_min_c']}°C, Precip {weather['precip_24h_mm']}mm"
                 context_used.append("weather")
@@ -6274,15 +6316,18 @@ async def analytics_chat(
         logger.warning(f"Research field aggregates unavailable: {e}")
     
     # ========== 10. Request Details — Sanitized List ==========
+    # Block-level addresses and PII-redacted descriptions: this list is the
+    # densest resident data in the prompt, so it gets the strictest treatment.
     request_details = []
     for r in all_requests[:100]:  # Cap at 100 most recent
+        desc = sanitize_description(r.description) if r.description else r.description
         detail = {
             "id": r.service_request_id,
             "category": r.service_name,
             "status": r.status,
             "priority": r.priority,
-            "address": r.address or "Unknown",
-            "description": (r.description[:150] + "...") if r.description and len(r.description) > 150 else r.description,
+            "address": anonymize_address(r.address, "fuzzed") or "Unknown",
+            "description": (desc[:150] + "...") if desc and len(desc) > 150 else desc,
             "source": r.source,
             "created": r.requested_datetime.isoformat() if r.requested_datetime else None,
             "closed": r.closed_datetime.isoformat() if r.closed_datetime else None,
@@ -6292,8 +6337,37 @@ async def analytics_chat(
             detail["ai_category"] = r.ai_classification
         if r.flagged:
             detail["flagged"] = True
-            detail["flag_reason"] = r.flag_reason
+            detail["flag_reason"] = sanitize_description(r.flag_reason) if r.flag_reason else None
         request_details.append(detail)
+
+    # ========== Audit: every analytics-chat call leaves a trace ==========
+    # Staff conversing with a model over the whole request corpus is data
+    # access like any bulk export — who asked, roughly what, and how much
+    # context went out. The question is truncated and no record contents or
+    # model output are stored.
+    try:
+        from app.services.audit_service import AuditService
+        await AuditService.log_event(
+            db,
+            event_type="analytics_chat",
+            success=True,
+            username=current_user.username,
+            user_id=getattr(current_user, "id", None),
+            ip_address=(request.client.host if request.client else None),
+            user_agent=(request.headers.get("User-Agent") or "")[:500] or None,
+            details={
+                "question_preview": body.message[:100],
+                "context_sizes": {
+                    "total_requests": total,
+                    "request_details": len(request_details),
+                    "ai_summaries": len(ai_summaries),
+                    "flagged": len(flagged_requests),
+                    "history_messages": len(body.history),
+                },
+            },
+        )
+    except Exception as e:
+        logger.warning(f"Failed to write analytics-chat audit log: {e}")
     
     # ========== Build the System Prompt ==========
     system_prompt = f"""You are an expert municipal analytics advisor for {township_name}. You have deep access to the community's 311 service request system INCLUDING advanced research-grade data: social equity metrics, resident sentiment analysis, bureaucratic friction indicators, and infrastructure categorization.
@@ -6323,7 +6397,7 @@ Your role is to provide **specific, data-driven insights** with exact numbers. Y
 - Daily distribution: {json.dumps(daily)}
 - Monthly trend: {json.dumps(dict(sorted(monthly.items())))}
 
-### Top Problem Locations (by request count)
+### Top Problem Areas (block-level, by request count)
 {chr(10).join(f'- {addr}: {count} requests' for addr, count in top_addresses)}
 
 ### Staff Performance

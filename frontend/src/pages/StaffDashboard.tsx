@@ -1189,14 +1189,19 @@ export default function StaffDashboard() {
                                         <Sparkles className="w-4 h-4" />
                                         <span>Ask AI</span>
                                     </button>
-                                    <button
-                                        onClick={() => window.location.href = '/research'}
-                                        className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 sm:py-2 bg-white/10 border border-white/20 text-white rounded-lg hover:bg-white/20 transition-all text-xs sm:text-sm font-medium"
-                                    >
-                                        <FlaskConical className="w-4 h-4" />
-                                        <span className="hidden sm:inline">Research Portal</span>
-                                        <span className="sm:hidden">Research</span>
-                                    </button>
+                                    {/* Gated on the same module flag the backend enforces —
+                                        an ungated button on a disabled module is a door
+                                        painted on a wall. */}
+                                    {settings?.modules?.research_portal && (
+                                        <button
+                                            onClick={() => window.location.href = '/research'}
+                                            className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 sm:py-2 bg-white/10 border border-white/20 text-white rounded-lg hover:bg-white/20 transition-all text-xs sm:text-sm font-medium"
+                                        >
+                                            <FlaskConical className="w-4 h-4" />
+                                            <span className="hidden sm:inline">Research Portal</span>
+                                            <span className="sm:hidden">Research</span>
+                                        </button>
+                                    )}
                                     <div className="relative group" onKeyDown={(e) => { if (e.key === 'Escape') setExportOpen(false); }}>
                                         <button
                                             onClick={() => setExportOpen(o => !o)}
