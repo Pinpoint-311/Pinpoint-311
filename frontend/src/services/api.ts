@@ -736,8 +736,8 @@ class ApiClient {
      * header and bypassed the 401 handling every other call gets -- so on an
      * expired session it failed quietly and the page rendered as an unmanaged
      * deployment with no public origin, rather than sending anyone to log in. */
-    async getSystemConfig(): Promise<{ managed_mode?: boolean; public_origin?: string | null }> {
-        return this.request<{ managed_mode?: boolean; public_origin?: string | null }>(
+    async getSystemConfig(): Promise<{ managed_mode?: boolean; public_origin?: string | null; contact_form_url?: string }> {
+        return this.request<{ managed_mode?: boolean; public_origin?: string | null; contact_form_url?: string }>(
             '/system/config'
         );
     }

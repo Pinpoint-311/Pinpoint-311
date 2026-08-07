@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Bell, ExternalLink, Check, X } from 'lucide-react';
 
 import { Button, Input, Select } from './ui';
+import { api } from '../services/api';
 
 /**
  * The one voluntary outbound call this application makes.
@@ -35,6 +36,13 @@ import { Button, Input, Select } from './ui';
  *
  * COMPLIANCE.md documents all of this, which is the point: the exception is
  * disclosed rather than discovered.
+ *
+ * One more mode, added later: a deployment whose operator hosts their own
+ * registration form (CONTACT_FORM_URL, surfaced as `contact_form_url` on the
+ * public config endpoint) gets a link out to that form -- opened in a new tab,
+ * hosted by Microsoft Forms, nothing submitted from this application at all.
+ * When no URL is configured, everything below behaves exactly as it always
+ * has, so a self-hoster without a form loses nothing.
  */
 
 /** Public, unauthenticated, CORS-open. No API key: distributing one with an
@@ -88,12 +96,13 @@ export function isStayInformedDismissed(): boolean {
     return readFlag(MODAL_KEY);
 }
 
-type Outcome = 'submitted' | 'already-in-touch' | 'not-now';
+type Outcome = 'submitted' | 'opened-form' | 'already-in-touch' | 'not-now';
 
 function recordDismissal(how: Outcome) {
     writeFlag(MODAL_KEY, how);
-    // Submitting answers the question, and somebody already in touch has
-    // answered it too. Only "Not now" leaves it open -- so only "Not now"
+    // Submitting answers the question, opening the operator's form is as
+    // close to an answer as this side can see, and somebody already in touch
+    // has answered it too. Only "Not now" leaves it open -- so only "Not now"
     // leaves the banner up.
     if (how !== 'not-now') writeFlag(BANNER_KEY, how);
 }
@@ -179,6 +188,53 @@ function Consent({ checked, onChange, children }: {
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * Shown instead of the built-in form when the operator hosts a registration
+ * form of their own. Nothing is collected or transmitted here -- the button is
+ * a link, the form lives on Microsoft Forms, and the browser is told so.
+ */
+function RegisterLinkOut({ url, onDone }: { url: string; onDone: (how: Outcome) => void }) {
+    return (
+        <div className="space-y-5">
+            <p className="text-white/65 text-sm leading-relaxed">
+                Pinpoint 311 is open source and self-hosted, so we have no way to reach you about
+                security fixes, releases, or anything affecting your instance. Registering takes
+                two minutes: who to reach, and where this runs.
+            </p>
+            <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => onDone('opened-form')}
+                className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-primary-500 to-indigo-500 hover:from-primary-400 hover:to-indigo-400 text-white text-sm font-medium shadow-lg shadow-primary-500/25 transition-colors"
+            >
+                Register your deployment
+                <ExternalLink className="w-4 h-4" />
+            </a>
+            <p className="text-center text-[11px] text-white/35">
+                Opens in a new tab. The form is hosted by Microsoft Forms — nothing is sent from
+                this application.
+            </p>
+            <div className="flex flex-col gap-3 pt-1">
+                <button
+                    type="button"
+                    onClick={() => onDone('already-in-touch')}
+                    className="w-full px-4 py-2.5 rounded-xl bg-white/[0.06] hover:bg-white/10 border border-white/12 text-white/70 text-sm transition-colors"
+                >
+                    I'm already in touch with Pinpoint 311
+                </button>
+                <button
+                    type="button"
+                    onClick={() => onDone('not-now')}
+                    className="text-white/40 hover:text-white/70 text-sm transition-colors"
+                >
+                    Not now
+                </button>
+            </div>
+        </div>
+    );
+}
 
 function StayInformedForm({ onDone }: { onDone: (how: Outcome) => void }) {
     const [form, setForm] = useState<FormState>(EMPTY);
@@ -409,6 +465,15 @@ export function StayInformedHost({ ready }: { ready: boolean }) {
     const [dismissed, setDismissed] = useState(() => readFlag(MODAL_KEY));
     const [bannerDismissed, setBannerDismissed] = useState(() => readFlag(BANNER_KEY));
     const autoPrompted = useRef(false);
+    /* The operator-hosted registration form, if this deployment has one.
+     * Empty means it does not, and the modal shows the built-in form. */
+    const [contactFormUrl, setContactFormUrl] = useState('');
+
+    useEffect(() => {
+        api.getSystemConfig()
+            .then(cfg => setContactFormUrl((cfg?.contact_form_url ?? '').trim()))
+            .catch(() => { /* unknowable reads as unconfigured: the in-app form */ });
+    }, []);
 
     useEffect(() => {
         const reopen = () => setOpen(true);
@@ -460,7 +525,9 @@ export function StayInformedHost({ ready }: { ready: boolean }) {
                             onClick={(e) => e.stopPropagation()}
                             role="dialog"
                             aria-modal="true"
-                            aria-label="Stay informed about security updates and new features"
+                            aria-label={contactFormUrl
+                                ? 'Register your deployment'
+                                : 'Stay informed about security updates and new features'}
                             className="setup-panel w-full max-w-xl my-auto p-7 sm:p-8"
                         >
                             <button
@@ -479,11 +546,15 @@ export function StayInformedHost({ ready }: { ready: boolean }) {
                                     <Bell className="w-6 h-6 text-white" />
                                 </div>
                                 <h2 className="font-bold text-lg text-white leading-tight">
-                                    Stay informed about security updates and new features
+                                    {contactFormUrl
+                                        ? 'Register your deployment'
+                                        : 'Stay informed about security updates and new features'}
                                 </h2>
                             </div>
 
-                            <StayInformedForm onDone={finish} />
+                            {contactFormUrl
+                                ? <RegisterLinkOut url={contactFormUrl} onDone={finish} />
+                                : <StayInformedForm onDone={finish} />}
                         </motion.div>
                     </motion.div>
                 )}
@@ -515,13 +586,13 @@ function StayInformedBanner({ onDismiss }: { onDismiss: () => void }) {
             >
                 <Bell className="w-4 h-4 text-primary-300 mt-0.5 shrink-0" />
                 <p className="text-xs text-white/60 leading-snug flex-1">
-                    We have no way to reach you about security fixes.{' '}
+                    We have no way to reach you about security fixes or updates.{' '}
                     <button
                         type="button"
                         onClick={openStayInformed}
                         className="text-primary-300 hover:text-primary-200 underline underline-offset-2"
                     >
-                        Share a contact
+                        Register a contact
                     </button>
                 </p>
                 <button

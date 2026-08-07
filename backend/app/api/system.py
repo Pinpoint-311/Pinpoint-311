@@ -118,6 +118,9 @@ async def get_deployment_config(db: AsyncSession = Depends(get_db)):
         "app_version": app_settings.app_version,
         "public_origin": await public_origin(db),
         "translation_enabled": translation_enabled,
+        # Operator-hosted registration form (CONTACT_FORM_URL). Empty string
+        # when none is configured; the UI then falls back to the in-app form.
+        "contact_form_url": (app_settings.contact_form_url or "").strip(),
     }
 
 
