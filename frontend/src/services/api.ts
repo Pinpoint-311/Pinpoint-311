@@ -540,6 +540,16 @@ class ApiClient {
         });
     }
 
+    /** Take one report off the public tracker and map, or put it back.
+     *  Deliberately not part of updateRequest: this changes where the report is
+     *  listed, not the report, and a bulk status edit must not carry it along. */
+    async setPublicArchived(requestId: string, archived: boolean): Promise<ServiceRequestDetail> {
+        return this.request<ServiceRequestDetail>(`/open311/v2/requests/${requestId}/public-archive`, {
+            method: 'PATCH',
+            body: JSON.stringify({ public_archived: archived }),
+        });
+    }
+
     async deleteRequest(requestId: string, justification: string): Promise<void> {
         return this.request<void>(`/open311/v2/requests/${requestId}`, {
             method: 'DELETE',

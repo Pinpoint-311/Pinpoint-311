@@ -2305,6 +2305,45 @@ export default function StaffDashboard() {
                                                 <span className="sm:hidden">{selectedRequest.flagged === true ? 'Legal Hold ✓' : 'Legal Hold'}</span>
                                             </button>
                                         )}
+
+                                        {/* Row 5: Archive from public view. Any staff member --
+                                            deciding the map does not need last spring's resolved
+                                            potholes on it is routine clerk work, not the
+                                            legal-hold kind of decision. Nothing is deleted. */}
+                                        <button
+                                            onClick={async () => {
+                                                const nowArchived = selectedRequest.public_archived !== true;
+                                                try {
+                                                    const updated = await api.setPublicArchived(
+                                                        selectedRequest.service_request_id, nowArchived);
+                                                    setSelectedRequest(updated);
+                                                    setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
+                                                    loadAuditLog(selectedRequest.service_request_id);
+                                                } catch (err) {
+                                                    console.error('Failed to change public visibility:', err);
+                                                }
+                                            }}
+                                            className={`w-full py-1.5 sm:py-2 px-3 sm:px-4 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center justify-center gap-1.5 sm:gap-2 ${selectedRequest.public_archived === true
+                                                ? 'bg-gradient-to-r from-slate-500 to-slate-600 text-white shadow-lg shadow-slate-500/30 ring-2 ring-white/20'
+                                                : 'bg-white/5 border border-white/10 text-white/70 hover:bg-slate-500/20 hover:text-slate-200 hover:border-slate-500/30'
+                                                }`}
+                                            title="Archive from public view \u2014 the report stays, residents with the link still see it"
+                                            aria-label={selectedRequest.public_archived === true
+                                                ? 'Put this report back on the public tracker and map'
+                                                : 'Archive from public view \u2014 the report stays, residents with the link still see it'}
+                                        >
+                                            <EyeOff className="w-3.5 h-3.5 sm:w-4 sm:h-4" aria-hidden="true" />
+                                            <span className="hidden sm:inline">{selectedRequest.public_archived === true
+                                                ? 'Archived from Public View (Click to Restore)'
+                                                : 'Archive from Public View'}</span>
+                                            <span className="sm:hidden">{selectedRequest.public_archived === true ? 'Archived \u2713' : 'Archive'}</span>
+                                        </button>
+
+                                        {selectedRequest.public_archived === true && (
+                                            <p className="text-[11px] text-white/40 text-center">
+                                                Off the public tracker and map. The report stays &mdash; residents with the link still see it, and it is still in research exports.
+                                            </p>
+                                        )}
                                     </div>
 
                                     {/* Scrollable Content - Professional Government Styling */}
@@ -3034,6 +3073,14 @@ export default function StaffDashboard() {
                                                                 actionConfig = { color: 'bg-indigo-500', text: `Assigned to ${entry.new_value}` };
                                                             } else if (entry.action === 'comment_added') {
                                                                 actionConfig = { color: 'bg-teal-500', text: 'Comment added' };
+                                                            } else if (entry.action === 'public_archive') {
+                                                                const isArchived = entry.new_value === 'archived';
+                                                                actionConfig = {
+                                                                    color: isArchived ? 'bg-slate-500' : 'bg-emerald-500',
+                                                                    text: isArchived
+                                                                        ? '\ud83d\udc41\ufe0f Archived from public view'
+                                                                        : '\ud83d\udc41\ufe0f Restored to public view'
+                                                                };
                                                             } else if (entry.action === 'legal_hold') {
                                                                 // Show if legal hold was enabled or removed
                                                                 const isEnabled = entry.new_value === 'enabled';
