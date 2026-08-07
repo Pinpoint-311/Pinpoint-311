@@ -271,6 +271,7 @@ export default function StaffDashboard() {
         requests: allRequests,
         readIds: readIdsFromStorage(localStorage.getItem('activityFeedRead')),
         departmentIds: userDepartmentIds,
+        username: user?.username,
         now: Date.now(),
     }), [allRequests, userDepartmentIds, activityTick, showActivityFeed]);
 

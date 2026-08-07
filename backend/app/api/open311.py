@@ -882,14 +882,21 @@ async def _finalize_new_request(
     if notify_resident:
         enqueue(send_branded_notification, service_request.id, "confirmation")
 
-    # Notify department staff based on their notification preferences
+    # Notify staff about the new request — always enqueued, never gated on the
+    # department having a routing_email. The worker resolves who to tell from
+    # the request itself (assignee → department staff → admins) and applies each
+    # person's Notification Settings; routing_email is only the no-recipients
+    # archive fallback. The old gate (`if dept.routing_email`) meant a town that
+    # never filled that field in — most of them — notified nobody, and the
+    # preference toggles were never even consulted.
+    routing_email = None
     if assigned_department_id:
         dept_result = await db.execute(
             select(Department).where(Department.id == assigned_department_id)
         )
         dept = dept_result.scalar_one_or_none()
-        if dept and dept.routing_email:
-            enqueue(send_department_notification, service_request.id, dept.routing_email)
+        routing_email = (dept.routing_email or None) if dept else None
+    enqueue(send_department_notification, service_request.id, routing_email)
 
 
 @router.get("/requests.json", response_model=List[ServiceRequestResponse])
