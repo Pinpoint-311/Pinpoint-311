@@ -1306,6 +1306,19 @@ class ApiClient {
         return response.blob();
     }
 
+    /** JSON data dictionary — packs and fields as the server actually exports
+     *  them (per-pack switches applied), so the Research Lab renders truth
+     *  rather than a hardcoded copy. */
+    async getResearchDataDictionary(): Promise<ResearchDataDictionary> {
+        return this.request<ResearchDataDictionary>('/research/data-dictionary');
+    }
+
+    /** Admin only: every pack (including disabled ones) with its field list,
+     *  for the Admin Console toggles. */
+    async getResearchPacks(): Promise<ResearchPackSwitch[]> {
+        return this.request<ResearchPackSwitch[]>('/research/packs');
+    }
+
     async exportDataDictionary(): Promise<Blob> {
         const response = await fetch(`${API_BASE}/research/export/data-dictionary`, {
             headers: this.token ? { 'Authorization': `Bearer ${this.token}` } : {},
@@ -1704,6 +1717,45 @@ export interface ResearchStatus {
     enabled: boolean;
     user: string;
     role: string;
+}
+
+export interface ResearchDictionaryField {
+    name: string;
+    type: string;
+    description: string;
+}
+
+export interface ResearchPackInfo {
+    label: string;
+    audience: string;
+    default_on: boolean;
+    enabled: boolean;
+    fields: ResearchDictionaryField[];
+    suggested_analyses: string[];
+    why_default_off?: string;
+}
+
+/** GET /research/data-dictionary — the fields and packs as the server actually
+ *  exports them, per-pack switches already applied. */
+export interface ResearchDataDictionary {
+    version: string;
+    fields: Record<string, { type: string; description: string; research_pack: string }>;
+    core_fields: ResearchDictionaryField[];
+    research_packs: Record<string, ResearchPackInfo>;
+    privacy: { fuzzed_mode: string; exact_mode: string };
+    sentiment_method?: string;
+}
+
+/** GET /research/packs (admin) — every pack including disabled ones, for the
+ *  Admin Console toggles. */
+export interface ResearchPackSwitch {
+    id: string;
+    label: string;
+    audience: string;
+    enabled: boolean;
+    default_on: boolean;
+    contains: string[];
+    why_default_off?: string;
 }
 
 export const api = new ApiClient();
