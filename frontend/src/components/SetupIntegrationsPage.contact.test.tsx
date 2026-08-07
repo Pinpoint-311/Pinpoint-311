@@ -73,17 +73,45 @@ afterEach(() => {
 });
 
 describe('the registration touchpoint on the setup tracker', () => {
-    it('links out to a configured contact form, in a new tab, without a window handle', async () => {
+    it('invites registration when a form is configured', async () => {
         state.systemConfig = { contact_form_url: 'https://forms.office.com/r/example' };
         await mount();
 
-        const link = host.querySelector<HTMLAnchorElement>('a[href="https://forms.office.com/r/example"]');
-        expect(link).not.toBeNull();
-        expect(link!.target).toBe('_blank');
-        expect(link!.rel).toContain('noopener');
-        expect(link!.textContent).toContain('Register your deployment');
+        expect(host.textContent).toContain('Register your deployment');
         // The honesty note: the form is not ours and the page says so.
         expect(host.textContent).toContain('hosted by Microsoft Forms');
+    });
+
+    it('opens the form in the console rather than navigating away', async () => {
+        // A button, not a link. The form is shown in the modal so somebody can
+        // answer it without losing the setup page they were working through --
+        // and an <a href> to Microsoft would be the old behaviour.
+        state.systemConfig = { contact_form_url: 'https://forms.office.com/r/example' };
+        await mount();
+
+        expect(host.querySelector('a[href*="forms.office.com"]')).toBeNull();
+        const invite = [...host.querySelectorAll('button')]
+            .find(b => b.textContent?.includes('Register your deployment'));
+        expect(invite).toBeDefined();
+    });
+
+    it('asks for the form deliberately, so nothing is fetched from Microsoft first', async () => {
+        // The click carries `immediate`, which is what permits the host to
+        // render the third-party frame. Without it the modal would open on the
+        // invitation and the clerk would have to ask twice.
+        state.systemConfig = { contact_form_url: 'https://forms.office.com/r/example' };
+        await mount();
+
+        const events: CustomEvent[] = [];
+        const listen = (e: Event) => events.push(e as CustomEvent);
+        window.addEventListener('pinpoint311:stay-informed:open', listen);
+        const invite = [...host.querySelectorAll('button')]
+            .find(b => b.textContent?.includes('Register your deployment'))!;
+        await act(async () => { invite.click(); });
+        window.removeEventListener('pinpoint311:stay-informed:open', listen);
+
+        expect(events).toHaveLength(1);
+        expect(events[0].detail).toEqual({ immediate: true });
     });
 
     it('falls back to the built-in contact form when no URL is configured', async () => {
@@ -93,5 +121,16 @@ describe('the registration touchpoint on the setup tracker', () => {
         expect(host.textContent).toContain('Register a contact');
         expect(host.textContent).not.toContain('Microsoft Forms');
         expect(host.querySelector('a[href*="forms.office.com"]')).toBeNull();
+    });
+
+    it('falls back on an unusable URL too, so the footer cannot disagree with the modal', async () => {
+        // Both sides run the setting through the same builder. Reading it raw
+        // here would invite somebody to register and then open a modal showing
+        // the built-in form.
+        state.systemConfig = { contact_form_url: 'not-a-url' };
+        await mount();
+
+        expect(host.textContent).toContain('Register a contact');
+        expect(host.textContent).not.toContain('Microsoft Forms');
     });
 });
