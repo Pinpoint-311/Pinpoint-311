@@ -6362,14 +6362,19 @@ async def analytics_chat(
     # model output are stored.
     try:
         from app.services.audit_service import AuditService
+        # The proxy convention, not request.client -- behind Caddy that host is
+        # the proxy's own address on every row, which defeats the one thing an
+        # audit IP is for. Same helper the research access log uses.
+        from app.api.research import client_info
+        _ip, _ua = client_info(request)
         await AuditService.log_event(
             db,
             event_type="analytics_chat",
             success=True,
             username=current_user.username,
             user_id=getattr(current_user, "id", None),
-            ip_address=(request.client.host if request.client else None),
-            user_agent=(request.headers.get("User-Agent") or "")[:500] or None,
+            ip_address=_ip,
+            user_agent=_ua,
             details={
                 "question_preview": body.message[:100],
                 "context_sizes": {

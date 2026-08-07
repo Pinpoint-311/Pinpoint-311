@@ -49,8 +49,21 @@ async def get_requests_for_export(
     service_code: Optional[str] = None
 ) -> List[ServiceRequest]:
     """Fetch requests with optional filters."""
-    query = select(ServiceRequest).order_by(ServiceRequest.requested_datetime.desc())
-    
+    from sqlalchemy.orm import selectinload
+
+    # Eager-loaded, like the research export (research.py). The shared row
+    # builder reads req.comments always and req.audit_logs for the friction
+    # metrics, and a lazy load on an AsyncSession instance raises
+    # MissingGreenlet -- so without these, any non-empty export 500s.
+    query = (
+        select(ServiceRequest)
+        .options(
+            selectinload(ServiceRequest.comments),
+            selectinload(ServiceRequest.audit_logs),
+        )
+        .order_by(ServiceRequest.requested_datetime.desc())
+    )
+
     conditions = [ServiceRequest.deleted_at.is_(None)]  # Exclude soft-deleted
     if start_date:
         conditions.append(ServiceRequest.requested_datetime >= start_date)
