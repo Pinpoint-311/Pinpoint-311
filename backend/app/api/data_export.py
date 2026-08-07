@@ -68,6 +68,33 @@ async def get_requests_for_export(
     return result.scalars().all()
 
 
+def export_audit_details(
+    *, format: str, row_count: int,
+    start_date=None, end_date=None,
+    status: Optional[str] = None, service_code: Optional[str] = None,
+    include_pii: bool = False,
+) -> dict:
+    """The audit-log `details` for a bulk export.
+
+    A pure function so the shape is testable: it must say how much left and
+    under what filters, and must never carry record contents. The staff export
+    always includes the operational columns (exact address, staff notes, raw
+    description) — that fact is recorded explicitly rather than inferred.
+    """
+    return {
+        "format": format,
+        "row_count": row_count,
+        "filters": {
+            "start_date": start_date.isoformat() if start_date else None,
+            "end_date": end_date.isoformat() if end_date else None,
+            "status": status or "all",
+            "service_code": service_code or "all",
+        },
+        "include_pii": include_pii,
+        "operational_columns": True,
+    }
+
+
 # NOTE: the former request_to_dict / request_to_geojson_feature helpers were
 # removed — staff exports now build rows via the shared
 # app.api.research.build_dataset_row, so the staff and research schemas cannot
@@ -98,31 +125,40 @@ async def export_requests(
     Requires staff or admin authentication. Bulk PII exports require admin
     and are audit-logged.
     """
-    # Bulk PII exfiltration is a sensitive action — admin only, and recorded.
-    if include_pii:
-        if current_user.role != "admin":
-            raise HTTPException(
-                status_code=403,
-                detail="Bulk exports that include resident PII require an admin account.",
-            )
-        try:
-            from app.services.audit_service import AuditService
-            await AuditService.log_event(
-                db,
-                event_type="data_export_pii",
-                success=True,
-                username=current_user.username,
-                user_id=getattr(current_user, "id", None),
-                details={
-                    "format": format,
-                    "status": status or "all",
-                    "service_code": service_code or "all",
-                },
-            )
-        except Exception as e:
-            logging.getLogger(__name__).warning(f"Failed to write PII-export audit log: {e}")
+    # Bulk PII exfiltration is a sensitive action — admin only.
+    if include_pii and current_user.role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Bulk exports that include resident PII require an admin account.",
+        )
 
     requests = await get_requests_for_export(db, start_date, end_date, status, service_code)
+
+    # EVERY bulk export leaves a trace, not just the PII ones. "Which records
+    # left this building, when, and who took them" is the first question an
+    # audit of a records process asks, and a non-PII export still carries exact
+    # addresses, staff notes and raw descriptions. Details name counts and
+    # filters only — never record contents.
+    try:
+        from app.services.audit_service import AuditService
+        await AuditService.log_event(
+            db,
+            event_type="records_export",
+            success=True,
+            username=current_user.username,
+            user_id=getattr(current_user, "id", None),
+            details=export_audit_details(
+                format=format,
+                row_count=len(requests),
+                start_date=start_date,
+                end_date=end_date,
+                status=status,
+                service_code=service_code,
+                include_pii=include_pii,
+            ),
+        )
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Failed to write export audit log: {e}")
     
     # Get township name for filename
     settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
