@@ -275,6 +275,16 @@ def analyze_request(self, request_id: int):
                         if "_error" in ai_result:
                             logger.error(f"[Analysis] AI error: {ai_result.get('_error')}")
                             analysis["_error"] = ai_result["_error"]
+                            # The adapters never raise -- a quota failure
+                            # (Vertex 429/RESOURCE_EXHAUSTED, Azure 429,
+                            # Bedrock ThrottlingException) arrives as this
+                            # fallback dict and the report still processes
+                            # with a manual-review default. That graceful
+                            # part stays; the health note is what stops it
+                            # being *invisible* to the administrator.
+                            from app.services import connector_health
+                            await connector_health.note_quota_failure(
+                                "ai", ai_result["_error"], provider=ai_provider.provider)
                         else:
                             analysis.update(ai_result)
                             ai_ran = True
@@ -292,8 +302,15 @@ def analyze_request(self, request_id: int):
                         )
                     except Exception as e:
                         logger.warning(f"[Analysis] usage tracking failed: {e}")
-                except Exception:
+                except Exception as ai_exc:
                     logger.warning("[Analysis] AI summary failed", exc_info=True)
+                    # Adapters shouldn't raise, but a quota error surfacing as
+                    # an exception still deserves the same flag as one arriving
+                    # in the fallback dict above. note_quota_failure never
+                    # raises, so this cannot re-break the swallowed branch.
+                    from app.services import connector_health
+                    await connector_health.note_quota_failure(
+                        "ai", ai_exc, provider=ai_provider.provider)
 
             # Fold the AI photo/text assessment into the moderation flag (image
             # moderation lives here — it needs the vision model). Graceful no-op
