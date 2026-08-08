@@ -1528,6 +1528,18 @@ export default function AdminConsole() {
                 ready={Boolean(settings?.township_name)
                     && settings?.township_name !== 'Your Municipality'
                     && currentTab !== 'integration'}
+                /* What the console already knows, so a registration form does
+                 * not ask for it again. Which of these actually travel is the
+                 * operator's choice, made by which {tokens} their
+                 * CONTACT_FORM_URL contains -- the two personal ones below go
+                 * nowhere unless they asked for them by name. See
+                 * components/contactForm.ts. */
+                prefill={{
+                    organization: settings?.township_name,
+                    contact_name: user?.full_name,
+                    contact_email: user?.email,
+                    contact_role: user?.role,
+                }}
             />
 
             {/* Mobile sidebar backdrop */}

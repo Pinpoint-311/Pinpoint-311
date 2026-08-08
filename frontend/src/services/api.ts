@@ -22,6 +22,21 @@ import {
 
 const API_BASE = '/api';
 
+/** Deployment-level shape the admin UI branches on, from GET /system/config. */
+export interface SystemConfig {
+    /** State-hosted: the orchestrator owns the infrastructure credentials. */
+    managed_mode?: boolean;
+    /** The address residents use, for callback URLs and for registration. */
+    public_origin?: string | null;
+    app_version?: string | null;
+    translation_enabled?: boolean;
+    /** An operator-hosted registration form, possibly carrying {token}
+     *  placeholders this console fills in. Empty means none is configured. */
+    contact_form_url?: string;
+    /** Whether that form may be shown in a frame inside the console. */
+    contact_form_embed?: boolean;
+}
+
 // GovTech platform integration types
 export interface IntegrationFieldSpec {
     key: string;
@@ -746,10 +761,8 @@ class ApiClient {
      * header and bypassed the 401 handling every other call gets -- so on an
      * expired session it failed quietly and the page rendered as an unmanaged
      * deployment with no public origin, rather than sending anyone to log in. */
-    async getSystemConfig(): Promise<{ managed_mode?: boolean; public_origin?: string | null }> {
-        return this.request<{ managed_mode?: boolean; public_origin?: string | null }>(
-            '/system/config'
-        );
+    async getSystemConfig(): Promise<SystemConfig> {
+        return this.request<SystemConfig>('/system/config');
     }
 
     /** External platform records linked to one request. Staff-visible. */
