@@ -477,16 +477,45 @@ export default function StaffDashboardMap({
      *
      * The first pass is skipped: the initial render is not a status *change*,
      * and requests arrive asynchronously, so announcing there would talk over
-     * the page as it loads. */
+     * the page as it loads.
+     *
+     * Keyed on the filter *inputs*, never on `filteredRequests`. That array is
+     * rebuilt whenever `requests` changes, and the dashboard above replaces the
+     * whole request list on a 30-second poll -- so an effect that watched the
+     * array announced "N of M requests shown on the map" twice a minute, over
+     * whatever the user was actually reading, in response to nothing they did
+     * (WCAG 2.2.4, 4.1.3). The counts are read inside the effect instead.
+     *
+     * The signature is the set of boxes the user has switched *off*, not the
+     * whole map: the category, department and staff filters are seeded from
+     * data that arrives asynchronously, and seeding them writes `true` for
+     * every key. Watching the raw objects would therefore announce again the
+     * moment the services list loaded. */
     const announce = useAnnounce();
-    const countAnnounced = useRef(false);
+    const filterSignature = useMemo(() => {
+        const off = (m: Record<string | number, boolean>) =>
+            Object.keys(m).filter(k => m[k] === false).sort().join(',');
+        return [
+            off(statusFilters as unknown as Record<string, boolean>),
+            off(categoryFilters),
+            operationalFilters ? off(departmentFilters) : '',
+            operationalFilters ? off(staffFilters) : '',
+            operationalFilters ? off(priorityFilters) : '',
+            assignmentFilter.trim(),
+        ].join('|');
+    }, [statusFilters, categoryFilters, departmentFilters, staffFilters, priorityFilters, assignmentFilter, operationalFilters]);
+    const lastAnnouncedFilters = useRef<string | null>(null);
     useEffect(() => {
-        if (!countAnnounced.current) {
-            countAnnounced.current = true;
+        if (lastAnnouncedFilters.current === null) {
+            lastAnnouncedFilters.current = filterSignature;
             return;
         }
+        if (lastAnnouncedFilters.current === filterSignature) return;
+        lastAnnouncedFilters.current = filterSignature;
         announce(`${filteredRequests.length} of ${requests.length} requests shown on the map`);
-    }, [filteredRequests, requests.length, announce]);
+        // filteredRequests / requests are read, not tracked -- see above.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [filterSignature, announce]);
 
     // Update markers when filters or requests change
     useEffect(() => {

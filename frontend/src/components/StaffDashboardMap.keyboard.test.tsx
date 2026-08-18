@@ -90,20 +90,22 @@ const services: any[] = [
     { service_code: 'streetlight', service_name: 'Streetlight Out' },
 ];
 
+const mapTree = (rows: any[], onRequestSelect: () => void) => (
+    <AccessibilityProvider>
+        <StaffDashboardMap
+            config={{ provider: 'google', apiKey: 'k' } as any}
+            requests={rows}
+            services={services}
+            departments={[]}
+            users={[]}
+            mapLayers={[]}
+            onRequestSelect={onRequestSelect}
+        />
+    </AccessibilityProvider>
+);
+
 const renderMap = (onRequestSelect = vi.fn()) => {
-    render(
-        <AccessibilityProvider>
-            <StaffDashboardMap
-                config={{ provider: 'google', apiKey: 'k' } as any}
-                requests={requests}
-                services={services}
-                departments={[]}
-                users={[]}
-                mapLayers={[]}
-                onRequestSelect={onRequestSelect}
-            />
-        </AccessibilityProvider>,
-    );
+    render(mapTree(requests, onRequestSelect));
     return onRequestSelect;
 };
 
@@ -238,6 +240,41 @@ describe('StaffDashboardMap filter status messages', () => {
         const region = await screen.findByText('1 of 2 requests shown on the map');
         expect(region.id).toBe('aria-live-region');
         expect(region.getAttribute('aria-live')).toBe('polite');
+    });
+
+    /* The dashboard above this map re-fetches every 30 seconds and hands down a
+       brand-new array. The count effect used to watch the filtered array, whose
+       identity changes with it, so a screen reader user heard "N of M requests
+       shown on the map" twice a minute over whatever they were reading, having
+       touched nothing (WCAG 2.2.4, 4.1.3). Only a filter the user actually
+       changed may speak. */
+    it('stays silent when a background poll replaces the request list', async () => {
+        const onRequestSelect = vi.fn();
+        const { rerender } = render(mapTree(requests, onRequestSelect));
+
+        const region = () => document.getElementById('aria-live-region')!;
+        expect(region().textContent).toBe('');
+
+        // A poll: same requests, fresh objects and a fresh array, exactly what
+        // `setAllRequests(await api.getRequests())` produces.
+        rerender(mapTree(requests.map(r => ({ ...r })), onRequestSelect));
+        await new Promise(resolve => setTimeout(resolve, 300));
+        expect(region().textContent).toBe('');
+
+        // A poll that also brings a new report in. Still not the user's doing.
+        rerender(mapTree(
+            [...requests.map(r => ({ ...r })), { ...requests[0], service_request_id: 'REQ-003' }],
+            onRequestSelect,
+        ));
+        await new Promise(resolve => setTimeout(resolve, 300));
+        expect(region().textContent).toBe('');
+
+        // The user unticks "Open" -- that, and only that, is announced.
+        const user = userEvent.setup();
+        const openBox = screen.getByRole('checkbox', { name: /^open$/i });
+        openBox.focus();
+        await user.keyboard(' ');
+        await waitFor(() => expect(region().textContent).toBe('1 of 3 requests shown on the map'));
     });
 });
 

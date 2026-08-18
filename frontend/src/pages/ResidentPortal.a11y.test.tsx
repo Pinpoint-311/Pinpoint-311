@@ -280,10 +280,20 @@ describe('the questions a municipality adds to a category', () => {
         await user.type(screen.getByLabelText(/^Email/), 'resident@example.gov');
         await user.type(screen.getByLabelText(/Description/), 'pothole');
 
+        /* Whatever alert regions the page already has are not the point; the
+           point is that a failed submit must not add a pile of new ones. */
+        const alertsBefore = document.querySelectorAll('[role="alert"]').length;
+
         await user.click(screen.getByRole('button', { name: /Submit Request/ }));
 
-        const summary = await screen.findByRole('alert', { name: /problem/i });
+        /* The summary is not an alert region and must not be: it takes focus,
+           which is what announces it, and every field error alongside it is
+           plain text. Several alerts in one commit announce as none. */
+        const heading = await screen.findByRole('heading', { name: /problem/i });
+        const summary = heading.parentElement!;
         await waitFor(() => expect(document.activeElement).toBe(summary));
+        expect(summary.getAttribute('role')).toBe(null);
+        expect(document.querySelectorAll('[role="alert"]')).toHaveLength(alertsBefore);
         expect(summary.textContent).toContain('at least 10 characters');
         // The message links at the field it is about, by the field's own id.
         const link = summary.querySelector('a')!;
