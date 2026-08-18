@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Card, Input, Button, Textarea } from './ui';
 import { api } from '../services/api';
+import { useAnnounce } from '../context/AccessibilityContext';
 import { PublicServiceRequest, RequestComment, AuditLogEntry } from '../types';
 import { TranslatedContent } from './TranslatedContent';
 import { CommentCard, CommentEmptyState, CommentSkeleton } from './commentUI';
@@ -61,8 +62,44 @@ const STATUS_COLORS: Record<string, { bg: string; text: string; border: string; 
     },
 };
 
+/* Static class literals, not interpolated ones.
+ *
+ * These tiles were built as `from-${color}-500/10` / `text-${color}-400`, and
+ * Tailwind resolves class names by scanning the source text -- it never sees a
+ * name that only exists at runtime, and there is no safelist in
+ * tailwind.config.js. So none of those classes were ever generated: the tiles
+ * rendered with no background, no border and white text, which is both a
+ * missing visual affordance and the reason the counts had no colour coding to
+ * distinguish them (WCAG 1.4.1, and a plain rendering bug). Written out in full
+ * they exist in the stylesheet.
+ */
+const STAT_TILES = [
+    {
+        status: 'open',
+        label: 'Open',
+        mobileLabel: 'Open',
+        tile: 'from-amber-500/10 to-amber-500/5 border-amber-500/20 hover:border-amber-500/40',
+        count: 'text-amber-300',
+    },
+    {
+        status: 'in_progress',
+        label: 'In Progress',
+        mobileLabel: 'In Prog',
+        tile: 'from-blue-500/10 to-blue-500/5 border-blue-500/20 hover:border-blue-500/40',
+        count: 'text-blue-300',
+    },
+    {
+        status: 'closed',
+        label: 'Resolved',
+        mobileLabel: 'Done',
+        tile: 'from-emerald-500/10 to-emerald-500/5 border-emerald-500/20 hover:border-emerald-500/40',
+        count: 'text-emerald-300',
+    },
+] as const;
+
 export default function TrackRequests({ initialRequestId, selectedRequestId, onRequestSelect }: TrackRequestsProps) {
     const statusColors = STATUS_COLORS;
+    const announce = useAnnounce();
     const [requests, setRequests] = useState<PublicServiceRequest[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -79,7 +116,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
     const [commentError, setCommentError] = useState<string | null>(null);
     const [isLoadingComments, setIsLoadingComments] = useState(false);
     const [copied, setCopied] = useState(false);
-    const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+    const [lightbox, setLightbox] = useState<{ url: string; alt: string } | null>(null);
     const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
     // The whole payload: this used to keep only the Google key and render a
     // hardcoded Google Maps Embed iframe, so a town on any other provider got no
@@ -144,24 +181,24 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
     // has to put focus back on the thumbnail that opened it rather than
     // dropping it to <body> and restarting Tab from the top of the page.
     const lightboxTrigger = useRef<HTMLElement | null>(null);
-    const openLightbox = (url: string) => {
+    const openLightbox = (url: string, alt: string) => {
         lightboxTrigger.current = document.activeElement instanceof HTMLElement
             ? document.activeElement : null;
-        setLightboxUrl(url);
+        setLightbox({ url, alt });
     };
     const closeLightbox = () => {
-        setLightboxUrl(null);
+        setLightbox(null);
         lightboxTrigger.current?.focus();
         lightboxTrigger.current = null;
     };
     useEffect(() => {
-        if (!lightboxUrl) return;
+        if (!lightbox) return;
         const onKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') closeLightbox();
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [lightboxUrl]);
+    }, [lightbox]);
 
     // Sync internal state with parent-controlled selectedRequestId (for back/forward navigation)
     useEffect(() => {
@@ -276,6 +313,12 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
         const url = `${window.location.origin}/#track/${selectedRequest.service_request_id}`;
         navigator.clipboard.writeText(url);
         setCopied(true);
+        /* The button swaps to "Link Copied!" and swaps back two seconds later.
+         * Nothing about that reaches a screen reader on its own -- the label
+         * change is not a status message -- so copying was entirely silent
+         * (WCAG 4.1.3). Routed through the app's single live region rather than
+         * a new aria-live node of its own. */
+        announce('Link copied to clipboard');
         setTimeout(() => setCopied(false), 2000);
     };
 
@@ -583,7 +626,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                        on this page enlarges. */
                                     <button
                                         type="button"
-                                        onClick={() => openLightbox(selectedRequest.completion_photo_url!)}
+                                        onClick={() => openLightbox(selectedRequest.completion_photo_url!, 'Completion photo')}
                                         aria-label="View completion photo full size"
                                         className="block w-fit mt-3"
                                     >
@@ -612,7 +655,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                     <button
                                         key={index}
                                         type="button"
-                                        onClick={() => openLightbox(url)}
+                                        onClick={() => openLightbox(url, `Submitted photo ${index + 1}`)}
                                         className="block group cursor-pointer text-left w-full"
                                         aria-label={`View submitted photo ${index + 1} full size`}
                                     >
@@ -726,7 +769,20 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                     </div>
 
                     {/* Comment List */}
-                    <div className="space-y-4 max-h-[500px] overflow-y-auto">
+                    {/* A scroll container whose children hold no focusable
+                        controls cannot be scrolled by keyboard at all, so the
+                        comments past the fold were unreachable without a mouse
+                        (WCAG 2.1.1). tabIndex makes it a scrollable region the
+                        keyboard can enter, and a region needs a name to be worth
+                        landing on. The cap is in rem and bounded by the viewport
+                        because a fixed 500px does not shrink at 200% zoom or at a
+                        320px-wide viewport, which clipped the thread (1.4.4/1.4.10). */}
+                    <div
+                        tabIndex={0}
+                        role="region"
+                        aria-label="Comments"
+                        className="space-y-4 max-h-[min(31rem,60vh)] overflow-y-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded-lg"
+                    >
                         {isLoadingComments ? (
                             <CommentSkeleton rows={2} />
                         ) : comments.length === 0 ? (
@@ -755,7 +811,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                 </Card>
 
                 {/* Premium Photo Lightbox Modal */}
-                {lightboxUrl && <PhotoLightbox url={lightboxUrl} onClose={closeLightbox} />}
+                {lightbox && <PhotoLightbox url={lightbox.url} alt={lightbox.alt} onClose={closeLightbox} />}
             </motion.div>
         );
     }
@@ -867,7 +923,10 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
         <div className="min-h-screen">
             {/* Compact Header - Mobile Optimized */}
             <div className="mb-6">
-                <h2 className="text-2xl md:text-3xl font-bold text-white mb-1">{"Track Requests"}</h2>
+                {/* The one <h1> for this view. The portal's header no longer
+                    carries one, so without this the tracking list had no
+                    level-one heading at all (WCAG 1.3.1 / 2.4.6). */}
+                <h1 className="text-2xl md:text-3xl font-bold text-white mb-1">{"Track Requests"}</h1>
                 <p className="text-white/60 text-sm md:text-lg">{"View the status of community-reported issues"}</p>
             </div>
 
@@ -904,6 +963,9 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                             <button
                                 key={key}
                                 onClick={() => setStatusFilter(key as StatusFilter)}
+                                // Which filter is applied was conveyed by background
+                                // colour only, and nothing in the accessible tree.
+                                aria-pressed={isActive}
                                 className={`px-2 md:px-4 py-2 rounded-lg md:rounded-xl text-xs md:text-sm font-medium transition-all text-center ${isActive
                                     ? key === 'all'
                                         ? 'bg-primary-500 text-white'
@@ -921,25 +983,30 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
 
             {/* Stats Summary - Compact on mobile */}
             <div className="grid grid-cols-3 gap-2 md:gap-4 mb-6">
-                {[
-                    { status: 'open', color: 'amber', label: "Open", mobileLabel: "Open" },
-                    { status: 'in_progress', color: 'blue', label: "In Progress", mobileLabel: "In Prog" },
-                    { status: 'closed', color: 'emerald', label: "Resolved", mobileLabel: "Done" },
-                ].map(({ status, color, label, mobileLabel }) => (
-                    <button
-                        key={status}
-                        onClick={() => setStatusFilter(status as StatusFilter)}
-                        className={`p-2 md:p-4 rounded-xl md:rounded-2xl bg-gradient-to-br from-${color}-500/10 to-${color}-500/5 border border-${color}-500/20 hover:border-${color}-500/40 transition-all text-center group overflow-hidden`}
-                    >
-                        <div className={`text-xl md:text-4xl font-bold text-${color}-400 group-hover:scale-110 transition-transform`}>
-                            {requests.filter(r => r.status === status).length}
-                        </div>
-                        <div className="text-[10px] md:text-sm text-white/50 mt-1 truncate">
-                            <span className="hidden md:inline">{label}</span>
-                            <span className="md:hidden">{mobileLabel}</span>
-                        </div>
-                    </button>
-                ))}
+                {STAT_TILES.map(({ status, tile, count, label, mobileLabel }) => {
+                    const isActive = statusFilter === status;
+                    return (
+                        <button
+                            key={status}
+                            onClick={() => setStatusFilter(status as StatusFilter)}
+                            /* These are filters, and which one is on was shown by
+                               colour alone -- nothing in the accessible tree said
+                               so (WCAG 1.4.1, 4.1.2). aria-pressed is the right
+                               state here because each tile toggles a view rather
+                               than navigating. */
+                            aria-pressed={isActive}
+                            className={`p-2 md:p-4 rounded-xl md:rounded-2xl bg-gradient-to-br ${tile} border transition-all text-center group overflow-hidden ${isActive ? 'ring-2 ring-white/70' : ''}`}
+                        >
+                            <div className={`text-xl md:text-4xl font-bold ${count} group-hover:scale-110 transition-transform`}>
+                                {requests.filter(r => r.status === status).length}
+                            </div>
+                            <div className="text-[10px] md:text-sm text-white/50 mt-1 truncate">
+                                <span className="hidden md:inline">{label}</span>
+                                <span className="md:hidden">{mobileLabel}</span>
+                            </div>
+                        </button>
+                    );
+                })}
             </div>
 
             {/* Request List */}
@@ -1001,7 +1068,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
             )}
 
             {/* Premium Photo Lightbox Modal */}
-            {lightboxUrl && <PhotoLightbox url={lightboxUrl} onClose={closeLightbox} />}
+            {lightbox && <PhotoLightbox url={lightbox.url} alt={lightbox.alt} onClose={closeLightbox} />}
         </div>
     );
 }

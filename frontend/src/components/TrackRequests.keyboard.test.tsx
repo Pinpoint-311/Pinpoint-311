@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, within } from '@testing-library/react';
+import { render as rtlRender, screen, cleanup, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type React from 'react';
 
 /**
  * The keyboard-only review's repro: Tab through the status filters to
@@ -53,9 +54,22 @@ vi.mock('../services/api', () => {
 vi.mock('../hooks/useContentTranslation', () => ({
     useContentTranslation: (text: string) => ({ translatedText: text, isTranslating: false }),
 }));
+/* TranslatedContent now reads the selected language so it can tag what it
+ * renders with a `lang` attribute (WCAG 3.1.2), and useTranslation throws
+ * outside its provider. The provider is mounted app-wide in App.tsx; here only
+ * the value it supplies matters. */
+vi.mock('../context/TranslationContext', () => ({
+    useTranslation: () => ({ language: 'en' }),
+}));
 vi.mock('./RequestDetailMap', () => ({ default: () => null }));
 
+import { AccessibilityProvider } from '../context/AccessibilityContext';
 import TrackRequests from './TrackRequests';
+
+/* The component announces through the app's single live region, which the
+ * provider owns, and App.tsx mounts that provider above every route. Rendering
+ * it here is what the component actually runs inside, not scaffolding. */
+const render = (ui: React.ReactElement) => rtlRender(ui, { wrapper: AccessibilityProvider });
 
 // jsdom has no PointerEvent; framer-motion's keyboard press support fires one
 // when Enter lands on a whileTap element.
@@ -66,6 +80,15 @@ if (typeof window.PointerEvent === 'undefined') {
 beforeEach(() => {
     localStorage.clear();
     window.scrollTo = vi.fn();
+    // jsdom implements no matchMedia; the provider reads it for the
+    // reduced-motion and high-contrast preferences.
+    if (!window.matchMedia) {
+        (window as any).matchMedia = () => ({
+            matches: false,
+            addEventListener: () => { },
+            removeEventListener: () => { },
+        });
+    }
 });
 afterEach(cleanup);
 
