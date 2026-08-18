@@ -1,3 +1,5 @@
+import { useEffect } from 'react';
+import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Accessibility, Check } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
@@ -18,17 +20,22 @@ This 311 portal is designed to conform to:
 
 ## Accessibility Features
 
-This portal includes the following accessibility features:
+This portal includes the following accessibility features. This list describes
+the resident-facing portal — the pages for reporting an issue, tracking a
+request, and these information pages.
 
-- **Keyboard Navigation**: All functionality is accessible via keyboard
-- **Screen Reader Support**: Semantic HTML and ARIA labels for assistive technologies
+- **Skip Link**: A "skip to main content" link appears on the first press of Tab on every page
+- **Keyboard Navigation**: The reporting form, the request tracker and the address search can be completed with the keyboard alone
+- **Screen Reader Support**: Semantic HTML, with ARIA used only where HTML has no equivalent
+- **Focus Order**: Moving between steps of a report moves keyboard focus to the new step's heading, rather than leaving it at the top of the document
 - **Color Contrast**: Text meets WCAG AA contrast ratios
 - **Resizable Text**: Content remains functional when text is resized up to 200%
-- **Focus Indicators**: Visible focus states for keyboard navigation
-- **Skip Links**: Skip to main content functionality
-- **Form Labels**: All form inputs have associated labels
-- **Error Identification**: Form errors are clearly identified and described
-- **Language**: Page language is properly declared
+- **Focus Indicators**: Visible focus states for keyboard navigation, including on custom-styled checkboxes
+- **Form Labels**: Every input in the reporting form has an associated label, including the questions your municipality adds to a category
+- **Autofill**: Name, email, phone and address fields declare their purpose so a browser or assistive tool can fill them
+- **Error Identification**: A failed submission lists what needs fixing, moves focus to that list, and links each message to the field it is about
+- **Status Messages**: Copying a tracking link, dropping a map pin, and a blocked submission are announced to screen readers
+- **Language**: Page language is properly declared, including on machine-translated content
 
 ## Alternative Submission Methods
 
@@ -40,11 +47,15 @@ If you are unable to use this web portal, you can submit service requests via:
 
 ## Known Limitations
 
-We are aware of and working to address:
+We would rather name these than imply they are solved. We are aware of and
+working to address:
 
-- Some third-party content may not fully conform to accessibility standards
-- Dynamic content updates may require manual refresh for some screen readers
-- Map interfaces provide text alternatives but may have limited functionality for some users
+- Placing a pin by dragging it on the map is a pointer gesture with no keyboard equivalent. Typing an address, or using "Use my current location", sets the same location, so a report can always be filed without the map — but the map itself is not keyboard operable
+- Map tiles, markers and the map provider's own controls come from a third party and have not been audited by us
+- The staff and administrator console has not been through the same review as the resident portal, and should not be assumed to meet AA
+- Photos uploaded by other residents carry generic descriptions ("Submitted photo 2"), because the person who uploaded them is not asked for alternative text
+- Automatic translations are machine-generated; wording and phrasing may be less clear than the English original
+- This statement describes our own assessment. It has not yet been confirmed by an independent audit
 
 ## Feedback
 
@@ -70,11 +81,78 @@ We conduct regular accessibility audits and training to:
 *This statement was last reviewed and updated on the date shown below. We regularly review our accessibility practices.*
 `;
 
+/* Consecutive "- " lines become one <ul>.
+ *
+ * The renderer emitted bare <li> elements with no list parent at all, which is
+ * not just invalid markup: a screen reader has nothing to announce as a list,
+ * so there is no "list, 6 items", no item numbering, and no way to skip past it
+ * (WCAG 1.3.1 Info and Relationships). Grouping happens before rendering, so
+ * every item keeps exactly the markup it had.
+ */
+function renderStatement(content: string): ReactNode[] {
+    const out: ReactNode[] = [];
+    let items: ReactNode[] = [];
+
+    const flushList = () => {
+        if (items.length === 0) return;
+        out.push(<ul key={`list-${out.length}`} className="list-none pl-0 my-3">{items}</ul>);
+        items = [];
+    };
+
+    content.split('\n').forEach((line, i) => {
+        if (line.startsWith('- ')) {
+            const match = line.match(/- \*\*(.+?)\*\*:? ?(.+)?/);
+            items.push(match ? (
+                <li key={i} className="text-white/70 ml-4 my-1 flex items-start gap-2">
+                    <Check className="w-4 h-4 text-emerald-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
+                    <span><strong className="text-white">{match[1]}</strong>{match[2] ? `: ${match[2]}` : ''}</span>
+                </li>
+            ) : (
+                <li key={i} className="text-white/70 ml-4 my-1 flex items-start gap-2">
+                    <span className="text-emerald-400" aria-hidden="true">&bull;</span>
+                    <span>{line.replace('- ', '')}</span>
+                </li>
+            ));
+            return;
+        }
+
+        flushList();
+
+        if (line.startsWith('## ')) {
+            out.push(<h2 key={i} className="text-xl font-bold text-white mt-8 mb-4 first:mt-0">{line.replace('## ', '')}</h2>);
+        } else if (line.startsWith('### ')) {
+            out.push(<h3 key={i} className="text-lg font-semibold text-white/90 mt-6 mb-3">{line.replace('### ', '')}</h3>);
+        } else if (line.startsWith('**') && line.endsWith('**')) {
+            out.push(<p key={i} className="text-white font-semibold my-2">{line.replace(/\*\*/g, '')}</p>);
+        } else if (line.startsWith('*') && line.endsWith('*')) {
+            out.push(<p key={i} className="text-white/50 italic text-sm my-4">{line.replace(/\*/g, '')}</p>);
+        } else if (line === '---') {
+            out.push(<hr key={i} className="border-white/10 my-8" />);
+        } else if (line.trim()) {
+            out.push(<p key={i} className="text-white/70 my-3">{line}</p>);
+        }
+    });
+
+    flushList();
+    return out;
+}
+
 export default function AccessibilityPage() {
     const { settings } = useSettings();
 
     const content = settings?.accessibility_statement || DEFAULT_ACCESSIBILITY_STATEMENT;
     const townshipName = settings?.township_name || 'Your Municipality';
+
+    /* Every one of the static pages kept index.html's default title, so a
+     * screen-reader user tabbing through browser tabs, and anyone reading their
+     * history or bookmarks, saw the same string on four different pages (WCAG
+     * 2.4.2 Page Titled). Restored on unmount so the portal's own title logic
+     * takes over again. */
+    useEffect(() => {
+        const previousTitle = document.title;
+        document.title = `Accessibility Statement | ${settings?.township_name || 'Municipality 311'}`;
+        return () => { document.title = previousTitle; };
+    }, [settings?.township_name]);
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
@@ -111,50 +189,10 @@ export default function AccessibilityPage() {
             </div>
 
             {/* Content */}
-            <main className="max-w-4xl mx-auto px-4 py-8">
+            <main id="main-content" className="max-w-4xl mx-auto px-4 py-8">
                 <div className="glass-card rounded-2xl p-8">
                     <div className="prose prose-invert prose-sm max-w-none">
-                        {/* Simple markdown-like rendering */}
-                        {content.split('\n').map((line, i) => {
-                            if (line.startsWith('## ')) {
-                                return <h2 key={i} className="text-xl font-bold text-white mt-8 mb-4 first:mt-0">{line.replace('## ', '')}</h2>;
-                            }
-                            if (line.startsWith('### ')) {
-                                return <h3 key={i} className="text-lg font-semibold text-white/90 mt-6 mb-3">{line.replace('### ', '')}</h3>;
-                            }
-                            if (line.startsWith('- **')) {
-                                const match = line.match(/- \*\*(.+?)\*\*:? ?(.+)?/);
-                                if (match) {
-                                    return (
-                                        <li key={i} className="text-white/70 ml-4 my-1 flex items-start gap-2">
-                                            <Check className="w-4 h-4 text-emerald-400 mt-0.5 flex-shrink-0" />
-                                            <span><strong className="text-white">{match[1]}</strong>{match[2] ? `: ${match[2]}` : ''}</span>
-                                        </li>
-                                    );
-                                }
-                            }
-                            if (line.startsWith('- ')) {
-                                return (
-                                    <li key={i} className="text-white/70 ml-4 my-1 flex items-start gap-2">
-                                        <span className="text-emerald-400">•</span>
-                                        <span>{line.replace('- ', '')}</span>
-                                    </li>
-                                );
-                            }
-                            if (line.startsWith('**') && line.endsWith('**')) {
-                                return <p key={i} className="text-white font-semibold my-2">{line.replace(/\*\*/g, '')}</p>;
-                            }
-                            if (line.startsWith('*') && line.endsWith('*')) {
-                                return <p key={i} className="text-white/50 italic text-sm my-4">{line.replace(/\*/g, '')}</p>;
-                            }
-                            if (line === '---') {
-                                return <hr key={i} className="border-white/10 my-8" />;
-                            }
-                            if (line.trim()) {
-                                return <p key={i} className="text-white/70 my-3">{line}</p>;
-                            }
-                            return null;
-                        })}
+                        {renderStatement(content)}
                     </div>
                 </div>
 
