@@ -562,7 +562,12 @@ export default function AuditLogViewer() {
                                                                         type="button"
                                                                         onClick={(e) => { e.stopPropagation(); setExpandedId(expanded ? null : log.id); }}
                                                                         aria-expanded={expanded}
-                                                                        aria-controls={`audit-detail-${log.id}`}
+                                                                        /* Named only while the detail row exists. The row
+                                                                         * is unmounted when collapsed, so an unconditional
+                                                                         * aria-controls dangles on every closed entry in
+                                                                         * the table — a reference to nothing, which is
+                                                                         * worse than no reference. */
+                                                                        aria-controls={expanded ? `audit-detail-${log.id}` : undefined}
                                                                         className="ml-1 p-1 rounded shrink-0 text-white/60 hover:text-white hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
                                                                     >
                                                                         <span className="sr-only">

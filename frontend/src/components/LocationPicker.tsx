@@ -681,7 +681,16 @@ export default function LocationPicker({
                        first paint -- and disabling it removed it from the tab
                        order underneath a resident who was already typing, then
                        put it back (WCAG 2.4.3, 3.2.2). */
-                    autoComplete="street-address"
+                    /* Autofill is off here on purpose. This box asks where the
+                       *incident* is, not where the resident lives, so WCAG
+                       1.3.5 Identify Input Purpose does not ask for a token --
+                       and the browser's own saved-address dropdown drew on top
+                       of the suggestion listbox below, so a resident arrowing
+                       through our options with aria-activedescendant was
+                       choosing from a list they could no longer see. The plain
+                       address field on the report form has no popup and keeps
+                       autocomplete="street-address". */
+                    autoComplete="off"
                 />
                 {/* Use my location button */}
                 <button

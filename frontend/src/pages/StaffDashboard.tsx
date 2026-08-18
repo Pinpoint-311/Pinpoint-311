@@ -1470,7 +1470,15 @@ export default function StaffDashboard() {
                                             ref={exportBtnRef}
                                             onClick={() => setExportOpen(o => !o)}
                                             aria-expanded={exportOpen}
-                                            aria-controls="export-options"
+                                            /* Named only while the panel is really there. The
+                                               panel is unmounted when collapsed, so a constant
+                                               aria-controls pointed at an id that did not
+                                               exist -- a broken reference some screen readers
+                                               report as an error and others use to offer a
+                                               "move to controlled element" command that goes
+                                               nowhere. aria-expanded alone already says the
+                                               button opens something (WCAG 4.1.2). */
+                                            aria-controls={exportOpen ? 'export-options' : undefined}
                                             className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 sm:py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all text-xs sm:text-sm font-medium w-full shadow-lg shadow-purple-900/30"
                                         >
                                             <Download className="w-4 h-4" aria-hidden="true" />
@@ -2286,7 +2294,10 @@ export default function StaffDashboard() {
                                             variant="ghost"
                                             onClick={() => setShowFilters(!showFilters)}
                                             aria-expanded={showFilters}
-                                            aria-controls="request-filters"
+                                            /* Only while the panel exists -- it is unmounted when
+                                               collapsed, so a constant aria-controls left a dangling
+                                               reference for assistive tech to follow nowhere. */
+                                            aria-controls={showFilters ? 'request-filters' : undefined}
                                             className={hasActiveFilters ? 'text-primary-400' : ''}
                                         >
                                             <Search className="w-4 h-4" aria-hidden="true" />
@@ -3056,7 +3067,9 @@ export default function StaffDashboard() {
                                                                 type="button"
                                                                 onClick={() => setIsAIExpanded(!isAIExpanded)}
                                                                 aria-expanded={isAIExpanded}
-                                                                aria-controls="ai-analysis-details"
+                                                                /* Only while the details are mounted; collapsed, the
+                                                                   id does not exist and the reference dangles. */
+                                                                aria-controls={isAIExpanded ? 'ai-analysis-details' : undefined}
                                                                 className="w-full flex items-center justify-between mb-3 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                                                             >
                                                                 <div className="flex items-center gap-3">
@@ -3914,7 +3927,9 @@ export default function StaffDashboard() {
                                                         type="button"
                                                         onClick={() => setShowShareMenu(!showShareMenu)}
                                                         aria-expanded={showShareMenu}
-                                                        aria-controls="share-link-options"
+                                                        /* Only while the menu is mounted; collapsed, the id
+                                                           does not exist and the reference dangles. */
+                                                        aria-controls={showShareMenu ? 'share-link-options' : undefined}
                                                         className="w-full py-2.5 px-4 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium flex items-center justify-center gap-2 transition-colors"
                                                     >
                                                         <Link className="w-4 h-4" aria-hidden="true" />
