@@ -37,6 +37,7 @@ import LanguageSelector from '../components/LanguageSelector';
 import StaffDashboardMap from '../components/StaffDashboardMap';
 import { useSettings } from '../context/SettingsContext';
 import { useTranslation } from '../context/TranslationContext';
+import { useAnnounce } from '../context/AccessibilityContext';
 import { api, MapLayer } from '../services/api';
 import { ServiceDefinition, ServiceRequestCreate, ServiceRequest } from '../types';
 import { usePageNavigation } from '../hooks/usePageNavigation';
@@ -62,6 +63,7 @@ type Step = 'categories' | 'form' | 'success';
 export default function ResidentPortal() {
     const { settings } = useSettings();
     const { language } = useTranslation();
+    const announce = useAnnounce();
     const { requestId: urlRequestId } = useParams<{ requestId?: string }>();
 
     // Whether the language picker is worth drawing. A picker over a translator
@@ -105,6 +107,70 @@ export default function ResidentPortal() {
         }
     }, [hasAcknowledgedDisclaimer]);
 
+    /* The disclaimer overlay covers the entire portal, so it has to behave like
+     * the modal it looks like (WCAG 2.1.2 No Keyboard Trap / 4.1.2 Name, Role,
+     * Value). It used to be a bare motion.div: a screen reader saw the page
+     * behind it, and Tab walked out of the overlay into controls nobody could
+     * see or click.
+     *
+     * Initial focus goes to the dialog container rather than to the checkbox so
+     * the heading and the 911 sentence are read before the resident is asked to
+     * agree to them; the container is the labelled/described element, so
+     * focusing it announces the whole thing. */
+    const disclaimerRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (!showDisclaimerModal) return;
+        const frame = window.requestAnimationFrame(() => disclaimerRef.current?.focus());
+        return () => window.cancelAnimationFrame(frame);
+    }, [showDisclaimerModal]);
+
+    const focusableInDisclaimer = () =>
+        Array.from(
+            disclaimerRef.current?.querySelectorAll<HTMLElement>(
+                'button:not([disabled]), [href], input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])',
+            ) ?? [],
+        );
+
+    const handleDisclaimerKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (e.key === 'Escape') {
+            /* Escape deliberately does NOT dismiss. The dialog is the gate that
+             * records the non-emergency acknowledgement, and the portal behind
+             * it is unusable until that is recorded -- so a "close" that left
+             * the resident staring at the same blocked page would only look
+             * broken, and a close that let them through would make Escape a
+             * silent substitute for reading the 911 notice. Instead focus goes
+             * back to the checkbox, which is the way out. */
+            e.preventDefault();
+            e.stopPropagation();
+            const checkbox = disclaimerRef.current?.querySelector<HTMLElement>('input[type="checkbox"]');
+            checkbox?.focus();
+            announce('Please confirm the non-emergency notice to continue.', 'assertive');
+            return;
+        }
+        if (e.key !== 'Tab') return;
+
+        // Focus trap. The checkbox is `sr-only` but still focusable, so it is
+        // part of the cycle; only genuinely disabled controls drop out.
+        const focusable = focusableInDisclaimer();
+        if (focusable.length === 0) {
+            e.preventDefault();
+            disclaimerRef.current?.focus();
+            return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+        if (e.shiftKey) {
+            if (active === first || active === disclaimerRef.current) {
+                e.preventDefault();
+                last.focus();
+            }
+        } else if (active === last) {
+            e.preventDefault();
+            first.focus();
+        }
+    };
+
     // Handle disclaimer acknowledgment
     const handleDisclaimerAcknowledge = async () => {
         if (!disclaimerChecked) return;
@@ -131,6 +197,39 @@ export default function ResidentPortal() {
         setHasAcknowledgedDisclaimer(true);
         setShowDisclaimerModal(false);
     };
+
+    /* Moving between steps swaps the entire contents of <main>, and the control
+     * that caused the swap is unmounted with it -- so focus fell back to
+     * <body>. A keyboard user's next Tab restarted from the top of the document
+     * and a screen reader said nothing at all about the new page (WCAG 2.4.3
+     * Focus Order). Focus goes to the new step's heading instead.
+     *
+     * A ref callback rather than an effect on `step`, because AnimatePresence
+     * runs in "wait" mode here: the incoming step is not in the DOM yet when an
+     * effect keyed on `step` would fire. The flag is cleared on the first call
+     * so later re-renders cannot yank focus back out from under the resident. */
+    const pendingStepFocus = useRef<Step | null>(null);
+    const stepHeadingRef = useMemo(() => {
+        const make = (target: Step) => (el: HTMLElement | null) => {
+            if (el && pendingStepFocus.current === target) {
+                pendingStepFocus.current = null;
+                el.focus();
+            }
+        };
+        return { categories: make('categories'), form: make('form'), success: make('success') };
+    }, []);
+
+    // Error summary shown after a failed submit, and the thing focus lands on.
+    const errorSummaryRef = useRef<HTMLDivElement>(null);
+    const [errorSummary, setErrorSummary] = useState<{ fieldId: string; message: string }[]>([]);
+    /* An effect rather than a call inside the validator: the summary is created
+     * by the same state update that the validator makes, so at the moment it
+     * returns there is nothing in the DOM to focus yet. A fresh array on every
+     * failed attempt means a second press of Submit brings focus back here
+     * rather than leaving it on a button that appears to do nothing. */
+    useEffect(() => {
+        if (errorSummary.length > 0) errorSummaryRef.current?.focus();
+    }, [errorSummary]);
 
     // Handle browser back/forward navigation
     const handleHashChange = useCallback((hash: string) => {
@@ -346,6 +445,7 @@ export default function ResidentPortal() {
             );
         }
 
+        pendingStepFocus.current = 'form';
         setStep('form');
         updateHash(`report/${service.service_code}`);
         scrollToTop('instant');
@@ -390,6 +490,26 @@ export default function ResidentPortal() {
                     : [],
             );
             setBlockJurisdiction(result.blocked ? result.jurisdiction : null);
+
+            /* One announcement for one event (WCAG 4.1.3 Status Messages).
+             * Dropping a pin used to populate two polite live regions in the
+             * same tick -- the "Road detected" line and the whole redirect
+             * notice, which was itself marked role="status" and so queued its
+             * entire body including every phone number. Two polite regions
+             * updating together means a screen reader reads neither, so the pin
+             * drop was silent. Both roles are gone; this composes the same
+             * facts into a single sentence and sends it through the app's one
+             * live region. */
+            const road = result.detected_road?.name;
+            const who = result.jurisdiction || 'another agency';
+            const sentence = result.blocked
+                ? road
+                    ? `Road detected: ${road}. ${road} is handled by ${who}. Contact details are shown below.`
+                    : `This location is handled by ${who}. Contact details are shown below.`
+                : road
+                    ? `Road detected: ${road}.`
+                    : '';
+            if (sentence) announce(sentence);
         } catch {
             if (seq !== roadCheckSeq.current) return;
             setDetectedRoad(null);
@@ -398,7 +518,18 @@ export default function ResidentPortal() {
             setBlockContacts([]);
             setBlockJurisdiction(null);
         }
-    }, []);
+    }, [announce]);
+
+    /* Field ids are fixed rather than generated so the error summary can link
+     * straight at them. `q.id` is the clerk-assigned question id, unique within
+     * a category, which is the same key the error map already uses. */
+    const FIELD_IDS = {
+        description: 'field-description',
+        address: 'field-address',
+        email: 'field-email',
+        phone: 'field-phone',
+    } as const;
+    const customFieldId = (questionId: string) => `field-custom-${questionId}`;
 
     const validateForm = (): boolean => {
         const errors: Record<string, string> = {};
@@ -428,6 +559,23 @@ export default function ResidentPortal() {
         }
 
         setFormErrors(errors);
+
+        /* WCAG 3.3.1 Error Identification. Failing validation used to do nothing
+         * a keyboard or screen-reader user could perceive: the messages appeared
+         * next to fields far up a long form, focus stayed on the submit button,
+         * and nothing was announced. The summary is a named list of what is
+         * wrong, each entry linking at the field it is about, and focus moves
+         * onto it -- so "Submit" always leads somewhere. */
+        const summary = Object.entries(errors)
+            .filter(([key]) => key !== 'submit')
+            .map(([key, message]) => ({
+                fieldId: key.startsWith('custom_')
+                    ? customFieldId(key.slice('custom_'.length))
+                    : FIELD_IDS[key as keyof typeof FIELD_IDS],
+                message,
+            }));
+        setErrorSummary(summary);
+
         return Object.keys(errors).length === 0;
     };
 
@@ -482,6 +630,7 @@ export default function ResidentPortal() {
                 custom_fields: customAnswers,
             }, inlineFallback);
             setSubmittedId(result.service_request_id);
+            pendingStepFocus.current = 'success';
             // Save to localStorage so Track Requests can identify "your" submissions
             try {
                 const myRequests: string[] = JSON.parse(localStorage.getItem('my_requests') || '[]');
@@ -501,6 +650,7 @@ export default function ResidentPortal() {
         }
     };
     const handleReset = () => {
+        pendingStepFocus.current = 'categories';
         setStep('categories');
         setSelectedService(null);
         setFormData({
@@ -514,6 +664,7 @@ export default function ResidentPortal() {
             is_public: true,
         });
         setFormErrors({});
+        setErrorSummary([]);
         setSubmittedId(null);
         setAttachedPhotos([]);
         setLocation({ address: '', lat: null, lng: null });
@@ -661,9 +812,15 @@ export default function ResidentPortal() {
                                 <Home className="w-4 h-4 md:w-6 md:h-6 text-white" />
                             </div>
                         )}
-                        <h1 className="text-lg md:text-xl font-semibold text-white hidden sm:block" data-no-translate>
+                        {/* A brand mark inside the home button, not a page heading.
+                            As an <h1> it produced two level-one headings on every
+                            view, and the button's own aria-label overrode it, so the
+                            heading a screen-reader user reached said "Go to home page"
+                            (WCAG 1.3.1 / 2.4.6). The page's single <h1> lives in
+                            <main>, where it names the view. */}
+                        <span className="text-lg md:text-xl font-semibold text-white hidden sm:block" data-no-translate>
                             {settings?.township_name || 'Municipality 311'}
-                        </h1>
+                        </span>
                     </button>
 
                     <div className="flex items-center gap-2 md:gap-4">
@@ -703,11 +860,18 @@ export default function ResidentPortal() {
                         className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
                     >
                         <motion.div
+                            ref={disclaimerRef}
                             initial={{ scale: 0.95, opacity: 0, y: 20 }}
                             animate={{ scale: 1, opacity: 1, y: 0 }}
                             exit={{ scale: 0.95, opacity: 0, y: 20 }}
                             transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                            className="bg-gradient-to-br from-slate-800 via-slate-800 to-slate-900 rounded-2xl max-w-lg w-full p-6 border border-white/10 shadow-2xl"
+                            role="dialog"
+                            aria-modal="true"
+                            aria-labelledby="disclaimer-title"
+                            aria-describedby="disclaimer-body"
+                            tabIndex={-1}
+                            onKeyDown={handleDisclaimerKeyDown}
+                            className="bg-gradient-to-br from-slate-800 via-slate-800 to-slate-900 rounded-2xl max-w-lg w-full p-6 border border-white/10 shadow-2xl focus:outline-none"
                         >
                             {/* Friendly Welcome Header */}
                             <div className="text-center mb-6">
@@ -722,14 +886,14 @@ export default function ResidentPortal() {
                                         <Sparkles className="w-8 h-8 text-white" />
                                     </div>
                                 )}
-                                <h2 className="text-2xl font-bold text-white mb-1">
+                                <h2 id="disclaimer-title" className="text-2xl font-bold text-white mb-1">
                                     Welcome to {settings?.township_name || "311 Services"}!
                                 </h2>
                                 <p className="text-white/60 text-sm">Your community service request portal</p>
                             </div>
 
                             {/* Helpful Info Card - Not scary! */}
-                            <div className="bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-purple-500/10 border border-blue-400/20 rounded-xl p-4 mb-6">
+                            <div id="disclaimer-body" className="bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-purple-500/10 border border-blue-400/20 rounded-xl p-4 mb-6">
                                 <div className="flex items-start gap-3">
                                     <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0">
                                         <Phone className="w-5 h-5 text-blue-400" />
@@ -760,7 +924,12 @@ export default function ResidentPortal() {
                                         onChange={(e) => setDisclaimerChecked(e.target.checked)}
                                         className="sr-only peer"
                                     />
-                                    <div className="w-6 h-6 rounded-lg border-2 border-white/30 peer-checked:border-primary-500 peer-checked:bg-primary-500 transition-all flex items-center justify-center">
+                                    {/* peer-focus-visible, not just peer-checked: the real
+                                        checkbox is sr-only, so this square is the only thing
+                                        on screen that can show it has focus. Without the ring
+                                        a keyboard user tabbing into the one control that gates
+                                        the whole portal saw nothing move (WCAG 2.4.7). */}
+                                    <div className="w-6 h-6 rounded-lg border-2 border-white/30 peer-checked:border-primary-500 peer-checked:bg-primary-500 peer-focus-visible:ring-2 peer-focus-visible:ring-white peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-slate-800 transition-all flex items-center justify-center">
                                         {disclaimerChecked && (
                                             <CheckCircle2 className="w-4 h-4 text-white" />
                                         )}
@@ -842,10 +1011,12 @@ export default function ResidentPortal() {
                                     </motion.div>
 
                                     <motion.h1
+                                        ref={stepHeadingRef.categories}
+                                        tabIndex={-1}
                                         initial={{ y: 20, opacity: 0 }}
                                         animate={{ y: 0, opacity: 1 }}
                                         transition={{ delay: 0.2 }}
-                                        className="text-4xl md:text-5xl lg:text-6xl font-bold text-gradient"
+                                        className="text-4xl md:text-5xl lg:text-6xl font-bold text-gradient focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded-lg"
                                     >
                                         {settings?.hero_text || 'How can we help?'}
                                     </motion.h1>
@@ -1053,9 +1224,16 @@ export default function ResidentPortal() {
                                         {getIcon(selectedService.icon)}
                                     </div>
                                     <div>
-                                        <h2 className="text-lg font-semibold text-white">
+                                        {/* The one <h1> for this view: it names what the
+                                            resident is now reporting. Focus lands here when
+                                            the step changes (WCAG 2.4.3). */}
+                                        <h1
+                                            ref={stepHeadingRef.form}
+                                            tabIndex={-1}
+                                            className="text-lg font-semibold text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded-lg"
+                                        >
                                             {selectedService.service_name}
-                                        </h2>
+                                        </h1>
                                         <p className="text-sm text-white/50">{selectedService.description}</p>
                                     </div>
                                 </div>
@@ -1080,6 +1258,7 @@ export default function ResidentPortal() {
                                         <Card>
                                             <div className="space-y-5">
                                                 <Textarea
+                                                    id={FIELD_IDS.description}
                                                     label={"Description"}
                                                     placeholder="Please describe the issue in detail..."
                                                     value={formData.description}
@@ -1136,7 +1315,13 @@ export default function ResidentPortal() {
                                                 ) : (
                                                     <>
                                                         <Input
+                                                            id={FIELD_IDS.address}
                                                             label={"Location / Address"}
+                                                            /* WCAG 1.3.5 Identify Input Purpose: this is the
+                                                               resident's own street address when no map is
+                                                               configured, so a browser or an assistive tool that
+                                                               fills addresses can fill it. */
+                                                            autoComplete="street-address"
                                                             placeholder="Street address or intersection"
                                                             leftIcon={<MapPin className="w-5 h-5" />}
                                                             value={formData.address}
@@ -1159,10 +1344,13 @@ export default function ResidentPortal() {
                                                     is blocked, so a resident can see the system read their pin
                                                     the way they meant it before they type a description. */}
                                                 {detectedRoad && (
-                                                    <div
-                                                        className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-white/[0.04] border border-white/10"
-                                                        role="status"
-                                                    >
+                                                    /* No role="status" here. The pin drop is announced
+                                                       once, as a composed sentence, from
+                                                       checkRoadBasedBlocking -- this line and the redirect
+                                                       notice below it are the visible half of the same
+                                                       event, and two polite regions firing together got
+                                                       neither of them read. */
+                                                    <div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-white/[0.04] border border-white/10">
                                                         <SignpostBig className="w-4 h-4 text-white/40 shrink-0" aria-hidden="true" />
                                                         <span className="text-sm text-white/60">
                                                             Road detected:{' '}
@@ -1204,141 +1392,198 @@ export default function ResidentPortal() {
                                                         Additional Information
                                                     </h3>
                                                     <div className="space-y-4">
-                                                        {selectedService.routing_config.custom_questions.map((q) => (
-                                                            <div key={q.id} className="space-y-2">
-                                                                <label className="block text-sm font-medium text-white/70">
-                                                                    {q.label} {q.required && <span className="text-red-400">*</span>}
-                                                                </label>
+                                                        {/* Each question is rendered from a clerk-authored
+                                                            definition, so nothing here can rely on hand-written
+                                                            markup being right. Every control gets an id that its
+                                                            <label> (or <legend>) points at, and the error message
+                                                            gets an id the control points back at -- the same
+                                                            association ui/Input.tsx already makes. Before this,
+                                                            the label was floating text, so each field was
+                                                            announced as "edit, blank" with the placeholder read
+                                                            as if it were the question (WCAG 1.3.1, 3.3.1,
+                                                            3.3.2, 4.1.2). */}
+                                                        {selectedService.routing_config.custom_questions.map((q) => {
+                                                            const fieldId = customFieldId(q.id);
+                                                            const errorId = `${fieldId}-error`;
+                                                            const error = formErrors[`custom_${q.id}`];
+                                                            const describedBy = error ? errorId : undefined;
+                                                            const labelText = (
+                                                                <>
+                                                                    {q.label}
+                                                                    {q.required && <span className="text-red-400" aria-hidden="true"> *</span>}
+                                                                    {q.required && <span className="sr-only"> (required)</span>}
+                                                                </>
+                                                            );
+                                                            const errorNode = error ? (
+                                                                <p id={errorId} className="text-red-400 text-sm" role="alert">
+                                                                    {error}
+                                                                </p>
+                                                            ) : null;
 
-                                                                {/* Text Input */}
-                                                                {q.type === 'text' && (
-                                                                    <input
-                                                                        type="text"
-                                                                        placeholder={q.placeholder || ''}
-                                                                        value={(customAnswers[q.label] as string) || ''}
-                                                                        onChange={(e) => setCustomAnswers(p => ({ ...p, [q.label]: e.target.value }))}
-                                                                        className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
-                                                                        required={q.required}
-                                                                    />
-                                                                )}
-
-                                                                {/* Textarea */}
-                                                                {q.type === 'textarea' && (
-                                                                    <textarea
-                                                                        rows={3}
-                                                                        placeholder={q.placeholder || ''}
-                                                                        value={(customAnswers[q.label] as string) || ''}
-                                                                        onChange={(e) => setCustomAnswers(p => ({ ...p, [q.label]: e.target.value }))}
-                                                                        className="w-full rounded-lg bg-white/10 border border-white/20 text-white px-3 py-2"
-                                                                        required={q.required}
-                                                                    />
-                                                                )}
-
-                                                                {/* Number */}
-                                                                {q.type === 'number' && (
-                                                                    <input
-                                                                        type="number"
-                                                                        placeholder={q.placeholder || ''}
-                                                                        value={(customAnswers[q.label] as string) || ''}
-                                                                        onChange={(e) => setCustomAnswers(p => ({ ...p, [q.label]: e.target.value }))}
-                                                                        className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
-                                                                        required={q.required}
-                                                                    />
-                                                                )}
-
-                                                                {/* Date */}
-                                                                {q.type === 'date' && (
-                                                                    <input
-                                                                        type="date"
-                                                                        value={(customAnswers[q.label] as string) || ''}
-                                                                        onChange={(e) => setCustomAnswers(p => ({ ...p, [q.label]: e.target.value }))}
-                                                                        className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
-                                                                        required={q.required}
-                                                                    />
-                                                                )}
-
-                                                                {/* Yes/No */}
-                                                                {q.type === 'yes_no' && (
-                                                                    <div className="flex gap-3">
-                                                                        {['Yes', 'No'].map(opt => (
-                                                                            <button
-                                                                                key={opt}
-                                                                                type="button"
-                                                                                onClick={() => setCustomAnswers(p => ({ ...p, [q.label]: opt }))}
-                                                                                className={`flex-1 py-2 rounded-lg border transition-colors ${customAnswers[q.label] === opt
-                                                                                    ? 'bg-primary-500/30 border-primary-500 text-white'
-                                                                                    : 'bg-white/5 border-white/20 text-white/70 hover:border-white/40'
-                                                                                    }`}
-                                                                            >
-                                                                                {opt}
-                                                                            </button>
-                                                                        ))}
-                                                                    </div>
-                                                                )}
-
-                                                                {/* Select Dropdown */}
-                                                                {q.type === 'select' && (
-                                                                    <select
-                                                                        value={(customAnswers[q.label] as string) || ''}
-                                                                        onChange={(e) => setCustomAnswers(p => ({ ...p, [q.label]: e.target.value }))}
-                                                                        className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
-                                                                        required={q.required}
-                                                                        aria-label={q.label}
+                                                            /* Radios, checkboxes and yes/no are groups of controls
+                                                               answering one question, which is what fieldset and
+                                                               legend are for. As bare divs the question text was
+                                                               not attached to the options at all, so a screen
+                                                               reader read "Yes" and "No" with nothing saying what
+                                                               was being asked. Native grouping, not role= --
+                                                               fieldset/legend needs no ARIA to say the same thing. */
+                                                            if (q.type === 'radio' || q.type === 'checkbox' || q.type === 'yes_no') {
+                                                                const multi = q.type === 'checkbox';
+                                                                const options = q.type === 'yes_no' ? ['Yes', 'No'] : (q.options ?? []);
+                                                                const selected = customAnswers[q.label];
+                                                                return (
+                                                                    <fieldset
+                                                                        key={q.id}
+                                                                        id={fieldId}
+                                                                        tabIndex={-1}
+                                                                        aria-describedby={describedBy}
+                                                                        className="space-y-2 m-0 p-0 border-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded-lg"
                                                                     >
-                                                                        <option value="">Select...</option>
-                                                                        {q.options?.map(opt => (
-                                                                            <option key={opt} value={opt}>{opt}</option>
-                                                                        ))}
-                                                                    </select>
-                                                                )}
+                                                                        <legend className="block text-sm font-medium text-white/70 mb-2">
+                                                                            {labelText}
+                                                                        </legend>
+                                                                        <div className={q.type === 'yes_no' ? 'flex gap-3' : 'space-y-2'}>
+                                                                            {options.map(opt => {
+                                                                                /* Selection used to be a background colour on a
+                                                                                   <button> and nothing else: invisible to a screen
+                                                                                   reader, and gone entirely in forced-colours mode
+                                                                                   (WCAG 1.4.1, 4.1.2). A real radio carries its own
+                                                                                   state, its own focus ring and its own arrow-key
+                                                                                   behaviour, so no aria-pressed is needed. */
+                                                                                const checked = multi
+                                                                                    ? ((selected as string[] | undefined) ?? []).includes(opt)
+                                                                                    : selected === opt;
+                                                                                return (
+                                                                                    <label
+                                                                                        key={opt}
+                                                                                        className={`flex items-center gap-3 text-white/80 cursor-pointer ${q.type === 'yes_no'
+                                                                                            ? `flex-1 justify-center py-2 rounded-lg border transition-colors ${checked
+                                                                                                ? 'bg-primary-500/30 border-primary-500 text-white'
+                                                                                                : 'bg-white/5 border-white/20 hover:border-white/40'}`
+                                                                                            : ''}`}
+                                                                                    >
+                                                                                        <input
+                                                                                            type={multi ? 'checkbox' : 'radio'}
+                                                                                            name={multi ? undefined : `custom_${q.id}`}
+                                                                                            value={opt}
+                                                                                            checked={checked}
+                                                                                            onChange={(e) => {
+                                                                                                if (!multi) {
+                                                                                                    setCustomAnswers(p => ({ ...p, [q.label]: opt }));
+                                                                                                    return;
+                                                                                                }
+                                                                                                const current = (customAnswers[q.label] as string[]) || [];
+                                                                                                const updated = e.target.checked
+                                                                                                    ? [...current, opt]
+                                                                                                    : current.filter(v => v !== opt);
+                                                                                                setCustomAnswers(p => ({ ...p, [q.label]: updated }));
+                                                                                            }}
+                                                                                            className={`w-4 h-4 accent-primary-500 ${multi ? 'rounded' : ''}`}
+                                                                                        />
+                                                                                        <span>{opt}</span>
+                                                                                    </label>
+                                                                                );
+                                                                            })}
+                                                                        </div>
+                                                                        {errorNode}
+                                                                    </fieldset>
+                                                                );
+                                                            }
 
-                                                                {/* Radio Buttons */}
-                                                                {q.type === 'radio' && (
-                                                                    <div className="space-y-2">
-                                                                        {q.options?.map(opt => (
-                                                                            <label key={opt} className="flex items-center gap-3 text-white/80 cursor-pointer">
-                                                                                <input
-                                                                                    type="radio"
-                                                                                    name={q.id}
-                                                                                    value={opt}
-                                                                                    checked={customAnswers[q.label] === opt}
-                                                                                    onChange={(e) => setCustomAnswers(p => ({ ...p, [q.label]: e.target.value }))}
-                                                                                    className="w-4 h-4"
-                                                                                />
-                                                                                {opt}
-                                                                            </label>
-                                                                        ))}
-                                                                    </div>
-                                                                )}
+                                                            return (
+                                                                <div key={q.id} className="space-y-2">
+                                                                    <label htmlFor={fieldId} className="block text-sm font-medium text-white/70">
+                                                                        {labelText}
+                                                                    </label>
 
-                                                                {/* Checkboxes */}
-                                                                {q.type === 'checkbox' && (
-                                                                    <div className="space-y-2">
-                                                                        {q.options?.map(opt => (
-                                                                            <label key={opt} className="flex items-center gap-3 text-white/80 cursor-pointer">
-                                                                                <input
-                                                                                    type="checkbox"
-                                                                                    value={opt}
-                                                                                    checked={(customAnswers[q.label] as string[] || []).includes(opt)}
-                                                                                    onChange={(e) => {
-                                                                                        const current = (customAnswers[q.label] as string[]) || [];
-                                                                                        const updated = e.target.checked
-                                                                                            ? [...current, opt]
-                                                                                            : current.filter(v => v !== opt);
-                                                                                        setCustomAnswers(p => ({ ...p, [q.label]: updated }));
-                                                                                    }}
-                                                                                    className="w-4 h-4 rounded"
-                                                                                />
-                                                                                {opt}
-                                                                            </label>
-                                                                        ))}
-                                                                    </div>
-                                                                )}
-                                                                {formErrors[`custom_${q.id}`] && (
-                                                                    <p className="text-red-400 text-sm">{formErrors[`custom_${q.id}`]}</p>
-                                                                )}
-                                                            </div>
-                                                        ))}
+                                                                    {/* Text Input */}
+                                                                    {q.type === 'text' && (
+                                                                        <input
+                                                                            id={fieldId}
+                                                                            type="text"
+                                                                            placeholder={q.placeholder || ''}
+                                                                            value={(customAnswers[q.label] as string) || ''}
+                                                                            onChange={(e) => setCustomAnswers(p => ({ ...p, [q.label]: e.target.value }))}
+                                                                            className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
+                                                                            required={q.required}
+                                                                            aria-required={q.required || undefined}
+                                                                            aria-invalid={error ? 'true' : undefined}
+                                                                            aria-describedby={describedBy}
+                                                                        />
+                                                                    )}
+
+                                                                    {/* Textarea */}
+                                                                    {q.type === 'textarea' && (
+                                                                        <textarea
+                                                                            id={fieldId}
+                                                                            rows={3}
+                                                                            placeholder={q.placeholder || ''}
+                                                                            value={(customAnswers[q.label] as string) || ''}
+                                                                            onChange={(e) => setCustomAnswers(p => ({ ...p, [q.label]: e.target.value }))}
+                                                                            className="w-full rounded-lg bg-white/10 border border-white/20 text-white px-3 py-2"
+                                                                            required={q.required}
+                                                                            aria-required={q.required || undefined}
+                                                                            aria-invalid={error ? 'true' : undefined}
+                                                                            aria-describedby={describedBy}
+                                                                        />
+                                                                    )}
+
+                                                                    {/* Number */}
+                                                                    {q.type === 'number' && (
+                                                                        <input
+                                                                            id={fieldId}
+                                                                            type="number"
+                                                                            placeholder={q.placeholder || ''}
+                                                                            value={(customAnswers[q.label] as string) || ''}
+                                                                            onChange={(e) => setCustomAnswers(p => ({ ...p, [q.label]: e.target.value }))}
+                                                                            className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
+                                                                            required={q.required}
+                                                                            aria-required={q.required || undefined}
+                                                                            aria-invalid={error ? 'true' : undefined}
+                                                                            aria-describedby={describedBy}
+                                                                        />
+                                                                    )}
+
+                                                                    {/* Date */}
+                                                                    {q.type === 'date' && (
+                                                                        <input
+                                                                            id={fieldId}
+                                                                            type="date"
+                                                                            value={(customAnswers[q.label] as string) || ''}
+                                                                            onChange={(e) => setCustomAnswers(p => ({ ...p, [q.label]: e.target.value }))}
+                                                                            className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
+                                                                            required={q.required}
+                                                                            aria-required={q.required || undefined}
+                                                                            aria-invalid={error ? 'true' : undefined}
+                                                                            aria-describedby={describedBy}
+                                                                        />
+                                                                    )}
+
+                                                                    {/* Select Dropdown. The aria-label it used to carry is
+                                                                        gone: it now has a real <label>, and an aria-label
+                                                                        alongside one silently wins over it. */}
+                                                                    {q.type === 'select' && (
+                                                                        <select
+                                                                            id={fieldId}
+                                                                            value={(customAnswers[q.label] as string) || ''}
+                                                                            onChange={(e) => setCustomAnswers(p => ({ ...p, [q.label]: e.target.value }))}
+                                                                            className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
+                                                                            required={q.required}
+                                                                            aria-required={q.required || undefined}
+                                                                            aria-invalid={error ? 'true' : undefined}
+                                                                            aria-describedby={describedBy}
+                                                                        >
+                                                                            <option value="">Select...</option>
+                                                                            {q.options?.map(opt => (
+                                                                                <option key={opt} value={opt}>{opt}</option>
+                                                                            ))}
+                                                                        </select>
+                                                                    )}
+
+                                                                    {errorNode}
+                                                                </div>
+                                                            );
+                                                        })}
                                                     </div>
                                                 </Card>
                                             )}
@@ -1351,6 +1596,10 @@ export default function ResidentPortal() {
                                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                                     <Input
                                                         label={"First Name"}
+                                                        /* WCAG 1.3.5: personal-data fields carry their purpose,
+                                                           so autofill can spare a resident with a motor or
+                                                           cognitive disability from retyping their own details. */
+                                                        autoComplete="given-name"
                                                         placeholder="John"
                                                         value={formData.first_name}
                                                         onChange={(e) =>
@@ -1359,6 +1608,7 @@ export default function ResidentPortal() {
                                                     />
                                                     <Input
                                                         label={"Last Name"}
+                                                        autoComplete="family-name"
                                                         placeholder="Doe"
                                                         value={formData.last_name}
                                                         onChange={(e) =>
@@ -1368,8 +1618,10 @@ export default function ResidentPortal() {
                                                 </div>
 
                                                 <Input
+                                                    id={FIELD_IDS.email}
                                                     label={"Email"}
                                                     type="email"
+                                                    autoComplete="email"
                                                     placeholder="you@example.com"
                                                     value={formData.email}
                                                     onChange={(e) =>
@@ -1380,9 +1632,11 @@ export default function ResidentPortal() {
                                                 />
 
                                                 <Input
+                                                    id={FIELD_IDS.phone}
                                                     label={"Phone (optional)"}
                                                     type="tel"
                                                     inputMode="tel"
+                                                    autoComplete="tel"
                                                     placeholder="(555) 123-4567"
                                                     value={formData.phone}
                                                     onChange={(e) => {
@@ -1433,37 +1687,98 @@ export default function ResidentPortal() {
                                             </Card>
                                         )}
 
+                                        {/* What went wrong, in one place, with focus on it.
+                                            Kept above the submit button so the reading order
+                                            matches: here is the problem, here is the control
+                                            it stopped. tabIndex allows focus without putting
+                                            it in the Tab sequence afterwards (WCAG 3.3.1). */}
+                                        {errorSummary.length > 0 && (
+                                            <div
+                                                ref={errorSummaryRef}
+                                                tabIndex={-1}
+                                                role="alert"
+                                                aria-labelledby="error-summary-heading"
+                                                className="p-4 rounded-xl bg-red-500/20 border border-red-500/30 text-red-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                                            >
+                                                <h3 id="error-summary-heading" className="font-semibold text-red-100">
+                                                    {errorSummary.length === 1
+                                                        ? 'There is a problem with your report'
+                                                        : `There are ${errorSummary.length} problems with your report`}
+                                                </h3>
+                                                <ul className="mt-2 space-y-1 list-disc list-inside">
+                                                    {errorSummary.map(({ fieldId, message }) => (
+                                                        <li key={message}>
+                                                            {fieldId ? (
+                                                                <a href={`#${fieldId}`} className="underline">{message}</a>
+                                                            ) : message}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                        )}
+
+                                        {/* role="alert" because this appears after the resident
+                                            pressed Submit and nothing else on screen moves --
+                                            without it, a failed submission was completely silent
+                                            (WCAG 4.1.3). */}
                                         {formErrors.submit && (
-                                            <div className="p-4 rounded-xl bg-red-500/20 border border-red-500/30 text-red-300">
+                                            <div role="alert" className="p-4 rounded-xl bg-red-500/20 border border-red-500/30 text-red-300">
                                                 {formErrors.submit}
                                             </div>
                                         )}
 
-                                        {!isBlocked && !isLocationOutOfBounds ? (
-                                            <Button
-                                                type="submit"
-                                                size="lg"
-                                                className="w-full"
-                                                // Held only while a photo is still being checked, and
-                                                // said out loud rather than left as a dead button. This
-                                                // is the last of the old wait: it started at photo-pick
-                                                // time, so by the time anyone has finished typing a
-                                                // description it is almost always already over.
-                                                isLoading={isSubmitting || photosStillChecking}
-                                                disabled={photosStillChecking}
-                                                rightIcon={<Send className="w-5 h-5" />}
+                                        {/* The reason the button cannot be used, rendered whether
+                                            or not it applies -- previously the button was removed
+                                            from the DOM entirely, so a resident who had just
+                                            dragged the pin out of town tabbed into a form with no
+                                            submit control and no announcement of why. The button
+                                            stays, disabled, and points at the reason. */}
+                                        {(isBlocked || isLocationOutOfBounds) && (
+                                            <div
+                                                id="submit-blocked-reason"
+                                                role="alert"
+                                                className={`p-4 rounded-xl text-center border ${isLocationOutOfBounds
+                                                    ? 'bg-red-500/20 border-red-500/30 text-red-300'
+                                                    : 'bg-amber-500/20 border-amber-500/30 text-amber-300'}`}
                                             >
-                                                {photosStillChecking ? "Checking your photos…" : "Submit Request"}
-                                            </Button>
-                                        ) : isLocationOutOfBounds ? (
-                                            <div className="p-4 rounded-xl bg-red-500/20 border border-red-500/30 text-red-300 text-center">
-                                                <strong>Cannot submit:</strong> The selected location is outside the municipality boundary. Please choose a location within the jurisdiction.
-                                            </div>
-                                        ) : (
-                                            <div className="p-4 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-300 text-center">
-                                                Submission blocked - see notice above
+                                                {isLocationOutOfBounds ? (
+                                                    <><strong>Cannot submit:</strong> The selected location is outside the municipality boundary. Please choose a location within the jurisdiction.</>
+                                                ) : (
+                                                    <>Submission blocked - see notice above</>
+                                                )}
                                             </div>
                                         )}
+
+                                        {/* Two separate reasons this can be unusable, and they
+                                            are announced differently on purpose. Blocked or
+                                            out-of-bounds is a state the resident has to fix, so it
+                                            points at the reason block above. A photo still being
+                                            screened is a wait that clears on its own, so it is said
+                                            in the label rather than described elsewhere -- and the
+                                            screening starts at photo-pick time, so by the time
+                                            anyone has finished typing a description it is almost
+                                            always already over. */}
+                                        <Button
+                                            type="submit"
+                                            size="lg"
+                                            className="w-full"
+                                            isLoading={isSubmitting || photosStillChecking}
+                                            disabled={isBlocked || isLocationOutOfBounds || photosStillChecking}
+                                            aria-describedby={(isBlocked || isLocationOutOfBounds) ? 'submit-blocked-reason' : undefined}
+                                            rightIcon={<Send className="w-5 h-5" />}
+                                        >
+                                            {photosStillChecking ? "Checking your photos…" : "Submit Request"}
+                                        </Button>
+
+                                        {/* WCAG 3.3.4: the Terms say that submitting is the act of
+                                            agreeing to them, so they have to be reachable at the
+                                            moment of submitting rather than only from the footer. */}
+                                        <p className="text-sm text-white/60 text-center">
+                                            By submitting this request you agree to the{' '}
+                                            <Link to="/terms" className="underline text-white/80 hover:text-white">
+                                                Terms of Service
+                                            </Link>.
+                                        </p>
 
                                     </form>
                                 )}
@@ -1488,7 +1803,13 @@ export default function ResidentPortal() {
                                 </motion.div>
 
                                 <div className="space-y-4">
-                                    <h2 className="text-3xl font-bold text-white">Request Submitted!</h2>
+                                    <h1
+                                        ref={stepHeadingRef.success}
+                                        tabIndex={-1}
+                                        className="text-3xl font-bold text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded-lg"
+                                    >
+                                        Request Submitted!
+                                    </h1>
                                     <p className="text-white/60">
                                         Thank you for helping improve our community. Your request has been
                                         received and will be reviewed shortly.
@@ -1524,6 +1845,7 @@ export default function ResidentPortal() {
                             {settings.social_links.map((link, index) => {
                                 // Ensure URL is absolute
                                 const url = link.url.startsWith('http') ? link.url : `https://${link.url}`;
+                                const platform = link.platform.charAt(0).toUpperCase() + link.platform.slice(1);
                                 return (
                                     <a
                                         key={index}
@@ -1531,14 +1853,24 @@ export default function ResidentPortal() {
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="w-9 h-9 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition-all hover:scale-110"
-                                        title={link.platform.charAt(0).toUpperCase() + link.platform.slice(1)}
+                                        title={platform}
+                                        /* The only content is a lucide <svg>, which ships no
+                                           aria-hidden and no title of its own, so the link had
+                                           no accessible name at all -- a screen reader read six
+                                           links called "link" (WCAG 1.1.1, 2.4.4). title= is a
+                                           tooltip, not a name, on a link with content. The new
+                                           tab is named because it is an unannounced context
+                                           change (WCAG 3.2.5 advisory). */
+                                        aria-label={`${platform} (opens in a new tab)`}
                                     >
-                                        {link.icon === 'Globe' && <Globe className="w-4 h-4 text-white/70" />}
-                                        {link.icon === 'Facebook' && <Facebook className="w-4 h-4 text-blue-400" />}
-                                        {link.icon === 'Instagram' && <Instagram className="w-4 h-4 text-pink-400" />}
-                                        {link.icon === 'Youtube' && <Youtube className="w-4 h-4 text-red-400" />}
-                                        {link.icon === 'Twitter' && <Twitter className="w-4 h-4 text-sky-400" />}
-                                        {link.icon === 'Linkedin' && <Linkedin className="w-4 h-4 text-blue-500" />}
+                                        <span aria-hidden="true">
+                                            {link.icon === 'Globe' && <Globe className="w-4 h-4 text-white/70" />}
+                                            {link.icon === 'Facebook' && <Facebook className="w-4 h-4 text-blue-400" />}
+                                            {link.icon === 'Instagram' && <Instagram className="w-4 h-4 text-pink-400" />}
+                                            {link.icon === 'Youtube' && <Youtube className="w-4 h-4 text-red-400" />}
+                                            {link.icon === 'Twitter' && <Twitter className="w-4 h-4 text-sky-400" />}
+                                            {link.icon === 'Linkedin' && <Linkedin className="w-4 h-4 text-blue-500" />}
+                                        </span>
                                     </a>
                                 );
                             })}
