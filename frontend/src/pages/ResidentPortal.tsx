@@ -1266,6 +1266,10 @@ export default function ResidentPortal() {
                                                         setFormData((prev) => ({ ...prev, description: e.target.value }))
                                                     }
                                                     error={formErrors.description}
+                                                    /* Announced by the error summary that takes
+                                                       focus, not by an alert of its own -- see the
+                                                       summary below. */
+                                                    errorAsAlert={false}
                                                     required
                                                 />
 
@@ -1414,8 +1418,16 @@ export default function ResidentPortal() {
                                                                     {q.required && <span className="sr-only"> (required)</span>}
                                                                 </>
                                                             );
+                                                            /* Plain text, not role="alert": the control
+                                                               above points at it with aria-describedby, so
+                                                               it is read on focus, and the error summary
+                                                               that takes focus on a failed submit already
+                                                               speaks every message once. As an alert each
+                                                               question added another region firing in the
+                                                               same commit as the summary, and a pile of
+                                                               simultaneous alerts announces as nothing. */
                                                             const errorNode = error ? (
-                                                                <p id={errorId} className="text-red-400 text-sm" role="alert">
+                                                                <p id={errorId} className="text-red-400 text-sm">
                                                                     {error}
                                                                 </p>
                                                             ) : null;
@@ -1628,6 +1640,10 @@ export default function ResidentPortal() {
                                                         setFormData((prev) => ({ ...prev, email: e.target.value }))
                                                     }
                                                     error={formErrors.email}
+                                                    /* Announced by the error summary that takes
+                                                       focus, not by an alert of its own -- see the
+                                                       summary below. */
+                                                    errorAsAlert={false}
                                                     required
                                                 />
 
@@ -1647,6 +1663,10 @@ export default function ResidentPortal() {
                                                         setFormErrors((prev) => (prev.phone ? { ...prev, phone: '' } : prev));
                                                     }}
                                                     error={formErrors.phone}
+                                                    /* Announced by the error summary that takes
+                                                       focus, not by an alert of its own -- see the
+                                                       summary below. */
+                                                    errorAsAlert={false}
                                                 />
                                             </div>
                                         </Card>
@@ -1691,12 +1711,22 @@ export default function ResidentPortal() {
                                             Kept above the submit button so the reading order
                                             matches: here is the problem, here is the control
                                             it stopped. tabIndex allows focus without putting
-                                            it in the Tab sequence afterwards (WCAG 3.3.1). */}
+                                            it in the Tab sequence afterwards (WCAG 3.3.1).
+
+                                            Deliberately not role="alert". Moving focus here is
+                                            what announces it -- a screen reader reads the
+                                            heading and the whole list on arrival. As an alert
+                                            it was one of five: each failed field rendered its
+                                            own alert in the same commit, and several alert
+                                            regions appearing at once means a screen reader
+                                            reliably announces none of them, so a four-error
+                                            submit went silent (WCAG 4.1.3). The field
+                                            messages are now plain text tied to their control
+                                            by aria-describedby. */}
                                         {errorSummary.length > 0 && (
                                             <div
                                                 ref={errorSummaryRef}
                                                 tabIndex={-1}
-                                                role="alert"
                                                 aria-labelledby="error-summary-heading"
                                                 className="p-4 rounded-xl bg-red-500/20 border border-red-500/30 text-red-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
                                             >
