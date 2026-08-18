@@ -133,7 +133,13 @@ export function CommentCard({ comment, showVisibility = false, children }: {
                     <a.Icon className="w-4 h-4" aria-hidden="true" />
                 </div>
                 <div className="flex items-center gap-2 flex-wrap min-w-0">
-                    <span className="text-sm font-semibold text-white/90 truncate">{comment.username}</span>
+                    {/* `truncate` clips the name with no way to recover it: the
+                      * pill and the timestamp hold their width, so a long staff
+                      * display name loses its tail at narrow widths (the drawer
+                      * is ~380px) with no reflow and no tooltip. The title puts
+                      * the full name back within reach without changing the
+                      * layout (WCAG 1.4.12). */}
+                    <span className="text-sm font-semibold text-white/90 truncate" title={comment.username}>{comment.username}</span>
                     <span className={`inline-flex items-center px-2 py-0.5 rounded-2xl text-[10px] font-semibold uppercase tracking-wider border shrink-0 ${a.pill}`}>
                         {a.label}
                     </span>

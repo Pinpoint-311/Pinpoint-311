@@ -121,7 +121,11 @@ export default function RedirectNotice({
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.25, ease: 'easeOut' }}
-            role="status"
+            /* No role="status". This component is ~80 lines of markup -- heading,
+               explanation, and every contact link -- so as a live region it queued
+               the whole thing, and it fired in the same tick as the "Road detected"
+               line, which meant a screen reader announced neither (WCAG 4.1.3).
+               The single composed announcement is made by the caller instead. */
             className="relative overflow-hidden rounded-3xl border border-white/[0.14] bg-white/[0.06] bg-gradient-to-br from-rose-400/[0.10] via-transparent to-transparent shadow-xl"
         >
             {/* Top glow accent, matching the service cards. */}

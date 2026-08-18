@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 
 import ActivityFeed from './ActivityFeed';
+import { AccessibilityProvider } from '../context/AccessibilityContext';
 import { markKeyRead, readIdsFromStorage } from './activityBell';
 import { ServiceRequest } from '../types';
 
@@ -40,6 +41,24 @@ function req(over: Partial<ServiceRequest>): ServiceRequest {
     } as ServiceRequest;
 }
 
+
+// jsdom ships no matchMedia; AccessibilityProvider queries it on mount for the
+// reduced-motion and high-contrast preferences.
+beforeAll(() => {
+    if (!window.matchMedia) {
+        window.matchMedia = ((query: string) => ({
+            matches: false,
+            media: query,
+            onchange: null,
+            addEventListener: () => {},
+            removeEventListener: () => {},
+            addListener: () => {},
+            removeListener: () => {},
+            dispatchEvent: () => false,
+        })) as unknown as typeof window.matchMedia;
+    }
+});
+
 beforeEach(() => {
     localStorage.clear();
 });
@@ -54,14 +73,16 @@ describe('ActivityFeed markAsRead / markAllAsRead vs. a concurrent markKeyRead w
 
         const other = req({ service_request_id: 'REQ-2' });
         render(
-            <ActivityFeed
+            <AccessibilityProvider>
+                <ActivityFeed
                 isOpen={true}
                 onClose={() => {}}
                 requests={[other]}
                 userId="pat"
                 userDepartmentIds={[]}
                 onSelectRequest={() => {}}
-            />
+                />
+            </AccessibilityProvider>
         );
 
         fireEvent.click(screen.getByText('Mark all read'));
@@ -76,14 +97,16 @@ describe('ActivityFeed markAsRead / markAllAsRead vs. a concurrent markKeyRead w
 
         const other = req({ service_request_id: 'REQ-2', service_name: 'Streetlight Out' });
         render(
-            <ActivityFeed
+            <AccessibilityProvider>
+                <ActivityFeed
                 isOpen={true}
                 onClose={() => {}}
                 requests={[other]}
                 userId="pat"
                 userDepartmentIds={[]}
                 onSelectRequest={() => {}}
-            />
+                />
+            </AccessibilityProvider>
         );
 
         fireEvent.click(screen.getByText(/New: Streetlight Out/));
