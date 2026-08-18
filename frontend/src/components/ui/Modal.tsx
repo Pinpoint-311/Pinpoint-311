@@ -13,6 +13,12 @@ interface ModalProps {
     /** Description for screen readers */
     'aria-describedby'?: string;
     /**
+     * Accessible name for dialogs rendered without a visible `title`. Without
+     * one such a dialog has no name at all — it is announced as just "dialog",
+     * and the only labelled thing inside it is the close button.
+     */
+    'aria-label'?: string;
+    /**
      * Override the panel surface. Defaults to the translucent `glass-card`.
      * Pass a solid class (e.g. a slate gradient) for dialogs that must sit
      * opaquely over busy backgrounds like a map.
@@ -20,6 +26,39 @@ interface ModalProps {
     panelClassName?: string;
     /** Optional class for the sticky header surface (defaults to bg-slate-900). */
     headerClassName?: string;
+}
+
+/**
+ * The focusable children of the dialog, in tab order.
+ *
+ * The selector this replaces matched `button, [href], input, select, textarea`
+ * with no filtering, which broke the trap in two ways that both end with focus
+ * escaping to the page behind the dialog:
+ *
+ *   A disabled control still matched. `.focus()` on a disabled button silently
+ *   does nothing, so a dialog whose first button starts disabled — the delete
+ *   confirmations here, which stay disabled until a justification is typed —
+ *   opened with focus left on <body>, outside the dialog entirely.
+ *
+ *   A control inside a `hidden`, `inert` or aria-hidden subtree still matched,
+ *   so Tab could stop at something the user cannot see, or wrap at it.
+ *
+ * The filter deliberately checks attributes rather than measuring geometry.
+ * Asking for `offsetParent`/`getClientRects()` would be more thorough in a
+ * browser, but it reports everything as invisible where there is no layout
+ * engine — which would silently disable the trap in the test environment,
+ * i.e. exactly where its absence would go unnoticed.
+ */
+function getFocusable(root: HTMLElement | null): HTMLElement[] {
+    if (!root) return [];
+    const candidates = root.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, summary, [contenteditable]:not([contenteditable="false"]), [tabindex]:not([tabindex="-1"])'
+    );
+    return Array.from(candidates).filter(el =>
+        !el.hasAttribute('disabled') &&
+        el.getAttribute('aria-disabled') !== 'true' &&
+        !el.closest('[hidden], [inert], [aria-hidden="true"]')
+    );
 }
 
 export const Modal: React.FC<ModalProps> = ({
@@ -30,6 +69,7 @@ export const Modal: React.FC<ModalProps> = ({
     size = 'md',
     triggerRef,
     'aria-describedby': ariaDescribedBy,
+    'aria-label': ariaLabel,
     panelClassName,
     headerClassName,
 }) => {
@@ -65,10 +105,8 @@ export const Modal: React.FC<ModalProps> = ({
 
             // Focus the modal or first focusable element
             setTimeout(() => {
-                const focusableElements = modalRef.current?.querySelectorAll<HTMLElement>(
-                    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-                );
-                if (focusableElements && focusableElements.length > 0) {
+                const focusableElements = getFocusable(modalRef.current);
+                if (focusableElements.length > 0) {
                     focusableElements[0].focus();
                 } else {
                     modalRef.current?.focus();
@@ -93,9 +131,7 @@ export const Modal: React.FC<ModalProps> = ({
 
         // Focus trap
         if (event.key === 'Tab' && modalRef.current) {
-            const focusableElements = modalRef.current.querySelectorAll<HTMLElement>(
-                'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-            );
+            const focusableElements = getFocusable(modalRef.current);
             const firstElement = focusableElements[0];
             const lastElement = focusableElements[focusableElements.length - 1];
 
@@ -146,6 +182,8 @@ export const Modal: React.FC<ModalProps> = ({
                             role="dialog"
                             aria-modal="true"
                             aria-labelledby={titleId}
+                            // Fallback only: a titled dialog is never double-named.
+                            aria-label={titleId ? undefined : ariaLabel}
                             aria-describedby={ariaDescribedBy}
                             tabIndex={-1}
                         >
