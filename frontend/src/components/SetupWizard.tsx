@@ -211,7 +211,7 @@ export default function SetupWizard(props: SetupWizardProps) {
                                     onClick={() => { chosen.current = true; setOpenId(active ? null : task.id); }}
                                     aria-current={active ? 'step' : undefined}
                                     aria-expanded={active}
-                                    aria-controls={active ? `setup-task-${task.id}` : undefined}
+                                    aria-controls={active ? `setup-task-panel-${task.id}` : undefined}
                                     className={`w-full text-left rounded-xl px-3 py-2.5 flex items-center gap-2.5 border transition-colors ${active
                                         ? 'bg-white/[0.09] border-white/20'
                                         : 'bg-white/[0.03] border-transparent hover:bg-white/[0.06]'}`}
@@ -249,6 +249,11 @@ export default function SetupWizard(props: SetupWizardProps) {
                             className="setup-panel p-5 sm:p-6 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400"
                             ref={panelRef as any}
                             tabIndex={-1}
+                            /* The panel needs an id of its own. The step button's
+                             * aria-controls used to name the <h3> below, which is
+                             * the panel's label, not the thing the button opens —
+                             * so it pointed at a heading rather than the region. */
+                            id={`setup-task-panel-${open.id}`}
                             aria-labelledby={`setup-task-${open.id}`}
                         >
                             <h3 id={`setup-task-${open.id}`} className="font-semibold text-white text-base">{open.title}</h3>
@@ -351,8 +356,11 @@ function TaskItem({
                 type="button"
                 onClick={onToggle}
                 aria-expanded={expanded}
-                /* aria-expanded said something opened; nothing said what. */
-                aria-controls={`setup-item-${item.id}`}
+                /* aria-expanded said something opened; nothing said what. Named
+                 * only while expanded, because the panel is unmounted otherwise
+                 * and a reference to an absent id is decoration, not a
+                 * relationship. */
+                aria-controls={expanded ? `setup-item-${item.id}` : undefined}
                 className="w-full text-left px-4 py-3 flex items-center gap-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
             >
                 <span

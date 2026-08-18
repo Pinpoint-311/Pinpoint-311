@@ -89,6 +89,18 @@ describe('the audit log, from a keyboard', () => {
         expect(document.getElementById(controls)).toBeTruthy();
     });
 
+    it('does not name a detail panel that is not there', async () => {
+        await open();
+        const expander = screen.getByRole('button', { name: /Show details for Login Failed/i });
+
+        // Collapsed, the detail row is unmounted. A table of closed entries each
+        // naming an id that resolves to nothing is a reference to nothing, which
+        // is worse for a screen reader than no reference at all — so the
+        // attribute is absent until there is something to point at.
+        expect(expander.getAttribute('aria-expanded')).toBe('false');
+        expect(expander.hasAttribute('aria-controls')).toBe(false);
+    });
+
     it('closes again with Space, without losing focus', async () => {
         const user = await open();
         const expander = screen.getByRole('button', { name: /Show details for Login Failed/i });

@@ -429,7 +429,10 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                         onKeyDown={onTriggerKeyDown}
                         aria-haspopup="listbox"
                         aria-expanded={catOpen}
-                        aria-controls="intake-category-listbox"
+                        /* The listbox is only in the DOM while open, so this is
+                         * only meaningful while open. aria-haspopup above is what
+                         * tells you a popup exists in the closed state. */
+                        aria-controls={catOpen ? 'intake-category-listbox' : undefined}
                         aria-required="true"
                         aria-invalid={errorField === 'category' || undefined}
                         aria-describedby={errorField === 'category' ? 'intake-error' : undefined}
