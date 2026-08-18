@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 
 import ProviderCredentialSteps from './ProviderCredentialSteps';
+import { useOptionalAnnounce } from './liveAnnounce';
 import type { StepContext } from './setupSteps';
 import { api } from '../services/api';
 import type { Capability, CloudIdentity, ProviderCatalog, ProviderInfo } from '../services/api';
@@ -32,6 +33,28 @@ import type { Capability, CloudIdentity, ProviderCatalog, ProviderInfo } from '.
  * attached identity each one waits out the metadata timeout before failing.
  * Memoised on the promise rather than the result so concurrent mounts share the
  * single in-flight request instead of racing to start their own. */
+/* The whole outcome of a save-and-test as one spoken sentence.
+ *
+ * The verdict and the value warnings are two separate boxes on screen and they
+ * appear together; spoken, they have to be one message or the second silences
+ * the first. The warnings are counted rather than read out in full because
+ * they are on screen beside the verdict -- what matters aloud is that they are
+ * there. */
+export function composeOutcome(
+    ok: boolean,
+    detail: string,
+    warnings: { message: string }[],
+): string {
+    const parts = [ok ? 'Saved and tested. Succeeded.' : 'Saved and tested. Failed.'];
+    if (detail) parts.push(detail);
+    if (warnings.length) {
+        parts.push(warnings.length === 1
+            ? '1 warning about the values just saved.'
+            : `${warnings.length} warnings about the values just saved.`);
+    }
+    return parts.join(' ');
+}
+
 let identityProbe: Promise<CloudIdentity | null> | null = null;
 function probeIdentity(): Promise<CloudIdentity | null> {
     identityProbe ??= api.getCloudIdentity().catch(() => null);
@@ -68,6 +91,14 @@ export default function InlineProviderSetup({
     const [warnings, setWarnings] = useState<{ key: string; severity: string; message: string }[]>([]);
     const [error, setError] = useState<string | null>(null);
     const [copied, setCopied] = useState<string | null>(null);
+    /* One sentence, through the app's shared region.
+     *
+     * The verdict and the warnings arrive in the same React batch, so when each
+     * had a live region of its own the two mounted together and a screen reader
+     * announced neither -- the clerk pressed Save & Test and heard nothing at
+     * all. Composed into a single message so the outcome and the caveats are
+     * spoken as one thing, which is also how they read. */
+    const announce = useOptionalAnnounce();
 
     const ctx: StepContext = {
         origin: publicOrigin || window.location.origin,
@@ -159,7 +190,8 @@ export default function InlineProviderSetup({
                 if (v) settings[f.key] = v;
             });
             const saved = await api.saveProvider(cap, { provider, settings });
-            setWarnings(saved.warnings || []);
+            const savedWarnings = saved.warnings || [];
+            setWarnings(savedWarnings);
             setValues({});
             await load();
             // Save and verify are one action here. A guide that says "saved"
@@ -167,9 +199,12 @@ export default function InlineProviderSetup({
             // the failure this whole page exists to avoid.
             const verified = await api.testProvider(cap);
             setResult(verified);
+            announce(composeOutcome(verified.ok, verified.detail, savedWarnings));
             onSaved?.(verified.ok);
         } catch (e: any) {
-            setResult({ ok: false, detail: e?.message || 'Save failed' });
+            const detail = e?.message || 'Save failed';
+            setResult({ ok: false, detail });
+            announce(composeOutcome(false, detail, []));
             onSaved?.(false);
         } finally {
             setBusy(null);
@@ -246,10 +281,12 @@ export default function InlineProviderSetup({
                 )}
             </div>
 
-            {/* The outcome of a save-and-test, previously a plain div: nothing
-                announced whether the credential the person just entered works. */}
+            {/* The outcome of a save-and-test. Visible text only: the spoken
+                half is the single composed announcement in save(), because this
+                box and the warnings list below it appear in the same render and
+                two live regions written in one tick are announced as none. */}
             {shownResult && (
-                <div role="status" className={`mt-2.5 rounded-lg px-3 py-2 text-xs flex items-start gap-2 ${shownResult.ok
+                <div className={`mt-2.5 rounded-lg px-3 py-2 text-xs flex items-start gap-2 ${shownResult.ok
                     ? 'bg-emerald-500/10 border border-emerald-400/25 text-emerald-100/90'
                     : 'bg-red-500/10 border border-red-400/25 text-red-100/90'}`}>
                     {shownResult.ok
@@ -267,8 +304,11 @@ export default function InlineProviderSetup({
                 not look like what this box wants", most often the right
                 credential in the wrong field, which a connection test does not
                 reliably tell apart from a wrong key. */}
+            {/* A plain list, not a live region: role="status" here overrode the
+                native list role, so it stopped being announced as "list, 3
+                items" and became a second polite region racing the box above. */}
             {warnings.length > 0 && (
-                <ul role="status" aria-label="Warnings about the values just saved" className="mt-2 space-y-1">
+                <ul aria-label="Warnings about the values just saved" className="mt-2 space-y-1">
                     {warnings.map(w => (
                         <li key={w.key} className="text-[11px] text-amber-200/80 flex items-start gap-1.5">
                             <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" aria-hidden="true" />

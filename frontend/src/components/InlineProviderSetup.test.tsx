@@ -73,6 +73,14 @@ async function mount(ui: React.ReactElement) {
 }
 
 beforeEach(async () => {
+    if (typeof window.matchMedia !== 'function') {
+        window.matchMedia = ((query: string) => ({
+            matches: false, media: query, onchange: null,
+            addListener() { }, removeListener() { },
+            addEventListener() { }, removeEventListener() { },
+            dispatchEvent: () => false,
+        })) as any;
+    }
     vi.clearAllMocks();
     vi.resetModules();
     // Order matters. SETUP_STEPS is a module-scoped registry that
@@ -192,6 +200,45 @@ describe('the guide sets a provider up where it describes it', () => {
         await act(async () => { await Promise.resolve(); });
 
         expect(container.textContent).toContain('Auth0 rejected the client secret.');
+    });
+
+    /* The verdict and the warnings used to be a live region each, mounted in
+     * the same React batch, so a screen reader announced neither -- the clerk
+     * pressed Save & Test and heard nothing at all. Both are plain text now and
+     * the outcome goes out as one composed message through the app's shared
+     * region. */
+    it('speaks the outcome once, through the shared region', async () => {
+        const { AccessibilityProvider } = await import('../context/AccessibilityContext');
+        saveProvider.mockResolvedValue({
+            ok: true, provider: 'auth0',
+            warnings: [{ key: 'AUTH0_DOMAIN', severity: 'warning', message: 'That looks like a client id.' }],
+        });
+        await mount(
+            <AccessibilityProvider>
+                <InlineProviderSetup cap="identity" provider="auth0" />
+            </AccessibilityProvider>
+        );
+
+        const save = Array.from(container.querySelectorAll('button'))
+            .find(b => (b.textContent || '').includes('Save'))!;
+        await act(async () => { save.click(); });
+        await act(async () => { await Promise.resolve(); });
+
+        // Nothing inside the component competes with that region (the two the
+        // provider itself renders are the region).
+        expect(container.querySelectorAll(
+            '[role="status"]:not([id^="aria-live-region"]), [aria-live]:not([id^="aria-live-region"])',
+        )).toHaveLength(0);
+        // The warnings list is a list again -- role="status" had overridden the
+        // native role, so it stopped being announced as "list, N items".
+        const list = container.querySelector('ul')!;
+        expect(list.getAttribute('role')).toBeNull();
+
+        const region = document.getElementById('aria-live-region')!;
+        await act(async () => { await new Promise(r => setTimeout(r, 150)); });
+        expect(region.textContent).toContain('Succeeded');
+        expect(region.textContent).toContain('Signed a test token.');
+        expect(region.textContent).toContain('1 warning');
     });
 
     it('says there is nothing to type when the server has an attached identity', async () => {

@@ -61,9 +61,12 @@ const CAPS: { key: Capability; title: string; blurb: string; icon: typeof Sparkl
 /** The same sliding pill the Modules screen uses, so on/off looks like on/off
  * everywhere in the console rather than being a labelled button here and a
  * toggle there. Held to the exact geometry of the modules one on purpose. */
-function Switch({ on, busy, disabled, onChange, label }: {
+function Switch({ on, busy, disabled, onChange, label, 'aria-describedby': describedBy }: {
     on: boolean; busy?: boolean; disabled?: boolean;
     onChange: () => void; label: string;
+    /* The prop list was closed, so a caller could not attach the sentence
+     * explaining what the switch does even when it had written one. */
+    'aria-describedby'?: string;
 }) {
     return (
         <button
@@ -73,6 +76,7 @@ function Switch({ on, busy, disabled, onChange, label }: {
             role="switch"
             aria-checked={on}
             aria-label={label}
+            aria-describedby={describedBy}
             className={`relative inline-flex items-center rounded-full transition-colors duration-300 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 disabled:opacity-50 ${on ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-slate-600'}`}
             style={{ width: 44, height: 24, minHeight: 24, maxHeight: 24, padding: 0 }}
         >
@@ -755,12 +759,14 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             <div className="relative">
                 {/* ── The bubble: a healthy capability, collapsed ── */}
                 {compact ? (
-                    /* aria-expanded was hardcoded false and aria-controls pointed
-                       at an id that only exists in the expanded branch, so while
-                       collapsed it dangled -- the state never changed and the
-                       reference never resolved. Collapsed IS the false state, but
-                       it has to be the same button reporting it, and the panel it
-                       names has to exist. */
+                    /* This branch only renders while collapsed, so aria-expanded
+                       here can only ever say false -- true is reported by the
+                       "Close" control in the branch that replaces it. What made
+                       that incoherent was the panel: `prov-${cap}` used to be
+                       mounted only while open, so the reference dangled in
+                       exactly the state that needs it. The panel is now always
+                       in the document and carries `hidden` instead, so the
+                       named target resolves either way. */
                     <button
                         type="button"
                         onClick={toggle}
@@ -821,7 +827,11 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                             <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-3 flex-wrap">
                                     <h3 className="font-bold text-lg text-white tracking-tight">{title}</h3>
-                                    <StatusPill state={shown} />
+                                    {/* Named. Without it the pill announces a
+                                        bare "Not working" on a page carrying
+                                        eight of them, which says something is
+                                        broken and not what. */}
+                                    <StatusPill state={shown} name={title} />
                                 </div>
                                 <p className={`text-sm mt-1.5 whitespace-pre-line ${bad ? 'text-red-100/90' : 'text-white/70'}`}>
                                     {spotlightDetail}
@@ -863,7 +873,14 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                         {busy === 'test' ? 'Testing…' : 'Test now'}
                                     </Action>
                                 )}
-                                <Action variant="primary" onClick={toggle} chevron>
+                                {/* The caret's promise, kept: this is the
+                                    control that reports the open state, and it
+                                    names the same panel the collapsed bubble
+                                    does. Without `expanded` the Action defaults
+                                    aria-expanded to false, so a card that is
+                                    plainly open said it was shut. */}
+                                <Action variant="primary" onClick={toggle} chevron
+                                    expanded={isOpen} aria-controls={`prov-${cap}`}>
                                     {isOpen ? 'Close' : configured ? 'Edit' : 'Set up'}
                                 </Action>
                             </div>
@@ -915,7 +932,8 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                 {busy === 'test' ? 'Testing…' : 'Test now'}
                             </Action>
                         )}
-                        <Action size="sm" variant="primary" onClick={toggle} chevron>
+                        <Action size="sm" variant="primary" onClick={toggle} chevron
+                            expanded={isOpen} aria-controls={`prov-${cap}`}>
                             {isOpen ? 'Close' : configured ? 'Edit' : 'Set up'}
                         </Action>
                     </div>
@@ -939,10 +957,13 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             )}
             {!compact && shownResult && (
                 <motion.div
-                    /* The outcome of "Save & Test" -- the single most important
-                       feedback on this page -- was a plain div. status, not alert:
-                       it follows an action the person just took. */
-                    role="status"
+                    /* The outcome of "Save & Test", as visible text only.
+                       It used to be role="status" as well, and it lands in the
+                       same React batch as the onStatus() call that flips the
+                       card's StatusPill -- two polite regions written in one
+                       tick, which a screen reader announces as neither. The
+                       pill's announcement, which names the capability, is the
+                       spoken half; this is the readable half. */
                     initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
                     className={`mt-3 rounded-xl px-3 py-2.5 text-xs border flex items-start gap-2 ${shownResult.ok
                         ? 'bg-emerald-500/10 border-emerald-400/30 text-emerald-200'
@@ -970,10 +991,14 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 "Configure" disclosure, which meant the fields a deployment
                 actually has to fill in were one click away from being missed,
                 and left the card looking finished when nothing was set. */}
+            {/* The id lives on a wrapper that is always in the document, marked
+                `hidden` while closed, because the toggle buttons name it with
+                aria-controls in both states -- and a reference to an element
+                that is not there resolves to nothing at all. */}
+            <div id={`prov-${cap}`} hidden={!isOpen}>
             <AnimatePresence initial={false}>
             {isOpen && (
             <motion.div
-                id={`prov-${cap}`}
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: 'auto', opacity: 1 }}
                 exit={{ height: 0, opacity: 0 }}
@@ -1188,13 +1213,21 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                         visible text instead. */}
                     {onSwitchOff && (
                         <span className="ml-auto inline-flex items-center gap-2.5">
-                            <span id={`switchoff-note-${cap}`} className="text-white/70 text-[11px] hidden sm:block">
+                            {/* Visible at every width, and actually attached to
+                                the control it explains. It was `hidden sm:block`,
+                                so on a phone the reassurance that switching off
+                                keeps the credentials simply did not exist, and
+                                nothing referenced the id -- the switch offered
+                                an irreversible-looking action with no
+                                explanation attached to it either way. */}
+                            <span id={`switchoff-note-${cap}`} className="text-white/70 text-[11px]">
                                 {switching ? 'Switching off…' : 'On — switching off keeps the credentials saved'}
                             </span>
                             <Switch
                                 on={!switching}
                                 busy={switching}
                                 disabled={switching || busy !== null}
+                                aria-describedby={`switchoff-note-${cap}`}
                                 onChange={async () => {
                                     setSwitching(true);
                                     try { await onSwitchOff(); } finally { setSwitching(false); }
@@ -1208,6 +1241,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             </motion.div>
             )}
             </AnimatePresence>
+            </div>
             </div>
         </motion.div>
     );
@@ -1260,6 +1294,14 @@ function PlainSettingCard({ setting, expanded, onToggle, secrets }: {
         >
             <div className="relative">
                 {!expanded ? (
+                    /* Only the collapsed half of the disclosure, so this can
+                       report nothing but false -- which was the whole story
+                       until now, because the "Close" control that replaces it
+                       carried no aria-expanded at all and an open card still
+                       announced itself as shut. The pair reports the state
+                       between them; no aria-controls, because the panel exists
+                       only while open and a reference to nothing is worse than
+                       none. */
                     <button
                         type="button"
                         onClick={onToggle}
@@ -1292,12 +1334,12 @@ function PlainSettingCard({ setting, expanded, onToggle, secrets }: {
                                 <div className="min-w-0">
                                     <div className="flex items-center gap-3 flex-wrap">
                                         <h3 className="font-bold text-lg text-white tracking-tight">{title}</h3>
-                                        <StatusPill state={configured ? 'done' : 'unset'} />
+                                        <StatusPill state={configured ? 'done' : 'unset'} name={title} />
                                     </div>
                                     <p className="text-sm text-white/60 mt-1">{subtitle}</p>
                                 </div>
                             </div>
-                            <Action variant="primary" onClick={onToggle} chevron>Close</Action>
+                            <Action variant="primary" onClick={onToggle} chevron expanded>Close</Action>
                         </div>
                         <div className="mt-4 pt-4 border-t border-white/10">
                             <PlainSecrets

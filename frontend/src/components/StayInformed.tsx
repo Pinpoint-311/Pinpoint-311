@@ -5,6 +5,7 @@ import { Bell, ExternalLink, Check, X } from 'lucide-react';
 import { Button, Input, Select } from './ui';
 import { api } from '../services/api';
 import { buildContactFormUrl, type PrefillValues } from './contactForm';
+import { useOptionalAnnounce } from './liveAnnounce';
 
 /**
  * The one voluntary outbound call this application makes.
@@ -700,11 +701,18 @@ export function StayInformedHost({ ready, prefill }: { ready: boolean; prefill?:
      * their screen reader had already written off (WCAG 2.1.2, 2.4.3). */
     const dialogRef = useRef<HTMLDivElement>(null);
     const [formDirty, setFormDirty] = useState(false);
-    const [status, setStatus] = useState('');
     const [discardArmed, setDiscardArmed] = useState(false);
+    /* Through the app's shared region, not a private one inside the dialog.
+     *
+     * This dialog opens on a page whose host already announces through that
+     * region, and a second polite region written in the same tick means a
+     * screen reader reads neither -- so the "press Escape again" warning, the
+     * one message here that has to be heard rather than seen, was the message
+     * most likely to be lost. */
+    const announce = useOptionalAnnounce();
 
     useEffect(() => {
-        if (!open) { setFormDirty(false); setStatus(''); setDiscardArmed(false); return; }
+        if (!open) { setFormDirty(false); setDiscardArmed(false); return; }
         const frame = window.requestAnimationFrame(() => dialogRef.current?.focus());
         return () => window.cancelAnimationFrame(frame);
     }, [open]);
@@ -718,7 +726,7 @@ export function StayInformedHost({ ready, prefill }: { ready: boolean; prefill?:
              * making it a one-key way to lose everything typed (WCAG 3.3.4). */
             if (formDirty && !discardArmed) {
                 setDiscardArmed(true);
-                setStatus('Press Escape again to close and discard what you have entered.');
+                announce('Press Escape again to close and discard what you have entered.');
                 return;
             }
             finish('not-now');
@@ -807,13 +815,6 @@ export function StayInformedHost({ ready, prefill }: { ready: boolean; prefill?:
                                 </h2>
                             </div>
 
-                            {/* Mounted with the dialog and written into later, so
-                              * assistive tech has the region registered before any
-                              * message lands in it. */}
-                            <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-                                {status}
-                            </div>
-
                             {hasOperatorForm
                                 ? <RegisterPanel
                                     url={formUrl}
@@ -825,7 +826,7 @@ export function StayInformedHost({ ready, prefill }: { ready: boolean; prefill?:
                                 : <StayInformedForm
                                     onDone={finish}
                                     onDirtyChange={setFormDirty}
-                                    onStatus={setStatus}
+                                    onStatus={announce}
                                 />}
                         </motion.div>
                     </motion.div>

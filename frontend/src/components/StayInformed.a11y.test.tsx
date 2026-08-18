@@ -25,6 +25,7 @@ vi.mock('../services/api', () => {
 });
 
 import { StayInformedHost } from './StayInformed';
+import { AccessibilityProvider } from '../context/AccessibilityContext';
 
 beforeEach(() => {
     localStorage.clear();
@@ -36,8 +37,12 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); localStorage.clear(); });
 
+/* Mounted under the provider because that is how the app mounts it, and
+ * because the dialog's status messages now go to the app's shared live region
+ * rather than to one of its own -- a second polite region inside a dialog on a
+ * page that already has one means neither is announced. */
 const openDialog = async () => {
-    render(<StayInformedHost ready />);
+    render(<AccessibilityProvider><StayInformedHost ready /></AccessibilityProvider>);
     return await screen.findByRole('dialog');
 };
 
@@ -80,10 +85,14 @@ describe('the registration dialog', () => {
         await user.type(screen.getByRole('textbox', { name: /Organization/ }), 'Township of Example');
 
         await user.keyboard('{Escape}');
-        // Still open, and the reason is in the dialog's live region rather than
-        // only implied by nothing having happened.
+        // Still open, and the reason is spoken rather than only implied by
+        // nothing having happened. Through the app's shared polite region: the
+        // dialog no longer carries a private one, so this is the assertion that
+        // the message actually reaches somebody.
         expect(screen.queryByRole('dialog')).not.toBeNull();
-        expect(screen.getByRole('status').textContent).toMatch(/Escape again/i);
+        expect(document.querySelector('.sr-only[role="status"][aria-live="polite"]:not(#aria-live-region)')).toBeNull();
+        const region = document.getElementById('aria-live-region')!;
+        await waitFor(() => expect(region.textContent).toMatch(/Escape again/i));
 
         await user.keyboard('{Escape}');
         await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());

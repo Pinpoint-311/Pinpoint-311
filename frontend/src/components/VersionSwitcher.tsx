@@ -648,10 +648,14 @@ export default function VersionSwitcher() {
                 </div>
             )}
 
-            {/* Messages */}
+            {/* Messages. Visible only: the spoken half of both of these is the
+                announce() pair above, and the same string reaching a second
+                region in the same commit is how a deploy that reports every
+                step ends up reporting none of them out loud. Same shape as
+                NotificationSettings. */}
             {error && (
                 <div className="space-y-2">
-                    <div role="alert" className="p-2.5 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-xs">
+                    <div className="p-2.5 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-xs">
                         <div className="flex items-start gap-1.5">
                             <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5" />
                             <span>{error}</span>
@@ -716,7 +720,7 @@ export default function VersionSwitcher() {
             )}
 
             {message && !isSwitching && (
-                <div role="status" className="p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400 text-xs flex items-center gap-1.5">
+                <div className="p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400 text-xs flex items-center gap-1.5">
                     <Check className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
                     <span>{message}</span>
                 </div>

@@ -776,8 +776,12 @@ export default function GovtechIntegrations() {
                                     </div>
                                 </div>
                                 <div className="shrink-0 flex items-center gap-2">
+                                    {/* Named, because this list is long and every
+                                        row carries one of these: an unnamed "Not
+                                        working" says a connector broke and leaves
+                                        somebody to work out which one. */}
                                     {state && (
-                                        <StatusPill state={state} label={connectionStateLabel(existing, state)} />
+                                        <StatusPill state={state} label={connectionStateLabel(existing, state)} name={platform.name} />
                                     )}
                                     <motion.span animate={{ rotate: isOpen ? 180 : 0 }} transition={{ duration: 0.3 }} aria-hidden="true" className="text-white/60">
                                         <ChevronDown className="w-4 h-4" />
