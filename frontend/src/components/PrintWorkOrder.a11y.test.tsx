@@ -90,7 +90,10 @@ describe('PrintWorkOrder when the pop-up is blocked', () => {
             expect(el).toBeTruthy();
             return el;
         });
-        expect(message.getAttribute('role')).toBe('alert');
+        /* Visible, and deliberately not a live region of its own: the app's
+         * shared assertive region speaks this, and a second assertive region
+         * written in the same commit would leave both unspoken. */
+        expect(message.hasAttribute('role')).toBe(false);
         expect(message.textContent).toMatch(/blocked the print window/i);
         // The button points at the explanation, so arriving back on it says why.
         expect(printButton().getAttribute('aria-describedby')).toBe(message.id);

@@ -919,10 +919,15 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
             {blocked && (
                 /* Visible as well as announced: a sighted operator got no
                  * feedback either, and "nothing happened" is the hardest kind
-                 * of failure to report to a helpdesk. */
+                 * of failure to report to a helpdesk. Visible only, though —
+                 * it used to carry role="alert" in the same commit that pushed
+                 * the same sentence through announce(), and two assertive
+                 * regions written together means a screen reader speaks
+                 * neither, which put the operator back at a button that
+                 * appeared to do nothing. The id stays: the button's
+                 * aria-describedby points here. */
                 <p
                     id="print-work-order-error"
-                    role="alert"
                     className="max-w-xs text-xs text-amber-200 bg-amber-500/10 border border-amber-400/30 rounded-lg px-2.5 py-2"
                 >
                     {POPUP_BLOCKED}

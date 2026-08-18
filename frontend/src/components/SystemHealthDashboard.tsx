@@ -170,8 +170,14 @@ export default function SystemHealthDashboard() {
         return (
             <div className="p-6">
                 <Card className="bg-red-500/10 border-red-500/20">
-                    {/* The only report that the health check itself failed. */}
-                    <div className="flex items-center gap-3" role="alert">
+                    {/* The visible report that the health check itself failed;
+                        the spoken one is the announce() in the catch that sets
+                        this state. This panel used to carry role="alert" too,
+                        and the pair cancelled out — two assertive regions
+                        written in one commit means a screen reader speaks
+                        neither, so the admin heard nothing while the page
+                        replaced itself with an error. */}
+                    <div className="flex items-center gap-3">
                         <XCircle className="w-6 h-6 text-red-400" aria-hidden="true" />
                         <div className="flex-1">
                             <h3 className="text-lg font-semibold text-red-300">Error Loading Health Check</h3>

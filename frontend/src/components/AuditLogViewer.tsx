@@ -480,12 +480,15 @@ export default function AuditLogViewer() {
 
                 {/* Table */}
                 <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden" aria-busy={isLoading}>
-                    {/* role="alert" so a fetch or export failure is spoken. The
-                        text is also pushed through announce() at the point of
-                        failure, because a role node inserted together with its
-                        text is routinely never announced at all. */}
+                    {/* Purely visual. This strip used to carry role="alert" as
+                        well as being pushed through announce() at the point of
+                        failure, and the two cancelled each other out: a second
+                        assertive region written in the same commit as the app's
+                        own means a screen reader speaks neither, so a failed
+                        fetch or export was silent for the reader who had no
+                        other way to know the table had not refreshed. */}
                     {(error || exportError) && (
-                        <div role="alert" className="p-4 bg-red-500/10 border-b border-red-500/20 flex items-center gap-3">
+                        <div className="p-4 bg-red-500/10 border-b border-red-500/20 flex items-center gap-3">
                             <AlertCircle className="w-5 h-5 text-red-400" aria-hidden="true" />
                             <span className="text-red-400 text-sm">{error || exportError}</span>
                         </div>

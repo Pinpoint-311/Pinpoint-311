@@ -8,7 +8,7 @@ import userEvent from '@testing-library/user-event';
  * category is set, and the form did nothing anybody could perceive -- the
  * submit buttons were `disabled` until the form was already valid, so the one
  * control that would have explained the problem could not be reached or
- * pressed, and the message it would have shown was a plain div with no role.
+ * pressed, and the message it would have shown was never spoken.
  *
  * And the category list, the only required field with no typing in it, was
  * mouse-only: a `<ul role="listbox">` full of `<li><button>`, no arrow keys, no
@@ -135,15 +135,18 @@ describe('ManualIntake validation feedback', () => {
 
         await user.click(logRequest());
 
-        /* Found by id, not by text or role: the app's shared assertive region
-         * is a role="alert" holding the same words a moment later, so either
-         * of those queries matches two nodes as soon as the timing shifts. */
+        /* Found by id, not by text: the app's shared assertive region holds
+         * the same words a moment later, so a text query matches two nodes as
+         * soon as the timing shifts. */
         const alert = await waitFor(() => {
             const el = document.getElementById('intake-error')!;
             expect(el).toBeTruthy();
             return el;
         });
-        expect(alert.getAttribute('role')).toBe('alert');
+        /* Visible, and deliberately silent: the shared assertive region below
+         * is the one that speaks. A role="alert" here would be a second
+         * assertive region in the same commit, and then neither is announced. */
+        expect(alert.hasAttribute('role')).toBe(false);
         expect(alert.textContent).toContain('Pick a category');
         // Focus is on the control at fault, not left on the button.
         expect(document.activeElement).toBe(category());
