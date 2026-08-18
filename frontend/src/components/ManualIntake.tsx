@@ -684,14 +684,15 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                 )}
 
                 {error && (
-                    /* role="alert" is what makes the message reach somebody who
-                     * is not looking at this corner of the dialog. The id is
-                     * pointed at by whichever field is at fault, so arriving
-                     * there reads the reason as well as the label. The message
-                     * is also passed to announce() at the moment it is set —
-                     * a role="alert" that renders in the same tick as its text
-                     * is announced inconsistently across screen readers. */
-                    <div id="intake-error" role="alert" className="rounded-xl bg-amber-500/10 border border-amber-400/30 px-3 py-2.5 text-sm text-amber-200 flex items-start gap-2">
+                    /* The id is pointed at by whichever field is at fault, so
+                     * arriving there reads the reason as well as the label.
+                     * The strip itself is silent: it used to carry role="alert"
+                     * on top of the announce() that fires the moment the message
+                     * is set, and the pair silenced each other — two assertive
+                     * regions written in one commit means a screen reader speaks
+                     * neither, so a rejected submit told the call taker nothing
+                     * until they happened to land on the field. */
+                    <div id="intake-error" className="rounded-xl bg-amber-500/10 border border-amber-400/30 px-3 py-2.5 text-sm text-amber-200 flex items-start gap-2">
                         <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" /> {error}
                     </div>
                 )}
