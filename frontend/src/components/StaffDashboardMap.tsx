@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
-import { MapPin, Layers, Search, X, ChevronDown, ChevronRight, Users } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { MapPin, Layers, List, Search, X, ChevronDown, ChevronRight, Users } from 'lucide-react';
 import { ServiceRequest, ServiceDefinition, User, Department } from '../types';
 import { MapLayer } from '../services/api';
 import { useTranslation } from '../context/TranslationContext';
+import { useAnnounce } from '../context/AccessibilityContext';
 import { BANDS, bandFor, bandLabel } from './priority';
 import {
     GeoJsonLayerHandle,
     MapRenderer,
+    MarkerIcon,
     MarkerLayer,
     MarkerOptions,
     PopupHandle,
@@ -18,7 +20,7 @@ import {
     extractFeatures,
     MapProviderConfig,
     hasMapCredential,
-    requestIcon,
+    puckIcon,
     el,
     popupRoot,
 } from '../maps';
@@ -64,6 +66,145 @@ const STATUS_COLORS = {
     in_progress: '#f59e0b', // amber
     closed: '#22c55e',      // green
 };
+
+const STATUS_LABELS: Record<string, string> = {
+    open: 'Open',
+    in_progress: 'In Progress',
+    closed: 'Closed',
+};
+
+const statusLabel = (status: string) => STATUS_LABELS[status] ?? status.replace('_', ' ');
+
+/**
+ * Status has to be readable without colour -- WCAG 1.4.1.
+ *
+ * Red / amber / green pins of identical shape are the textbook failure: the
+ * three hues collapse into one another for the commonest form of colour
+ * blindness, and they collapse completely on a greyscale print of the map,
+ * which is how a work order actually leaves the building. The asset puck
+ * already solves this by being a different *shape* rather than a different
+ * colour, so status does the same thing with the knobs `puckIcon` already
+ * exposes, instead of inventing a second glyph vocabulary:
+ *
+ *   open          solid puck, thin ring   "reported, untouched"
+ *   in progress   solid puck, thick ring  "somebody is on it"
+ *   closed        hollow puck             "done; a reference point now"
+ *
+ * The closed donut is deliberately the request size (22) while the asset donut
+ * is 18, and the legend names both, so the two hollow glyphs stay separable.
+ */
+function statusMarkerIcon(status: string): MarkerIcon {
+    const fill = STATUS_COLORS[status as keyof typeof STATUS_COLORS] ?? '#6366f1';
+    if (status === 'closed') return puckIcon({ fill, size: 22, hollow: true });
+    if (status === 'in_progress') return puckIcon({ fill, size: 22, strokeWidth: 5.5 });
+    return puckIcon({ fill, size: 22 });
+}
+
+/**
+ * The panel and legend echo of those pin shapes, so the three glyphs are taught
+ * where they are filtered. Decorative: every swatch sits beside the status
+ * word, which is what a screen reader reads.
+ */
+function StatusSwatch({ status }: { status: string }) {
+    const color = STATUS_COLORS[status as keyof typeof STATUS_COLORS] ?? '#6366f1';
+    const style = status === 'closed'
+        ? { borderColor: color, backgroundColor: 'transparent' }              // hollow
+        : { borderColor: status === 'in_progress' ? '#ffffff' : color, backgroundColor: color };
+    return (
+        <span
+            className="w-4 h-4 shrink-0 rounded-full border-2 shadow-lg"
+            style={style}
+            aria-hidden="true"
+        />
+    );
+}
+
+/**
+ * What a screen reader gets for a pin, and what a sighted user gets as a
+ * tooltip. `title` was the bare service name, so every hover and every
+ * accessible name on a busy map read "Pothole", "Pothole", "Pothole".
+ */
+function markerTitle(request: ServiceRequest): string {
+    return [
+        request.service_name,
+        request.address ? `at ${request.address}` : null,
+        `status ${statusLabel(request.status)}`,
+        `request ${request.service_request_id}`,
+    ].filter(Boolean).join(', ');
+}
+
+interface FilterSectionProps {
+    /** Id of the region this header opens; the header points at it. */
+    id: string;
+    /** Visible header content. */
+    title: ReactNode;
+    /** Plain-text name, used for the group's legend. */
+    label: string;
+    expanded: boolean;
+    onToggle: () => void;
+    /** False for the request list, which is navigation rather than form controls. */
+    group?: boolean;
+    contentClassName?: string;
+    outerClassName?: string;
+    children: ReactNode;
+}
+
+/**
+ * One collapsible section of the filter panel.
+ *
+ * All seven of these were hand-rolled: a bare <button> with a chevron, no
+ * aria-expanded (so the control announced as "Categories, button" whether the
+ * list under it was open or shut, and the chevron -- the only thing that said
+ * which -- is a picture) and no relationship to the region it opens. WCAG
+ * 1.3.1 / 4.1.2.
+ *
+ * The checkbox lists were bare divs, so a screen reader met fourteen unlabelled
+ * checkboxes with nothing tying them to the heading above them. <fieldset> with
+ * a <legend> is the HTML element for exactly that, needs no ARIA, and is
+ * announced as a group on entry -- so it is used here rather than
+ * role="group" + aria-labelledby. The legend is sr-only because the visible
+ * header is the toggle button and repeating it would just be noise.
+ *
+ * One component rather than seven copies, so the next section added cannot
+ * quietly ship without the attributes again.
+ */
+function FilterSection({
+    id,
+    title,
+    label,
+    expanded,
+    onToggle,
+    group = true,
+    contentClassName = 'px-4 pb-4 space-y-2',
+    outerClassName = 'border-b border-white/5',
+    children,
+}: FilterSectionProps) {
+    const Chevron = expanded ? ChevronDown : ChevronRight;
+    return (
+        <div className={outerClassName}>
+            <button
+                type="button"
+                onClick={onToggle}
+                aria-expanded={expanded}
+                aria-controls={id}
+                className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
+            >
+                <span className="text-sm font-semibold text-white flex items-center gap-2">{title}</span>
+                <Chevron className="w-4 h-4 text-white/50" aria-hidden="true" />
+            </button>
+            {expanded && (
+                group ? (
+                    <fieldset id={id} className={contentClassName}>
+                        <legend className="sr-only">{label}</legend>
+                        {children}
+                    </fieldset>
+                ) : (
+                    <div id={id} className={contentClassName}>{children}</div>
+                )
+            )}
+        </div>
+    );
+}
 
 export default function StaffDashboardMap({
     config,
@@ -113,6 +254,7 @@ export default function StaffDashboardMap({
     }, []);
     const [_mapType, setMapType] = useState<string>('hybrid');
     const [expandedSections, setExpandedSections] = useState({
+        requests: false,
         status: true,
         categories: false,
         departments: false,
@@ -261,11 +403,96 @@ export default function StaffDashboardMap({
         }
     };
 
+    /**
+     * The set that is actually plotted, computed once and shared.
+     *
+     * This used to live inside updateMarkers(), which meant the only place the
+     * filter logic existed was a side effect that wrote to the map SDK -- so
+     * the plotted set could not be rendered as text, counted, or announced.
+     * Everything a non-mouse user needs from this map (the request list below,
+     * the "N of M" count, the status-message announcement) reads this array,
+     * which is also what guarantees the list and the pins can never disagree.
+     */
+    const filteredRequests = useMemo(() => requests.filter(r => {
+        // Status filter
+        if (!statusFilters[r.status as keyof typeof statusFilters]) return false;
+
+        // Category filter
+        if (categoryFilters[r.service_code] === false) return false;
+
+        // Department filter - only filter if departments are loaded.
+        // Skipped entirely when the panel is hidden: a checkbox nobody can
+        // see must never be able to remove a pin from the map.
+        const requestDeptId = (r as any).assigned_department_id ?? 0;
+        if (operationalFilters && Object.keys(departmentFilters).length > 0) {
+            // Convert to number for comparison (filter keys are numbers)
+            const deptKey = Number(requestDeptId) || 0;
+            if (departmentFilters[deptKey] === false) {
+                return false;
+            }
+        }
+
+        // Staff filter - only filter if users are loaded
+        const requestStaff = (r as any).assigned_to ?? '';
+        if (operationalFilters && Object.keys(staffFilters).length > 0) {
+            if (staffFilters[requestStaff] === false) {
+                return false;
+            }
+        }
+
+        // Assignment filter - search in assigned_to, service_name, or description
+        if (assignmentFilter) {
+            const searchLower = assignmentFilter.toLowerCase();
+            const assignedTo = ((r as any).assigned_to || '').toLowerCase();
+            const serviceName = r.service_name.toLowerCase();
+            const description = r.description.toLowerCase();
+            const address = (r.address || '').toLowerCase();
+
+            if (!assignedTo.includes(searchLower) &&
+                !serviceName.includes(searchLower) &&
+                !description.includes(searchLower) &&
+                !address.includes(searchLower)) {
+                return false;
+            }
+        }
+
+        // Must have coordinates
+        if (!r.lat || !r.long) return false;
+
+        // Priority filter
+        const ai = (r as any).ai_analysis;
+        const priority = (r as any).manual_priority_score ?? ai?.priority_score ?? 5;
+        const priorityLevel = bandFor(priority);
+        if (operationalFilters && !priorityFilters[priorityLevel]) return false;
+
+        return true;
+    }), [requests, statusFilters, categoryFilters, departmentFilters, staffFilters, assignmentFilter, priorityFilters, operationalFilters]);
+
+    /* Toggling a filter used to change the marker set and nothing else: no
+     * number moved, no message was spoken, and a screen reader user had no way
+     * to tell a filter that removed 40 pins from one that did nothing at all.
+     * WCAG 4.1.3 -- routed through the app's single live region rather than a
+     * second aria-live node, because two polite regions updating in the same
+     * tick get neither announced.
+     *
+     * The first pass is skipped: the initial render is not a status *change*,
+     * and requests arrive asynchronously, so announcing there would talk over
+     * the page as it loads. */
+    const announce = useAnnounce();
+    const countAnnounced = useRef(false);
+    useEffect(() => {
+        if (!countAnnounced.current) {
+            countAnnounced.current = true;
+            return;
+        }
+        announce(`${filteredRequests.length} of ${requests.length} requests shown on the map`);
+    }, [filteredRequests, requests.length, announce]);
+
     // Update markers when filters or requests change
     useEffect(() => {
         if (!mapInstanceRef.current) return;
         updateMarkers();
-    }, [requests, statusFilters, categoryFilters, departmentFilters, staffFilters, assignmentFilter, priorityFilters, operationalFilters, mapReady]);
+    }, [filteredRequests, mapReady]);
 
     // Update GeoJSON layers when layer filters change
     useEffect(() => {
@@ -278,67 +505,11 @@ export default function StaffDashboardMap({
         const requestLayer = requestLayerRef.current;
         if (!map || !requestLayer) return;
 
-        // Filter requests
-        const filteredRequests = requests.filter(r => {
-            // Status filter
-            if (!statusFilters[r.status as keyof typeof statusFilters]) return false;
-
-            // Category filter
-            if (categoryFilters[r.service_code] === false) return false;
-
-            // Department filter - only filter if departments are loaded.
-            // Skipped entirely when the panel is hidden: a checkbox nobody can
-            // see must never be able to remove a pin from the map.
-            const requestDeptId = (r as any).assigned_department_id ?? 0;
-            if (operationalFilters && Object.keys(departmentFilters).length > 0) {
-                // Convert to number for comparison (filter keys are numbers)
-                const deptKey = Number(requestDeptId) || 0;
-                if (departmentFilters[deptKey] === false) {
-                    return false;
-                }
-            }
-
-            // Staff filter - only filter if users are loaded
-            const requestStaff = (r as any).assigned_to ?? '';
-            if (operationalFilters && Object.keys(staffFilters).length > 0) {
-                if (staffFilters[requestStaff] === false) {
-                    return false;
-                }
-            }
-
-            // Assignment filter - search in assigned_to, service_name, or description
-            if (assignmentFilter) {
-                const searchLower = assignmentFilter.toLowerCase();
-                const assignedTo = ((r as any).assigned_to || '').toLowerCase();
-                const serviceName = r.service_name.toLowerCase();
-                const description = r.description.toLowerCase();
-                const address = (r.address || '').toLowerCase();
-
-                if (!assignedTo.includes(searchLower) &&
-                    !serviceName.includes(searchLower) &&
-                    !description.includes(searchLower) &&
-                    !address.includes(searchLower)) {
-                    return false;
-                }
-            }
-
-            // Must have coordinates
-            if (!r.lat || !r.long) return false;
-
-            // Priority filter
-            const ai = (r as any).ai_analysis;
-            const priority = (r as any).manual_priority_score ?? ai?.priority_score ?? 5;
-            const priorityLevel = bandFor(priority);
-            if (operationalFilters && !priorityFilters[priorityLevel]) return false;
-
-            return true;
-        });
-
         // Create markers
         const markers: MarkerOptions[] = filteredRequests.map(request => ({
             position: { lat: request.lat!, lng: request.long! },
-            icon: requestIcon(STATUS_COLORS[request.status as keyof typeof STATUS_COLORS]),
-            title: request.service_name,
+            icon: statusMarkerIcon(request.status),
+            title: markerTitle(request),
             onClick: async (_e, marker) => {
                 const popup = popupRef.current;
                 if (popup) {
@@ -548,7 +719,7 @@ export default function StaffDashboardMap({
         return (
             <div className="h-full flex items-center justify-center bg-white/5 rounded-xl border border-white/10">
                 <div className="text-center p-8">
-                    <MapPin className="w-12 h-12 mx-auto mb-4 text-white/30" />
+                    <MapPin className="w-12 h-12 mx-auto mb-4 text-white/30" aria-hidden="true" />
                     <p className="text-white/60">No map provider is configured yet</p>
                     <p className="text-white/40 text-sm mt-2">Choose one in Admin Console → Service Providers → Maps</p>
                 </div>
@@ -569,7 +740,18 @@ export default function StaffDashboardMap({
             </div>
 
             {/* Filter Panel - Right Side (full width on mobile, fixed width on desktop) */}
+            {/* The panel does not unmount when it slides shut, it is translated
+                off the edge -- and an off-screen control is still in the tab
+                order. A keyboard user closing the panel used to Tab into two
+                dozen checkboxes they could not see, with the focus ring parked
+                somewhere off the right of the map (WCAG 2.4.3 / 2.4.7).
+                `inert` removes the subtree from focus and from the
+                accessibility tree while keeping the slide animation. React 18
+                does not know the attribute, hence the cast. */}
             <div
+                id="map-filter-panel"
+                {...({ inert: showFilters ? undefined : '' } as any)}
+                aria-hidden={showFilters ? undefined : true}
                 className={`absolute top-0 right-0 bottom-0 w-full sm:w-72 border-l border-white/10 transform transition-all duration-300 z-20 shadow-2xl ${showFilters ? 'translate-x-0' : 'translate-x-full'
                     }`}
                 style={{
@@ -581,384 +763,402 @@ export default function StaffDashboardMap({
                 {/* Panel Header */}
                 <div className="p-4 border-b border-white/10 flex items-center justify-between bg-gradient-to-r from-primary-500/10 to-transparent">
                     <h3 className="font-bold text-white flex items-center gap-2 text-lg">
-                        <Layers className="w-5 h-5 text-primary-400" />
-                        {"Filters"}
+                        <Layers className="w-5 h-5 text-primary-400" aria-hidden="true" />
+                        {"Requests & Filters"}
                     </h3>
                     <button
+                        type="button"
                         onClick={() => setShowFilters(false)}
                         className="p-1.5 hover:bg-white/10 rounded-lg transition-colors"
-                        aria-label="Close filters"
+                        aria-label="Close requests and filters panel"
                     >
                         <X className="w-5 h-5 text-white/60" aria-hidden="true" />
                     </button>
                 </div>
 
                 <div className="overflow-y-auto h-[calc(100%-60px)]">
-                    {/* Status Filters */}
-                    <div className="border-b border-white/5">
-                        <button
-                            onClick={() => toggleSection('status')}
-                            className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
-                        >
-                            <span className="text-sm font-semibold text-white">{"Request Status"}</span>
-                            {expandedSections.status ? (
-                                <ChevronDown className="w-4 h-4 text-white/50" />
-                            ) : (
-                                <ChevronRight className="w-4 h-4 text-white/50" />
-                            )}
-                        </button>
-                        {expandedSections.status && (
-                            <div className="px-4 pb-4 space-y-3">
-                                {Object.entries(statusFilters).map(([status, enabled]) => (
-                                    <label key={status} className="flex items-center gap-3 cursor-pointer group">
-                                        <input
-                                            type="checkbox"
-                                            checked={enabled}
-                                            onChange={(e) => setStatusFilters(prev => ({ ...prev, [status]: e.target.checked }))}
-                                            className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
-                                        />
-                                        <span
-                                            className="w-4 h-4 rounded-full shadow-lg"
-                                            style={{ backgroundColor: STATUS_COLORS[status as keyof typeof STATUS_COLORS] }}
-                                        />
-                                        <span className="text-sm text-white/80 capitalize group-hover:text-white transition-colors">
-                                            {status === 'in_progress' ? 'In Progress' : status === 'open' ? 'Open' : 'Closed'}
-                                        </span>
-                                    </label>
+                    {/* The text equivalent of the pins -- WCAG 2.1.1 / 4.1.2.
+                        Every request on this map was reachable only by clicking
+                        a marker the provider draws onto a canvas, and the
+                        popup's "View Full Details" is a DOM button synthesised
+                        into an overlay that nothing puts focus into. There was
+                        no keyboard path to a single request from this surface.
+                        These are real buttons in the tab order calling the same
+                        onRequestSelect the popup calls, over the same
+                        filteredRequests the markers are built from, so the two
+                        views cannot drift apart. */}
+                    <FilterSection
+                        id="map-request-list"
+                        label="Plotted requests"
+                        group={false}
+                        expanded={expandedSections.requests}
+                        onToggle={() => toggleSection('requests')}
+                        contentClassName="px-2 pb-4"
+                        title={<>
+                            <List className="w-4 h-4 text-white/50" aria-hidden="true" />
+                            {`Plotted Requests (${filteredRequests.length})`}
+                        </>}
+                    >
+                        {filteredRequests.length === 0 ? (
+                            <p className="px-2 text-sm text-white/50">No requests match the current filters.</p>
+                        ) : (
+                            <ul className="space-y-1 max-h-72 overflow-y-auto">
+                                {filteredRequests.map(request => (
+                                    <li key={request.service_request_id}>
+                                        <button
+                                            type="button"
+                                            onClick={() => onRequestSelect(request.service_request_id)}
+                                            className="w-full text-left px-2 py-2 rounded-lg hover:bg-white/10 focus:bg-white/10 transition-colors"
+                                        >
+                                            <span className="flex items-center gap-2">
+                                                <StatusSwatch status={request.status} />
+                                                <span className="text-sm text-white/90 truncate">{request.service_name}</span>
+                                            </span>
+                                            {/* The address is the only thing that
+                                                says *where* on a map nobody can
+                                                see; coordinates stand in when a
+                                                report has no address. */}
+                                            <span className="block text-xs text-white/60 truncate">
+                                                {request.address || `${request.lat?.toFixed(5)}, ${request.long?.toFixed(5)}`}
+                                            </span>
+                                            <span className="block text-xs text-white/60">
+                                                {`${statusLabel(request.status)} · ${request.service_request_id}`}
+                                            </span>
+                                        </button>
+                                    </li>
                                 ))}
-                            </div>
+                            </ul>
                         )}
-                    </div>
+                    </FilterSection>
+
+                    {/* Status Filters */}
+                    <FilterSection
+                        id="map-filter-status"
+                        label="Request status"
+                        title="Request Status"
+                        expanded={expandedSections.status}
+                        onToggle={() => toggleSection('status')}
+                        contentClassName="px-4 pb-4 space-y-3"
+                    >
+                        {Object.entries(statusFilters).map(([status, enabled]) => (
+                            <label key={status} className="flex items-center gap-3 cursor-pointer group">
+                                <input
+                                    type="checkbox"
+                                    checked={enabled}
+                                    onChange={(e) => setStatusFilters(prev => ({ ...prev, [status]: e.target.checked }))}
+                                    className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
+                                />
+                                <StatusSwatch status={status} />
+                                <span className="text-sm text-white/80 group-hover:text-white transition-colors">
+                                    {statusLabel(status)}
+                                </span>
+                            </label>
+                        ))}
+                    </FilterSection>
 
                     {/* Category Filters */}
-                    <div className="border-b border-white/5">
-                        <button
-                            onClick={() => toggleSection('categories')}
-                            className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
-                        >
-                            <span className="text-sm font-semibold text-white">{"Categories"}</span>
-                            {expandedSections.categories ? (
-                                <ChevronDown className="w-4 h-4 text-white/50" />
-                            ) : (
-                                <ChevronRight className="w-4 h-4 text-white/50" />
-                            )}
-                        </button>
-                        {expandedSections.categories && (
-                            <div className="px-4 pb-4 space-y-2">
-                                <div className="flex gap-3 mb-3 pb-2 border-b border-white/5">
-                                    <button
-                                        onClick={() => toggleAllCategories(true)}
-                                        className="text-xs text-primary-400 hover:text-primary-300 font-medium"
-                                    >
-                                        {"Select All"}
-                                    </button>
-                                    <span className="text-white/20">|</span>
-                                    <button
-                                        onClick={() => toggleAllCategories(false)}
-                                        className="text-xs text-primary-400 hover:text-primary-300 font-medium"
-                                    >
-                                        Clear All
-                                    </button>
-                                </div>
-                                {services.map(service => (
-                                    <label key={service.service_code} className="flex items-center gap-3 cursor-pointer group">
-                                        <input
-                                            type="checkbox"
-                                            checked={categoryFilters[service.service_code] ?? true}
-                                            onChange={(e) => setCategoryFilters(prev => ({ ...prev, [service.service_code]: e.target.checked }))}
-                                            className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
-                                        />
-                                        <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors">
-                                            {service.service_name}
-                                        </span>
-                                    </label>
-                                ))}
-                            </div>
-                        )}
-                    </div>
+                    <FilterSection
+                        id="map-filter-categories"
+                        label="Categories"
+                        title="Categories"
+                        expanded={expandedSections.categories}
+                        onToggle={() => toggleSection('categories')}
+                    >
+                        <div className="flex gap-3 mb-3 pb-2 border-b border-white/5">
+                            <button
+                                type="button"
+                                onClick={() => toggleAllCategories(true)}
+                                className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                            >
+                                {"Select All"}
+                            </button>
+                            <span className="text-white/20" aria-hidden="true">|</span>
+                            <button
+                                type="button"
+                                onClick={() => toggleAllCategories(false)}
+                                className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                            >
+                                Clear All
+                            </button>
+                        </div>
+                        {services.map(service => (
+                            <label key={service.service_code} className="flex items-center gap-3 cursor-pointer group">
+                                <input
+                                    type="checkbox"
+                                    checked={categoryFilters[service.service_code] ?? true}
+                                    onChange={(e) => setCategoryFilters(prev => ({ ...prev, [service.service_code]: e.target.checked }))}
+                                    className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
+                                />
+                                <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors">
+                                    {service.service_name}
+                                </span>
+                            </label>
+                        ))}
+                    </FilterSection>
 
                     {/* Department Filters */}
                     {operationalFilters && (
-                    <div className="border-b border-white/5">
-                        <button
-                            onClick={() => toggleSection('departments')}
-                            className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
+                        <FilterSection
+                            id="map-filter-departments"
+                            label="Departments"
+                            title="Departments"
+                            expanded={expandedSections.departments}
+                            onToggle={() => toggleSection('departments')}
                         >
-                            <span className="text-sm font-semibold text-white">{"Departments"}</span>
-                            {expandedSections.departments ? (
-                                <ChevronDown className="w-4 h-4 text-white/50" />
-                            ) : (
-                                <ChevronRight className="w-4 h-4 text-white/50" />
-                            )}
-                        </button>
-                        {expandedSections.departments && (
-                            <div className="px-4 pb-4 space-y-2">
-                                <div className="flex gap-3 mb-3 pb-2 border-b border-white/5">
-                                    <button
-                                        onClick={() => toggleAllDepartments(true)}
-                                        className="text-xs text-primary-400 hover:text-primary-300 font-medium"
-                                    >
-                                        Select All
-                                    </button>
-                                    <span className="text-white/20">|</span>
-                                    <button
-                                        onClick={() => toggleAllDepartments(false)}
-                                        className="text-xs text-primary-400 hover:text-primary-300 font-medium"
-                                    >
-                                        Clear All
-                                    </button>
-                                </div>
-                                <label className="flex items-center gap-3 cursor-pointer group">
+                            <div className="flex gap-3 mb-3 pb-2 border-b border-white/5">
+                                <button
+                                    type="button"
+                                    onClick={() => toggleAllDepartments(true)}
+                                    className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                >
+                                    Select All
+                                </button>
+                                <span className="text-white/20" aria-hidden="true">|</span>
+                                <button
+                                    type="button"
+                                    onClick={() => toggleAllDepartments(false)}
+                                    className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                >
+                                    Clear All
+                                </button>
+                            </div>
+                            <label className="flex items-center gap-3 cursor-pointer group">
+                                <input
+                                    type="checkbox"
+                                    checked={departmentFilters[0] ?? true}
+                                    onChange={(e) => setDepartmentFilters(prev => ({ ...prev, [0]: e.target.checked }))}
+                                    className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
+                                />
+                                <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors italic">
+                                    Unassigned
+                                </span>
+                            </label>
+                            {departments.map(dept => (
+                                <label key={dept.id} className="flex items-center gap-3 cursor-pointer group">
                                     <input
                                         type="checkbox"
-                                        checked={departmentFilters[0] ?? true}
-                                        onChange={(e) => setDepartmentFilters(prev => ({ ...prev, [0]: e.target.checked }))}
+                                        checked={departmentFilters[dept.id] ?? true}
+                                        onChange={(e) => setDepartmentFilters(prev => ({ ...prev, [dept.id]: e.target.checked }))}
                                         className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
                                     />
-                                    <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors italic">
-                                        Unassigned
+                                    <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors">
+                                        {dept.name}
                                     </span>
                                 </label>
-                                {departments.map(dept => (
-                                    <label key={dept.id} className="flex items-center gap-3 cursor-pointer group">
-                                        <input
-                                            type="checkbox"
-                                            checked={departmentFilters[dept.id] ?? true}
-                                            onChange={(e) => setDepartmentFilters(prev => ({ ...prev, [dept.id]: e.target.checked }))}
-                                            className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
-                                        />
-                                        <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors">
-                                            {dept.name}
-                                        </span>
-                                    </label>
-                                ))}
-                            </div>
-                        )}
-                    </div>
+                            ))}
+                        </FilterSection>
                     )}
 
                     {/* Staff Filters */}
                     {operationalFilters && (
-                    <div className="border-b border-white/5">
-                        <button
-                            onClick={() => toggleSection('staff')}
-                            className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
+                        <FilterSection
+                            id="map-filter-staff"
+                            label="Assigned staff"
+                            title="Assigned Staff"
+                            expanded={expandedSections.staff}
+                            onToggle={() => toggleSection('staff')}
                         >
-                            <span className="text-sm font-semibold text-white">{"Assigned Staff"}</span>
-                            {expandedSections.staff ? (
-                                <ChevronDown className="w-4 h-4 text-white/50" />
-                            ) : (
-                                <ChevronRight className="w-4 h-4 text-white/50" />
-                            )}
-                        </button>
-                        {expandedSections.staff && (
-                            <div className="px-4 pb-4 space-y-2">
-                                <div className="flex gap-3 mb-3 pb-2 border-b border-white/5">
-                                    <button
-                                        onClick={() => toggleAllStaff(true)}
-                                        className="text-xs text-primary-400 hover:text-primary-300 font-medium"
-                                    >
-                                        {"Select All"}
-                                    </button>
-                                    <span className="text-white/20">|</span>
-                                    <button
-                                        onClick={() => toggleAllStaff(false)}
-                                        className="text-xs text-primary-400 hover:text-primary-300 font-medium"
-                                    >
-                                        {"Clear All"}
-                                    </button>
-                                </div>
-                                <label className="flex items-center gap-3 cursor-pointer group">
+                            <div className="flex gap-3 mb-3 pb-2 border-b border-white/5">
+                                <button
+                                    type="button"
+                                    onClick={() => toggleAllStaff(true)}
+                                    className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                >
+                                    {"Select All"}
+                                </button>
+                                <span className="text-white/20" aria-hidden="true">|</span>
+                                <button
+                                    type="button"
+                                    onClick={() => toggleAllStaff(false)}
+                                    className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                >
+                                    {"Clear All"}
+                                </button>
+                            </div>
+                            <label className="flex items-center gap-3 cursor-pointer group">
+                                <input
+                                    type="checkbox"
+                                    checked={staffFilters[''] ?? true}
+                                    onChange={(e) => setStaffFilters(prev => ({ ...prev, ['']: e.target.checked }))}
+                                    className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
+                                />
+                                <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors italic">
+                                    {"Unassigned"}
+                                </span>
+                            </label>
+                            {users.filter(u => u.role === 'staff' || u.role === 'admin').map(user => (
+                                <label key={user.username} className="flex items-center gap-3 cursor-pointer group">
                                     <input
                                         type="checkbox"
-                                        checked={staffFilters[''] ?? true}
-                                        onChange={(e) => setStaffFilters(prev => ({ ...prev, ['']: e.target.checked }))}
+                                        checked={staffFilters[user.username] ?? true}
+                                        onChange={(e) => setStaffFilters(prev => ({ ...prev, [user.username]: e.target.checked }))}
                                         className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
                                     />
-                                    <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors italic">
-                                        {"Unassigned"}
+                                    <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors">
+                                        {user.full_name || user.username}
                                     </span>
                                 </label>
-                                {users.filter(u => u.role === 'staff' || u.role === 'admin').map(user => (
-                                    <label key={user.username} className="flex items-center gap-3 cursor-pointer group">
-                                        <input
-                                            type="checkbox"
-                                            checked={staffFilters[user.username] ?? true}
-                                            onChange={(e) => setStaffFilters(prev => ({ ...prev, [user.username]: e.target.checked }))}
-                                            className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
-                                        />
-                                        <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors">
-                                            {user.full_name || user.username}
-                                        </span>
-                                    </label>
-                                ))}
-                            </div>
-                        )}
-                    </div>
+                            ))}
+                        </FilterSection>
                     )}
 
                     {/* Priority Level Filter */}
                     {operationalFilters && (
-                    <div className="border-b border-white/5">
-                        <button
-                            onClick={() => toggleSection('priority')}
-                            className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
+                        <FilterSection
+                            id="map-filter-priority"
+                            label="Priority level"
+                            title="Priority Level"
+                            expanded={expandedSections.priority}
+                            onToggle={() => toggleSection('priority')}
                         >
-                            <span className="text-sm font-semibold text-white">{"Priority Level"}</span>
-                            {expandedSections.priority ? (
-                                <ChevronDown className="w-4 h-4 text-white/50" />
-                            ) : (
-                                <ChevronRight className="w-4 h-4 text-white/50" />
-                            )}
-                        </button>
-                        {expandedSections.priority && (
-                            <div className="px-4 pb-4 space-y-2">
-                                {[
-                                    BANDS.map(b => ({
-                                        value: b.level, label: bandLabel(b.level), color: b.hex,
-                                    }))
-                                ].flat().map(option => (
-                                    <label key={option.value} className="flex items-center gap-3 cursor-pointer group">
-                                        <input
-                                            type="checkbox"
-                                            checked={priorityFilters[option.value]}
-                                            onChange={(e) => setPriorityFilters(prev => ({ ...prev, [option.value]: e.target.checked }))}
-                                            className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
-                                        />
-                                        <span
-                                            className="w-4 h-4 rounded-full shadow-lg"
-                                            style={{ backgroundColor: option.color }}
-                                        />
-                                        <span className="text-sm text-white/80 group-hover:text-white transition-colors">
-                                            {option.label}
-                                        </span>
-                                    </label>
-                                ))}
-                            </div>
-                        )}
-                    </div>
+                            {BANDS.map(b => ({ value: b.level, label: bandLabel(b.level), color: b.hex })).map(option => (
+                                <label key={option.value} className="flex items-center gap-3 cursor-pointer group">
+                                    <input
+                                        type="checkbox"
+                                        checked={priorityFilters[option.value]}
+                                        onChange={(e) => setPriorityFilters(prev => ({ ...prev, [option.value]: e.target.checked }))}
+                                        className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
+                                    />
+                                    <span
+                                        className="w-4 h-4 rounded-full shadow-lg"
+                                        style={{ backgroundColor: option.color }}
+                                        aria-hidden="true"
+                                    />
+                                    <span className="text-sm text-white/80 group-hover:text-white transition-colors">
+                                        {option.label}
+                                    </span>
+                                </label>
+                            ))}
+                        </FilterSection>
                     )}
 
                     {/* GeoJSON Layers */}
                     {operationalFilters && mapLayers.length > 0 && (
-                        <div className="border-b border-white/5">
-                            <button
-                                onClick={() => toggleSection('layers')}
-                                className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
-                            >
-                                <span className="text-sm font-semibold text-white">{"Map Layers"}</span>
-                                {expandedSections.layers ? (
-                                    <ChevronDown className="w-4 h-4 text-white/50" />
-                                ) : (
-                                    <ChevronRight className="w-4 h-4 text-white/50" />
-                                )}
-                            </button>
-                            {expandedSections.layers && (
-                                <div className="px-4 pb-4 space-y-2">
-                                    <div className="flex gap-3 mb-3 pb-2 border-b border-white/5">
-                                        <button
-                                            onClick={() => toggleAllLayers(true)}
-                                            className="text-xs text-primary-400 hover:text-primary-300 font-medium"
-                                        >
-                                            {"Show All"}
-                                        </button>
-                                        <span className="text-white/20">|</span>
-                                        <button
-                                            onClick={() => toggleAllLayers(false)}
-                                            className="text-xs text-primary-400 hover:text-primary-300 font-medium"
-                                        >
-                                            {"Hide All"}
-                                        </button>
-                                    </div>
-                                    {mapLayers.map(layer => (
-                                        <label key={layer.id} className="flex items-center gap-3 cursor-pointer group">
-                                            <input
-                                                type="checkbox"
-                                                checked={layerFilters[layer.id] ?? true}
-                                                onChange={(e) => setLayerFilters(prev => ({ ...prev, [layer.id]: e.target.checked }))}
-                                                className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
-                                            />
-                                            <span
-                                                className="w-4 h-4 rounded border-2"
-                                                style={{
-                                                    backgroundColor: layer.fill_color,
-                                                    borderColor: layer.stroke_color,
-                                                    opacity: 0.9
-                                                }}
-                                            />
-                                            <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors">
-                                                {layer.name}
-                                            </span>
-                                        </label>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
+                        <FilterSection
+                            id="map-filter-layers"
+                            label="Map layers"
+                            title="Map Layers"
+                            expanded={expandedSections.layers}
+                            onToggle={() => toggleSection('layers')}
+                        >
+                            <div className="flex gap-3 mb-3 pb-2 border-b border-white/5">
+                                <button
+                                    type="button"
+                                    onClick={() => toggleAllLayers(true)}
+                                    className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                >
+                                    {"Show All"}
+                                </button>
+                                <span className="text-white/20" aria-hidden="true">|</span>
+                                <button
+                                    type="button"
+                                    onClick={() => toggleAllLayers(false)}
+                                    className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                >
+                                    {"Hide All"}
+                                </button>
+                            </div>
+                            {mapLayers.map(layer => (
+                                <label key={layer.id} className="flex items-center gap-3 cursor-pointer group">
+                                    <input
+                                        type="checkbox"
+                                        checked={layerFilters[layer.id] ?? true}
+                                        onChange={(e) => setLayerFilters(prev => ({ ...prev, [layer.id]: e.target.checked }))}
+                                        className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
+                                    />
+                                    <span
+                                        className="w-4 h-4 rounded border-2"
+                                        style={{
+                                            backgroundColor: layer.fill_color,
+                                            borderColor: layer.stroke_color,
+                                            opacity: 0.9
+                                        }}
+                                        aria-hidden="true"
+                                    />
+                                    <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors">
+                                        {layer.name}
+                                    </span>
+                                </label>
+                            ))}
+                        </FilterSection>
                     )}
 
                     {/* Assignment Filter */}
-                    <div>
-                        <button
-                            onClick={() => toggleSection('assignment')}
-                            className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
-                        >
-                            <span className="text-sm font-semibold text-white flex items-center gap-2">
-                                <Users className="w-4 h-4 text-white/50" />
-                                {"Search Requests"}
-                            </span>
-                            {expandedSections.assignment ? (
-                                <ChevronDown className="w-4 h-4 text-white/50" />
-                            ) : (
-                                <ChevronRight className="w-4 h-4 text-white/50" />
+                    <FilterSection
+                        id="map-filter-search"
+                        label="Search requests"
+                        expanded={expandedSections.assignment}
+                        onToggle={() => toggleSection('assignment')}
+                        outerClassName=""
+                        contentClassName="px-4 pb-4"
+                        title={<>
+                            <Users className="w-4 h-4 text-white/50" aria-hidden="true" />
+                            {"Search Requests"}
+                        </>}
+                    >
+                        <div className="relative">
+                            {/* A placeholder is not a label: it disappears the
+                                moment anything is typed, and several screen
+                                readers never announce it at all (WCAG 3.3.2). */}
+                            <label htmlFor="map-request-search" className="sr-only">Search requests</label>
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" aria-hidden="true" />
+                            <input
+                                id="map-request-search"
+                                type="text"
+                                placeholder={"Staff, address, description..."}
+                                value={assignmentFilter}
+                                aria-describedby="map-request-search-help"
+                                onChange={(e) => setAssignmentFilter(e.target.value)}
+                                className="w-full pl-10 pr-10 py-3 bg-white/5 border border-white/10 rounded-xl text-sm text-white placeholder-white/40 focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/50 transition-all"
+                            />
+                            {assignmentFilter && (
+                                <button
+                                    type="button"
+                                    onClick={() => setAssignmentFilter('')}
+                                    aria-label="Clear search"
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-white/10 rounded-full transition-colors"
+                                >
+                                    <X className="w-4 h-4 text-white/50" aria-hidden="true" />
+                                </button>
                             )}
-                        </button>
-                        {expandedSections.assignment && (
-                            <div className="px-4 pb-4">
-                                <div className="relative">
-                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
-                                    <input
-                                        type="text"
-                                        placeholder={"Staff, address, description..."}
-                                        value={assignmentFilter}
-                                        onChange={(e) => setAssignmentFilter(e.target.value)}
-                                        className="w-full pl-10 pr-10 py-3 bg-white/5 border border-white/10 rounded-xl text-sm text-white placeholder-white/40 focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/50 transition-all"
-                                    />
-                                    {assignmentFilter && (
-                                        <button
-                                            onClick={() => setAssignmentFilter('')}
-                                            className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-white/10 rounded-full transition-colors"
-                                        >
-                                            <X className="w-4 h-4 text-white/50" />
-                                        </button>
-                                    )}
-                                </div>
-                                <p className="text-xs text-white/40 mt-2">
-                                    {"Filter by assigned staff, address, or description"}
-                                </p>
-                            </div>
-                        )}
-                    </div>
+                        </div>
+                        <p id="map-request-search-help" className="text-xs text-white/60 mt-2">
+                            {"Filter by assigned staff, address, or description"}
+                        </p>
+                    </FilterSection>
                 </div>
             </div>
 
             {/* Filter Toggle Button */}
             {!showFilters && (
                 <button
+                    type="button"
                     onClick={() => setShowFilters(true)}
+                    aria-expanded={false}
+                    aria-controls="map-filter-panel"
+                    aria-label="Show requests and filters panel"
                     className="absolute top-4 right-4 z-20 p-3 bg-[#1a1a2e]/95 backdrop-blur-md rounded-xl border border-white/20 hover:bg-primary-500/20 transition-all shadow-xl"
-                    title="Show Filters"
+                    title="Show requests and filters"
                 >
-                    <Layers className="w-5 h-5 text-white" />
+                    <Layers className="w-5 h-5 text-white" aria-hidden="true" />
                 </button>
             )}
 
             {/* Legend */}
             <div className="absolute bottom-4 left-4 z-10 bg-[#0f0f1a]/95 backdrop-blur-md rounded-xl border border-white/10 px-4 py-3 shadow-xl">
+                {/* How many pins are actually out there. Toggling a filter used
+                    to change the marker set with nothing on the page moving,
+                    so "did that filter do anything?" was unanswerable without
+                    counting dots; this is the visible half of the same status
+                    message announce() speaks (WCAG 4.1.3). */}
+                <p className="text-xs text-white/80 font-medium mb-2">
+                    {`${filteredRequests.length} of ${requests.length} requests plotted`}
+                </p>
                 <div className="flex items-center gap-5 text-xs">
-                    {Object.entries(STATUS_COLORS).map(([status, color]) => (
+                    {Object.keys(STATUS_COLORS).map((status) => (
                         <div key={status} className="flex items-center gap-2">
-                            <span className="w-3 h-3 rounded-full shadow-lg" style={{ backgroundColor: color }} />
-                            <span className="text-white/70 font-medium capitalize">{status.replace('_', ' ')}</span>
+                            <StatusSwatch status={status} />
+                            <span className="text-white/70 font-medium">{statusLabel(status)}</span>
                         </div>
                     ))}
                     {/* The shape, not the colour. An asset layer's colour is
@@ -968,8 +1168,7 @@ export default function StaffDashboardMap({
                     {mapLayers.length > 0 && (
                         <div className="flex items-center gap-2 pl-4 border-l border-white/15">
                             <span
-                                className="w-3 h-3 bg-white/70 shadow-lg"
-                                style={{ transform: 'rotate(45deg)' }}
+                                className="w-3 h-3 rounded-full border-2 border-white/70"
                                 aria-hidden="true"
                             />
                             <span className="text-white/70 font-medium">Town asset</span>

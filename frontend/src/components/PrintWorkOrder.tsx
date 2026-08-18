@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { ServiceRequestDetail, AuditLogEntry, RequestComment } from '../types';
 import { Printer } from 'lucide-react';
 import { MapProviderConfig, mapSnapshot } from '../maps';
 import { qrSvg } from '../utils/qr';
+import { useAnnounce } from '../context/AccessibilityContext';
 
 interface PrintWorkOrderProps {
     request: ServiceRequestDetail;
@@ -17,11 +19,28 @@ interface PrintWorkOrderProps {
     config?: MapProviderConfig;
 }
 
+const POPUP_BLOCKED =
+    'The work order could not open. Your browser blocked the print window — allow pop-ups for this site, then try again.';
+
 export default function PrintWorkOrder({ request, auditLog, comments, townshipName, logoUrl, config }: PrintWorkOrderProps) {
+    const announce = useAnnounce();
+    const [blocked, setBlocked] = useState(false);
+
     const handlePrint = () => {
         // Create a new window for printing
         const printWindow = window.open('', '_blank', 'width=800,height=600');
-        if (!printWindow) return;
+        /* A blocked pop-up used to return here in silence: the button did
+         * nothing, said nothing, and looked identical to a button that had
+         * worked, so the only clue was the browser's own blocked-pop-up
+         * indicator — which a screen reader user never meets. Nothing else in
+         * this component can fail visibly, so this is the one message it owes
+         * the operator. */
+        if (!printWindow) {
+            setBlocked(true);
+            announce(POPUP_BLOCKED, 'assertive');
+            return;
+        }
+        setBlocked(false);
 
         // A flat image from whichever provider the town uses, or null when it
         // cannot supply one -- Apple signs its snapshots server-side, and no
@@ -109,7 +128,14 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
             <div class="section">
                 <h3>${icons.camera} Photos (${request.media_urls.length})</h3>
                 <div class="photos">
-                    ${request.media_urls.map(url => `<img src="${url}" alt="Issue photo" />`).join('')}
+                    ${request.media_urls.map((url, i) =>
+                        /* Every photo carried the identical alt text, so a
+                           read-aloud or a text extraction of this sheet said
+                           "Issue photo" three times with nothing to tell the
+                           three apart. Numbering them at least says which one
+                           is being referred to. */
+                        `<img src="${url}" alt="Photo ${i + 1} of ${request.media_urls!.length} submitted with request ${request.service_request_id}" />`
+                    ).join('')}
                 </div>
             </div>
         ` : '';
@@ -303,7 +329,12 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
 
         const html = `
             <!DOCTYPE html>
-            <html>
+            <!-- WCAG 3.1.1: the generated document is its own page, so it needs
+                 its own language. Without it a screen reader reads a work order
+                 in whatever voice it happened to be left in. The sheet's own
+                 wording is the staff console's language, not the resident's
+                 preferred one — that governs the correspondence, not this. -->
+            <html lang="${document.documentElement.lang || 'en'}">
             <head>
                 <title>Work Order - ${request.service_request_id}</title>
                 <style>
@@ -874,13 +905,29 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
     };
 
     return (
-        <button
-            onClick={handlePrint}
-            className="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors text-sm"
-            title="Print Work Order as PDF"
-        >
-            <Printer className="w-4 h-4" />
-            <span>Print Work Order</span>
-        </button>
+        <div className="flex flex-col gap-2">
+            <button
+                type="button"
+                onClick={handlePrint}
+                aria-describedby={blocked ? 'print-work-order-error' : undefined}
+                className="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors text-sm"
+                title="Print Work Order as PDF"
+            >
+                <Printer className="w-4 h-4" aria-hidden="true" />
+                <span>Print Work Order</span>
+            </button>
+            {blocked && (
+                /* Visible as well as announced: a sighted operator got no
+                 * feedback either, and "nothing happened" is the hardest kind
+                 * of failure to report to a helpdesk. */
+                <p
+                    id="print-work-order-error"
+                    role="alert"
+                    className="max-w-xs text-xs text-amber-200 bg-amber-500/10 border border-amber-400/30 rounded-lg px-2.5 py-2"
+                >
+                    {POPUP_BLOCKED}
+                </p>
+            )}
+        </div>
     );
 }

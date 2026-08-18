@@ -10,6 +10,37 @@ import api, { HealthDashboard, RunbookResult, ProactiveHealth, HealthCheck } fro
 import type { ConnectorHealth } from '../types';
 import { ALERTING_STATUSES, hasAlert } from './capabilityUI';
 import { useDialog } from './DialogProvider';
+import { useAnnounce } from '../context/AccessibilityContext';
+
+/* Status words a person can read.
+ *
+ * These badges printed the raw enum -- `not_configured`, `fallback` -- and
+ * leaned on their colour to say whether that was good news. Somebody who
+ * cannot tell green from grey was left with an identifier out of the database,
+ * and "fallback" does not say, in any colour, that the service is running on a
+ * substitute. The colour still carries the same meaning; it is no longer the
+ * only thing that does (WCAG 1.4.1). */
+const STATUS_LABELS: Record<string, string> = {
+    running: 'Running',
+    healthy: 'Healthy',
+    stopped: 'Stopped',
+    error: 'Error',
+    unknown: 'Unknown',
+    not_configured: 'Not set up',
+    configured: 'Set up',
+    disabled: 'Turned off',
+    fallback: 'Using a fallback',
+    degraded: 'Degraded',
+    warning: 'Warning',
+    critical: 'Critical',
+    working: 'Working',
+    failing: 'Failing',
+    down: 'Down',
+    stale: 'Not checked recently',
+};
+
+const statusLabel = (status: string): string =>
+    STATUS_LABELS[status] ?? String(status).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
 
 /* Same list the provider cards gate their mute button on, so "is this
  * alerting?" cannot mean two different things in two places. */
@@ -62,6 +93,7 @@ export default function OperationsPanel() {
      * rather than under both of them. */
     const [muteError, setMuteError] = useState<{ id: string; message: string } | null>(null);
     const dialog = useDialog();
+    const announce = useAnnounce();
 
     const mutedUntilOf = (c: HealthCheck): string | null =>
         c.key in muteOverride ? muteOverride[c.key] : (c.muted ? (c.muted_until ?? null) : null);
@@ -127,7 +159,7 @@ export default function OperationsPanel() {
             className="shrink-0 px-2.5 py-1 text-xs rounded-md border border-slate-600/60 text-gray-300 hover:text-white hover:border-slate-400/60 disabled:opacity-50 disabled:cursor-not-allowed"
         >
             {mutingCheck === id
-                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
                 : (isMuted ? 'Unmute' : 'Mute alerts')}
         </button>
     );
@@ -200,6 +232,18 @@ export default function OperationsPanel() {
         try {
             const result = await api.executeRunbook(action);
             setLastAction(result);
+            /* Restarting the services is the most consequential button on this
+             * page and its result appeared only as a card sliding in at the
+             * bottom of a long scroll -- no announcement, and for an admin who
+             * cannot see it, nothing at all separating "restarted everything"
+             * from "did nothing". Failures go out assertively because the
+             * follow-up action is immediate. */
+            announce(
+                result.status === 'success'
+                    ? `${label} finished successfully.`
+                    : `${label} ${result.status === 'partial' ? 'partly failed' : 'failed'}.`,
+                result.status === 'success' ? 'polite' : 'assertive',
+            );
             setTimeout(fetchAll, 2000);
         } catch (err: any) {
             setLastAction({
@@ -209,11 +253,14 @@ export default function OperationsPanel() {
                 status: 'error',
                 details: { error: err.message },
             });
+            announce(`${label} failed: ${err?.message || 'the server did not answer'}.`, 'assertive');
         } finally {
             setRunbookLoading(null);
         }
     };
 
+    /* Colour only. The words beside it come from statusLabel(), because a badge
+     * whose only content was the enum made the colour the real message. */
     const getStatusBadge = (status: string) => {
         const colors: Record<string, string> = {
             running: 'bg-green-500/20 text-green-300 border-green-500/30',
@@ -242,13 +289,13 @@ export default function OperationsPanel() {
         return (
             <Card className="bg-red-500/10 border-red-500/20">
                 <div className="flex items-center gap-3">
-                    <XCircle className="w-6 h-6 text-red-400" />
+                    <XCircle className="w-6 h-6 text-red-400" aria-hidden="true" />
                     <div className="flex-1">
                         <h3 className="text-lg font-semibold text-red-300">Error Loading Dashboard</h3>
                         <p className="text-red-200/80 mt-1">{error}</p>
                     </div>
                     <Button onClick={fetchAll} disabled={isLoading}>
-                        <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                        <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
                         Retry
                     </Button>
                 </div>
@@ -262,7 +309,7 @@ export default function OperationsPanel() {
             <div className="flex items-center justify-between">
                 <div>
                     <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                        <Activity className="w-6 h-6 text-blue-400" />
+                        <Activity className="w-6 h-6 text-blue-400" aria-hidden="true" />
                         System Dashboard
                     </h2>
                     <p className="text-gray-300 text-sm mt-1">
@@ -270,7 +317,7 @@ export default function OperationsPanel() {
                     </p>
                 </div>
                 <Button onClick={fetchAll} disabled={isLoading} variant="secondary">
-                    <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
                     Refresh
                 </Button>
             </div>
@@ -281,7 +328,7 @@ export default function OperationsPanel() {
                     {/* Infrastructure Status */}
                     <Card className={`${health.overall_status === 'healthy' ? 'bg-green-500/10 border-green-500/30' : 'bg-yellow-500/10 border-yellow-500/30'}`}>
                         <div className="flex items-center gap-3">
-                            <Server className="w-8 h-8 text-blue-400" />
+                            <Server className="w-8 h-8 text-blue-400" aria-hidden="true" />
                             <div>
                                 <p className="text-gray-300 text-xs uppercase tracking-wide">Infrastructure</p>
                                 <p className="text-white font-semibold">
@@ -306,11 +353,11 @@ export default function OperationsPanel() {
                     {/* Database Status */}
                     <Card className={`${health.database.status === 'healthy' ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
                         <div className="flex items-center gap-3">
-                            <Database className="w-8 h-8 text-purple-400" />
+                            <Database className="w-8 h-8 text-purple-400" aria-hidden="true" />
                             <div>
                                 <p className="text-gray-300 text-xs uppercase tracking-wide">PostgreSQL</p>
                                 <p className="text-white font-semibold">{health.database.size || '?'}</p>
-                                <p className="text-gray-500 text-xs">{health.database.connections || 0} connections</p>
+                                <p className="text-gray-300 text-xs">{health.database.connections || 0} connections</p>
                             </div>
                         </div>
                     </Card>
@@ -318,7 +365,7 @@ export default function OperationsPanel() {
                     {/* Cache Status */}
                     <Card className={`${health.cache.status === 'healthy' ? 'bg-green-500/10 border-green-500/30' : 'bg-yellow-500/10 border-yellow-500/30'}`}>
                         <div className="flex items-center gap-3">
-                            <HardDrive className="w-8 h-8 text-orange-400" />
+                            <HardDrive className="w-8 h-8 text-orange-400" aria-hidden="true" />
                             <div>
                                 <p className="text-gray-300 text-xs uppercase tracking-wide">Redis Cache</p>
                                 <p className="text-white font-semibold">{health.cache.used_memory || 'N/A'}</p>
@@ -343,7 +390,7 @@ export default function OperationsPanel() {
             {proactive && (
                 <Card>
                     <h3 className="text-lg font-semibold text-white mb-1 flex items-center gap-2">
-                        <Cpu className="w-5 h-5 text-cyan-400" />
+                        <Cpu className="w-5 h-5 text-cyan-400" aria-hidden="true" />
                         Container resources
                     </h3>
                     <p className="text-gray-400 text-xs mb-4">
@@ -367,21 +414,38 @@ export default function OperationsPanel() {
                                         <span className="text-gray-300 text-xs uppercase tracking-wide">{c.label}</span>
                                         <span className={`text-lg font-semibold ${c.status === 'critical' ? 'text-red-300'
                                             : c.status === 'warning' ? 'text-amber-300' : 'text-white'}`}>
-                                            {pct === null ? '—' : `${pct}%`}
+                                            {/* The dash is the visible reading. It says
+                                                "no number" to somebody looking at it and
+                                                nothing at all when read aloud, so the
+                                                words travel with it. */}
+                                            {pct === null
+                                                ? <>—<span className="sr-only">no reading</span></>
+                                                : `${pct}%`}
                                         </span>
                                     </div>
-                                    <div
-                                        className="h-1.5 rounded-full bg-white/10 overflow-hidden"
-                                        role="meter"
-                                        aria-label={c.label}
-                                        aria-valuenow={pct ?? undefined}
-                                        aria-valuemin={0}
-                                        aria-valuemax={100}
-                                    >
-                                        {pct !== null && (
+                                    {/* A meter with no aria-valuenow is announced as
+                                        zero, so a probe that could not measure anything
+                                        read exactly like a container using none of its
+                                        memory -- the most reassuring possible rendering
+                                        of "we do not know". A gauge with no reading is
+                                        not a gauge: without a number the track is a
+                                        decorative empty bar, and the words above carry
+                                        the state. */}
+                                    {pct === null ? (
+                                        <div className="h-1.5 rounded-full bg-white/10 overflow-hidden" aria-hidden="true" />
+                                    ) : (
+                                        <div
+                                            className="h-1.5 rounded-full bg-white/10 overflow-hidden"
+                                            role="meter"
+                                            aria-label={c.label}
+                                            aria-valuenow={pct}
+                                            aria-valuemin={0}
+                                            aria-valuemax={100}
+                                            aria-valuetext={`${pct}% of the limit used`}
+                                        >
                                             <div className={`h-full ${bar}`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
-                                        )}
-                                    </div>
+                                        </div>
+                                    )}
                                     <p className="text-gray-400 text-xs mt-2">{c.message}</p>
                                 </div>
                             );
@@ -395,7 +459,7 @@ export default function OperationsPanel() {
                 proactive.overall_status === 'ok' ? (
                     <Card className="bg-green-500/5 border-green-500/20">
                         <div className="flex items-center gap-3">
-                            <CheckCircle className="w-5 h-5 text-green-400" />
+                            <CheckCircle className="w-5 h-5 text-green-400" aria-hidden="true" />
                             <p className="text-green-200/90 text-sm font-medium">
                                 All early-warning checks passing (disk, memory, database, backups, cache).
                             </p>
@@ -404,7 +468,7 @@ export default function OperationsPanel() {
                 ) : (
                     <Card className={proactive.overall_status === 'critical' ? 'bg-red-500/5 border-red-500/30' : 'bg-amber-500/5 border-amber-500/30'}>
                         <h3 className={`text-lg font-semibold mb-1 flex items-center gap-2 ${proactive.overall_status === 'critical' ? 'text-red-300' : 'text-amber-300'}`}>
-                            <AlertTriangle className="w-5 h-5" />
+                            <AlertTriangle className="w-5 h-5" aria-hidden="true" />
                             Needs attention {proactive.overall_status === 'critical' ? '— act now' : 'soon'}
                         </h3>
                         <p className="text-gray-400 text-xs mb-3">Leading indicators — resolving these prevents an outage. Admins are emailed when a check crosses a threshold.</p>
@@ -468,7 +532,7 @@ export default function OperationsPanel() {
             {systemProbes.length > 0 && (
                 <Card>
                     <h3 className="text-lg font-semibold text-white mb-1 flex items-center gap-2">
-                        <Server className="w-5 h-5 text-cyan-400" />
+                        <Server className="w-5 h-5 text-cyan-400" aria-hidden="true" />
                         Infrastructure probes
                     </h3>
                     <p className="text-gray-400 text-xs mb-3">
@@ -521,7 +585,7 @@ export default function OperationsPanel() {
             {health && (
                 <Card>
                     <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                        <Server className="w-5 h-5 text-blue-400" />
+                        <Server className="w-5 h-5 text-blue-400" aria-hidden="true" />
                         Infrastructure Services
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
@@ -532,10 +596,10 @@ export default function OperationsPanel() {
                                     <div className="flex items-center justify-between mb-2">
                                         <span className="text-white font-medium capitalize">{name}</span>
                                         <span className={`px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(svc.status)}`}>
-                                            {svc.status}
+                                            {statusLabel(svc.status)}
                                         </span>
                                     </div>
-                                    <p className="text-gray-500 text-xs truncate mb-2">{svc.uptime || 'Checking...'}</p>
+                                    <p className="text-gray-300 text-xs truncate mb-2">{svc.uptime || 'Checking...'}</p>
                                     {canRestart(name) && (
                                         <Button
                                             size="sm"
@@ -544,7 +608,7 @@ export default function OperationsPanel() {
                                             onClick={() => executeRunbook(`restart-${name}`, `Restart ${name}`)}
                                             disabled={runbookLoading !== null}
                                         >
-                                            <RotateCcw className="w-3 h-3 mr-1" />
+                                            <RotateCcw className="w-3 h-3 mr-1" aria-hidden="true" />
                                             Restart
                                         </Button>
                                     )}
@@ -594,7 +658,7 @@ export default function OperationsPanel() {
             {connectorRollup && (
                 <Card>
                     <h3 className="text-lg font-semibold text-white mb-1 flex items-center gap-2">
-                        <Cloud className="w-5 h-5 text-purple-400" />
+                        <Cloud className="w-5 h-5 text-purple-400" aria-hidden="true" />
                         Service providers
                     </h3>
                     <p className="text-white/55 text-xs mb-4">
@@ -603,12 +667,12 @@ export default function OperationsPanel() {
                     <div className="flex flex-wrap items-center gap-2.5">
                         {connectorRollup.working > 0 && (
                             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl text-xs font-semibold border bg-gradient-to-r from-emerald-500/20 to-teal-500/20 text-emerald-300 border-emerald-500/30">
-                                <CheckCircle className="w-3.5 h-3.5" /> {connectorRollup.working} working
+                                <CheckCircle className="w-3.5 h-3.5" aria-hidden="true" /> {connectorRollup.working} working
                             </span>
                         )}
                         {connectorRollup.failing > 0 && (
                             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl text-xs font-semibold border bg-gradient-to-r from-red-500/25 to-rose-500/20 text-red-200 border-red-400/35">
-                                <AlertTriangle className="w-3.5 h-3.5" /> {connectorRollup.failing} not working
+                                <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" /> {connectorRollup.failing} not working
                             </span>
                         )}
                         {connectorRollup.unchecked > 0 && (
@@ -629,7 +693,7 @@ export default function OperationsPanel() {
             {degradedServices.length > 0 && (
                 <Card className="bg-amber-500/5 border-amber-500/20">
                     <h3 className="text-lg font-semibold text-amber-300 mb-3 flex items-center gap-2">
-                        <Wrench className="w-5 h-5" />
+                        <Wrench className="w-5 h-5" aria-hidden="true" />
                         Troubleshooting Tips
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -656,7 +720,7 @@ export default function OperationsPanel() {
             {/* Emergency Operations */}
             <Card className="bg-slate-800/50">
                 <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                    <Play className="w-5 h-5 text-green-400" />
+                    <Play className="w-5 h-5 text-green-400" aria-hidden="true" />
                     Emergency Operations
                 </h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -665,7 +729,7 @@ export default function OperationsPanel() {
                         onClick={() => executeRunbook('restart-all', 'Restart All Services')}
                         disabled={runbookLoading !== null}
                     >
-                        {runbookLoading === 'restart-all' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RotateCcw className="w-4 h-4 mr-2" />}
+                        {runbookLoading === 'restart-all' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" /> : <RotateCcw className="w-4 h-4 mr-2" aria-hidden="true" />}
                         Restart All
                     </Button>
                     <Button
@@ -673,7 +737,7 @@ export default function OperationsPanel() {
                         onClick={() => executeRunbook('clear-cache', 'Clear Cache')}
                         disabled={runbookLoading !== null}
                     >
-                        {runbookLoading === 'clear-cache' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
+                        {runbookLoading === 'clear-cache' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" /> : <Trash2 className="w-4 h-4 mr-2" aria-hidden="true" />}
                         Clear Cache
                     </Button>
                     <Button
@@ -681,7 +745,7 @@ export default function OperationsPanel() {
                         onClick={() => executeRunbook('vacuum', 'DB Maintenance')}
                         disabled={runbookLoading !== null}
                     >
-                        {runbookLoading === 'vacuum' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Database className="w-4 h-4 mr-2" />}
+                        {runbookLoading === 'vacuum' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" /> : <Database className="w-4 h-4 mr-2" aria-hidden="true" />}
                         DB Vacuum
                     </Button>
                     <Button
@@ -689,7 +753,7 @@ export default function OperationsPanel() {
                         onClick={fetchAll}
                         disabled={isLoading}
                     >
-                        <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                        <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
                         Refresh
                     </Button>
                 </div>
@@ -699,7 +763,7 @@ export default function OperationsPanel() {
             {health?.last_backup?.created && (
                 <Card className="bg-slate-800/30">
                     <div className="flex items-center gap-3">
-                        <Clock className="w-5 h-5 text-green-400" />
+                        <Clock className="w-5 h-5 text-green-400" aria-hidden="true" />
                         <div>
                             <span className="text-white font-medium">Last Backup</span>
                             <span className="text-gray-300 text-sm ml-3">
@@ -720,9 +784,9 @@ export default function OperationsPanel() {
                     >
                         <Card className={`${lastAction.status === 'success' ? 'bg-green-500/10 border-green-500/30' : lastAction.status === 'partial' ? 'bg-amber-500/10 border-amber-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
                             <div className="flex items-start gap-3">
-                                {lastAction.status === 'success' ? <CheckCircle className="w-5 h-5 text-green-400 mt-0.5" /> : <XCircle className="w-5 h-5 text-red-400 mt-0.5" />}
+                                {lastAction.status === 'success' ? <CheckCircle className="w-5 h-5 text-green-400 mt-0.5" aria-hidden="true" /> : <XCircle className="w-5 h-5 text-red-400 mt-0.5" aria-hidden="true" />}
                                 <div className="flex-1 min-w-0">
-                                    <span className="font-medium text-white">{lastAction.action}: {lastAction.status}</span>
+                                    <span className="font-medium text-white">{lastAction.action}: {statusLabel(lastAction.status)}</span>
                                     <span className="text-gray-300 text-sm ml-2">at {new Date(lastAction.timestamp).toLocaleTimeString()}</span>
                                     {(() => {
                                         const d = (lastAction.details || {}) as Record<string, any>;
@@ -740,7 +804,7 @@ export default function OperationsPanel() {
             {/* Loading State */}
             {isLoading && !health && (
                 <div className="flex items-center justify-center py-12">
-                    <RefreshCw className="w-8 h-8 text-blue-400 animate-spin" />
+                    <RefreshCw className="w-8 h-8 text-blue-400 animate-spin" aria-hidden="true" />
                     <span className="ml-3 text-gray-300">Loading system dashboard...</span>
                 </div>
             )}
