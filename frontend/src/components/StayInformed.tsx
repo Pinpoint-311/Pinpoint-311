@@ -197,20 +197,25 @@ function Field({ label, hint, optional, children }: {
 function Consent({ checked, onChange, children }: {
     checked: boolean; onChange: (v: boolean) => void; children: React.ReactNode;
 }) {
+    /* The real checkbox is sr-only and this square is its only visible form, so
+     * it has to show focus as well as checked state -- without the ring,
+     * tabbing onto the consent box moved nothing on screen (WCAG 2.4.7).
+     * peer-* needs the input to precede its surrogate in the DOM, so the input
+     * is first and the square is ordered back with `order-first`. */
     return (
         <label className="flex items-start gap-3 cursor-pointer group">
-            <span className={`mt-0.5 w-5 h-5 rounded-lg shrink-0 flex items-center justify-center border transition-all duration-200 ${checked
+            <input
+                type="checkbox"
+                checked={checked}
+                onChange={(e) => onChange(e.target.checked)}
+                className="sr-only peer"
+            />
+            <span className={`order-first mt-0.5 w-5 h-5 rounded-lg shrink-0 flex items-center justify-center border transition-all duration-200 peer-focus-visible:ring-2 peer-focus-visible:ring-white peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-slate-900 ${checked
                 ? 'bg-gradient-to-br from-primary-400 to-indigo-500 border-transparent shadow-lg shadow-primary-500/25'
                 : 'bg-white/[0.06] border-white/20 group-hover:border-white/35'
                 }`}>
                 {checked && <Check className="w-3.5 h-3.5 text-white" strokeWidth={3} />}
             </span>
-            <input
-                type="checkbox"
-                checked={checked}
-                onChange={(e) => onChange(e.target.checked)}
-                className="sr-only"
-            />
             <span className="text-sm text-white/65 leading-snug">{children}</span>
         </label>
     );
@@ -339,12 +344,25 @@ function RegisterPanel({ url, embedUrl, startEmbedded, onShowForm, onDone }: {
     );
 }
 
-function StayInformedForm({ onDone }: { onDone: (how: Outcome) => void }) {
+function StayInformedForm({ onDone, onDirtyChange, onStatus }: {
+    onDone: (how: Outcome) => void;
+    /** Told whenever the form stops or starts being pristine, so the host can
+     *  refuse to throw it away on a stray backdrop click. */
+    onDirtyChange: (dirty: boolean) => void;
+    /** Status text for the dialog's live region. */
+    onStatus: (message: string) => void;
+}) {
     const [form, setForm] = useState<FormState>(EMPTY);
     const [state, setState] = useState<'editing' | 'sending' | 'sent' | 'fallback'>('editing');
 
     const set = <K extends keyof FormState>(key: K) => (value: FormState[K]) =>
         setForm(prev => ({ ...prev, [key]: value }));
+
+    /* Compared against EMPTY rather than tracked with a flag, so clearing the
+     * last field you typed makes the form pristine again -- otherwise one
+     * keystroke would make the dialog sticky for the rest of its life. */
+    const dirty = (Object.keys(EMPTY) as (keyof FormState)[]).some(k => form[k] !== EMPTY[k]);
+    useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
 
     const complete = form.organization.trim() && form.contact_name.trim() && form.contact_email.trim();
 
@@ -352,6 +370,11 @@ function StayInformedForm({ onDone }: { onDone: (how: Outcome) => void }) {
         event.preventDefault();
         if (!complete || state === 'sending') return;
         setState('sending');
+        /* Every one of these transitions replaces the dialog body with
+         * different text and nothing else moves, which is exactly the case
+         * WCAG 4.1.3 covers -- previously a screen-reader user pressed Submit
+         * and the dialog went quiet. */
+        onStatus('Sending your details.');
         try {
             const response = await fetch(REGISTRATION_ENDPOINT, {
                 method: 'POST',
@@ -363,12 +386,14 @@ function StayInformedForm({ onDone }: { onDone: (how: Outcome) => void }) {
             });
             if (!response.ok) throw new Error(String(response.status));
             setState('sent');
+            onStatus('Thank you, we have your details.');
             recordDismissal('submitted');
         } catch {
             // Deliberately not an error. The most likely cause is a town that
             // firewalls outbound traffic, which is a reasonable thing for a
             // municipal network to do and not a mistake to report back at them.
             setState('fallback');
+            onStatus("We couldn't reach pinpoint311.org from this browser. The same form is on our website.");
         }
     }
 
@@ -667,6 +692,64 @@ export function StayInformedHost({ ready, prefill }: { ready: boolean; prefill?:
         setShowForm(false);
     };
 
+    /* The dialog declared role="dialog" aria-modal="true" and then behaved like
+     * nothing of the sort: Tab walked straight out of it onto the page behind
+     * the backdrop, nothing focused it when it appeared, and Escape did
+     * nothing. aria-modal tells a screen reader the rest of the page is
+     * unavailable, so leaving focus able to reach it stranded people in content
+     * their screen reader had already written off (WCAG 2.1.2, 2.4.3). */
+    const dialogRef = useRef<HTMLDivElement>(null);
+    const [formDirty, setFormDirty] = useState(false);
+    const [status, setStatus] = useState('');
+    const [discardArmed, setDiscardArmed] = useState(false);
+
+    useEffect(() => {
+        if (!open) { setFormDirty(false); setStatus(''); setDiscardArmed(false); return; }
+        const frame = window.requestAnimationFrame(() => dialogRef.current?.focus());
+        return () => window.cancelAnimationFrame(frame);
+    }, [open]);
+
+    const handleDialogKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (e.key === 'Escape') {
+            e.stopPropagation();
+            /* Escape closes -- except when it would take seven filled-in fields
+             * with it. Then the first press says so and the second one goes
+             * through, which keeps Escape working for keyboard users without
+             * making it a one-key way to lose everything typed (WCAG 3.3.4). */
+            if (formDirty && !discardArmed) {
+                setDiscardArmed(true);
+                setStatus('Press Escape again to close and discard what you have entered.');
+                return;
+            }
+            finish('not-now');
+            return;
+        }
+        if (discardArmed) setDiscardArmed(false);
+        if (e.key !== 'Tab') return;
+
+        const focusable = Array.from(
+            dialogRef.current?.querySelectorAll<HTMLElement>(
+                'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), iframe, [tabindex]:not([tabindex="-1"])',
+            ) ?? [],
+        );
+        if (focusable.length === 0) {
+            e.preventDefault();
+            dialogRef.current?.focus();
+            return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey) {
+            if (document.activeElement === first || document.activeElement === dialogRef.current) {
+                e.preventDefault();
+                last.focus();
+            }
+        } else if (document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+        }
+    };
+
     return (
         <>
             <AnimatePresence>
@@ -676,15 +759,24 @@ export function StayInformedHost({ ready, prefill }: { ready: boolean; prefill?:
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/50 backdrop-blur-sm overflow-y-auto"
-                        // Clicking away is a dismissal like any other -- it is
-                        // an optional form, not something to trap somebody in.
-                        onClick={() => finish('not-now')}
+                        /* Clicking away is a dismissal like any other -- it is
+                           an optional form, not something to trap somebody in.
+                           Not once anything has been typed, though: this both
+                           destroys a part-filled seven-field form and records a
+                           permanent dismissal, off a click that is most often a
+                           mis-aimed one (WCAG 3.3.4). With entries present the
+                           backdrop does nothing and the explicit Close, "Not
+                           now" and Escape remain the ways out. */
+                        onClick={() => { if (!formDirty) finish('not-now'); }}
                     >
                         <motion.div
                             initial={{ opacity: 0, y: 24, scale: 0.97 }}
                             animate={{ opacity: 1, y: 0, scale: 1 }}
                             exit={{ opacity: 0, y: 12, scale: 0.98 }}
                             transition={{ type: 'spring', stiffness: 300, damping: 26 }}
+                            ref={dialogRef}
+                            tabIndex={-1}
+                            onKeyDown={handleDialogKeyDown}
                             onClick={(e) => e.stopPropagation()}
                             role="dialog"
                             aria-modal="true"
@@ -715,6 +807,13 @@ export function StayInformedHost({ ready, prefill }: { ready: boolean; prefill?:
                                 </h2>
                             </div>
 
+                            {/* Mounted with the dialog and written into later, so
+                              * assistive tech has the region registered before any
+                              * message lands in it. */}
+                            <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+                                {status}
+                            </div>
+
                             {hasOperatorForm
                                 ? <RegisterPanel
                                     url={formUrl}
@@ -723,7 +822,11 @@ export function StayInformedHost({ ready, prefill }: { ready: boolean; prefill?:
                                     onShowForm={() => setShowForm(true)}
                                     onDone={finish}
                                 />
-                                : <StayInformedForm onDone={finish} />}
+                                : <StayInformedForm
+                                    onDone={finish}
+                                    onDirtyChange={setFormDirty}
+                                    onStatus={setStatus}
+                                />}
                         </motion.div>
                     </motion.div>
                 )}

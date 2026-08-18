@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
     RefreshCw,
     ChevronDown,
@@ -14,6 +14,7 @@ import {
     GitCommit
 } from 'lucide-react';
 import { useConfirmDeploy } from './DialogProvider';
+import { useOptionalAnnounce } from './liveAnnounce';
 
 interface Release {
     tag: string;
@@ -93,6 +94,40 @@ export default function VersionSwitcher() {
     const [message, setMessage] = useState<string | null>(null);
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const [showDeployLog, setShowDeployLog] = useState(false);
+
+    const announce = useOptionalAnnounce();
+    const dropdownRef = useRef<HTMLDivElement>(null);
+    const triggerRef = useRef<HTMLButtonElement>(null);
+
+    /* The version menu had no Escape and no outside-click close, so once it was
+     * open a keyboard user could only leave it by tabbing through every commit
+     * in it. Focus goes back to the trigger, which is where they were. */
+    useEffect(() => {
+        if (!dropdownOpen) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') { setDropdownOpen(false); triggerRef.current?.focus(); }
+        };
+        const onClickAway = (e: MouseEvent) => {
+            const t = e.target as Node;
+            if (!dropdownRef.current?.contains(t) && !triggerRef.current?.contains(t)) setDropdownOpen(false);
+        };
+        document.addEventListener('keydown', onKey);
+        document.addEventListener('mousedown', onClickAway);
+        return () => {
+            document.removeEventListener('keydown', onKey);
+            document.removeEventListener('mousedown', onClickAway);
+        };
+    }, [dropdownOpen]);
+
+    /* A deploy runs for minutes and reports through `message`. Routed through
+     * the app's live region rather than a second aria-live node of its own. */
+    useEffect(() => {
+        if (message) announce(message);
+    }, [message, announce]);
+
+    useEffect(() => {
+        if (error) announce(error, 'assertive');
+    }, [error, announce]);
 
     const fetchCurrentVersion = async () => {
         try {
@@ -299,14 +334,24 @@ export default function VersionSwitcher() {
         });
     };
 
+    /** Pass, fail and pending were glyph plus colour only, with the check's
+     *  full name reachable only as a `title` on a div nobody can focus. */
+    const statusWord = (check: SecurityCheck) => {
+        if (check.status === 'not_found') return 'not run';
+        if (check.status === 'in_progress' || check.status === 'queued') return 'running';
+        if (check.passed === true) return 'passed';
+        if (check.passed === false) return 'failed';
+        return 'pending';
+    };
+
     const getStatusIcon = (check: SecurityCheck) => {
-        if (check.status === 'not_found') return <span className="text-white/30">—</span>;
+        if (check.status === 'not_found') return <span className="text-white/50" aria-hidden="true">—</span>;
         if (check.status === 'in_progress' || check.status === 'queued') {
-            return <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin" />;
+            return <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin" aria-hidden="true" />;
         }
-        if (check.passed === true) return <Check className="w-3.5 h-3.5 text-emerald-400" />;
-        if (check.passed === false) return <X className="w-3.5 h-3.5 text-red-400" />;
-        return <Clock className="w-3.5 h-3.5 text-white/50" />;
+        if (check.passed === true) return <Check className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />;
+        if (check.passed === false) return <X className="w-3.5 h-3.5 text-red-400" aria-hidden="true" />;
+        return <Clock className="w-3.5 h-3.5 text-white/50" aria-hidden="true" />;
     };
 
     // Parse commit message into type and description
@@ -346,11 +391,13 @@ export default function VersionSwitcher() {
                     </div>
                 </div>
                 <button
+                    type="button"
                     onClick={() => { fetchCurrentVersion(); fetchReleases(); }}
                     className="p-1.5 hover:bg-white/10 rounded-lg transition-colors flex-shrink-0"
+                    aria-label="Refresh version list"
                     title="Refresh"
                 >
-                    <RefreshCw className={`w-3.5 h-3.5 text-white/60 ${isLoading ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`w-3.5 h-3.5 text-white/60 ${isLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
                 </button>
             </div>
 
@@ -364,7 +411,12 @@ export default function VersionSwitcher() {
             {/* Version Selector */}
             <div className="relative">
                 <button
+                    type="button"
+                    ref={triggerRef}
                     onClick={() => setDropdownOpen(!dropdownOpen)}
+                    aria-expanded={dropdownOpen}
+                    aria-haspopup="menu"
+                    aria-controls="version-switcher-menu"
                     className="w-full flex items-center justify-between bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white hover:bg-white/15 transition-colors text-sm"
                 >
                     <span className="flex items-center gap-2 min-w-0">
@@ -379,7 +431,7 @@ export default function VersionSwitcher() {
                 </button>
 
                 {dropdownOpen && (
-                    <div className="absolute z-50 mt-2 w-[calc(100%+60px)] -left-[30px] bg-slate-800 border border-white/20 rounded-xl shadow-xl max-h-80 overflow-y-auto">
+                    <div id="version-switcher-menu" ref={dropdownRef} className="absolute z-50 mt-2 w-[calc(100%+60px)] -left-[30px] bg-slate-800 border border-white/20 rounded-xl shadow-xl max-h-80 overflow-y-auto">
                         {/* Releases */}
                         {releases.length > 0 && (
                             <>
@@ -389,6 +441,9 @@ export default function VersionSwitcher() {
                                 {releases.map((release) => (
                                     <button
                                         key={release.tag}
+                                        type="button"
+                                        // Selection was a background tint and nothing else.
+                                        aria-pressed={selectedRef === release.tag}
                                         onClick={() => handleSelectRef(release.tag, release, null)}
                                         className={`w-full px-3 py-2 text-left hover:bg-white/10 transition-colors ${selectedRef === release.tag ? 'bg-indigo-500/20' : ''
                                             }`}
@@ -414,6 +469,8 @@ export default function VersionSwitcher() {
                                     return (
                                         <button
                                             key={commit.sha}
+                                            type="button"
+                                            aria-pressed={selectedRef === commit.full_sha}
                                             onClick={() => handleSelectRef(commit.full_sha, null, commit)}
                                             className={`w-full px-3 py-2.5 text-left hover:bg-white/10 transition-colors border-b border-white/5 last:border-0 ${selectedRef === commit.full_sha ? 'bg-indigo-500/20' : ''
                                                 }`}
@@ -515,18 +572,19 @@ export default function VersionSwitcher() {
                                     <div
                                         key={key}
                                         className="flex items-center gap-1.5 text-[11px] bg-white/5 rounded px-2 py-1"
-                                        title={check.name}
                                     >
                                         {getStatusIcon(check)}
                                         <span className="text-white/70">{SHORT_LABELS[key] || key}</span>
+                                        <span className="sr-only">{check.name}: {statusWord(check)}</span>
                                         {check.run_url && (
                                             <a
                                                 href={check.run_url}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
-                                                className="text-white/30 hover:text-white/60 ml-auto"
+                                                aria-label={`View the ${check.name} run (opens in a new tab)`}
+                                                className="text-white/50 hover:text-white ml-auto"
                                             >
-                                                <ExternalLink className="w-2.5 h-2.5" />
+                                                <ExternalLink className="w-2.5 h-2.5" aria-hidden="true" />
                                             </a>
                                         )}
                                     </div>
@@ -540,12 +598,24 @@ export default function VersionSwitcher() {
                         <div className="space-y-1.5">
                             <div className="flex items-center justify-between text-xs">
                                 <span className="text-white/70 flex items-center gap-1.5">
-                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                    <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />
                                     {message || 'Deploying...'}
                                 </span>
                                 <span className="font-mono font-semibold text-white">{deployProgress}%</span>
                             </div>
-                            <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+                            {/* A multi-minute, irreversible rebuild-and-migrate of a
+                                live 311 system reported its progress as a div whose
+                                width changed. Nothing announced the percentage, the
+                                step, or that anything was happening at all. */}
+                            <div
+                                className="h-2 rounded-full bg-white/10 overflow-hidden"
+                                role="progressbar"
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                                aria-valuenow={deployProgress}
+                                aria-valuetext={`${deployProgress}% — ${message || 'Deploying'}`}
+                                aria-label="Deployment progress"
+                            >
                                 <div
                                     className={`h-full rounded-full transition-all duration-700 ease-out ${deployProgress >= 100
                                             ? 'bg-gradient-to-r from-emerald-400 to-cyan-400'
@@ -581,7 +651,7 @@ export default function VersionSwitcher() {
             {/* Messages */}
             {error && (
                 <div className="space-y-2">
-                    <div className="p-2.5 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-xs">
+                    <div role="alert" className="p-2.5 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-xs">
                         <div className="flex items-start gap-1.5">
                             <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5" />
                             <span>{error}</span>
@@ -592,7 +662,10 @@ export default function VersionSwitcher() {
                     {deployFailure?.steps && deployFailure.steps.length > 0 && (
                         <div className="rounded-lg border border-white/10 overflow-hidden">
                             <button
+                                type="button"
                                 onClick={() => setShowDeployLog(!showDeployLog)}
+                                aria-expanded={showDeployLog}
+                                aria-controls="deploy-log"
                                 className="w-full flex items-center justify-between px-3 py-2 bg-white/[0.04] hover:bg-white/[0.06] transition-colors text-xs"
                             >
                                 <span className="text-white/50 font-medium flex items-center gap-1.5">
@@ -602,7 +675,7 @@ export default function VersionSwitcher() {
                                 <ChevronDown className={`w-3 h-3 text-white/40 transition-transform ${showDeployLog ? 'rotate-180' : ''}`} />
                             </button>
                             {showDeployLog && (
-                                <div className="px-3 py-2 space-y-1.5 bg-black/20 max-h-64 overflow-y-auto">
+                                <div id="deploy-log" className="px-3 py-2 space-y-1.5 bg-black/20 max-h-64 overflow-y-auto">
                                     {deployFailure.steps.map((step, i) => (
                                         <div key={i} className="flex items-start gap-2 text-[11px]">
                                             {step.success ? (
@@ -643,8 +716,8 @@ export default function VersionSwitcher() {
             )}
 
             {message && !isSwitching && (
-                <div className="p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400 text-xs flex items-center gap-1.5">
-                    <Check className="w-3 h-3 flex-shrink-0" />
+                <div role="status" className="p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400 text-xs flex items-center gap-1.5">
+                    <Check className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
                     <span>{message}</span>
                 </div>
             )}

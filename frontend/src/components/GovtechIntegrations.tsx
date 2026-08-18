@@ -11,6 +11,7 @@ import {
 import { Button, Modal, CollapsibleSection } from './ui';
 import SecretField from './SecretField';
 import { useDialog } from './DialogProvider';
+import { useOptionalAnnounce } from './liveAnnounce';
 import {
     api, IntegrationPlatform, IntegrationConfig, IntegrationSyncLog, IntegrationTestResult,
 } from '../services/api';
@@ -646,6 +647,18 @@ export default function GovtechIntegrations() {
             return rank(a) - rank(b);
         });
 
+    /* Typing rewrites the card grid in place. Nothing said how many platforms
+     * were left, which on an empty result is the difference between "not found"
+     * and "still loading". */
+    const announce = useOptionalAnnounce();
+    const visibleCount = visibleCatalog.length;
+    useEffect(() => {
+        if (!q) return;
+        announce(visibleCount === 0
+            ? `No platforms match ${query}.`
+            : `${visibleCount} platform${visibleCount === 1 ? '' : 's'} match ${query}.`);
+    }, [visibleCount, q, query, announce]);
+
     // ---------- UI ----------
 
     return (
@@ -677,8 +690,8 @@ export default function GovtechIntegrations() {
             </p>
 
             {error && (
-                <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0" /> {error}
+                <div role="alert" className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" /> {error}
                 </div>
             )}
 
@@ -1271,7 +1284,10 @@ export default function GovtechIntegrations() {
                                 return (
                             <div className="rounded-xl bg-white/[0.04] border border-white/10 p-4">
                                 <h4 className="text-white font-semibold text-sm mb-3">How should the two systems work together?</h4>
-                                <div className="space-y-2" role="radiogroup" aria-label="Sync direction">
+                                {/* Was role="radiogroup"/role="radio" with no roving
+                                    tabIndex and no arrow keys: announced as a radio
+                                    group, operated as nothing of the sort. */}
+                                <div className="space-y-2" role="group" aria-label="Sync direction">
                                     {syncOptions
                                         .map(choice => {
                                             const isSel = syncChoice === choice.value;
@@ -1280,8 +1296,7 @@ export default function GovtechIntegrations() {
                                                 <button
                                                     key={choice.value}
                                                     type="button"
-                                                    role="radio"
-                                                    aria-checked={isSel}
+                                                    aria-pressed={isSel}
                                                     onClick={() => setSyncChoice(choice.value)}
                                                     className={`w-full text-left rounded-xl px-3.5 py-3 border transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${isSel
                                                         ? 'bg-gradient-to-br from-primary-500/25 to-primary-700/15 border-primary-400/50 shadow-lg shadow-primary-900/30'
@@ -1294,7 +1309,7 @@ export default function GovtechIntegrations() {
                                                         </span>
                                                         {isSel && (
                                                             <span className="shrink-0 w-4 h-4 rounded-full bg-primary-400 flex items-center justify-center">
-                                                                <Check className="w-3 h-3 text-primary-950" strokeWidth={3} />
+                                                                <Check className="w-3 h-3 text-primary-950" strokeWidth={3} aria-hidden="true" />
                                                             </span>
                                                         )}
                                                     </span>

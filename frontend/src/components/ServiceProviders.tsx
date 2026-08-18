@@ -755,10 +755,16 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             <div className="relative">
                 {/* ── The bubble: a healthy capability, collapsed ── */}
                 {compact ? (
+                    /* aria-expanded was hardcoded false and aria-controls pointed
+                       at an id that only exists in the expanded branch, so while
+                       collapsed it dangled -- the state never changed and the
+                       reference never resolved. Collapsed IS the false state, but
+                       it has to be the same button reporting it, and the panel it
+                       names has to exist. */
                     <button
                         type="button"
                         onClick={toggle}
-                        aria-expanded={false}
+                        aria-expanded={isOpen}
                         aria-controls={`prov-${cap}`}
                         className="w-full text-left rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
                     >
@@ -933,6 +939,10 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             )}
             {!compact && shownResult && (
                 <motion.div
+                    /* The outcome of "Save & Test" -- the single most important
+                       feedback on this page -- was a plain div. status, not alert:
+                       it follows an action the person just took. */
+                    role="status"
                     initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
                     className={`mt-3 rounded-xl px-3 py-2.5 text-xs border flex items-start gap-2 ${shownResult.ok
                         ? 'bg-emerald-500/10 border-emerald-400/30 text-emerald-200'
@@ -941,10 +951,14 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                             : 'bg-amber-500/10 border-amber-400/30 text-amber-200'}`}
                 >
                     {shownResult.ok
-                        ? <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                        ? <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
                         : resultUncheckable
-                            ? <HelpCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                            : <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />}
+                            ? <HelpCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+                            : <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />}
+                    {/* Pass and fail were otherwise glyph plus colour only. */}
+                    <span className="sr-only">
+                        {shownResult.ok ? 'Test passed. ' : resultUncheckable ? 'Could not be checked. ' : 'Test failed. '}
+                    </span>
                     {/* pre-line: the tests report their work as numbered steps,
                         one per line — collapsing them to a paragraph turns a
                         verifiable log back into a claim. */}
@@ -1050,15 +1064,22 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                     );
                                 }
                                 return (
-                                    <div className="max-h-80 overflow-y-auto pr-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2" role="radiogroup" aria-label="AI model">
+                                    /* Was role="radiogroup" + role="radio" with no roving
+                                       tabIndex and no arrow-key handler: AT announced
+                                       "radio, 3 of 200" and then the arrow keys did
+                                       nothing, while every option stayed its own tab
+                                       stop. Honest button semantics beat a radio group
+                                       that lies about how it is operated; aria-pressed
+                                       carries the selection, which was previously
+                                       gradient and ring colour alone. */
+                                    <div className="max-h-80 overflow-y-auto pr-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2" role="group" aria-label="AI model">
                                         {filtered.map(m => {
                                             const isSel = m.id === chosen;
                                             return (
                                                 <button
                                                     key={m.id}
                                                     type="button"
-                                                    role="radio"
-                                                    aria-checked={isSel}
+                                                    aria-pressed={isSel}
                                                     onClick={() => setModel(m.id)}
                                                     className={`relative text-left rounded-xl px-3 py-2.5 border transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${isSel
                                                         ? 'bg-gradient-to-br from-primary-500/25 to-primary-700/15 border-primary-400/50 shadow-lg shadow-primary-900/30'
@@ -1068,7 +1089,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                                         <span className={`text-sm font-medium truncate ${isSel ? 'text-white' : 'text-white/70'}`}>{m.label}</span>
                                                         {isSel && (
                                                             <span className="shrink-0 w-4 h-4 rounded-full bg-primary-400 flex items-center justify-center">
-                                                                <Check className="w-3 h-3 text-primary-950" strokeWidth={3} />
+                                                                <Check className="w-3 h-3 text-primary-950" strokeWidth={3} aria-hidden="true" />
                                                             </span>
                                                         )}
                                                     </div>
@@ -1162,10 +1183,12 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                         the tile this card collapses into says the credentials
                         are still saved, and switching back on picks up as it
                         was. */}
+                    {/* The explanation used to be a `title` on this span: hover
+                        only, unreachable by keyboard, and not dismissible. It is
+                        visible text instead. */}
                     {onSwitchOff && (
-                        <span className="ml-auto inline-flex items-center gap-2.5"
-                            title="Stops this service running and stops testing it. Everything entered here stays saved.">
-                            <span className="text-white/45 text-[11px] hidden sm:block">
+                        <span className="ml-auto inline-flex items-center gap-2.5">
+                            <span id={`switchoff-note-${cap}`} className="text-white/70 text-[11px] hidden sm:block">
                                 {switching ? 'Switching off…' : 'On — switching off keeps the credentials saved'}
                             </span>
                             <Switch
@@ -1240,7 +1263,7 @@ function PlainSettingCard({ setting, expanded, onToggle, secrets }: {
                     <button
                         type="button"
                         onClick={onToggle}
-                        aria-expanded={false}
+                        aria-expanded={expanded}
                         className="w-full text-left rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
                     >
                         <div className="flex items-center gap-3">

@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react';
+import { useContext, useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { Check, AlertCircle, CircleDashed, HelpCircle, ChevronDown, Loader2, PowerOff } from 'lucide-react';
+import AccessibilityContext from '../context/AccessibilityContext';
 
 /**
  * The shared vocabulary for a capability, wherever it appears.
@@ -100,12 +101,46 @@ const PILL: Record<CapabilityState, { cls: string; label: string; Icon: typeof C
     },
 };
 
-export function StatusPill({ state, label }: { state: CapabilityState; label?: string }) {
+export function StatusPill({ state, label, name }: {
+    state: CapabilityState;
+    label?: string;
+    /** What this pill is about, for the announcement. Without it a change reads
+     *  as a bare "Not working", which is useless on a page carrying eight pills. */
+    name?: string;
+}) {
     const p = PILL[state];
+    const text = label ?? p.label;
+
+    /* WCAG 4.1.3 Status Messages.
+     *
+     * These pills are driven by live health checks, so one can flip from
+     * "Working" to "Not working" while the operator is reading something else
+     * on the page. That is a status change with no focus change and no other
+     * signal — exactly the case 4.1.3 covers — and it happened in total silence.
+     *
+     * Routed through the app's single live region rather than making the pill
+     * one: eight pills each with their own aria-live means eight regions
+     * updating in the same tick, and a screen reader announces none of them.
+     *
+     * Read from the context directly rather than through useAnnounce() so this
+     * stays a leaf presentational component that renders anywhere — the hook
+     * throws without a provider, and this pill is used in isolation in tests
+     * and in the setup guide. */
+    const a11y = useContext(AccessibilityContext);
+    const previous = useRef<string | null>(null);
+    useEffect(() => {
+        const current = `${state}:${text}`;
+        // Skip the first render: the initial state is not a change.
+        if (previous.current !== null && previous.current !== current) {
+            a11y?.announce(name ? `${name}: ${text}` : text, hasAlert(state) ? 'assertive' : 'polite');
+        }
+        previous.current = current;
+    }, [state, text, name, a11y]);
+
     return (
         <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl text-xs font-semibold border shrink-0 ${p.cls}`}>
             <p.Icon className="w-3.5 h-3.5" aria-hidden="true" />
-            {label ?? p.label}
+            {text}
         </span>
     );
 }
@@ -136,7 +171,10 @@ export function CapabilityTile({ icon: Icon, label, size = 'md', tone = 'normal'
     }[tone];
     return (
         <div className={`relative shrink-0 flex items-center justify-center border shadow-inner ${box} ${skin}`}>
-            {Icon ? <Icon className={glyph} /> : <span className={`${type} font-bold tabular-nums`}>{label}</span>}
+            {/* The tile is decoration beside a heading that already names the
+              * capability; lucide emits no aria-hidden of its own, so without this
+              * the icon's <svg> is exposed as an unnamed graphic (1.1.1). */}
+            {Icon ? <Icon className={glyph} aria-hidden="true" /> : <span className={`${type} font-bold tabular-nums`}>{label}</span>}
             {badge != null && (
                 <span className="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full bg-primary-500 border-2 border-slate-900 text-[10px] font-bold text-white flex items-center justify-center">
                     {badge}
@@ -154,18 +192,28 @@ export function CapabilityTile({ icon: Icon, label, size = 'md', tone = 'normal'
  * tiles; the primary carries the indigo gradient and its own shadow, which is
  * what the rest of the console uses for the one action a screen is about.
  */
-export function Action({
-    variant = 'ghost', size = 'md', busy = false, disabled, onClick, children, title, chevron = false,
-}: {
+/* The prop list used to be closed, which meant no caller could pass aria-label,
+ * aria-expanded, aria-controls or aria-describedby to a button rendered by this
+ * component — they were not dropped at runtime so much as impossible to write
+ * (4.1.2). Exactly the defect ui/Button.tsx had. `...rest` fixes it once, for
+ * every surface that imports Action; `className` is included so a caller can
+ * extend the skin without a wrapper that breaks the layout. */
+interface ActionProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> {
     variant?: 'primary' | 'ghost';
     size?: 'sm' | 'md';
     busy?: boolean;
-    disabled?: boolean;
-    onClick?: () => void;
     children: ReactNode;
-    title?: string;
+    /** Renders a dropdown caret. Only honest on a control that opens a menu. */
     chevron?: boolean;
-}) {
+    /** Whether the menu this button opens is currently open. Required whenever
+     *  `chevron` is set — see the comment below. */
+    expanded?: boolean;
+}
+
+export function Action({
+    variant = 'ghost', size = 'md', busy = false, disabled, onClick, children, title, chevron = false,
+    expanded, className = '', ...rest
+}: ActionProps) {
     const pad = size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm';
     const skin = variant === 'primary'
         ? 'font-semibold text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 border-primary-400/50 shadow-lg shadow-primary-500/25 hover:shadow-primary-500/40'
@@ -176,7 +224,18 @@ export function Action({
             onClick={onClick}
             disabled={disabled || busy}
             title={title}
-            className={`${pad} ${skin} rounded-2xl border inline-flex items-center gap-1.5 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300`}
+            /* A caret says "this opens a menu". Saying it visually and not
+             * programmatically leaves a screen-reader user with a button that
+             * gives no hint it will open anything, and no way to know whether it
+             * already has. aria-haspopup rides with the caret; aria-expanded
+             * follows it whenever the caller tracks the state. */
+            aria-haspopup={chevron ? 'menu' : undefined}
+            aria-expanded={chevron ? !!expanded : undefined}
+            /* `busy` already swaps in a spinner and disables the control; without
+             * aria-busy that is a button that silently stops responding. */
+            aria-busy={busy || undefined}
+            className={`${pad} ${skin} rounded-2xl border inline-flex items-center gap-1.5 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 ${className}`}
+            {...rest}
         >
             {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />}
             {children}

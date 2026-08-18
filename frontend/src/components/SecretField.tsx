@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useId, useEffect, useRef } from 'react';
 import { Eye, EyeOff, Lock, CheckCircle, AlertCircle } from 'lucide-react';
+import { useOptionalAnnounce } from './liveAnnounce';
 
 type FieldKind = 'url' | 'email' | 'json' | 'auto';
 
@@ -151,9 +152,48 @@ export default function SecretField({
     const paste = diagnosePaste(value);
     const placeholderish = !paste && looksLikePlaceholder(value);
 
+    const baseId = useId();
+    const inputId = `${baseId}-input`;
+    const helpId = `${baseId}-help`;
+    const noteId = `${baseId}-note`;
+    const savedId = `${baseId}-saved`;
+
+    /* Everything advisory about this field is announced through the input's
+       description, not as separate visual-only text: the paste diagnosis, the
+       format check and the help line all sit in one describedby chain so a
+       screen reader reaches them when it lands on the box. */
+    const noteText = paste ? paste.label
+        : placeholderish ? 'This looks like example text rather than a real value.'
+            : check ? check.msg : '';
+    const describedBy = [
+        savedHint ? savedId : null,
+        noteText ? noteId : null,
+        help ? helpId : null,
+    ].filter(Boolean).join(' ') || undefined;
+
+    /* Advisory, never blocking -- these are guesses about the shape of a
+       credential, so the field is flagged as invalid only where the value is
+       positively wrong (a mangled paste, a failed format check), and a save is
+       still allowed. */
+    const invalid = !!paste || (!!check && !check.ok);
+
+    const announce = useOptionalAnnounce();
+    const lastPaste = useRef<string | null>(null);
+    const pasteLabel = paste?.label ?? null;
+    useEffect(() => {
+        if (pasteLabel && pasteLabel !== lastPaste.current) {
+            // A pasted key that arrived wrapped in quotes or with a stray newline
+            // is the single most common credential failure here, and the panel
+            // that says so appears silently below a box the person has already
+            // left.
+            announce(`${label}: ${pasteLabel}`);
+        }
+        lastPaste.current = pasteLabel;
+    }, [pasteLabel, announce, label]);
+
     return (
         <div>
-            <label className="text-[11px] uppercase tracking-wider text-white/60 mb-1.5 font-semibold flex items-center gap-1.5">
+            <label htmlFor={inputId} className="text-[11px] uppercase tracking-wider text-white/60 mb-1.5 font-semibold flex items-center gap-1.5">
                 {secret && <Lock className="w-3 h-3 text-white/35" aria-hidden="true" />}
                 {label}
                 {required && !savedHint && <span className="normal-case tracking-normal text-amber-300 font-medium">(required)</span>}
@@ -163,13 +203,26 @@ export default function SecretField({
                     </span>
                 )}
             </label>
+            {/* The "leave blank to keep" instruction used to exist only as
+                placeholder text, which disappears the moment anything is typed
+                and is not a label — WCAG 3.3.2 wants the instruction to persist
+                for anyone who cannot see the greyed-out hint. */}
+            {savedHint && (
+                <p id={savedId} className="sr-only">
+                    A value is already stored. Leave this blank to keep it, or type a new value to replace it.
+                </p>
+            )}
             <div className="relative">
                 <input
+                    id={inputId}
                     type={isPassword ? 'password' : 'text'}
                     autoFocus={autoFocus}
                     placeholder={savedHint ? '•••••••••  leave blank to keep' : (placeholder || '')}
                     value={value}
                     onChange={(e) => onChange(e.target.value)}
+                    aria-describedby={describedBy}
+                    aria-invalid={invalid || undefined}
+                    aria-required={required || undefined}
                     className={`w-full rounded-xl bg-white/[0.04] border border-white/10 text-white text-sm px-3.5 py-2.5 ${secret ? 'pr-10' : ''} placeholder:text-white/40 transition-all focus:outline-none focus:border-primary-400/50 focus:bg-white/[0.06] focus:shadow-[0_0_0_3px_rgba(99,102,241,0.15)]`}
                     spellCheck={false}
                     autoComplete="off"
@@ -179,11 +232,16 @@ export default function SecretField({
                         type="button"
                         onClick={() => setReveal(v => !v)}
                         className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-white/40 hover:text-white/80 hover:bg-white/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
-                        aria-label={reveal ? 'Hide value' : 'Show value'}
+                        aria-label={`${reveal ? 'Hide' : 'Show'} ${label}`}
+                        aria-pressed={reveal}
+                        aria-controls={inputId}
                         title={reveal ? 'Hide' : 'Show'}
-                        tabIndex={-1}
                     >
-                        {reveal ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        {/* No tabIndex={-1}. Taking this out of the tab order was the
+                            whole point of the control being unusable: the reveal exists
+                            so a clerk can check a pasted key before saving, and a
+                            keyboard-only clerk could never reach it. */}
+                        {reveal ? <EyeOff className="w-4 h-4" aria-hidden="true" /> : <Eye className="w-4 h-4" aria-hidden="true" />}
                     </button>
                 )}
             </div>
@@ -194,9 +252,10 @@ export default function SecretField({
                 <div className="mt-1.5 rounded-lg bg-amber-500/10 border border-amber-400/25 px-2.5 py-2 flex items-start gap-2">
                     <AlertCircle className="w-3.5 h-3.5 text-amber-300/90 mt-0.5 shrink-0" aria-hidden="true" />
                     <div className="min-w-0 flex-1">
-                        <p className="text-xs text-amber-100/85 leading-relaxed">{paste.label}</p>
+                        <p id={noteId} className="text-xs text-amber-100/85 leading-relaxed">{paste.label}</p>
                         <button
                             type="button"
+                            aria-label={`Fix ${label}: ${paste.label}`}
                             onClick={() => onChange(paste.fixed)}
                             className="mt-1 text-xs font-semibold text-amber-200 hover:text-white underline underline-offset-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60 rounded"
                         >
@@ -206,18 +265,18 @@ export default function SecretField({
                 </div>
             )}
             {placeholderish && (
-                <p className="text-xs mt-1.5 flex items-start gap-1 text-amber-300/90">
+                <p id={noteId} className="text-xs mt-1.5 flex items-start gap-1 text-amber-300/90">
                     <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" aria-hidden="true" />
                     This looks like example text rather than a real value.
                 </p>
             )}
-            {check && !paste && (
-                <p className={`text-xs mt-1.5 flex items-center gap-1 ${check.ok ? 'text-emerald-300/80' : 'text-amber-300/90'}`}>
+            {check && !paste && !placeholderish && (
+                <p id={noteId} className={`text-xs mt-1.5 flex items-center gap-1 ${check.ok ? 'text-emerald-300/80' : 'text-amber-300/90'}`}>
                     {check.ok ? <CheckCircle className="w-3 h-3 shrink-0" aria-hidden="true" /> : <AlertCircle className="w-3 h-3 shrink-0" aria-hidden="true" />}
                     {check.msg}
                 </p>
             )}
-            {help && <p className="text-white/50 text-xs mt-1.5 leading-relaxed">{help}</p>}
+            {help && <p id={helpId} className="text-white/50 text-xs mt-1.5 leading-relaxed">{help}</p>}
         </div>
     );
 }

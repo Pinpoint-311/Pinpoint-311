@@ -246,8 +246,10 @@ export default function InlineProviderSetup({
                 )}
             </div>
 
+            {/* The outcome of a save-and-test, previously a plain div: nothing
+                announced whether the credential the person just entered works. */}
             {shownResult && (
-                <div className={`mt-2.5 rounded-lg px-3 py-2 text-xs flex items-start gap-2 ${shownResult.ok
+                <div role="status" className={`mt-2.5 rounded-lg px-3 py-2 text-xs flex items-start gap-2 ${shownResult.ok
                     ? 'bg-emerald-500/10 border border-emerald-400/25 text-emerald-100/90'
                     : 'bg-red-500/10 border border-red-400/25 text-red-100/90'}`}>
                     {shownResult.ok
@@ -256,6 +258,7 @@ export default function InlineProviderSetup({
                     {/* pre-line: the tests report their work as numbered steps,
                         one per line — collapsing them to a paragraph turns a
                         verifiable log back into a claim. */}
+                    <span className="sr-only">{shownResult.ok ? 'Succeeded. ' : 'Failed. '}</span>
                     <span className="whitespace-pre-line">{shownResult.detail}</span>
                 </div>
             )}
@@ -265,7 +268,7 @@ export default function InlineProviderSetup({
                 credential in the wrong field, which a connection test does not
                 reliably tell apart from a wrong key. */}
             {warnings.length > 0 && (
-                <ul className="mt-2 space-y-1">
+                <ul role="status" aria-label="Warnings about the values just saved" className="mt-2 space-y-1">
                     {warnings.map(w => (
                         <li key={w.key} className="text-[11px] text-amber-200/80 flex items-start gap-1.5">
                             <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" aria-hidden="true" />

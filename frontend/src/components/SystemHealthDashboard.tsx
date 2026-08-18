@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, AlertCircle, RefreshCw, Activity } from 'lucide-react';
 import { Card, Button } from '../components/ui';
+import { useOptionalAnnounce } from './liveAnnounce';
 
 interface HealthCheckResult {
     status: string;
@@ -46,6 +47,7 @@ export default function SystemHealthDashboard() {
     const [health, setHealth] = useState<HealthCheckResponse | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const announce = useOptionalAnnounce();
 
     const fetchHealth = async () => {
         setIsLoading(true);
@@ -64,8 +66,13 @@ export default function SystemHealthDashboard() {
 
             const data = await response.json();
             setHealth(data);
+            // Pressing Refresh repaints cards in place. Without this the only
+            // report that anything happened is a spinner that has stopped.
+            announce(`System health refreshed. Overall status: ${data.overall_status}.`);
         } catch (err: any) {
-            setError(err.message || 'Failed to fetch health status');
+            const message = err.message || 'Failed to fetch health status';
+            setError(message);
+            announce(message, 'assertive');
         } finally {
             setIsLoading(false);
         }
@@ -75,20 +82,46 @@ export default function SystemHealthDashboard() {
         fetchHealth();
     }, []);
 
-    const getStatusIcon = (status: string) => {
+    /** The word for a status, for anyone the colour and glyph do not reach.
+     *
+     * Every check on this page was distinguished by icon shape plus green /
+     * yellow / red alone (WCAG 1.4.1); the message beside it says what is wrong,
+     * never whether it is wrong. */
+    const statusWord = (status: string) => {
         switch (status) {
-            case 'healthy':
-            case 'configured':
-                return <CheckCircle className="w-6 h-6 text-green-400" />;
-            case 'not_configured':
-            case 'disabled':
-            case 'fallback':
-                return <AlertCircle className="w-6 h-6 text-yellow-400" />;
-            case 'error':
-                return <XCircle className="w-6 h-6 text-red-400" />;
-            default:
-                return <Activity className="w-6 h-6 text-gray-400" />;
+            case 'healthy': return 'Healthy';
+            case 'configured': return 'Configured';
+            case 'not_configured': return 'Not configured';
+            case 'disabled': return 'Disabled';
+            case 'fallback': return 'Using fallback';
+            case 'error': return 'Error';
+            default: return 'Unknown';
         }
+    };
+
+    const getStatusIcon = (status: string) => {
+        const word = statusWord(status);
+        const glyph = (() => {
+            switch (status) {
+                case 'healthy':
+                case 'configured':
+                    return <CheckCircle className="w-6 h-6 text-green-400" aria-hidden="true" />;
+                case 'not_configured':
+                case 'disabled':
+                case 'fallback':
+                    return <AlertCircle className="w-6 h-6 text-yellow-400" aria-hidden="true" />;
+                case 'error':
+                    return <XCircle className="w-6 h-6 text-red-400" aria-hidden="true" />;
+                default:
+                    return <Activity className="w-6 h-6 text-gray-400" aria-hidden="true" />;
+            }
+        })();
+        return (
+            <span className="shrink-0 inline-flex">
+                {glyph}
+                <span className="sr-only">{word}: </span>
+            </span>
+        );
     };
 
     const getStatusColor = (status: string) => {
@@ -137,14 +170,15 @@ export default function SystemHealthDashboard() {
         return (
             <div className="p-6">
                 <Card className="bg-red-500/10 border-red-500/20">
-                    <div className="flex items-center gap-3">
-                        <XCircle className="w-6 h-6 text-red-400" />
+                    {/* The only report that the health check itself failed. */}
+                    <div className="flex items-center gap-3" role="alert">
+                        <XCircle className="w-6 h-6 text-red-400" aria-hidden="true" />
                         <div className="flex-1">
                             <h3 className="text-lg font-semibold text-red-300">Error Loading Health Check</h3>
                             <p className="text-red-200/80 mt-1">{error}</p>
                         </div>
                         <Button onClick={fetchHealth} disabled={isLoading}>
-                            <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                            <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
                             Retry
                         </Button>
                     </div>
@@ -158,11 +192,14 @@ export default function SystemHealthDashboard() {
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold text-white">System Health</h1>
-                    <p className="text-gray-400 mt-1">Monitor all system integrations and dependencies</p>
+                    {/* h2, not h1: this dashboard is a panel inside the admin
+                        console, which already titles the tab. Two h1s per view
+                        leaves a screen-reader user with no single page title. */}
+                    <h2 className="text-2xl font-bold text-white">System Health</h2>
+                    <p className="text-gray-300 mt-1">Monitor all system integrations and dependencies</p>
                 </div>
                 <Button onClick={fetchHealth} disabled={isLoading}>
-                    <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
                     Refresh
                 </Button>
             </div>
@@ -228,7 +265,7 @@ export default function SystemHealthDashboard() {
                                 {getStatusIcon(health.checks.gcp_auth.status)}
                                 <div className="flex-1">
                                     <h3 className="font-semibold text-white">GCP Authentication</h3>
-                                    <p className="text-xs text-gray-500 mb-1">Encrypted Service Account</p>
+                                    <p className="text-xs text-gray-300 mb-1">Encrypted Service Account</p>
                                     <p className={`text-sm ${getStatusColor(health.checks.gcp_auth.status)}`}>
                                         {health.checks.gcp_auth.message}
                                     </p>
@@ -249,7 +286,7 @@ export default function SystemHealthDashboard() {
                                 <h3 className="font-semibold text-white">
                                     {backendLabel(health.checks.kms.kms_backend)}
                                 </h3>
-                                <p className="text-xs text-gray-500 mb-1">PII Encryption</p>
+                                <p className="text-xs text-gray-300 mb-1">PII Encryption</p>
                                 <p className={`text-sm ${getStatusColor(health.checks.kms.status)}`}>
                                     {health.checks.kms.message}
                                 </p>
@@ -266,7 +303,7 @@ export default function SystemHealthDashboard() {
                                 <h3 className="font-semibold text-white">
                                     {storeLabel(health.checks.secret_store.store)}
                                 </h3>
-                                <p className="text-xs text-gray-500 mb-1">Credential storage</p>
+                                <p className="text-xs text-gray-300 mb-1">Credential storage</p>
                                 <p className={`text-sm ${getStatusColor(health.checks.secret_store.status)}`}>
                                     {health.checks.secret_store.message}
                                 </p>
@@ -281,7 +318,7 @@ export default function SystemHealthDashboard() {
                             {getStatusIcon(health.checks.vertex_ai.status)}
                             <div className="flex-1">
                                 <h3 className="font-semibold text-white">Vertex AI</h3>
-                                <p className="text-xs text-gray-500 mb-1">AI Analysis (Gemini)</p>
+                                <p className="text-xs text-gray-300 mb-1">AI Analysis (Gemini)</p>
                                 <p className={`text-sm ${getStatusColor(health.checks.vertex_ai.status)}`}>
                                     {health.checks.vertex_ai.message}
                                 </p>
@@ -296,7 +333,7 @@ export default function SystemHealthDashboard() {
                             {getStatusIcon(health.checks.translation_api.status)}
                             <div className="flex-1">
                                 <h3 className="font-semibold text-white">Translation API</h3>
-                                <p className="text-xs text-gray-500 mb-1">Multi-Language Support</p>
+                                <p className="text-xs text-gray-300 mb-1">Multi-Language Support</p>
                                 <p className={`text-sm ${getStatusColor(health.checks.translation_api.status)}`}>
                                     {health.checks.translation_api.message}
                                 </p>
@@ -309,9 +346,9 @@ export default function SystemHealthDashboard() {
 
             {/* Loading State */}
             {isLoading && !health && (
-                <div className="flex items-center justify-center py-12">
-                    <RefreshCw className="w-8 h-8 text-blue-400 animate-spin" />
-                    <span className="ml-3 text-gray-400">Loading system health...</span>
+                <div className="flex items-center justify-center py-12" aria-busy="true">
+                    <RefreshCw className="w-8 h-8 text-blue-400 animate-spin" aria-hidden="true" />
+                    <span className="ml-3 text-gray-300">Loading system health...</span>
                 </div>
             )}
 

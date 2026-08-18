@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Check, Plus, SignpostBig, X } from 'lucide-react';
 
 import { api } from '../services/api';
+import { useOptionalAnnounce } from './liveAnnounce';
 
 /**
  * Pick roads for a routing rule, from the roads this town actually has.
@@ -42,6 +43,16 @@ export default function RoadListInput({
     const roads = splitRoads(value);
     const [query, setQuery] = useState('');
     const [options, setOptions] = useState<RoadOption[]>([]);
+    const announce = useOptionalAnnounce();
+
+    /* The suggestion list appearing, changing length or emptying is a silent
+       visual event: aria-expanded says a popup exists, never how much is in it. */
+    useEffect(() => {
+        if (!query.trim()) return;
+        announce(options.length
+            ? `${options.length} road${options.length === 1 ? '' : 's'} found. Use the arrow keys to review.`
+            : 'No matching roads.');
+    }, [options, query, announce]);
     const [open, setOpen] = useState(false);
     const [dataAvailable, setDataAvailable] = useState<boolean | null>(null);
     const [knownNames, setKnownNames] = useState<Set<string>>(new Set());
@@ -165,7 +176,7 @@ export default function RoadListInput({
         <div className="space-y-2" ref={containerRef}>
             <label htmlFor={id} className={`block text-sm font-medium ${accent}`}>{label}</label>
 
-            <div className="rounded-xl bg-white/[0.06] border border-white/15 focus-within:border-primary-400/60 focus-within:ring-1 focus-within:ring-primary-400/30 transition-colors px-2.5 py-2">
+            <div className="rounded-xl bg-white/[0.06] border border-white/15 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-400 transition-colors px-2.5 py-2">
                 {roads.length > 0 && (
                     <ul className="flex flex-wrap gap-1.5 mb-2" aria-label={`${label} selections`}>
                         {roads.map((name, index) => (
@@ -202,6 +213,7 @@ export default function RoadListInput({
                         aria-expanded={open && options.length > 0}
                         aria-controls={listboxId}
                         aria-autocomplete="list"
+                        aria-describedby={hint ? `${id}-hint` : undefined}
                         aria-activedescendant={activeIndex >= 0 ? `${listboxId}-${activeIndex}` : undefined}
                         value={query}
                         onChange={e => { setQuery(e.target.value); setOpen(true); }}
@@ -221,31 +233,36 @@ export default function RoadListInput({
                             {options.map((option, index) => {
                                 const already = roads.some(r => r.toLowerCase() === option.name.toLowerCase());
                                 return (
+                                    /* The option used to wrap a <button>. ARIA prohibits
+                                       interactive descendants inside role="option": it
+                                       added a tab stop per suggestion, and the button
+                                       stealing focus desynchronised the combobox's
+                                       aria-activedescendant, so the listbox highlight and
+                                       what the screen reader was reading drifted apart.
+                                       The <li> is the option, and the combobox above keeps
+                                       the focus and the keys, as the pattern intends. */
                                     <li
                                         key={`${option.name}-${option.ref ?? ''}`}
                                         id={`${listboxId}-${index}`}
                                         role="option"
                                         aria-selected={index === activeIndex}
+                                        onMouseEnter={() => setActiveIndex(index)}
+                                        onMouseDown={(e) => { e.preventDefault(); addRoad(option.name); }}
+                                        className={`cursor-pointer px-3 py-2 flex items-center justify-between gap-3 transition-colors ${
+                                            index === activeIndex ? 'bg-white/10' : 'hover:bg-white/[0.06]'
+                                        }`}
                                     >
-                                        <button
-                                            type="button"
-                                            onMouseEnter={() => setActiveIndex(index)}
-                                            onClick={() => addRoad(option.name)}
-                                            className={`w-full text-left px-3 py-2 flex items-center justify-between gap-3 transition-colors ${
-                                                index === activeIndex ? 'bg-white/10' : 'hover:bg-white/[0.06]'
-                                            }`}
-                                        >
-                                            <span className="min-w-0">
-                                                <span className="block text-sm text-white truncate">{option.name}</span>
-                                                <span className="block text-[11px] text-white/40">
-                                                    {option.ref ? `${option.ref} · ` : ''}
-                                                    {option.segments} segment{option.segments === 1 ? '' : 's'}
-                                                </span>
+                                        <span className="min-w-0">
+                                            <span className="block text-sm text-white truncate">{option.name}</span>
+                                            <span className="block text-[11px] text-white/60">
+                                                {option.ref ? `${option.ref} · ` : ''}
+                                                {option.segments} segment{option.segments === 1 ? '' : 's'}
+                                                {already ? ' · already added' : ''}
                                             </span>
-                                            {already
-                                                ? <Check className="w-4 h-4 text-emerald-400 shrink-0" aria-hidden="true" />
-                                                : <Plus className="w-4 h-4 text-white/30 shrink-0" aria-hidden="true" />}
-                                        </button>
+                                        </span>
+                                        {already
+                                            ? <Check className="w-4 h-4 text-emerald-400 shrink-0" aria-hidden="true" />
+                                            : <Plus className="w-4 h-4 text-white/30 shrink-0" aria-hidden="true" />}
                                     </li>
                                 );
                             })}
@@ -254,7 +271,7 @@ export default function RoadListInput({
                 </div>
             </div>
 
-            {hint && <p className="text-xs text-white/40">{hint}</p>}
+            {hint && <p id={`${id}-hint`} className="text-xs text-white/60">{hint}</p>}
 
             {dataAvailable === false && (
                 <p className="text-xs text-amber-300/80">

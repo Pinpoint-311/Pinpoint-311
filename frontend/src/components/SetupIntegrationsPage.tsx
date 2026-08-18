@@ -23,6 +23,8 @@ import './setupStepsContent';
 import StorageStatusLine from './StorageStatusLine';
 import SecretStoreGate, { SECRET_STORE_GATE_ID } from './SecretStoreGate';
 import SecretField from './SecretField';
+import { useDialog } from './DialogProvider';
+import { useOptionalAnnounce } from './liveAnnounce';
 import { openStayInformed } from './StayInformed';
 import { buildContactFormUrl } from './contactForm';
 
@@ -289,32 +291,46 @@ isConfigured: (key: string) => boolean | undefined;
 onWantAi: () => Promise<void>;
 }) {
     const jsonKey = 'GCP_SERVICE_ACCOUNT_JSON';
+    const announce = useOptionalAnnounce();
     const [showKms, setShowKms] = useState(false);
     const pending = ['GOOGLE_CLOUD_PROJECT', jsonKey, 'KMS_LOCATION', 'KMS_KEY_RING', 'KMS_KEY_ID']
         .filter(k => secretValues[k]);
     return (
         <div className="ml-9 mt-1 rounded-xl border border-white/10 bg-white/[0.03] p-3.5 space-y-3">
             <div>
-                <label className="text-[11px] uppercase tracking-wider text-white/55 font-semibold flex items-center gap-1.5">
+                {/* A <label> that wrapped and pointed at nothing named nothing.
+                    It titles the picker below, which now carries the name itself. */}
+                <p id="gcp-json-label" className="text-[11px] uppercase tracking-wider text-white/55 font-semibold flex items-center gap-1.5">
                     <Key className="w-3.5 h-3.5 text-amber-300/80" aria-hidden="true" />
                     The .json file you just downloaded
                     {isConfigured(jsonKey) && <span className="text-emerald-300/80 normal-case font-medium">· Saved</span>}
-                </label>
-                <label className="mt-1.5 block cursor-pointer">
+                </p>
+                {/* sr-only, not `hidden`: display:none takes the input out of the
+                    tab order entirely, and the wrapping label is not focusable,
+                    so this upload could not be started from a keyboard at all.
+                    Off-screen-but-focusable keeps it tabbable, and the ring below
+                    is what a keyboard user sees when it has focus. */}
+                <label className="mt-1.5 block cursor-pointer focus-within:ring-2 focus-within:ring-primary-400 rounded-lg">
                     <div className="h-10 rounded-lg border border-dashed border-white/20 flex items-center justify-center text-white/50 text-xs hover:border-white/40 hover:text-white/70 transition-colors">
                         Choose the file, or drop it here
                     </div>
                     <input
                         type="file"
+                        aria-labelledby="gcp-json-label"
                         accept=".json,application/json"
-                        className="hidden"
+                        className="sr-only"
                         onChange={(e) => {
                             const file = e.target.files?.[0];
                             if (!file) return;
                             const reader = new FileReader();
-                            reader.onload = (ev) => setSecretValues(p => ({
-                                ...p, [jsonKey]: (ev.target?.result as string) || '',
-                            }));
+                            reader.onload = (ev) => {
+                                setSecretValues(p => ({
+                                    ...p, [jsonKey]: (ev.target?.result as string) || '',
+                                }));
+                                // The only sign the file was accepted is a line of
+                                // green text that appears below the picker.
+                                announce(`${file.name} read. Press Save below to store it.`);
+                            };
                             reader.readAsText(file);
                         }}
                     />
@@ -461,6 +477,8 @@ export function LockedUntilStoreChosen({ locked, children }: {
 
 
 export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh }: SetupIntegrationsPageProps) {
+    const dialog = useDialog();
+    const announce = useOptionalAnnounce();
     const [secretValues, setSecretValues] = useState<Record<string, string>>({});
     /**
      * Null until the gate reports. Not `false`, because assuming unchosen would
@@ -495,6 +513,16 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [finishing, setFinishing] = useState(false);
     const guideAutoSet = useRef(false);
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
+
+    /* Every save on this page reports through saveMessage, and it reported to
+     * sighted people only: the text appeared in a plain div with no live region,
+     * so saving a credential, finishing setup or failing to mint a backup key
+     * were all silent. One effect covers every writer of the message. */
+    useEffect(() => {
+        if (!saveMessage) return;
+        const failed = saveMessage.startsWith('❌');
+        announce(saveMessage.replace(/^[❌✅⚠️]\s*/u, ''), failed ? 'assertive' : 'polite');
+    }, [saveMessage, announce]);
 
     // Setup Instructions chooser: the guide shows ONLY the steps for the cloud
     // and optional features the admin actually wants to set up.
@@ -1057,9 +1085,30 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                     variant="ghost"
                     className="w-full border border-white/15 hover:bg-white/10"
                     onClick={async () => {
+                        /* Replacing an existing passphrase is the most
+                         * irreversible single click in the console: every backup
+                         * taken before this moment becomes restorable only with a
+                         * passphrase that is about to stop being shown anywhere.
+                         * It went through on one click, with the warning sitting
+                         * in prose above the button. Creating the FIRST one
+                         * destroys nothing, so that stays a single click. */
+                        if (isConfigured('BACKUP_ENCRYPTION_KEY')) {
+                            const ok = await dialog.confirm({
+                                title: 'Replace backup passphrase',
+                                message: 'Every backup taken so far can only be restored with the CURRENT passphrase. Replacing it does not re-encrypt them.\n\nOnly continue if the current passphrase has been exposed, and only if you still hold a copy of it.',
+                                variant: 'danger',
+                                confirmText: 'Replace passphrase',
+                                requireTyped: 'REPLACE',
+                            });
+                            if (!ok) return;
+                        }
                         try {
                             const { key } = await api.generateBackupKey();
                             setBackupKey(key);
+                            // Shown exactly once, and its arrival was a silent
+                            // DOM swap -- nothing told a screen reader the one
+                            // value they must copy had appeared.
+                            announce('A new backup passphrase has been created and is shown once on this page. Copy it now.', 'assertive');
                         } catch (err: any) {
                             setSaveMessage(`❌ ${err.message || 'Could not create a passphrase'}`);
                         }
@@ -1085,7 +1134,17 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                     <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => navigator.clipboard?.writeText(backupKey)}
+                        aria-label="Copy backup passphrase"
+                        onClick={async () => {
+                            try {
+                                await navigator.clipboard?.writeText(backupKey);
+                                // Copy had no feedback of any kind, visual or
+                                // otherwise, on the one value that is never shown again.
+                                announce('Backup passphrase copied to the clipboard.');
+                            } catch {
+                                announce('Could not copy the passphrase. Select it and copy manually.', 'assertive');
+                            }
+                        }}
                     >
                         Copy
                     </Button>
@@ -1680,6 +1739,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             </CollapsibleSection>
 
             {/* Optional Integrations */}
+            {/* The status text stays visible; the spoken copy goes through the
+                app's single live region (see announceSaveMessage below), because
+                a node inserted together with its text is routinely not announced. */}
             {saveMessage && (
                 <div className="rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-sm text-white/80">
                     {saveMessage}
