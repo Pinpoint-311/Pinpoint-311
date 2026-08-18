@@ -62,7 +62,11 @@ body {
     .glass-button {
         background: linear-gradient(135deg, rgba(99, 102, 241, 0.8) 0%, rgba(79, 70, 229, 0.8) 100%);
         backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.2);
+        /* 1.4.11 again. The button's own fill composites to 2.56:1 against the
+         * page, so the fill alone does not mark where the control is; at a 20%
+         * border the edge added 1.79:1 and did not either. 0.5 puts the outline
+         * at 3.7:1 or better on every surface. */
+        border: 1px solid rgba(255, 255, 255, 0.5);
         border-radius: 12px;
         color: white;
         font-weight: 500;
@@ -86,7 +90,19 @@ body {
     .glass-input {
         background: rgba(255, 255, 255, 0.05);
         backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        /* WCAG 1.4.11 Non-text Contrast, 3:1.
+         *
+         * The border IS the field: the fill is white at 5%, near-identical to
+         * the page behind it, so nothing else tells a user where an input
+         * begins or ends. At the previous 10% the edge measured 1.33:1 against
+         * the page and 1.2:1 against the lighter card surfaces — a boundary
+         * only visible if you already knew it was there.
+         *
+         * 0.5 measures 3.69:1 against the lightest surface an input sits on
+         * (a white/6 card over the mid gradient stop) and 4.9:1 against the
+         * page itself, so it clears the bar on every background in the product
+         * rather than only the flattering one. */
+        border: 1px solid rgba(255, 255, 255, 0.5);
         border-radius: 12px;
         color: white;
         padding: 12px 16px;
@@ -648,9 +664,16 @@ a:focus-visible {
     }
 }
 
-/* Required Field Indicator */
+/* Required Field Indicator.
+ *
+ * #ef4444 measured 3.04:1 on the page and 2.55:1 on the card surfaces. The
+ * asterisk is `aria-hidden` with an sr-only "(required)" beside it, so a
+ * screen-reader user was fine — but it is also the ONLY visual marker of a
+ * required field, which makes it text that has to clear 4.5:1. red-300 is
+ * 6.02:1 on the page and 5.06:1 on the lightest card, and still reads as red.
+ */
 .required-indicator {
-    color: #ef4444;
+    color: #fca5a5;
     margin-left: 4px;
 }
 
@@ -699,8 +722,20 @@ a:not(.skip-link):not(.brand-link):not(.contact-action):not([class*="btn"]):not(
     cursor: not-allowed;
 }
 
-/* Live region styling */
-[aria-live] {
+/* Live region styling.
+ *
+ * This was a bare `[aria-live]` selector, which visually hid EVERY element
+ * carrying the attribute rather than just the app's announcement region. The
+ * casualties were all things a sighted user needs to see: the login error
+ * banner, so a failed sign-in appeared to do nothing at all; the research
+ * portal's export and query error banner; and the character counter under
+ * every Textarea.
+ *
+ * A live region is a behaviour, not a presentation — many of them are meant to
+ * be on screen. Hiding is now opt-in, and the two regions that do want it are
+ * named explicitly. */
+#aria-live-region,
+#aria-live-region-assertive {
     position: absolute;
     left: -10000px;
     width: 1px;
@@ -787,17 +822,17 @@ span a,
     display: inline;
 }
 
-/* Progress indicators accessibility */
+/* Progress indicators.
+ *
+ * The `::after { content: attr(aria-valuenow) "%" }` that used to live here
+ * stamped a percentage across the middle of every progressbar in the product.
+ * It was wrong three ways: it assumed every progressbar is scaled 0–100, it
+ * printed the literal string "%" for meters measuring anything else, and
+ * generated content is exposed to assistive tech inconsistently, so where it
+ * was picked up the value was announced twice. Progress labels belong in real
+ * markup next to the bar, where they can be positioned and translated. */
 [role="progressbar"] {
     position: relative;
-}
-
-[role="progressbar"]::after {
-    content: attr(aria-valuenow) "%";
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
-    font-size: 0.75rem;
 }
 
 /* ========================================

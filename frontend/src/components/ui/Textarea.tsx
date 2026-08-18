@@ -69,7 +69,12 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
                         <p
                             id={countId}
                             className={`text-sm ${charCount > maxLength * 0.9 ? 'text-amber-400' : 'text-white/40'}`}
-                            aria-live="polite"
+                            /* Deliberately NOT a live region. The count is already
+                             * referenced by the textarea's aria-describedby, so it is
+                             * read on focus. As aria-live it re-announced on every
+                             * keystroke, and it competed with the app's polite
+                             * region — two polite regions updating in the same tick
+                             * and a screen reader announces neither. (WCAG 4.1.3) */
                         >
                             <span className="sr-only">Character count:</span>
                             {charCount}/{maxLength}
