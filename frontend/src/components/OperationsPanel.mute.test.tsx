@@ -101,6 +101,16 @@ const payload = (checks: any[]) => ({
     timestamp: '2026-08-11T00:00:00Z',
 });
 
+/* jsdom ships no matchMedia, and the accessibility provider asks it about
+ * reduced motion and contrast on mount. */
+if (!window.matchMedia) {
+    (window as any).matchMedia = (query: string) => ({
+        matches: false, media: query, onchange: null,
+        addEventListener: () => { }, removeEventListener: () => { },
+        addListener: () => { }, removeListener: () => { }, dispatchEvent: () => false,
+    });
+}
+
 let host: HTMLDivElement; let root: Root;
 beforeEach(() => {
     muteCalls = []; muteFails = false; muteResult = { muted_until: null };
@@ -110,9 +120,16 @@ beforeEach(() => {
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.clearAllMocks(); });
 
+/* The panel announces runbook results through the app's shared live region,
+ * so it needs the provider that owns it -- mounted bare, useAnnounce() throws. */
 async function mount() {
     const { default: OperationsPanel } = await import('./OperationsPanel');
-    await act(async () => { root.render(React.createElement(OperationsPanel as any)); });
+    const { AccessibilityProvider } = await import('../context/AccessibilityContext');
+    await act(async () => {
+        root.render(React.createElement(
+            AccessibilityProvider as any, null, React.createElement(OperationsPanel as any),
+        ));
+    });
 }
 
 const row = (key = 'disk') =>
@@ -190,7 +207,9 @@ describe('muting a proactive health check', () => {
         await mount();
         await act(async () => { muteButton()!.click(); });
 
-        const alerts = host.querySelectorAll('[role="alert"]');
+        // The provider's assertive live region is a role="alert" as well; this
+        // count is about messages pinned to a row, so it is excluded by id.
+        const alerts = host.querySelectorAll('[role="alert"]:not([id^="aria-live-region"])');
         expect(alerts.length).toBe(1);
     });
 
