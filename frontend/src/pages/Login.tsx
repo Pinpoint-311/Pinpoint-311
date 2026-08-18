@@ -16,12 +16,21 @@ export default function Login() {
     const [isLoading, setIsLoading] = useState(false);
     const [authStatus, setAuthStatus] = useState<{ auth0_configured: boolean; message?: string } | null>(null);
 
-    // Set page title for accessibility
+    /* Page title — WCAG 2.4.2.
+     *
+     * The restore is conditional. SettingsContext writes the document title
+     * asynchronously once settings arrive, so the value snapshotted at mount
+     * can still be a pre-settings placeholder; restoring it unconditionally on
+     * unmount overwrote the title the page being navigated TO had just set, and
+     * the user landed on a correctly rendered page with the wrong name
+     * announced. Only put the old title back if this effect's own title is
+     * still the one in place. */
     useEffect(() => {
         const previousTitle = document.title;
-        document.title = `Staff Login | ${settings?.township_name || 'Municipality 311'}`;
+        const ourTitle = `Staff Login | ${settings?.township_name || 'Municipality 311'}`;
+        document.title = ourTitle;
         return () => {
-            document.title = previousTitle;
+            if (document.title === ourTitle) document.title = previousTitle;
         };
     }, [settings?.township_name]);
 
@@ -188,7 +197,12 @@ export default function Login() {
                             </p>
                             <Link
                                 to="/"
-                                className="inline-block mt-4 text-sm text-primary-400 hover:text-primary-300 transition-colors"
+                                /* primary-200 (#c7d2fe), not primary-400 (#a5b4fc):
+                                 * 6.8:1 rather than 5.9:1 against the glass card, and
+                                 * it keeps the one route back to the public portal
+                                 * legible for the low-vision reader this page is
+                                 * hardest for (1.4.3). */
+                                className="inline-block mt-4 text-sm text-primary-200 hover:text-white transition-colors"
                             >
                                 <span aria-hidden="true">←</span> Back to public portal
                             </Link>
@@ -198,7 +212,11 @@ export default function Login() {
                                     href="https://pinpoint311.org"
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="brand-link text-primary-400/50 hover:text-primary-300 transition-colors inline-flex items-center gap-1"
+                                    /* The /50 alpha composited to 2.44:1 against the
+                                     * card — a link rendered barely above the
+                                     * background it sits on. Solid primary-200 is
+                                     * 6.8:1 (1.4.3). */
+                                    className="brand-link text-primary-200 hover:text-white transition-colors inline-flex items-center gap-1"
                                     data-no-translate
                                 >
                                     Pinpoint 311
