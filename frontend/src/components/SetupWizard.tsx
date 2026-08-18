@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Check, ChevronDown, ChevronRight, Circle, AlertCircle } from 'lucide-react';
+import { useOptionalAnnounce } from './liveAnnounce';
 
 import InlineProviderSetup from './InlineProviderSetup';
 import SecretField from './SecretField';
@@ -163,6 +164,21 @@ export default function SetupWizard(props: SetupWizardProps) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [openId, status, open?.items.length]);
 
+    /* Choosing a task in the list, or auto-advancing after a green test, swaps
+     * the whole right-hand panel and leaves focus back in the nav. A sighted
+     * user sees the panel change; a screen-reader user is told nothing and is
+     * still standing in the list. Focus moves to the panel heading, which is
+     * also what gets read. */
+    const panelRef = useRef<HTMLElement | null>(null);
+    const announce = useOptionalAnnounce();
+    const firstPanel = useRef(true);
+    useEffect(() => {
+        if (!open) return;
+        if (firstPanel.current) { firstPanel.current = false; return; }
+        panelRef.current?.focus();
+        announce(`${open.title}. ${remaining === 0 ? 'All tasks done.' : `${remaining} left.`}`);
+    }, [openId, open, remaining, announce]);
+
     /** Finishing an item opens the next one, or moves on to the next task. */
     const advanceItem = (fromId: string) => {
         if (!open) return;
@@ -194,6 +210,8 @@ export default function SetupWizard(props: SetupWizardProps) {
                                     type="button"
                                     onClick={() => { chosen.current = true; setOpenId(active ? null : task.id); }}
                                     aria-current={active ? 'step' : undefined}
+                                    aria-expanded={active}
+                                    aria-controls={active ? `setup-task-${task.id}` : undefined}
                                     className={`w-full text-left rounded-xl px-3 py-2.5 flex items-center gap-2.5 border transition-colors ${active
                                         ? 'bg-white/[0.09] border-white/20'
                                         : 'bg-white/[0.03] border-transparent hover:bg-white/[0.06]'}`}
@@ -228,9 +246,12 @@ export default function SetupWizard(props: SetupWizardProps) {
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: -6 }}
                             transition={{ duration: 0.18 }}
-                            className="setup-panel p-5 sm:p-6"
+                            className="setup-panel p-5 sm:p-6 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400"
+                            ref={panelRef as any}
+                            tabIndex={-1}
+                            aria-labelledby={`setup-task-${open.id}`}
                         >
-                            <h3 className="font-semibold text-white text-base">{open.title}</h3>
+                            <h3 id={`setup-task-${open.id}`} className="font-semibold text-white text-base">{open.title}</h3>
                             <p className="text-sm text-white/55 leading-relaxed mt-1">{open.blurb}</p>
 
                             {open.foundation && (
@@ -330,6 +351,8 @@ function TaskItem({
                 type="button"
                 onClick={onToggle}
                 aria-expanded={expanded}
+                /* aria-expanded said something opened; nothing said what. */
+                aria-controls={`setup-item-${item.id}`}
                 className="w-full text-left px-4 py-3 flex items-center gap-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
             >
                 <span
@@ -360,7 +383,7 @@ function TaskItem({
             {/* No blurb repeated inside: it is already in the header above,
                 which stays visible while expanded. */}
             {expanded && (
-                <div className="px-4 pb-4 pt-1">
+                <div id={`setup-item-${item.id}`} className="px-4 pb-4 pt-1">
                     {item.cap && item.provider && (
                         <InlineProviderSetup
                             cap={item.cap}

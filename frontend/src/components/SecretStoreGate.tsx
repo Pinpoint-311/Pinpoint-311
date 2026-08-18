@@ -3,6 +3,7 @@ import { Lock, ShieldCheck, AlertCircle } from 'lucide-react';
 
 import { api } from '../services/api';
 import type { SecretStoreChoice } from '../services/api';
+import { useDialog } from './DialogProvider';
 
 /**
  * The first question, and nothing can be entered before it is answered.
@@ -67,6 +68,7 @@ export default function SecretStoreGate({ onChosen, onState }: {
      */
     onState?: (chosen: boolean) => void;
 } = {}) {
+    const dialog = useDialog();
     const [choice, setChoice] = useState<SecretStoreChoice | null>(null);
     const [picked, setPicked] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
@@ -135,27 +137,46 @@ export default function SecretStoreGate({ onChosen, onState }: {
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mt-3.5">
-                {/* Every store this build knows about, unless the server
-                    narrowed the list. An absent `options` is a response that
-                    did not say, and offering nothing at all would be a gate
-                    with no way through it -- this panel is the only place the
-                    choice can be made. */}
-                {STORES.filter(s => !choice.options || choice.options.includes(s.id)).map(store => (
-                    <button
-                        key={store.id}
-                        type="button"
-                        onClick={() => { setPicked(store.id); setError(null); }}
-                        aria-pressed={picked === store.id}
-                        className={`text-left px-3.5 py-3 rounded-xl border transition-colors ${picked === store.id
-                            ? 'bg-primary-500/20 border-primary-400/50'
-                            : 'bg-white/[0.04] border-white/10 hover:border-white/25'}`}
-                    >
-                        <p className="text-sm font-semibold text-white">{store.name}</p>
-                        <p className="text-[11px] text-white/55 leading-relaxed mt-0.5">{store.blurb}</p>
-                    </button>
-                ))}
-            </div>
+            {/* Real radios in a fieldset, not aria-pressed buttons.
+                These four options are mutually exclusive, and toggle-buttons say
+                the opposite: a screen reader announced four independent pressed
+                states, each its own tab stop, with nothing tying them together
+                or saying "1 of 4". Native radios also bring arrow-key movement
+                for free, which a hand-rolled radiogroup would have to implement
+                and, elsewhere in this console, does not. */}
+            <fieldset className="mt-3.5 border-0 p-0 m-0">
+                <legend className="sr-only">Where credentials are kept</legend>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {/* Every store this build knows about, unless the server
+                        narrowed the list. An absent `options` is a response that
+                        did not say, and offering nothing at all would be a gate
+                        with no way through it -- this panel is the only place the
+                        choice can be made. */}
+                    {STORES.filter(s => !choice.options || choice.options.includes(s.id)).map(store => (
+                        <label
+                            key={store.id}
+                            className={`block cursor-pointer text-left px-3.5 py-3 rounded-xl border transition-colors focus-within:ring-2 focus-within:ring-primary-300 ${picked === store.id
+                                ? 'bg-primary-500/20 border-primary-400/50'
+                                : 'bg-white/[0.04] border-white/10 hover:border-white/25'}`}
+                        >
+                            <input
+                                type="radio"
+                                name="secret-store"
+                                value={store.id}
+                                checked={picked === store.id}
+                                onChange={() => { setPicked(store.id); setError(null); }}
+                                className="sr-only"
+                            />
+                            <p className="text-sm font-semibold text-white">
+                                {store.name}
+                                {/* Selection was carried by background colour alone. */}
+                                {picked === store.id && <span className="sr-only"> (selected)</span>}
+                            </p>
+                            <p className="text-[11px] text-white/55 leading-relaxed mt-0.5">{store.blurb}</p>
+                        </label>
+                    ))}
+                </div>
+            </fieldset>
 
             {/* Spelled out rather than implied, and only when it is the answer
                 being considered. This is the whole reason the database is an
@@ -188,6 +209,18 @@ export default function SecretStoreGate({ onChosen, onState }: {
                     disabled={!picked || saving}
                     onClick={async () => {
                         if (!picked) return;
+                        /* The panel above says in so many words that moving
+                         * credentials afterwards "is not something a click can
+                         * do" -- and then committed the choice on exactly one
+                         * click. WCAG 3.3.4 wants the confirmation step that
+                         * every other one-way action in this console has. */
+                        const ok = await dialog.confirm({
+                            title: 'Keep credentials here?',
+                            message: `Every password and API key entered on this page will be stored in ${LABEL[picked] ?? picked}.\n\nThis is asked once. Moving credentials to a different store later is not something a click can do.`,
+                            variant: 'warning',
+                            confirmText: 'Use this store',
+                        });
+                        if (!ok) return;
                         setSaving(true); setError(null);
                         try {
                             const saved = await api.chooseSecretStore(picked);

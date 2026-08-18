@@ -30,13 +30,20 @@ function CopyValue({ ctx, id, value }: { ctx: StepContext; id: string; value: st
     return (
         <span className="inline-flex items-center gap-1 align-middle">
             <code className="bg-black/30 px-1.5 py-0.5 rounded text-[11px] text-primary-200 break-all">{value}</code>
+            {/* Every chip on the page carried the identical name "Copy to
+                clipboard", so a screen-reader user listing the buttons got a
+                column of indistinguishable entries and no way to tell which
+                value each one copies. Success was likewise a swapped icon and
+                nothing else. */}
             <button
                 type="button"
                 onClick={() => ctx.copy(value, id)}
-                aria-label="Copy to clipboard"
+                aria-label={ctx.copied === id ? `Copied ${value}` : `Copy ${value} to clipboard`}
                 className="inline-flex text-white/40 hover:text-white/80 transition-colors"
             >
-                {ctx.copied === id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                {ctx.copied === id
+                    ? <Check className="w-3 h-3" aria-hidden="true" />
+                    : <Copy className="w-3 h-3" aria-hidden="true" />}
             </button>
         </span>
     );

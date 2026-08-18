@@ -1,6 +1,7 @@
-import { Fragment, useState, useEffect, useCallback } from 'react';
+import { Fragment, useState, useEffect, useCallback, useId } from 'react';
 import { Shield, Download, RefreshCw, AlertCircle, CheckCircle, XCircle, User, ChevronLeft, ChevronRight, ChevronDown, Sparkles } from 'lucide-react';
 import { AccordionSection } from './ui';
+import { useOptionalAnnounce } from './liveAnnounce';
 
 interface AuditLog {
     id: number;
@@ -150,6 +151,15 @@ export default function AuditLogViewer() {
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
     const [quickRange, setQuickRange] = useState<string>('7');
+    const [exportError, setExportError] = useState<string | null>(null);
+
+    const announce = useOptionalAnnounce();
+
+    /* Every filter control here had a sibling <label> with no htmlFor and no id
+       on the control, so the whole filter bar reached assistive tech unnamed —
+       six controls announced as just "combo box". */
+    const fieldId = useId();
+    const id = (name: string) => `${fieldId}-${name}`;
 
     const totalPages = Math.ceil(totalCount / pageSize);
 
@@ -200,7 +210,11 @@ export default function AuditLogViewer() {
 
             const data = await response.json();
             setLogs(data.logs || []);
-            setTotalCount(data.total_count || data.logs?.length || 0);
+            const total = data.total_count || data.logs?.length || 0;
+            setTotalCount(total);
+            // Filtering rewrites the table in place with no visible movement;
+            // without this the result count is a silent change (WCAG 4.1.3).
+            announce(`${total.toLocaleString()} audit ${total === 1 ? 'entry' : 'entries'} match the current filters.`);
 
             const statsResponse = await fetch('/api/audit/stats', {
                 headers: { 'Authorization': `Bearer ${token}` },
@@ -211,7 +225,9 @@ export default function AuditLogViewer() {
                 setStats(statsData);
             }
         } catch (err: any) {
-            setError(err.message || 'Failed to fetch audit logs');
+            const message = err.message || 'Failed to fetch audit logs';
+            setError(message);
+            announce(message, 'assertive');
         } finally {
             setIsLoading(false);
         }
@@ -241,7 +257,16 @@ export default function AuditLogViewer() {
                 headers: { 'Authorization': `Bearer ${token}` },
             });
 
-            if (response.ok) {
+            if (!response.ok) {
+                /* A failed export used to fall through this if and return
+                   silently: no file, no message, nothing to distinguish it from
+                   a browser that swallowed the download. */
+                const message = `Export failed (${response.status}). The audit log was not downloaded.`;
+                setExportError(message);
+                announce(message, 'assertive');
+                return;
+            }
+            {
                 const blob = await response.blob();
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -252,8 +277,12 @@ export default function AuditLogViewer() {
                 window.URL.revokeObjectURL(url);
                 document.body.removeChild(a);
             }
+            setExportError(null);
         } catch (err) {
             console.error('Export failed:', err);
+            const message = 'Export failed. The audit log was not downloaded.';
+            setExportError(message);
+            announce(message, 'assertive');
         }
     };
 
@@ -330,8 +359,9 @@ export default function AuditLogViewer() {
                 {/* Filters */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div>
-                        <label className={labelStyle}>Time Range</label>
+                        <label htmlFor={id('range')} className={labelStyle}>Time Range</label>
                         <select
+                            id={id('range')}
                             value={quickRange}
                             onChange={(e) => applyQuickRange(e.target.value)}
                             className={inputStyle + " w-full"}
@@ -346,8 +376,9 @@ export default function AuditLogViewer() {
                     </div>
 
                     <div>
-                        <label className={labelStyle}>Event Type</label>
+                        <label htmlFor={id('event-type')} className={labelStyle}>Event Type</label>
                         <select
+                            id={id('event-type')}
                             value={filterEventType}
                             onChange={(e) => setFilterEventType(e.target.value)}
                             className={inputStyle + " w-full"}
@@ -375,8 +406,9 @@ export default function AuditLogViewer() {
                     </div>
 
                     <div>
-                        <label className={labelStyle}>Status</label>
+                        <label htmlFor={id('status')} className={labelStyle}>Status</label>
                         <select
+                            id={id('status')}
                             value={filterSuccess}
                             onChange={(e) => setFilterSuccess(e.target.value)}
                             className={inputStyle + " w-full"}
@@ -388,9 +420,10 @@ export default function AuditLogViewer() {
                     </div>
 
                     <div>
-                        <label className={labelStyle}>Username</label>
+                        <label htmlFor={id('username')} className={labelStyle}>Username</label>
                         <input
                             type="text"
+                            id={id('username')}
                             value={filterUsername}
                             onChange={(e) => setFilterUsername(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -404,19 +437,21 @@ export default function AuditLogViewer() {
                 {quickRange === 'custom' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                         <div>
-                            <label className={labelStyle}>From Date</label>
+                            <label htmlFor={id('from-date')} className={labelStyle}>From Date</label>
                             <input
                                 type="date"
-                                value={startDate}
+                                id={id('from-date')}
+                            value={startDate}
                                 onChange={(e) => setStartDate(e.target.value)}
                                 className={inputStyle + " w-full"}
                             />
                         </div>
                         <div>
-                            <label className={labelStyle}>To Date</label>
+                            <label htmlFor={id('to-date')} className={labelStyle}>To Date</label>
                             <input
                                 type="date"
-                                value={endDate}
+                                id={id('to-date')}
+                            value={endDate}
                                 onChange={(e) => setEndDate(e.target.value)}
                                 className={inputStyle + " w-full"}
                             />
@@ -431,30 +466,34 @@ export default function AuditLogViewer() {
                         disabled={isLoading}
                         className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors disabled:opacity-50 font-medium"
                     >
-                        <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+                        <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
                         Refresh
                     </button>
                     <button
                         onClick={handleExport}
                         className="flex items-center gap-2 px-5 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors"
                     >
-                        <Download className="w-4 h-4" />
+                        <Download className="w-4 h-4" aria-hidden="true" />
                         Export CSV
                     </button>
                 </div>
 
                 {/* Table */}
-                <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
-                    {error && (
-                        <div className="p-4 bg-red-500/10 border-b border-red-500/20 flex items-center gap-3">
-                            <AlertCircle className="w-5 h-5 text-red-400" />
-                            <span className="text-red-400 text-sm">{error}</span>
+                <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden" aria-busy={isLoading}>
+                    {/* role="alert" so a fetch or export failure is spoken. The
+                        text is also pushed through announce() at the point of
+                        failure, because a role node inserted together with its
+                        text is routinely never announced at all. */}
+                    {(error || exportError) && (
+                        <div role="alert" className="p-4 bg-red-500/10 border-b border-red-500/20 flex items-center gap-3">
+                            <AlertCircle className="w-5 h-5 text-red-400" aria-hidden="true" />
+                            <span className="text-red-400 text-sm">{error || exportError}</span>
                         </div>
                     )}
 
                     {isLoading ? (
                         <div className="p-16 text-center">
-                            <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-4 text-indigo-400" />
+                            <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-4 text-indigo-400" aria-hidden="true" />
                             <div className="text-white/50">Loading audit logs...</div>
                         </div>
                     ) : logs.length === 0 ? (
@@ -467,11 +506,11 @@ export default function AuditLogViewer() {
                                 <table className="w-full">
                                     <thead>
                                         <tr className="border-b border-white/10 text-left bg-white/5">
-                                            <th className="px-6 py-4 text-xs font-semibold text-white/60 uppercase tracking-wider">Event</th>
-                                            <th className="px-6 py-4 text-xs font-semibold text-white/60 uppercase tracking-wider">User</th>
-                                            <th className="px-6 py-4 text-xs font-semibold text-white/60 uppercase tracking-wider">IP Address</th>
-                                            <th className="px-6 py-4 text-xs font-semibold text-white/60 uppercase tracking-wider">Timestamp</th>
-                                            <th className="px-6 py-4 text-xs font-semibold text-white/60 uppercase tracking-wider">Details</th>
+                                            <th scope="col" className="px-6 py-4 text-xs font-semibold text-white/60 uppercase tracking-wider">Event</th>
+                                            <th scope="col" className="px-6 py-4 text-xs font-semibold text-white/60 uppercase tracking-wider">User</th>
+                                            <th scope="col" className="px-6 py-4 text-xs font-semibold text-white/60 uppercase tracking-wider">IP Address</th>
+                                            <th scope="col" className="px-6 py-4 text-xs font-semibold text-white/60 uppercase tracking-wider">Timestamp</th>
+                                            <th scope="col" className="px-6 py-4 text-xs font-semibold text-white/60 uppercase tracking-wider">Details</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-white/5">
@@ -492,6 +531,9 @@ export default function AuditLogViewer() {
                                                                 <span className={`text-sm font-medium ${log.success ? 'text-white' : 'text-red-400'}`}>
                                                                     {getEventLabel(log.event_type)}
                                                                 </span>
+                                                                {/* Success and failure were carried by icon shape and
+                                                                    colour alone (WCAG 1.4.1) -- identical text otherwise. */}
+                                                                <span className="sr-only">{log.success ? 'Succeeded' : 'Failed'}</span>
                                                             </div>
                                                         </td>
                                                         <td className="px-6 py-4 text-sm text-white/80">{log.username || 'Unknown'}</td>
@@ -510,17 +552,34 @@ export default function AuditLogViewer() {
                                                                         <span className="text-white/30">-</span>
                                                                     )}
                                                                 </div>
+                                                                {/* The row's onClick above is a mouse convenience only.
+                                                                    This button is the real control: it was the ONLY way
+                                                                    to reach the detail payload and the user agent, and a
+                                                                    <tr onClick> is unreachable by keyboard and announces
+                                                                    no expanded state. */}
                                                                 {expandable && (
-                                                                    <ChevronDown
-                                                                        className={`w-4 h-4 mt-0.5 shrink-0 text-white/40 transition-transform ${expanded ? 'rotate-180' : ''}`}
-                                                                    />
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={(e) => { e.stopPropagation(); setExpandedId(expanded ? null : log.id); }}
+                                                                        aria-expanded={expanded}
+                                                                        aria-controls={`audit-detail-${log.id}`}
+                                                                        className="ml-1 p-1 rounded shrink-0 text-white/60 hover:text-white hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+                                                                    >
+                                                                        <span className="sr-only">
+                                                                            {expanded ? 'Hide details' : 'Show details'} for {getEventLabel(log.event_type)} by {log.username || 'unknown user'} at {formatTimestamp(log.timestamp)}
+                                                                        </span>
+                                                                        <ChevronDown
+                                                                            aria-hidden="true"
+                                                                            className={`w-4 h-4 transition-transform ${expanded ? 'rotate-180' : ''}`}
+                                                                        />
+                                                                    </button>
                                                                 )}
                                                             </div>
                                                         </td>
                                                     </tr>
                                                     {expanded && (
                                                         <tr key={`${log.id}-details`} className="bg-white/5">
-                                                            <td colSpan={5} className="px-6 py-4">
+                                                            <td colSpan={5} className="px-6 py-4" id={`audit-detail-${log.id}`}>
                                                                 <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
                                                                     {entries.map(([k, v]) => (
                                                                         <div key={k} className="flex gap-2">
@@ -548,8 +607,9 @@ export default function AuditLogViewer() {
                             {/* Pagination */}
                             <div className="flex items-center justify-between px-6 py-4 border-t border-white/10 bg-white/5">
                                 <div className="flex items-center gap-3 text-sm text-white/60">
-                                    <span>Showing</span>
+                                    <label htmlFor={id('page-size')}>Showing</label>
                                     <select
+                                        id={id('page-size')}
                                         value={pageSize}
                                         onChange={(e) => setPageSize(parseInt(e.target.value))}
                                         className="bg-white/10 text-white rounded-lg px-3 py-1.5 border border-white/20"
@@ -564,6 +624,7 @@ export default function AuditLogViewer() {
                                 <div className="flex items-center gap-2">
                                     <button
                                         onClick={() => setCurrentPage(1)}
+                                        aria-label="First page"
                                         disabled={currentPage === 1}
                                         className="px-3 py-1.5 text-sm text-white/70 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
                                     >
@@ -572,9 +633,10 @@ export default function AuditLogViewer() {
                                     <button
                                         onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                                         disabled={currentPage === 1}
+                                        aria-label="Previous page"
                                         className="p-1.5 text-white/70 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
                                     >
-                                        <ChevronLeft className="w-5 h-5" />
+                                        <ChevronLeft className="w-5 h-5" aria-hidden="true" />
                                     </button>
                                     <span className="px-3 text-sm text-white/70">
                                         Page <span className="text-white font-medium">{currentPage}</span> of {totalPages}
@@ -582,12 +644,14 @@ export default function AuditLogViewer() {
                                     <button
                                         onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                                         disabled={currentPage === totalPages}
+                                        aria-label="Next page"
                                         className="p-1.5 text-white/70 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
                                     >
-                                        <ChevronRight className="w-5 h-5" />
+                                        <ChevronRight className="w-5 h-5" aria-hidden="true" />
                                     </button>
                                     <button
                                         onClick={() => setCurrentPage(totalPages)}
+                                        aria-label="Last page"
                                         disabled={currentPage === totalPages}
                                         className="px-3 py-1.5 text-sm text-white/70 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
                                     >
