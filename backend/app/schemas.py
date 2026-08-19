@@ -218,8 +218,12 @@ class ServiceRequestUpdate(BaseModel):
     closed_substatus: Optional[ClosedSubstatus] = None
     completion_message: Optional[str] = None
     completion_photo_url: Optional[str] = None
-    # Legal hold (admin only)
+    # Legal hold (admin only). `flagged` is the legacy name the admin console
+    # still posts; `legal_hold` is the column retention actually reads, and the
+    # handler keeps the two in step. See models.ServiceRequest.legal_hold for
+    # why they are separate columns now.
     flagged: Optional[bool] = None
+    legal_hold: Optional[bool] = None
 
 
 class PublicArchiveUpdate(BaseModel):
@@ -251,7 +255,11 @@ class ServiceRequestResponse(BaseModel):
     requested_datetime: Optional[datetime] = None
     updated_datetime: Optional[datetime] = None
     source: str
+    # Content moderation said a human should look at this.
     flagged: bool = False
+    # Exempt from the retention schedule until an admin lifts it. Distinct from
+    # `flagged`; see models.ServiceRequest.legal_hold.
+    legal_hold: bool = False
     # Whether this report appears in public listings (False = unlisted).
     is_public: bool = True
     # Whether staff took it off the public tracker and map. Distinct from
@@ -271,6 +279,11 @@ class ServiceRequestResponse(BaseModel):
     @field_validator('flagged', mode='before')
     @classmethod
     def coalesce_flagged(cls, v):
+        return v if v is not None else False
+
+    @field_validator('legal_hold', mode='before')
+    @classmethod
+    def coalesce_legal_hold(cls, v):
         return v if v is not None else False
     
     matched_asset: Optional[Dict[str, Any]] = None
@@ -741,6 +754,8 @@ class RequestCommentCreate(BaseModel):
 
 
 class RequestCommentResponse(BaseModel):
+    """A comment as STAFF see it: the author is named."""
+
     id: int
     service_request_id: int
     user_id: Optional[int] = None
@@ -749,6 +764,52 @@ class RequestCommentResponse(BaseModel):
     visibility: str
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PublicRequestCommentResponse(BaseModel):
+    """A comment as the PUBLIC see it: the staff author is "Staff".
+
+    The public comments endpoint returned `username` and `user_id` straight off
+    the row, so anyone who opened a report on the tracker learned which named
+    employee replied to it -- and, across a town's reports, the whole roster and
+    each person's internal user id. The public audit log 150 lines away in
+    open311.py already redacts its actor to "Staff" for exactly this reason;
+    this is the same decision applied to the same audience.
+
+    A resident's own comment is posted anonymously and stored as "Resident", so
+    nothing a resident sees about themselves changes.
+    """
+
+    id: int
+    service_request_id: int
+    # Deliberately absent: user_id. A stable internal identifier per employee is
+    # the thing that makes "Staff" re-identifiable across reports.
+    username: str
+    content: str
+    visibility: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    @classmethod
+    def redacted(cls, comment) -> "PublicRequestCommentResponse":
+        """Build one from a RequestComment row, hiding any staff identity.
+
+        Keyed on `user_id` rather than on the username string: a staffer who
+        happens to be named "Resident" must not be able to pass as one, and a
+        row written by a logged-in user is a staff row whatever it is labelled.
+        """
+        return cls(
+            id=comment.id,
+            service_request_id=comment.service_request_id,
+            username="Staff" if comment.user_id is not None else (comment.username or "Resident"),
+            content=comment.content,
+            visibility=comment.visibility,
+            created_at=comment.created_at,
+            updated_at=getattr(comment, "updated_at", None),
+        )
 
     class Config:
         from_attributes = True

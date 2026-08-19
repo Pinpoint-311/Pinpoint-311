@@ -232,9 +232,11 @@ NEVER = {
     "_email_encrypted", "_phone_encrypted",
     # Written by staff, for staff.
     "staff_notes",
-    # Legal hold, and the moderation text explaining a flag. Neither is the
-    # vendor's business and flag_reason can quote what a resident wrote.
-    "flagged", "flag_reason",
+    # The legal hold and the content-moderation flag, plus the moderation text
+    # explaining the latter. None is the vendor's business, and flag_reason can
+    # quote what a resident wrote. (These were one column until the hold was
+    # split out; both stay out of the payload.)
+    "legal_hold", "flagged", "flag_reason",
     # Deletion and archival bookkeeping.
     "deleted_at", "deleted_by", "delete_justification", "archived_at",
     # Where the report is listed on Pinpoint's own tracker and map is a Pinpoint

@@ -153,11 +153,20 @@ def test_a_push_only_connection_refuses_inbound_records():
 
 
 class _RateReq:
-    """Just what _webhook_rate_key reads: the path and the peer address."""
+    """Just what _webhook_rate_key reads: the path and the caller's address.
 
-    def __init__(self, path, host="203.0.113.9"):
+    `headers` is here because the address is now resolved through
+    app/core/client_ip.py rather than read straight off the socket -- behind
+    Caddy the peer is one container address shared by everyone, and the
+    forwarded header is only believed from a trusted peer. The hosts these
+    tests use are public, so the header is ignored and the peer stands, which
+    is exactly the intent of the assertions below.
+    """
+
+    def __init__(self, path, host="203.0.113.9", forwarded=None):
         self.url = type("U", (), {"path": path})()
         self.client = type("C", (), {"host": host})()
+        self.headers = {"X-Forwarded-For": forwarded} if forwarded else {}
 
 
 def test_the_webhook_is_rate_limited_per_connection_not_per_address_alone():

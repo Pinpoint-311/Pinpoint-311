@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from slowapi import Limiter
-from slowapi.util import get_remote_address
+from app.core.client_ip import client_ip, rate_limit_key
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +34,8 @@ from app.models import (
     User,
 )
 
-limiter = Limiter(key_func=get_remote_address)
+# Per-caller, not per-proxy -- see app/core/client_ip.py.
+limiter = Limiter(key_func=rate_limit_key)
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -625,14 +626,17 @@ async def refresh_request_work_order(
     request: Request,
     request_id: str,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_staff),
 ):
     """Pull the latest work-order state (assignment, schedule, status,
     resolution) for a single request from every platform it's linked to.
-    Staff-triggered on-demand refresh — complements the scheduled pull."""
-    sr = (await db.execute(
-        select(ServiceRequest).where(ServiceRequest.service_request_id == request_id)
-    )).scalar_one_or_none()
+    Staff-triggered on-demand refresh — complements the scheduled pull.
+
+    Department-scoped like every other by-id staff endpoint: this writes the
+    external system's assignment, schedule and resolution onto the request."""
+    from app.api.scoping import scoped_request
+
+    sr = await scoped_request(db, current_user, service_request_id=request_id)
     if not sr:
         raise HTTPException(status_code=404, detail="Request not found")
     links = (await db.execute(
@@ -867,12 +871,12 @@ async def get_sync_logs(
 async def get_request_links(
     service_request_id: str,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_staff),
 ):
-    """External platform records linked to a service request (staff view)."""
-    sr = (await db.execute(
-        select(ServiceRequest).where(ServiceRequest.service_request_id == service_request_id)
-    )).scalar_one_or_none()
+    """External platform records linked to a service request (staff, own departments)."""
+    from app.api.scoping import scoped_request
+
+    sr = await scoped_request(db, current_user, service_request_id=service_request_id)
     if not sr:
         raise HTTPException(status_code=404, detail="Request not found")
 
@@ -919,8 +923,8 @@ def _webhook_rate_key(request: Request) -> str:
     if len(parts) >= 2 and parts[-2]:
         import hashlib
         digest = hashlib.sha256(parts[-1].encode("utf-8", "replace")).hexdigest()[:16]
-        return f"webhook:{parts[-2]}:{digest}:{get_remote_address(request)}"
-    return f"webhook:{get_remote_address(request)}"
+        return f"webhook:{parts[-2]}:{digest}:{client_ip(request)}"
+    return f"webhook:{client_ip(request)}"
 
 
 @router.post("/webhook/{platform}/{token}", status_code=status.HTTP_201_CREATED)

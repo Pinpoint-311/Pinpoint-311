@@ -322,7 +322,13 @@ def test_the_toggle_finds_an_already_archived_report():
 
     from app.api import open311
 
-    assert "direct_link_filters()" in inspect.getsource(open311.set_public_archived)
+    # It used to splice in direct_link_filters(); it now goes through the
+    # shared staff by-id rule with include_deleted=True, which keeps the
+    # already-archived (and even soft-deleted) report reachable AND adds the
+    # department scope every other by-id endpoint gained.
+    source = inspect.getsource(open311.set_public_archived)
+    assert "scoped_request(" in source
+    assert "include_deleted=True" in source
 
 
 # ---------------------------------------------------------------------------

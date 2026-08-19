@@ -159,9 +159,18 @@ async def test_absent_or_true_choice_is_always_public(requested):
 
 @pytest.mark.asyncio
 async def test_settings_read_failure_fails_public():
-    """Better to publish than to silently hide a report on a transient error;
-    the resident sees the outcome on their tracking page either way."""
-    assert await open311.resolve_is_public(_FakeDB(boom=True), False) is True
+    """A settings read failure must NOT publish a report asked to stay unlisted.
+
+    This test used to assert the opposite -- "better to publish than to
+    silently hide" -- and that reasoning does not survive contact with what
+    publishing does: the report goes onto the public map with its description,
+    address and photos, where it can be read, scraped and cached, and no later
+    correction takes any of that back. A report missing from a listing until an
+    admin looks is recoverable; a published one is not. Only a resident who
+    asked for unlisted reaches this path at all, so the town's default is
+    untouched -- see the case below.
+    """
+    assert await open311.resolve_is_public(_FakeDB(boom=True), False) is False
 
 
 def test_module_default_is_off():

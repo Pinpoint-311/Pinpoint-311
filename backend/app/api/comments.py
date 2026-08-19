@@ -7,9 +7,10 @@ from sqlalchemy import select
 from typing import List
 
 from app.db.session import get_db
-from app.models import RequestAuditLog, RequestComment, ServiceRequest, User
+from app.models import RequestAuditLog, RequestComment, User
 from app.schemas import RequestCommentCreate, RequestCommentResponse
 from app.core.auth import get_current_user, get_current_staff
+from app.api.scoping import scoped_request
 from app.services.enqueue import enqueue
 
 router = APIRouter(prefix="/api/requests", tags=["comments"])
@@ -21,12 +22,14 @@ async def get_comments(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_staff)
 ):
-    """Get all comments for a service request (staff/admin only — includes internal notes)"""
-    # Verify request exists
-    result = await db.execute(
-        select(ServiceRequest).where(ServiceRequest.id == request_id)
-    )
-    request = result.scalar_one_or_none()
+    """Get all comments for a service request (staff/admin, own departments).
+
+    Includes INTERNAL notes, which is why the department scope matters here as
+    much as on the request itself: without it any staffer could read the
+    internal discussion on another department's report by walking the integer
+    ids, which are sequential.
+    """
+    request = await scoped_request(db, current_user, record_id=request_id)
     if not request:
         raise HTTPException(status_code=404, detail="Service request not found")
     
@@ -48,12 +51,8 @@ async def create_comment(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_staff)
 ):
-    """Add a comment to a service request (staff/admin only)"""
-    # Verify request exists
-    result = await db.execute(
-        select(ServiceRequest).where(ServiceRequest.id == request_id)
-    )
-    request = result.scalar_one_or_none()
+    """Add a comment to a service request (staff/admin, own departments)"""
+    request = await scoped_request(db, current_user, record_id=request_id)
     if not request:
         raise HTTPException(status_code=404, detail="Service request not found")
     

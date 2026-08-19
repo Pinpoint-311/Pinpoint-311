@@ -288,8 +288,26 @@ class ServiceRequest(Base):
 
     # AI Analysis
     ai_analysis = Column(JSON)
+
+    # Content moderation. Set by the moderation wordlist / cloud classifier when
+    # mild profanity turns up in the report OR in any public comment on it, and
+    # it means "a human should look at this". Anyone can cause it: the public
+    # comment endpoint is unauthenticated by design.
     flagged = Column(Boolean, default=False, server_default='false', nullable=False)
     flag_reason = Column(String(255))
+
+    # Legal hold: this record is exempt from the retention schedule until an
+    # administrator lifts it. Admin-only, and its own column ON PURPOSE.
+    #
+    # It used to BE `flagged`. Retention skipped flagged rows forever and
+    # reported them to the admin as "under legal hold", while
+    # `add_public_comment` -- unauthenticated, by design -- set the same column
+    # on any moderation hit. So a stranger typing mild profanity into a public
+    # comment on somebody else's report permanently exempted that reporter's
+    # name, email, phone and address from the town's own retention policy, and
+    # the admin's legal-hold list filled up with reports nobody had placed a
+    # hold on. Two meanings, two columns; only the admin path writes this one.
+    legal_hold = Column(Boolean, default=False, server_default='false', nullable=False, index=True)
     
     # Timestamps
     requested_datetime = Column(DateTime(timezone=True), server_default=func.now())

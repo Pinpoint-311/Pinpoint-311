@@ -31,7 +31,13 @@ CONTINENTAL_US_ZOOM = 4
 
 
 async def get_google_api_key(db: AsyncSession) -> Optional[str]:
-    """Get Google Maps API key from Secret Manager (decrypted)"""
+    """Get Google Maps API key from Secret Manager (decrypted).
+
+    This is the SERVER-SIDE key. It bills the town's account for geocoding
+    (services/geocode_dispatch) and translation (services/translation) and must
+    never reach a browser -- see BROWSER_KEY_FOR below for the key /config is
+    allowed to publish instead.
+    """
     try:
         from app.services.secret_manager import get_secret
         return await get_secret("GOOGLE_MAPS_API_KEY")
@@ -39,6 +45,57 @@ async def get_google_api_key(db: AsyncSession) -> Optional[str]:
         import logging
         logging.getLogger(__name__).warning(f"Could not get Google Maps API Key: {e}")
         return None
+
+
+# ---------------------------------------------------------------------------
+# Browser-delivered credentials
+# ---------------------------------------------------------------------------
+#
+# /config has no authentication and cannot have any: a resident's map has to be
+# configured before the resident has done anything. It was answering the public
+# internet with GOOGLE_MAPS_API_KEY, ARCGIS_API_KEY and AZURE_MAPS_KEY -- the
+# same secrets the server uses for billed calls. Anyone who loaded the site
+# could copy the Google key and spend the town's geocoding and translation
+# budget from their own machine, and there is no way to notice except the bill.
+#
+# A map key delivered to a browser IS public; that part is unavoidable. What is
+# avoidable is it being the SAME key as the server's. So the endpoint only ever
+# reads the browser-scoped secret name, and the server-side name is not
+# reachable from here at all:
+#
+#   GOOGLE_MAPS_BROWSER_API_KEY   HTTP-referrer restricted to the town's domain
+#   ARCGIS_BROWSER_API_KEY        referrer-restricted ArcGIS key
+#   AZURE_MAPS_BROWSER_KEY        Azure Maps key restricted to the town's origin
+#
+# A town that has configured only the server key gets NO key here and an
+# explicit note saying which one to create. That fails safe in the honest
+# direction: a blank map with an admin-visible explanation is recoverable in
+# ten minutes, and a published server key is not recoverable at all -- it has
+# to be rotated, and every call made with it in the meantime is billed.
+#
+# A town that genuinely wants one key for both writes the same value into the
+# browser-scoped name. That is a deliberate, recorded choice by an
+# administrator, which is exactly the difference from publishing it by default.
+BROWSER_KEY_FOR = {
+    "GOOGLE_MAPS_API_KEY": "GOOGLE_MAPS_BROWSER_API_KEY",
+    "ARCGIS_API_KEY": "ARCGIS_BROWSER_API_KEY",
+    "AZURE_MAPS_KEY": "AZURE_MAPS_BROWSER_KEY",
+}
+
+
+def browser_secret_reader(get_secret):
+    """Wrap a secret reader so billed keys resolve to their browser twin only.
+
+    Passed to map_provider.resolve_credentials in place of the raw reader, so
+    there is no code path from that call to a server-side key -- the
+    substitution happens before the lookup rather than as a filter afterwards,
+    because a filter is one forgotten field away from leaking again.
+    """
+
+    async def read(key: str):
+        return await get_secret(BROWSER_KEY_FOR.get(key, key))
+
+    return read
 
 
 
@@ -264,8 +321,11 @@ async def check_point_in_boundary(
 
 @router.get("/config")
 async def get_maps_config(db: AsyncSession = Depends(get_db)):
-    """Get maps configuration for frontend"""
-    api_key = await get_google_api_key(db)
+    """Get maps configuration for the browser.
+
+    Unauthenticated by necessity, so everything it returns is public. Only
+    browser-scoped credentials are readable from here; see BROWSER_KEY_FOR.
+    """
     
     # Get Map ID for vector maps (enables 45° tilt, rotation, 3D buildings)
     map_id = None
@@ -293,8 +353,32 @@ async def get_maps_config(db: AsyncSession = Depends(get_db)):
     geocode_provider = mp.geocoder_for(
         render_provider, await _get_secret(mp.GEOCODE_PROVIDER_KEY)
     )
-    credentials = await mp.resolve_credentials(render_provider, _get_secret)
+    # Browser-scoped reader, not `_get_secret`: this response goes to anyone
+    # who asks, so a server-side key must not be reachable from this call.
+    _get_browser_secret = browser_secret_reader(_get_secret)
+    # Legacy Google fields below are fed from the browser key too, so a client
+    # still reading them cannot be handed the server key by the back door.
+    try:
+        google_browser_key = await _get_browser_secret("GOOGLE_MAPS_API_KEY")
+    except Exception as exc:  # a secret-store hiccup must not blank the config
+        import logging
+        logging.getLogger(__name__).warning("Could not read browser map key: %s", exc)
+        google_browser_key = None
+    credentials = await mp.resolve_credentials(render_provider, _get_browser_secret)
     missing = mp.missing_requirements(render_provider, credentials)
+
+    # A town with only the server key configured lands here: nothing to publish,
+    # and a sentence saying which secret to create rather than a blank map with
+    # no explanation.
+    browser_key_needed = []
+    for server_key, browser_key in BROWSER_KEY_FOR.items():
+        spec = mp.MAP_CATALOG.get(render_provider) or {}
+        if server_key not in {f["key"] for f in spec.get("credential_fields", [])}:
+            continue
+        if await _get_browser_secret(server_key):
+            continue
+        if await _get_secret(server_key):
+            browser_key_needed.append(browser_key)
 
     # Apple is the one provider that cannot be authenticated with a static key:
     # MapKit JS wants an ES256-signed JWT, and the signing key must never leave
@@ -320,8 +404,11 @@ async def get_maps_config(db: AsyncSession = Depends(get_db)):
         # Legacy fields. The frontend still reads these until every component
         # goes through resolveMapProviderConfig(); they stay accurate for
         # Google and are null elsewhere, which is the honest answer.
-        "has_google_maps": bool(api_key),
-        "google_maps_api_key": api_key if api_key else None,
+        # The browser key, never the server key. `has_google_maps` answers
+        # "can the browser draw a Google map", which is what the frontend is
+        # asking, not "does this town have a Google account".
+        "has_google_maps": bool(google_browser_key),
+        "google_maps_api_key": google_browser_key or None,
         "google_maps_map_id": map_id,
 
         "map_provider": render_provider,
@@ -331,6 +418,17 @@ async def get_maps_config(db: AsyncSession = Depends(get_db)):
         # configuring. Reported rather than silently falling back, so an admin
         # can see why their map is blank.
         "map_provider_missing": missing,
+        # Secret names an administrator has to create before the map can draw,
+        # because only the server-side twin exists. Surfaced rather than
+        # silently publishing the server key.
+        "browser_key_needed": browser_key_needed,
+        "browser_key_note": (
+            "This town has a server-side map key but no browser key. A key sent "
+            "to a browser is public, so it must be a separate, referrer-"
+            "restricted key: create "
+            + ", ".join(browser_key_needed)
+            + " in the secret store."
+        ) if browser_key_needed else None,
 
         "township_boundary": boundary,
         # The middle of the town, when the town has said where it is.

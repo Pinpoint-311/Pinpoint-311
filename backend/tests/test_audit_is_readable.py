@@ -191,5 +191,19 @@ def test_the_address_is_taken_from_the_proxy_header():
     source = root.joinpath("backend/app/main.py").read_text()
     helper = source[source.index("def _client_ip"):]
     helper = helper[:helper.index("\nclass ")]
-    assert 'X-Forwarded-For' in helper
-    assert "request.client.host" in helper, "no fallback for a direct connection"
+    # The rule itself moved to app/core/client_ip.py, so every audit trail,
+    # the research access log and the rate limiter resolve the caller the same
+    # way -- and so that the trust boundary is stated once. What must not come
+    # back is the old "first entry of X-Forwarded-For" read, which Caddy
+    # appends to and a caller could therefore choose. See
+    # tests/test_client_ip_is_not_forgeable.py.
+    import inspect
+
+    from app.core import client_ip as resolver
+
+    assert "client_ip" in helper, "the helper no longer resolves the caller"
+    assert 'X-Forwarded-For' in inspect.getsource(resolver)
+    assert "request.client.host" in inspect.getsource(resolver), (
+        "no fallback for a direct connection"
+    )
+    assert resolver.resolve_client_ip("172.19.0.5", "8.8.8.8, 203.0.113.7") == "203.0.113.7"
