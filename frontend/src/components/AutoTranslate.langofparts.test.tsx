@@ -106,4 +106,28 @@ describe('AutoTranslate language of parts', () => {
         await waitFor(() => expect(getByTestId('prose').textContent).toBe('Report a pothole'));
         expect(container.querySelector('[data-no-translate].fixed')).toBeNull();
     });
+    /* The spacer that keeps the page header out from under the fixed banner.
+     * Measuring it after paint and starting from zero meant every non-English
+     * page load painted once with the header obscured and then jumped -- and
+     * anywhere offsetHeight reports 0 (jsdom, and a banner not yet laid out)
+     * the header stayed obscured for good. The measurement is a refinement of
+     * a sensible default, never the starting point. */
+    it('reserves room for the banner on the first paint, before anything is measured', () => {
+        const { container } = render(<Page />);
+
+        const spacer = container.querySelector('[data-banner-spacer]') as HTMLElement | null;
+        expect(spacer).not.toBeNull();
+        expect(spacer!.style.height).toBe('40px');
+    });
+
+    it('keeps the reserved height when the banner measures as zero', async () => {
+        const { container } = render(<Page />);
+
+        // jsdom lays nothing out, so offsetHeight is 0 here -- the case that
+        // used to leave the header permanently under the banner.
+        await waitFor(() => {
+            const spacer = container.querySelector('[data-banner-spacer]') as HTMLElement;
+            expect(spacer.style.height).toBe('40px');
+        });
+    });
 });

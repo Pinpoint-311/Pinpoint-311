@@ -172,12 +172,21 @@ export default function SetupWizard(props: SetupWizardProps) {
     const panelRef = useRef<HTMLElement | null>(null);
     const announce = useOptionalAnnounce();
     const firstPanel = useRef(true);
+    /* Read through a ref, not through the dependency list. `open` is recomputed
+     * every render and `remaining` changes the moment any credential is saved,
+     * so depending on either re-ran this effect mid-task and snatched focus off
+     * the Save button the clerk had just pressed. The panel only changes when
+     * the task changes, so `openId` is the whole dependency. */
+    const panelLatest = useRef({ open, remaining });
+    panelLatest.current = { open, remaining };
     useEffect(() => {
-        if (!open) return;
+        const { open: task, remaining: left } = panelLatest.current;
+        if (!task) return;
         if (firstPanel.current) { firstPanel.current = false; return; }
         panelRef.current?.focus();
-        announce(`${open.title}. ${remaining === 0 ? 'All tasks done.' : `${remaining} left.`}`);
-    }, [openId, open, remaining, announce]);
+        announce(`${task.title}. ${left === 0 ? 'All tasks done.' : `${left} left.`}`);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [openId, announce]);
 
     /** Finishing an item opens the next one, or moves on to the next task. */
     const advanceItem = (fromId: string) => {

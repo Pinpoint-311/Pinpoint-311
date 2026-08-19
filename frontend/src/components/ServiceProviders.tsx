@@ -599,6 +599,17 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [catalog, cap]);
 
+    /* `hidden` on the panel wrapper and the collapse animation disagree about
+     * when a card is shut: framer-motion spends 300ms animating the height back
+     * to zero, and `display:none` applied at the top of that window replaces the
+     * animation with a disappearance -- panels vanished on close but still slid
+     * open. So the wrapper stays visible until the exit actually finishes.
+     *
+     * Declared up here with the other hooks, above the early returns, and
+     * adjusted during render below (rather than in an effect) so the panel is
+     * never painted with `hidden` still set on the frame it opens. */
+    const [exitDone, setExitDone] = useState(true);
+
     if (error) {
         return (
             <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
@@ -644,6 +655,8 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const toggle = controlled
         ? () => onExpandToggle?.()
         : () => setOpen(v => (v === null ? !isOpen : !v));
+
+    if (isOpen && exitDone) setExitDone(false);
 
     const shown: CapabilityState = state ?? (configured ? 'unchecked' : 'unset');
     const bad = shown === 'failing';
@@ -994,9 +1007,11 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
             {/* The id lives on a wrapper that is always in the document, marked
                 `hidden` while closed, because the toggle buttons name it with
                 aria-controls in both states -- and a reference to an element
-                that is not there resolves to nothing at all. */}
-            <div id={`prov-${cap}`} hidden={!isOpen}>
-            <AnimatePresence initial={false}>
+                that is not there resolves to nothing at all. `hidden` waits for
+                the collapse to finish, so closing animates the way opening
+                does. */}
+            <div id={`prov-${cap}`} hidden={!isOpen && exitDone}>
+            <AnimatePresence initial={false} onExitComplete={() => setExitDone(true)}>
             {isOpen && (
             <motion.div
                 initial={{ height: 0, opacity: 0 }}

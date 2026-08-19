@@ -717,19 +717,30 @@ export function StayInformedHost({ ready, prefill }: { ready: boolean; prefill?:
         return () => window.cancelAnimationFrame(frame);
     }, [open]);
 
+    /* Escape and the backdrop both close -- except when closing would take
+     * seven filled-in fields with it. Then the first attempt arms the discard
+     * and the second goes through, so neither is a one-gesture way to lose
+     * everything typed (WCAG 3.3.4).
+     *
+     * The warning has to be VISIBLE, not only announced. An earlier version
+     * routed it through the live region alone, which left a sighted mouse user
+     * clicking a backdrop that did nothing and said nothing -- a dead control
+     * is worse than the dismissal it was protecting. The banner below the
+     * header is the message; `announce` is the same message for people who
+     * cannot see it. */
+    const attemptDismiss = () => {
+        if (formDirty && !discardArmed) {
+            setDiscardArmed(true);
+            announce('Press Escape again, or click outside again, to close and discard what you have entered.');
+            return;
+        }
+        finish('not-now');
+    };
+
     const handleDialogKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
         if (e.key === 'Escape') {
             e.stopPropagation();
-            /* Escape closes -- except when it would take seven filled-in fields
-             * with it. Then the first press says so and the second one goes
-             * through, which keeps Escape working for keyboard users without
-             * making it a one-key way to lose everything typed (WCAG 3.3.4). */
-            if (formDirty && !discardArmed) {
-                setDiscardArmed(true);
-                announce('Press Escape again to close and discard what you have entered.');
-                return;
-            }
-            finish('not-now');
+            attemptDismiss();
             return;
         }
         if (discardArmed) setDiscardArmed(false);
@@ -769,13 +780,10 @@ export function StayInformedHost({ ready, prefill }: { ready: boolean; prefill?:
                         className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/50 backdrop-blur-sm overflow-y-auto"
                         /* Clicking away is a dismissal like any other -- it is
                            an optional form, not something to trap somebody in.
-                           Not once anything has been typed, though: this both
-                           destroys a part-filled seven-field form and records a
-                           permanent dismissal, off a click that is most often a
-                           mis-aimed one (WCAG 3.3.4). With entries present the
-                           backdrop does nothing and the explicit Close, "Not
-                           now" and Escape remain the ways out. */
-                        onClick={() => { if (!formDirty) finish('not-now'); }}
+                           Once something has been typed the first click arms
+                           the discard and shows why, and the second click goes
+                           through; it never silently does nothing. */
+                        onClick={attemptDismiss}
                     >
                         <motion.div
                             initial={{ opacity: 0, y: 24, scale: 0.97 }}
@@ -814,6 +822,21 @@ export function StayInformedHost({ ready, prefill }: { ready: boolean; prefill?:
                                         : 'Stay informed about security updates and new features'}
                                 </h2>
                             </div>
+
+                            {/* The discard warning, on screen. Everything the
+                              * live region says, said where a mouse user can
+                              * read it too. */}
+                            {discardArmed && (
+                                <div
+                                    className="mb-5 flex items-start gap-2 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3.5 py-2.5 text-sm text-amber-200"
+                                    data-testid="discard-warning"
+                                >
+                                    <span>
+                                        You have entered details that will be discarded. Press Escape
+                                        again, or click outside again, to close without saving them.
+                                    </span>
+                                </div>
+                            )}
 
                             {hasOperatorForm
                                 ? <RegisterPanel

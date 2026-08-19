@@ -155,19 +155,29 @@ export default function SecretField({
     const baseId = useId();
     const inputId = `${baseId}-input`;
     const helpId = `${baseId}-help`;
-    const noteId = `${baseId}-note`;
     const savedId = `${baseId}-saved`;
+    /* One id per note, rather than one `noteId` shared by all three. They are
+       not mutually exclusive -- a value can look like example text AND fail the
+       format check -- and reusing the id rendered it twice in the same
+       document, which makes aria-describedby resolve to whichever came first.
+       Separate ids also mean nothing has to be suppressed to keep them unique:
+       the format verdict is shown whenever there is one. */
+    const pasteId = `${baseId}-paste`;
+    const placeholderId = `${baseId}-placeholder`;
+    const checkId = `${baseId}-check`;
+
+    const showCheck = !!check && !paste;
 
     /* Everything advisory about this field is announced through the input's
        description, not as separate visual-only text: the paste diagnosis, the
-       format check and the help line all sit in one describedby chain so a
-       screen reader reaches them when it lands on the box. */
-    const noteText = paste ? paste.label
-        : placeholderish ? 'This looks like example text rather than a real value.'
-            : check ? check.msg : '';
+       placeholder warning, the format check and the help line all sit in one
+       describedby chain so a screen reader reaches them when it lands on the
+       box. */
     const describedBy = [
         savedHint ? savedId : null,
-        noteText ? noteId : null,
+        paste ? pasteId : null,
+        placeholderish ? placeholderId : null,
+        showCheck ? checkId : null,
         help ? helpId : null,
     ].filter(Boolean).join(' ') || undefined;
 
@@ -252,7 +262,7 @@ export default function SecretField({
                 <div className="mt-1.5 rounded-lg bg-amber-500/10 border border-amber-400/25 px-2.5 py-2 flex items-start gap-2">
                     <AlertCircle className="w-3.5 h-3.5 text-amber-300/90 mt-0.5 shrink-0" aria-hidden="true" />
                     <div className="min-w-0 flex-1">
-                        <p id={noteId} className="text-xs text-amber-100/85 leading-relaxed">{paste.label}</p>
+                        <p id={pasteId} className="text-xs text-amber-100/85 leading-relaxed">{paste.label}</p>
                         <button
                             type="button"
                             aria-label={`Fix ${label}: ${paste.label}`}
@@ -265,13 +275,17 @@ export default function SecretField({
                 </div>
             )}
             {placeholderish && (
-                <p id={noteId} className="text-xs mt-1.5 flex items-start gap-1 text-amber-300/90">
+                <p id={placeholderId} className="text-xs mt-1.5 flex items-start gap-1 text-amber-300/90">
                     <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" aria-hidden="true" />
                     This looks like example text rather than a real value.
                 </p>
             )}
-            {check && !paste && !placeholderish && (
-                <p id={noteId} className={`text-xs mt-1.5 flex items-center gap-1 ${check.ok ? 'text-emerald-300/80' : 'text-amber-300/90'}`}>
+            {/* Shown whenever there is a verdict. It was briefly suppressed while
+                the value looked like example text, which hid the one line that
+                says whether the shape is right -- an id collision fixed by
+                deleting content instead of by giving it its own id. */}
+            {showCheck && check && (
+                <p id={checkId} className={`text-xs mt-1.5 flex items-center gap-1 ${check.ok ? 'text-emerald-300/80' : 'text-amber-300/90'}`}>
                     {check.ok ? <CheckCircle className="w-3 h-3 shrink-0" aria-hidden="true" /> : <AlertCircle className="w-3 h-3 shrink-0" aria-hidden="true" />}
                     {check.msg}
                 </p>

@@ -102,6 +102,11 @@ interface AttributeOriginal {
     originalValue: string;
 }
 
+/* One line of banner text at a desktop width. Wrong for a wrapped translation,
+ * which is why it is measured — but right far more often than zero, and it is
+ * what the spacer is worth before anything has been laid out. */
+const DEFAULT_BANNER_HEIGHT = 40;
+
 export function AutoTranslate({ children }: AutoTranslateProps) {
     const { language } = useTranslation();
     const containerRef = useRef<HTMLDivElement>(null);
@@ -116,17 +121,24 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
     const isTranslatingRef = useRef(false); // Ref to prevent re-triggering
 
     /* Measured height of the fixed banner, mirrored into the spacer below it.
-     * 40px is the one-line English case and nothing else; see the spacer. */
+     *
+     * The measurement is a REFINEMENT, never the starting point. Starting from
+     * zero meant every non-English page load painted once with the header
+     * underneath the fixed banner and then jumped when the effect ran, and any
+     * environment where offsetHeight reports 0 (a banner not yet laid out, a
+     * display:none ancestor) left the header permanently obscured. So the
+     * one-line height is the default, which is right for the common case from
+     * the first frame, and a real measurement replaces it when there is one. */
     const bannerRef = useRef<HTMLDivElement>(null);
-    const [bannerHeight, setBannerHeight] = useState(0);
+    const [bannerHeight, setBannerHeight] = useState(DEFAULT_BANNER_HEIGHT);
 
     useEffect(() => {
         const banner = bannerRef.current;
         if (language === 'en' || !banner) {
-            setBannerHeight(0);
+            setBannerHeight(DEFAULT_BANNER_HEIGHT);
             return;
         }
-        const measure = () => setBannerHeight(banner.offsetHeight);
+        const measure = () => setBannerHeight(banner.offsetHeight || DEFAULT_BANNER_HEIGHT);
         measure();
         // Guarded: jsdom and older Safari have no ResizeObserver, and failing to
         // observe must not cost the initial measurement above.
@@ -584,7 +596,7 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
               * translated string, the viewport and the user's font size — none of
               * which are knowable here. */}
             <div ref={containerRef} style={{ display: 'contents' }}>
-                {language !== 'en' && <div aria-hidden="true" style={{ height: bannerHeight }} />}
+                {language !== 'en' && <div aria-hidden="true" data-banner-spacer="" style={{ height: bannerHeight }} />}
                 {children}
             </div>
         </>

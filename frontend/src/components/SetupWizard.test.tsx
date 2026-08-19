@@ -264,3 +264,58 @@ describe('one item open at a time', () => {
         expect(current?.textContent).toContain('Google Cloud');
     });
 });
+
+/* Focus moves to the panel heading when the TASK changes -- that is the whole
+ * point of the effect. It must not move for anything else. The effect used to
+ * depend on `open` (rebuilt every render) and on `remaining` (a derived count
+ * that changes the moment any credential saves), so saving the last credential
+ * of the task a clerk was already in pulled focus off the Save button they had
+ * just pressed. */
+describe('where focus goes when the panel changes', () => {
+    const focusInPanel = () => {
+        const btn = container.querySelector<HTMLButtonElement>('[data-pass]')!;
+        btn.focus();
+        return btn;
+    };
+
+    it('leaves focus alone when the task has not changed', async () => {
+        const status = statusFor({});
+        await render({ status });
+
+        // Cross to a task deliberately, so the first-render guard is spent and
+        // the effect is armed.
+        await act(async () => { rows()[1].click(); });
+        await act(async () => { await Promise.resolve(); });
+
+        const parked = focusInPanel();
+        expect(document.activeElement).toBe(parked);
+
+        // A re-render with the same open task, for any reason at all.
+        await act(async () => {
+            root.render(React.createElement(SetupWizard as any, { ...BASE, status }));
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(document.activeElement).toBe(parked);
+    });
+
+    it('leaves focus alone when the completion count changes under it', async () => {
+        await render({ status: statusFor({}) });
+
+        await act(async () => { rows()[1].click(); });
+        await act(async () => { await Promise.resolve(); });
+
+        const parked = focusInPanel();
+
+        // Something elsewhere finishes: `remaining` drops, the open task does not
+        // change. This is the mid-flow save that used to steal focus.
+        await act(async () => {
+            root.render(React.createElement(SetupWizard as any, {
+                ...BASE, status: statusFor({ identity: ['entra'] }),
+            }));
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(document.activeElement).toBe(parked);
+    });
+});

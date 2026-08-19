@@ -102,4 +102,33 @@ describe('a credential field', () => {
         const box = screen.getByLabelText(/API Key/i, { selector: 'input' });
         expect(textOf(box.getAttribute('aria-describedby'))).toMatch(/leave this blank to keep it/i);
     });
+    /* The format verdict and the "looks like example text" warning briefly
+     * shared one id, and the collision was resolved by not rendering the
+     * verdict whenever the value looked placeholder-ish -- which hid the one
+     * line that says whether the shape is right. Separate ids, both shown. */
+    it('shows the format verdict even when the value also looks like example text', () => {
+        render(<Harness initial="example.com" kind="url" />);
+
+        expect(screen.getByText(/looks like example text/i)).toBeTruthy();
+        expect(screen.getByText(/usually start with https:\/\//i)).toBeTruthy();
+    });
+
+    it('describes the box with both notes, and gives each its own id', () => {
+        render(<Harness initial="example.com" kind="url" />);
+
+        const box = screen.getByLabelText(/API Key/i, { selector: 'input' });
+        const ids = (box.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+        expect(new Set(ids).size).toBe(ids.length);
+
+        const described = textOf(box.getAttribute('aria-describedby'));
+        expect(described).toMatch(/looks like example text/i);
+        expect(described).toMatch(/usually start with https:\/\//i);
+    });
+
+    it('shows a passing verdict too, so example-looking values are not silently unjudged', () => {
+        render(<Harness initial="your.name@example.com" kind="email" />);
+
+        expect(screen.getByText(/looks like example text/i)).toBeTruthy();
+        expect(screen.getByText(/looks like a valid email/i)).toBeTruthy();
+    });
 });

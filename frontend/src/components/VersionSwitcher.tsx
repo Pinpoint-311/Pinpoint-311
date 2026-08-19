@@ -571,6 +571,12 @@ export default function VersionSwitcher() {
                                 {Object.entries(security.verification).map(([key, check]) => (
                                     <div
                                         key={key}
+                                        /* The chip shows an abbreviation, so the
+                                           full check name has to stay reachable
+                                           by hover as well as by screen reader --
+                                           the sr-only span below is an addition
+                                           to the tooltip, not a replacement. */
+                                        title={`${check.name}: ${statusWord(check)}`}
                                         className="flex items-center gap-1.5 text-[11px] bg-white/5 rounded px-2 py-1"
                                     >
                                         {getStatusIcon(check)}
