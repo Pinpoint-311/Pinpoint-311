@@ -340,7 +340,23 @@ async def export_statistics(
     if end_date:
         conditions.append(ServiceRequest.created_at <= end_date)
     
-    base_query = select(ServiceRequest).where(ServiceRequest.deleted_at.is_(None))
+    # The department is eager-loaded, and the identical hazard is documented
+    # twenty lines above, in get_requests_for_export. It was missed here: the
+    # loop below reads `req.assigned_department.name`, which on an AsyncSession
+    # instance is a lazy load and raises
+    #
+    #     MissingGreenlet: greenlet_spawn has not been called
+    #
+    # so GET /api/export/statistics 500ed on any non-empty dataset -- which is
+    # every deployment that has ever received a report. The frontend has a live
+    # button for it, so this was a user-visible 500 on the happy path.
+    from sqlalchemy.orm import selectinload
+
+    base_query = (
+        select(ServiceRequest)
+        .options(selectinload(ServiceRequest.assigned_department))
+        .where(ServiceRequest.deleted_at.is_(None))
+    )
     if conditions:
         base_query = base_query.where(and_(*conditions))
     

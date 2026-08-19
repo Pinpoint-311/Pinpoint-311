@@ -129,10 +129,47 @@ def test_redaction_passes_when_the_chosen_detector_works(monkeypatch):
     async def _effective(p):
         return "google", None
 
+    # The detector answers. `detect` has to be stubbed as well as the two
+    # resolvers: `_test_redaction` deliberately puts a one-pixel probe through
+    # the REAL detector -- which is the point of it, since a key that is present
+    # and rejected passes every credentials-only check -- so without this the
+    # test called Google Vision for real. It passed only on a machine holding
+    # application default credentials and failed everywhere else. Nobody saw
+    # that: CI installed no google-cloud libraries and skipped the whole file,
+    # and in the production image the run was aborting at collection.
+    async def _detect(provider, data, width, height, faces, plates):
+        return []
+
     monkeypatch.setattr(ir, "resolve_provider", _resolve)
     monkeypatch.setattr(ir, "effective_provider", _effective)
+    monkeypatch.setattr(ir, "detect", _detect)
 
     assert _run(system._test_redaction())["ok"] is True
+
+
+def test_redaction_fails_when_the_detector_rejects_the_credentials(monkeypatch):
+    """The case the probe image exists for. AWS and Azure can only be checked
+    for the *presence* of a key, so one that is present and rejected passed
+    every test on this page while every resident photo went out unblurred.
+    `detect` returning None is the detector refusing."""
+    from app.services import image_redaction as ir
+
+    async def _resolve():
+        return "azure"
+
+    async def _effective(p):
+        return "azure", None
+
+    async def _detect(provider, data, width, height, faces, plates):
+        return None
+
+    monkeypatch.setattr(ir, "resolve_provider", _resolve)
+    monkeypatch.setattr(ir, "effective_provider", _effective)
+    monkeypatch.setattr(ir, "detect", _detect)
+
+    result = _run(system._test_redaction())
+    assert result["ok"] is False
+    assert "rejected" in result["detail"].lower()
 
 
 def test_redaction_fails_when_it_has_quietly_degraded(monkeypatch):

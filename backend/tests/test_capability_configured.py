@@ -406,12 +406,22 @@ class _NoBackground:
 
 async def _save(capability, provider, store, monkeypatch, settings=None):
     from app.api import system
+    from app.services import secret_manager as sm
 
     async def fake_persist(db, key_name, value):
         store[key_name] = value
         return True
 
     monkeypatch.setattr(system, "_persist_secret", fake_persist)
+    # The town has answered "where are our credentials kept". save_provider
+    # refuses with 409 before writing any secret until that question has an
+    # answer -- a deliberate gate, added after these tests were written, and one
+    # they never noticed because they were not running: CI installed neither
+    # fastapi nor pydantic so the module skipped, and in the production image the
+    # whole suite was aborting at collection. Two tests here had been red for as
+    # long as the gate has existed. Answering the question is what a town does
+    # before saving a credential, so the tests do it too.
+    monkeypatch.setattr(sm, "store_chosen", lambda: True)
     body = system.ProviderSaveRequest(provider=provider, settings=settings or {})
     return await system.save_provider(capability, body, _NoBackground(), db=None, _=None)
 

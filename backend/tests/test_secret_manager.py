@@ -1,27 +1,64 @@
-"""Secret manager: TTL cache expiry and no-clobber bundle merge."""
+"""Secret manager: TTL cache expiry and no-clobber bundle merge.
+
+The stubs below used to be written straight into `sys.modules` at import time
+and never taken out again. That is a process-global edit made by whichever test
+module collects first, and it does not stay inside this file: a later module
+importing `app.main` got this file's one-attribute fake of
+`app.services.api_usage` instead of the real module and died at collection with
+`ImportError: cannot import name 'get_usage_summary'`. A collection error
+aborts the run, so `pytest tests` executed *zero* tests -- and the failure
+looked like a bug in `app.main`.
+
+So the fakes live in a fixture now. `secret_manager` imports all three of these
+lazily, inside the functions that use them, so they only have to exist while a
+test is running -- and `monkeypatch.setitem` restores `sys.modules` exactly as
+it found it, including deleting a key that was not there before.
+"""
 import json
 import os
 import sys
 import types
 
-# Stub DB / tracking / sanitize so the merge path needs no real database.
-_san = types.ModuleType("app.core.sanitize"); _san.sanitize_for_log = lambda s: s
-sys.modules.setdefault("app.core.sanitize", _san)
-
-
-class _Sess:
-    async def __aenter__(self): return self
-    async def __aexit__(self, *a): return False
-
-
-_dbs = types.ModuleType("app.db.session"); _dbs.SessionLocal = _Sess; _dbs.sync_engine = None
-sys.modules.setdefault("app.db.session", _dbs)
-_au = types.ModuleType("app.services.api_usage")
-async def _track(*a, **k): return None
-_au.track_api_usage = _track
-sys.modules.setdefault("app.services.api_usage", _au)
+import pytest
 
 import app.services.secret_manager as sm  # noqa: E402
+
+
+def _stub_modules() -> dict:
+    """Stub DB / tracking / sanitize so the merge path needs no real database."""
+    san = types.ModuleType("app.core.sanitize")
+    san.sanitize_for_log = lambda s: s
+
+    class _Sess:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+
+    dbs = types.ModuleType("app.db.session")
+    dbs.SessionLocal = _Sess
+    dbs.sync_engine = None
+
+    au = types.ModuleType("app.services.api_usage")
+
+    async def _track(*a, **k):
+        return None
+
+    au.track_api_usage = _track
+
+    return {
+        "app.core.sanitize": san,
+        "app.db.session": dbs,
+        "app.services.api_usage": au,
+    }
+
+
+@pytest.fixture(autouse=True)
+def _isolated_stubs(monkeypatch):
+    """Fakes for the duration of one test, and only where the real module is
+    not already imported -- the old code used `setdefault` for that reason."""
+    for name, fake in _stub_modules().items():
+        if name not in sys.modules:
+            monkeypatch.setitem(sys.modules, name, fake)
+    yield
 
 
 class FakeSM:
