@@ -45,14 +45,43 @@ def test_the_column_is_off_by_default_and_never_null():
 
 
 def test_the_startup_guard_adds_the_column_with_the_same_default():
-    """init_db's belt-and-braces ADD COLUMN IF NOT EXISTS runs on installs that
-    never see the migration. If it disagreed with the migration about the
-    default, whether a deployment prompts would depend on how it was upgraded."""
-    source = Path(__file__).resolve().parents[1].joinpath("app/db/init_db.py").read_text()
-    assert (
-        "ADD COLUMN IF NOT EXISTS registration_prompt_dismissed "
-        "BOOLEAN NOT NULL DEFAULT false" in source
-    )
+    """An install that never sees the migration still gets the column, and gets
+    it with the same default -- otherwise whether a deployment prompts would
+    depend on how it was upgraded.
+
+    This used to assert that init_db.py contained the literal DDL string
+    `ADD COLUMN IF NOT EXISTS registration_prompt_dismissed BOOLEAN NOT NULL
+    DEFAULT false`. Keeping the two in step was somebody's job to remember, and
+    "the same default" was enforced by two hand-written texts agreeing.
+
+    The startup guard is `migrate.reconcile()` now: it diffs the live database
+    against the models and adds what is missing, compiling the column's DDL from
+    the model itself. There is only one statement of the default left -- the
+    model's -- so they cannot disagree. What is checked here is that the guard
+    covers this column, and that the DDL it would emit carries the default.
+    """
+    pytest.importorskip("alembic.script")
+
+    from app.db.migrate import plan_reconciliation
+    from app.db.session import Base
+    import app.models  # noqa: F401
+
+    table = Base.metadata.tables["system_settings"]
+    existing = {"system_settings": {c.name: None for c in table.columns
+                                    if c.name != "registration_prompt_dismissed"}}
+    plan = plan_reconciliation(existing, Base.metadata)
+    assert ("system_settings", "registration_prompt_dismissed") in plan.missing_columns
+
+    # And the generated DDL carries NOT NULL plus the false default, so existing
+    # rows on an adopted database read as "not dismissed" exactly as the
+    # migration's did.
+    from sqlalchemy.dialects import postgresql
+    from sqlalchemy.schema import CreateColumn
+
+    spec = str(CreateColumn(table.columns["registration_prompt_dismissed"])
+               .compile(dialect=postgresql.dialect())).lower()
+    assert "not null" in spec
+    assert "false" in spec
 
 
 # ---------------------------------------------------------------------------

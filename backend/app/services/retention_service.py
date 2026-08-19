@@ -18,7 +18,7 @@ Key features:
 import logging
 
 from app.services.retention_scrub import (
-    REDACT, apply_scrub, fields_for_mode, normalise_mode,
+    REDACT, apply_scrub, fields_for_mode, normalise_mode, upload_filenames,
 )
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
@@ -26,6 +26,58 @@ from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
+
+
+def upload_directory() -> str:
+    """Where POST /api/system/upload puts photos. Same default as main.py."""
+    import os
+
+    return os.environ.get("UPLOAD_DIR", "/project/uploads")
+
+
+def delete_upload_files(names: List[str]) -> List[str]:
+    """Delete uploaded photo files by bare filename. Returns what went.
+
+    The catalog entry for "Photos" told towns that "the files themselves are
+    removed by the storage cleanup that follows". There was no storage cleanup.
+    Nothing anywhere deleted from UPLOAD_DIR, so a town that ticked Photos --
+    or ran a full purge, which ticks everything -- had the links cleared out of
+    the database and every image still sitting on disk, served by the
+    unauthenticated /api/uploads static mount to anyone who had the URL.
+
+    This is the cleanup that was being promised. It lives here rather than in
+    retention_scrub because that module is deliberately pure, which is what lets
+    CI run it without a filesystem.
+
+    A file that cannot be deleted is logged and the run continues: the database
+    redaction is the part with the legal weight, and aborting a retention run
+    over one unlinkable file would leave the rest of the record intact.
+    """
+    import os
+
+    directory = upload_directory()
+    removed: List[str] = []
+    for name in names:
+        # upload_filenames() has already refused anything that is not a bare
+        # filename. Joining is safe, and the check is repeated at the boundary
+        # that actually touches the disk rather than trusted from a caller.
+        if name != os.path.basename(name):
+            logger.warning("[Retention] refusing to delete a non-basename path: %r", name)
+            continue
+        path = os.path.join(directory, name)
+        try:
+            os.remove(path)
+            removed.append(name)
+        except FileNotFoundError:
+            # Already gone. The record's promise is that it is not reachable,
+            # and it is not.
+            removed.append(name)
+        except Exception as exc:
+            logger.warning("[Retention] could not delete uploaded photo %s: %s",
+                           name, str(exc)[:200])
+    if removed:
+        logger.info("[Retention] deleted %d uploaded photo file(s)", len(removed))
+    return removed
 
 
 # One definition of the cutoff, shared by the eligibility query, the stats
@@ -159,7 +211,12 @@ async def archive_record(
     # leaves the row as a shell that still counts. Neither removes the record:
     # see the note in retention_scrub about why hard deletion is gone.
     chosen = fields_for_mode(archive_mode, scrub_fields)
+    # Read the photo filenames BEFORE apply_scrub clears the columns that name
+    # them -- afterwards there is nothing left to say which files to delete.
+    photo_files = upload_filenames(record) if "media" in set(chosen) else []
     cleared = apply_scrub(record, chosen)
+    if photo_files:
+        delete_upload_files(photo_files)
     if "comments" in set(chosen):
         await scrub_comments(db, record.id)
         cleared.append("comments")

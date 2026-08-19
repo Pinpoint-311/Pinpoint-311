@@ -1210,24 +1210,42 @@ def test_an_external_store_that_refuses_the_write_is_still_reported(town, monkey
     assert result["db_only"] == [A_KEY]
 
 
-def test_the_column_has_the_belt_and_braces_guard_too():
-    """Every recent column is added twice: once by its Alembic revision, and
-    once by init_db's idempotent ADD COLUMN IF NOT EXISTS.
+def test_an_install_missing_the_column_gets_it_back():
+    """The deployment this protects is the one whose migration history is ahead
+    of its actual schema -- a restored dump, a stamped-not-migrated database, a
+    town brought up from a snapshot. On exactly those, `host_provided_keys` is
+    missing, and because it is ORM-mapped every read of the settings row raises:
+    not a degraded credential feature, a 500 on any page that reads settings.
 
-    That is not redundancy for its own sake. init_db is what catches an install
-    whose migration history is ahead of its actual schema -- a restored dump, a
-    stamped-not-migrated database, a town brought up from a snapshot. Without
-    the guard, `host_provided_keys` is missing on exactly those deployments and
-    every read of the settings row raises: not a degraded credential feature, a
-    500 on any page that reads settings at all."""
-    from pathlib import Path
+    This used to be checked by asserting init_db.py contained the literal string
+    `ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS host_provided_keys` --
+    a second, hand-maintained copy of the schema that had to be remembered for
+    every new column, and that raced the revision chain over the same columns
+    (`op.add_column` has no IF NOT EXISTS, so whichever lost the race wedged the
+    container with DuplicateColumn).
 
-    from app.db import init_db
+    The guarantee is unchanged and is now derived rather than remembered:
+    migrate.reconcile() diffs the live database against the models and adds what
+    is missing. So the check is the behaviour, not the string.
+    """
+    pytest.importorskip("alembic.script")
 
-    source = Path(init_db.__file__).read_text()
-    assert (
-        "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS host_provided_keys"
-        in source
+    from app.db.migrate import plan_reconciliation
+    from app.db.session import Base
+    import app.models  # noqa: F401
+
+    settings_table = Base.metadata.tables["system_settings"]
+    assert "host_provided_keys" in settings_table.columns, (
+        "host_provided_keys is no longer on the model, so nothing restores it"
+    )
+    # A database that has system_settings but not this column.
+    existing = {"system_settings": {c.name: None for c in settings_table.columns
+                                    if c.name != "host_provided_keys"}}
+
+    plan = plan_reconciliation(existing, Base.metadata)
+    assert ("system_settings", "host_provided_keys") in plan.missing_columns, (
+        "a database missing host_provided_keys would not have it restored at "
+        "startup, and every settings read on that deployment 500s"
     )
 
 

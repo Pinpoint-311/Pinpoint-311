@@ -1283,11 +1283,28 @@ def enforce_retention_policy():
         return {"status": "error", "error": str(e)}
 
 
-@celery_app.task
+# pg_dump | gzip | gpg | upload, over a whole municipal database, does not fit
+# in the global `task_time_limit=300`. Five minutes in, Celery kills the worker
+# process -- and a hard kill does not run the task's own `except`, so not even
+# the "[Backup] Task failed" line was written. The nightly backup of any town
+# large enough to actually need one stopped silently, and the freshness check
+# that should have caught that was broken too (see backup_service.as_utc), so
+# nothing anywhere said so.
+#
+# An hour, with a soft limit fifty minutes in so the task receives an exception
+# it can catch and report rather than being shot. Set per-task rather than
+# globally: the point of the five-minute default is that a stuck
+# request-processing task should die, and that stays true.
+BACKUP_TIME_LIMIT_SECONDS = 60 * 60
+BACKUP_SOFT_TIME_LIMIT_SECONDS = 50 * 60
+
+
+@celery_app.task(time_limit=BACKUP_TIME_LIMIT_SECONDS,
+                 soft_time_limit=BACKUP_SOFT_TIME_LIMIT_SECONDS)
 def backup_database():
     """
     Create an encrypted database backup and upload to S3.
-    
+
     Should be scheduled to run daily via Celery Beat.
     Backups are encrypted with AES-256 using the BACKUP_ENCRYPTION_KEY secret.
     """
@@ -1692,11 +1709,29 @@ def proactive_health_scan():
             # than cancels -- are pure and live next to the checks themselves,
             # where they are unit-tested without a database or a mail server.
             escalations = find_escalations(checks, prev)
-            settings.health_alert_state = next_alert_state(checks, prev)
-            await db.commit()
+            next_state = next_alert_state(checks, prev)
 
             if not escalations:
+                # Nothing to send, so nothing to lose by recording now. This is
+                # also how a recovery gets written back.
+                settings.health_alert_state = next_state
+                await db.commit()
                 return {"status": "ok", "overall": result["overall_status"], "alerts": 0}
+
+            # The state is NOT committed yet, and that is the fix.
+            #
+            # It used to be written and committed here, before the send. The
+            # state is what makes an alert fire only on a transition into a
+            # worse status -- so once "disk is critical" was recorded, disk was
+            # never again a transition, and no further alert for it would ever
+            # be raised. If the send then failed (ten minutes of SMTP trouble is
+            # enough), the admin was never told, and never would be: the
+            # database said they had already been told. A permanent silence
+            # bought by a temporary outage.
+            #
+            # services/connector_alerts.py:463-481 already had this right --
+            # `remember()` runs only after a delivery succeeded -- and says why.
+            # This mirrors it.
 
             # Email active admins.
             admins_res = await db.execute(
@@ -1705,6 +1740,9 @@ def proactive_health_scan():
             admins = [a for a in admins_res.scalars().all() if a.email]
             if not admins:
                 logger.warning("[proactive] escalations found but no admin emails to notify")
+                # Deliberately not recorded. Nobody was told, so the next sweep
+                # must still treat this as new -- an admin address added an hour
+                # from now should receive the alert that is still true.
                 return {"status": "no_admins", "alerts": len(escalations)}
 
             township = settings.township_name or "Your 311"
@@ -1740,15 +1778,38 @@ def proactive_health_scan():
                 blocks=blocks,
                 footer_lines=["Proactive health alert. Sent to administrators only."],
             )
+            # Sent one at a time so one bad address cannot drop the batch, and
+            # tracked so the state below records only what actually went out.
+            delivered = False
             for admin in admins:
                 try:
-                    notification_service.send_email(
+                    # A provider that returns False rather than raising is a
+                    # failure too. `or delivered` keeps a single success enough.
+                    sent = notification_service.send_email(
                         to=admin.email, subject=message["subject"],
                         body_html=message["html"], body_text=message["text"],
                         from_name=f"{township} System Monitor",
                     )
+                    delivered = (sent is not False) or delivered
                 except Exception as e:
                     logger.warning(f"[proactive] failed to email {admin.email}: {e}")
+
+            if not delivered:
+                # Nothing reached anybody, so nothing is recorded. The next
+                # sweep sees the same escalation as new and tries again --
+                # which is the whole point: an SMTP outage must delay the
+                # alert, never cancel it.
+                logger.warning(
+                    "[proactive] %d escalation(s) could not be delivered to any of %d "
+                    "admin(s); leaving the alert state untouched so the next sweep retries",
+                    len(escalations), len(admins))
+                return {"status": "send_failed", "overall": result["overall_status"],
+                        "alerts": len(escalations)}
+
+            # Delivered. Now it is true that the admins have been told, so the
+            # transition can be recorded and stop re-alerting.
+            settings.health_alert_state = next_state
+            await db.commit()
 
             return {"status": "alerted", "overall": result["overall_status"], "alerts": len(escalations)}
 

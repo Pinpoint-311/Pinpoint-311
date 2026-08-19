@@ -34,6 +34,7 @@ FastAPI or Celery, neither of which CI installs.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Awaitable, Callable, Dict, Mapping, Optional
 
 from app.core.sanitize import sanitize_for_log
@@ -497,33 +498,79 @@ async def _collect_readings(db) -> Dict[str, Dict[str, Any]]:
         out["system:database"] = probes.classify_reachable(
             "The database", False, probes.failure_summary(e))
 
+    # The cache.
+    #
+    # This used to read `from app.core.redis_client import redis_client`. There
+    # is no such module and there never has been. The except below caught the
+    # ModuleNotFoundError, sanitised it, and filed it as "the cache is
+    # unreachable" -- so `system:cache` reported BROKEN on every sweep, emailed
+    # every administrator hourly about a Redis that was perfectly healthy, and
+    # an actual Redis outage was indistinguishable from the bug. An import error
+    # is a fault in this file; it is not evidence about somebody else's service,
+    # and the two must not land in the same bucket.
     try:
-        from app.core.redis_client import redis_client
-        if redis_client is None:
+        import redis.asyncio as aioredis
+    except Exception as e:  # the library itself is missing from the image
+        logger.warning("[Probe] redis client library unavailable: %s",
+                       sanitize_for_log(str(e)[:300]))
+        out["system:cache"] = {"ok": True, "detail": "Cache status unavailable.",
+                               "recorded": False}
+    else:
+        url = os.getenv("REDIS_URL") or ""
+        if not url:
             # Not configured is not broken. Redis is optional here.
-            out["system:cache"] = {"ok": True, "detail": "No cache configured.", "recorded": False}
+            out["system:cache"] = {"ok": True, "detail": "No cache configured.",
+                                   "recorded": False}
         else:
-            await redis_client.ping()
-            out["system:cache"] = probes.classify_reachable("The cache", True)
-    except Exception as e:
-        # Same reasoning as the database above: a Redis URL carries a password.
-        logger.warning("[Probe] cache unreachable: %s", sanitize_for_log(str(e)[:300]))
-        out["system:cache"] = probes.classify_reachable(
-            "The cache", False, probes.failure_summary(e))
+            client = None
+            try:
+                client = aioredis.from_url(url, socket_timeout=3)
+                await client.ping()
+                out["system:cache"] = probes.classify_reachable("The cache", True)
+            except Exception as e:
+                # Same reasoning as the database above: a Redis URL carries a
+                # password, so the exception text never reaches the card or the
+                # alert email.
+                logger.warning("[Probe] cache unreachable: %s",
+                               sanitize_for_log(str(e)[:300]))
+                out["system:cache"] = probes.classify_reachable(
+                    "The cache", False, probes.failure_summary(e))
+            finally:
+                if client is not None:
+                    try:
+                        await client.aclose()
+                    except Exception:
+                        pass
 
     try:
         from datetime import datetime, timezone
 
         from app.services.backup_service import get_backup_status
         status = await get_backup_status()
+        # `last_backup` is a DICT -- {"name", "size_bytes", "created_at",
+        # "age_days"} -- which is what backup_service actually returns. This
+        # read it as if it were a datetime and handed it to classify_backup,
+        # which called .replace() on it and raised AttributeError straight into
+        # the except below, so backups reported "unmeasured" forever. The one
+        # check that would notice a town's backups had stopped could not fire.
         last = (status or {}).get("last_backup_at") or (status or {}).get("last_backup")
+        if isinstance(last, dict):
+            last = last.get("created_at")
         if isinstance(last, str):
             from datetime import datetime as _dt
             last = _dt.fromisoformat(last.replace("Z", "+00:00"))
+        if last is not None and last.tzinfo is None:
+            # Filenames carry UTC with no offset in them; comparing that to an
+            # aware `now` is a TypeError. See backup_service._parsed_timestamp.
+            last = last.replace(tzinfo=timezone.utc)
         out["system:backups"] = probes.classify_backup(last, datetime.now(timezone.utc))
-    except Exception:
+    except Exception as e:
         # Backups not being configured at all is a real and supported state for
-        # a town whose host takes them, so this is not reported as a failure.
+        # a town whose host takes them, so this is not reported as a failure --
+        # but it is said out loud, because this branch spent months absorbing a
+        # bug in the line above it and looking exactly like a town that had not
+        # configured backups.
+        logger.warning("[Probe] backup status unreadable: %s", sanitize_for_log(str(e)[:300]))
         out["system:backups"] = {"ok": True, "detail": "Backup status unavailable.", "recorded": False}
 
     return out

@@ -269,6 +269,44 @@ async def create_backup() -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
+def as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """Give a naive datetime UTC, leave an aware one alone.
+
+    Every timestamp in this module has to pass through here before it meets
+    another one, and that is not a style preference. `strptime` on a backup
+    filename returns a NAIVE datetime; `datetime.now(timezone.utc)` is aware;
+    subtracting one from the other raises
+
+        TypeError: can't subtract offset-naive and offset-aware datetimes
+
+    which is what happened on every parsed filename. In `list_backups` it threw
+    out of the loop into the function's own except, so the call returned
+    `{"status": "error", "backups": []}` -- an S3 bucket full of backups
+    reported as none. In `cleanup_old_backups` it was caught per-backup, so
+    nothing was ever deleted and the retention policy silently did not run. And
+    `proactive_health._backup_age_check` had it too, so the one check that
+    would have noticed any of this could never fire.
+
+    Naive means UTC here because that is what the filenames are: `backup_db`
+    writes them from `datetime.now(timezone.utc)`.
+    """
+    if value is None or value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=timezone.utc)
+
+
+def parse_backup_timestamp(name: str) -> Optional[datetime]:
+    """The UTC datetime encoded in a backup's filename, or None.
+
+    `db_backup_20260127_020000.sql.gpg` -> 2026-01-27 02:00:00+00:00
+    """
+    try:
+        ts_str = name.replace(BACKUP_PREFIX, "").replace(BACKUP_EXTENSION, "")
+        return as_utc(datetime.strptime(ts_str, "%Y%m%d_%H%M%S"))
+    except Exception:
+        return None
+
+
 async def list_backups() -> Dict[str, Any]:
     """List all available backups from S3."""
     config = await get_backup_config()
@@ -288,18 +326,17 @@ async def list_backups() -> Dict[str, Any]:
             if obj['Key'].endswith(BACKUP_EXTENSION):
                 # Parse timestamp from filename
                 name = obj['Key']
-                try:
-                    # Extract timestamp: db_backup_20260127_020000.sql.gpg
-                    ts_str = name.replace(BACKUP_PREFIX, "").replace(BACKUP_EXTENSION, "")
-                    created_at = datetime.strptime(ts_str, "%Y%m%d_%H%M%S")
-                except Exception:
-                    created_at = obj.get('LastModified', datetime.now(timezone.utc))
-                
+                created_at = parse_backup_timestamp(name)
+                if created_at is None:
+                    # S3's LastModified is already aware; as_utc is a no-op on
+                    # it and a fix on anything else that turns up here.
+                    created_at = as_utc(obj.get('LastModified')) or datetime.now(timezone.utc)
+
                 backups.append({
                     "name": name,
                     "size_bytes": obj['Size'],
-                    "created_at": created_at.isoformat() if isinstance(created_at, datetime) else str(created_at),
-                    "age_days": (datetime.now(timezone.utc) - created_at).days if isinstance(created_at, datetime) else 0
+                    "created_at": created_at.isoformat(),
+                    "age_days": (datetime.now(timezone.utc) - created_at).days,
                 })
         
         # Sort by date, newest first
@@ -394,7 +431,12 @@ async def cleanup_old_backups(retention_days: int = None) -> Dict[str, Any]:
         deleted = []
         for backup in result["backups"]:
             try:
-                backup_date = datetime.fromisoformat(backup["created_at"].replace('Z', '+00:00').replace('+00:00', ''))
+                # `.replace('+00:00', '')` used to strip the offset back off,
+                # producing a naive datetime to compare against an aware cutoff
+                # -- a TypeError caught by the handler below, on every backup,
+                # so the retention sweep deleted nothing and reported success.
+                backup_date = as_utc(
+                    datetime.fromisoformat(backup["created_at"].replace('Z', '+00:00')))
                 if backup_date < cutoff:
                     delete_result = await delete_backup(backup["name"])
                     if delete_result["status"] == "success":

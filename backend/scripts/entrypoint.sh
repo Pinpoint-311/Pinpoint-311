@@ -18,8 +18,14 @@
 set -euo pipefail
 
 echo "[entrypoint] checking database schema"
-python -m app.db.migrate
-status=$?
+# `|| status=$?`, not a bare call. Under `set -e` a non-zero exit terminates the
+# script on the line that produced it, so `status=$?` and the diagnostic below
+# were unreachable: the container exited with the correct code and printed
+# nothing about why. The operator saw a container that stopped, and the one
+# sentence that would have told them what to do -- "refusing to start the API",
+# with the exit code naming which of the four reasons it was -- never printed.
+status=0
+python -m app.db.migrate || status=$?
 
 if [ "$status" -ne 0 ]; then
     echo "[entrypoint] schema check failed (exit ${status}); refusing to start the API" >&2

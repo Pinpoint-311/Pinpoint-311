@@ -124,7 +124,16 @@ def _build_payload(sr: ServiceRequest, config: dict, dept_name: Optional[str] = 
         "priority": sr.manual_priority_score if sr.manual_priority_score is not None else sr.priority,
         "assigned_to": sr.assigned_to,
         "assigned_department": dept_name,
-        "due_date": sr.due_datetime.isoformat() if getattr(sr, "due_datetime", None) else None,
+        # No due date is sent, deliberately. There was a `"due_date"` here
+        # reading `getattr(sr, "due_datetime", None)`, and ServiceRequest has
+        # no such column -- `due_datetime` exists only on the *inbound*
+        # ExternalRecord dataclass, where it carries a due date the vendor set.
+        # The getattr default meant every work order Pinpoint has ever pushed
+        # carried `due_date: null`. Pinpoint has no notion of a due date to
+        # send (SLA targets live per service category, not per request, and are
+        # not the same promise), so the key is gone rather than shipped empty:
+        # a null field a vendor maps into its own due-date column is worse than
+        # an absent one, because it overwrites whatever the vendor had.
         # How and when it was resolved. A work order that syncs the request but
         # not its outcome leaves the external system showing an open job the
         # town closed weeks ago -- and `completion_message` is the sentence the

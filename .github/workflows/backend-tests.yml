@@ -19,12 +19,40 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install test dependencies
-        # The security/integration logic tests are self-contained (no DB); they
-        # need only the crypto + HTTP libraries plus pytest. Alembic is here for
-        # test_migrate.py's plan/chain tests: without it they importorskip, and
-        # a skip in this suite once hid a failing migration-gate regression for
-        # months (it first surfaced inside the production image).
-        run: pip install cryptography httpx pytest pytest-asyncio alembic
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-py311-${{ hashFiles('backend/requirements.txt') }}
+          restore-keys: pip-${{ runner.os }}-py311-
+      - name: Install dependencies
+        # The application's real dependencies, not a hand-picked subset.
+        #
+        # This used to be `pip install cryptography httpx pytest pytest-asyncio
+        # alembic`, on the reasoning that the logic tests are self-contained.
+        # They are; the problem is what happens to everything else. Measured on
+        # the same commit:
+        #
+        #     CI's five packages   1363 passed, 178 skipped
+        #     the real deps        1974 passed,  81 skipped
+        #
+        # About six hundred tests never ran, and they were not a random six
+        # hundred -- they were most of the data-leak protection:
+        # test_public_visibility, test_public_archival, the test_research_*
+        # files, test_export_schema_parity, and the migration chain-linearity
+        # guard. That last one needs geoalchemy2 (the road-geometry revision
+        # imports it at module scope), which was never here, despite the comment
+        # this replaces claiming the problem had been fixed by adding alembic.
+        #
+        # A skip is silent. Green with six hundred tests skipped looks exactly
+        # like green.
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio aiosqlite
       - name: Run tests
+        # No --continue-on-collection-errors, deliberately. A collection error
+        # must fail the job: one of them (a test module writing fakes into
+        # sys.modules at import time) once made `pytest tests -q` abort and run
+        # zero tests, which reads as a single red X on a job that did nothing.
+        # See tests/test_test_isolation.py.
         run: python -m pytest tests/ -q

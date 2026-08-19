@@ -112,8 +112,27 @@ SCRUB_FIELDS: List[Dict[str, Any]] = [
     {
         "id": "media",
         "label": "Photos",
-        "detail": "Photo links are cleared. The files themselves are removed by "
-                  "the storage cleanup that follows.",
+        # Two things were wrong with what this used to say -- "Photo links are
+        # cleared. The files themselves are removed by the storage cleanup that
+        # follows."
+        #
+        # There is no storage cleanup and there never was: nothing anywhere
+        # deleted from UPLOAD_DIR, so a town told its photos were gone still had
+        # every one of them on disk, served by the unauthenticated
+        # /api/uploads static mount to anyone who had ever seen the URL. That is
+        # a promise a town may have relied on to answer a records request.
+        #
+        # And `completion_photo_url` was not in this catalog at all -- not under
+        # media, not anywhere -- so even a full PURGE, which selects every field
+        # in this list, left the staff completion photo both stored and
+        # reachable. That photo is taken at the resident's address.
+        #
+        # Both are fixed: apply_scrub clears both columns, and the caller (which
+        # has the filesystem, and which this module deliberately does not)
+        # deletes the files named by upload_filenames().
+        "detail": "The resident's photos and the staff completion photo. The "
+                  "links are cleared and the uploaded files are deleted from "
+                  "disk, so the images stop being reachable.",
     },
     {
         "id": "ai_analysis",
@@ -169,6 +188,52 @@ def normalise_fields(fields: Optional[Iterable[str]]) -> List[str]:
     if fields is None:
         return []
     return [f for f in dict.fromkeys(fields) if f in FIELD_IDS]
+
+
+# Photos uploaded through POST /api/system/upload are stored as a uuid4 hex
+# name plus an extension and served at this prefix by the static mount.
+UPLOAD_URL_PREFIX = "/api/uploads/"
+
+
+def upload_filenames(record: Any) -> List[str]:
+    """The locally-stored photo files this record points at.
+
+    Names only, never paths: the caller joins them onto UPLOAD_DIR, and anything
+    carrying a separator or a `..` is dropped here rather than trusted there. A
+    retention run must not be able to unlink outside the upload directory
+    because a URL in the database said so.
+
+    Base64 data URIs and links to somebody else's host are skipped -- there is
+    no local file to delete, and the first is removed by clearing the column.
+
+    Pure and string-only, so it is tested without a filesystem; the deletion
+    itself lives in retention_service, which is the layer that has one.
+    """
+    import os
+
+    candidates: List[str] = []
+    media = getattr(record, "media_urls", None)
+    if isinstance(media, (list, tuple)):
+        candidates.extend(u for u in media if isinstance(u, str))
+    completion = getattr(record, "completion_photo_url", None)
+    if isinstance(completion, str):
+        candidates.append(completion)
+
+    names: List[str] = []
+    for url in candidates:
+        value = url.split("?", 1)[0].split("#", 1)[0]
+        if UPLOAD_URL_PREFIX not in value:
+            continue
+        name = value.rsplit(UPLOAD_URL_PREFIX, 1)[1]
+        # Must be a bare filename. os.path.basename would *make* it one, which
+        # is the wrong instinct: a URL that does not look like ours is a URL we
+        # do not understand, and guessing at a path to delete is not a thing to
+        # do on somebody's records.
+        if not name or name != os.path.basename(name) or name in (".", ".."):
+            continue
+        if name not in names:
+            names.append(name)
+    return names
 
 
 def scrub_ai_analysis(record: Any) -> None:
@@ -238,6 +303,13 @@ def apply_scrub(record: Any, fields: Optional[Iterable[str]] = None) -> List[str
         done.append("staff_notes")
     if "media" in chosen:
         record.media_urls = []
+        # `completion_photo_url` was absent from this catalog entirely, so even
+        # a PURGE -- which selects every field in SCRUB_FIELDS -- left the staff
+        # completion photo in the column and the file on disk, reachable through
+        # the unauthenticated /api/uploads mount. It is a photograph taken at
+        # the resident's address; it belongs with the rest of the photos.
+        if hasattr(record, "completion_photo_url"):
+            record.completion_photo_url = None
         done.append("media")
     if "ai_analysis" in chosen:
         scrub_ai_analysis(record)
