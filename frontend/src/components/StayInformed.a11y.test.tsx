@@ -119,4 +119,34 @@ describe('the registration dialog', () => {
         expect((screen.getByRole('textbox', { name: /Organization/ }) as HTMLInputElement).value)
             .toBe('Township of Example');
     });
+
+    /* The protection above is only defensible if it explains itself. Routed
+     * through the live region alone it left a sighted mouse user clicking a
+     * control that did nothing and said nothing, which is worse than the
+     * dismissal it was guarding. */
+    it('shows the discard warning on screen, not only to a screen reader', async () => {
+        const user = userEvent.setup();
+        const dialog = await openDialog();
+
+        await user.type(screen.getByRole('textbox', { name: /Organization/ }), 'Township of Example');
+        await user.click(dialog.parentElement!);
+
+        const warning = await screen.findByTestId('discard-warning');
+        expect(warning.className).not.toMatch(/\bsr-only\b/);
+        expect(warning.textContent).toMatch(/discarded/i);
+    });
+
+    it('lets a second backdrop click through, so the control is never dead', async () => {
+        const user = userEvent.setup();
+        const dialog = await openDialog();
+        const backdrop = dialog.parentElement!;
+
+        await user.type(screen.getByRole('textbox', { name: /Organization/ }), 'Township of Example');
+
+        await user.click(backdrop);
+        expect(screen.queryByRole('dialog')).not.toBeNull();
+
+        await user.click(backdrop);
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    });
 });

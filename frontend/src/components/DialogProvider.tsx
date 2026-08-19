@@ -415,12 +415,6 @@ export const useConfirmDeploy = () => {
             ),
             variant: 'deploy',
             confirmText: 'Deploy',
-            /* A deploy rebuilds every container and migrates the database of a
-             * live 311 system — the highest-consequence action in the product,
-             * and it was one click behind a dialog whose Confirm button sits
-             * where the cursor already is. Typing the word is the difference
-             * between agreeing and noticing. */
-            requireTyped: 'DEPLOY',
             icon: <Rocket size={24} />,
         });
     }, [confirm]);

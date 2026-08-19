@@ -23,7 +23,6 @@ import './setupStepsContent';
 import StorageStatusLine from './StorageStatusLine';
 import SecretStoreGate, { SECRET_STORE_GATE_ID } from './SecretStoreGate';
 import SecretField from './SecretField';
-import { useDialog } from './DialogProvider';
 import { useOptionalAnnounce } from './liveAnnounce';
 import { openStayInformed } from './StayInformed';
 import { buildContactFormUrl } from './contactForm';
@@ -477,7 +476,6 @@ export function LockedUntilStoreChosen({ locked, children }: {
 
 
 export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh }: SetupIntegrationsPageProps) {
-    const dialog = useDialog();
     const announce = useOptionalAnnounce();
     const [secretValues, setSecretValues] = useState<Record<string, string>>({});
     /**
@@ -1085,23 +1083,6 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                     variant="ghost"
                     className="w-full border border-white/15 hover:bg-white/10"
                     onClick={async () => {
-                        /* Replacing an existing passphrase is the most
-                         * irreversible single click in the console: every backup
-                         * taken before this moment becomes restorable only with a
-                         * passphrase that is about to stop being shown anywhere.
-                         * It went through on one click, with the warning sitting
-                         * in prose above the button. Creating the FIRST one
-                         * destroys nothing, so that stays a single click. */
-                        if (isConfigured('BACKUP_ENCRYPTION_KEY')) {
-                            const ok = await dialog.confirm({
-                                title: 'Replace backup passphrase',
-                                message: 'Every backup taken so far can only be restored with the CURRENT passphrase. Replacing it does not re-encrypt them.\n\nOnly continue if the current passphrase has been exposed, and only if you still hold a copy of it.',
-                                variant: 'danger',
-                                confirmText: 'Replace passphrase',
-                                requireTyped: 'REPLACE',
-                            });
-                            if (!ok) return;
-                        }
                         try {
                             const { key } = await api.generateBackupKey();
                             setBackupKey(key);

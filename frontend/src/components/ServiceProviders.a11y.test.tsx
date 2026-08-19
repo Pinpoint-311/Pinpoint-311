@@ -95,6 +95,30 @@ describe('a capability card as a disclosure', () => {
         expect(byId(panelId)!.hidden).toBe(false);
     });
 
+    /* `hidden` is display:none, and the panel spends 300ms animating its height
+     * back to zero on the way out. Applying it at the top of that window made
+     * closing a vanish while opening stayed a slide -- so the wrapper has to
+     * stay visible until the exit has actually finished. */
+    it('does not black out the panel while the collapse is still animating', async () => {
+        await mount();
+
+        const collapsed = cardToggle();
+        const panelId = collapsed.getAttribute('aria-controls')!;
+        await act(async () => { collapsed.click(); });
+        await act(async () => { await Promise.resolve(); });
+        expect(byId(panelId)!.hidden).toBe(false);
+
+        const opened = buttons().find(b => b.getAttribute('aria-controls') === panelId
+            && b.getAttribute('aria-expanded') === 'true')!;
+        await act(async () => { opened.click(); });
+        await act(async () => { await Promise.resolve(); });
+
+        // Closed as far as ARIA is concerned, still on screen for the animation.
+        const nowClosed = buttons().find(b => b.getAttribute('aria-controls') === panelId)!;
+        expect(nowClosed.getAttribute('aria-expanded')).toBe('false');
+        expect(byId(panelId)!.hidden).toBe(false);
+    });
+
     it('attaches the switch-off explanation to the switch, at every width', async () => {
         await mount();
         await act(async () => { cardToggle().click(); });

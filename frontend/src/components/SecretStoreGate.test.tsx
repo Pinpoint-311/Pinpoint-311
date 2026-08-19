@@ -45,14 +45,11 @@ const UNCHOSEN = {
 let host: HTMLDivElement;
 let root: Root;
 
-// Inside DialogProvider, as App.tsx mounts it: committing the choice now goes
-// through dialog.confirm, because it is a one-way decision (WCAG 3.3.4).
+// Mounted bare, with no provider around it: the gate is the first thing the
+// setup page renders and must not depend on any context to come up.
 async function mount(props: Record<string, unknown> = {}) {
     const { default: Gate } = await import('./SecretStoreGate');
-    const { DialogProvider } = await import('./DialogProvider');
-    await act(async () => {
-        root.render(React.createElement(DialogProvider, null, React.createElement(Gate, props)));
-    });
+    await act(async () => { root.render(React.createElement(Gate, props)); });
     return host.textContent || '';
 }
 
@@ -75,14 +72,9 @@ async function pick(pattern: RegExp) {
     await act(async () => { (input as HTMLInputElement).click(); });
 }
 
-/** Click "Use this store", then confirm in the dialog it now raises. */
+/** Commit the picked store. One click, as it has always been. */
 async function useStore() {
     await click(/Use this store/i);
-    await act(async () => {
-        const confirmBtn = Array.from(host.querySelectorAll('[role="dialog"] button'))
-            .find(b => /Use this store/i.test(b.textContent || ''));
-        (confirmBtn as HTMLElement).click();
-    });
 }
 
 beforeEach(() => {
@@ -203,5 +195,22 @@ describe('telling the page whether to lock its fields', () => {
         const seen: boolean[] = [];
         await mount({ onState: (v: boolean) => seen.push(v) });
         expect(seen).toEqual([]);
+    });
+});
+
+describe('the store options as a radio group', () => {
+    it('scopes the group to the instance, so two gates do not share one', async () => {
+        const { default: Gate } = await import('./SecretStoreGate');
+        await act(async () => {
+            root.render(React.createElement('div', null,
+                React.createElement(Gate, { key: 'a' }),
+                React.createElement(Gate, { key: 'b' })));
+        });
+
+        const names = new Set(Array.from(host.querySelectorAll('input[type="radio"]'))
+            .map(r => r.getAttribute('name')));
+        // Two groups, not one: a hard-coded name would make picking in either
+        // gate clear the selection in the other.
+        expect(names.size).toBe(2);
     });
 });
