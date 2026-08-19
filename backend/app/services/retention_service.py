@@ -116,8 +116,12 @@ async def get_records_for_archival(
             ServiceRequest.closed_datetime < cutoff_date,
             ServiceRequest.archived_at.is_(None),
             ServiceRequest.deleted_at.is_(None),
-            # Legal hold check - skip if flagged
-            ServiceRequest.flagged == False
+            # Legal hold check. Reads `legal_hold`, NOT `flagged`: `flagged` is
+            # the content-moderation marker and an anonymous public comment can
+            # set it, which made "rude comment on your neighbour's report"
+            # a way to exempt that neighbour's PII from the retention policy
+            # forever. See the a1c2e3f4b5d6 migration.
+            ServiceRequest.legal_hold == False
         )
     ).limit(limit)
 
@@ -199,11 +203,12 @@ async def archive_record(
     if not record:
         return {"status": "error", "message": "Record not found"}
     
-    # Check for legal hold (flagged records)
-    if record.flagged:
+    # Check for legal hold. `legal_hold`, not `flagged` -- see the note in
+    # get_records_for_archival.
+    if record.legal_hold:
         return {
             "status": "skipped",
-            "message": "Record under legal hold (flagged)",
+            "message": "Record under legal hold",
             "record_id": record_id
         }
     
@@ -269,18 +274,18 @@ async def get_retention_stats(
             ServiceRequest.closed_datetime < cutoff_date,
             ServiceRequest.archived_at.is_(None),
             ServiceRequest.deleted_at.is_(None),
-            ServiceRequest.flagged == False
+            ServiceRequest.legal_hold == False
         )
     )
     eligible_result = await db.execute(eligible_query)
     eligible_count = eligible_result.scalar() or 0
     
-    # Count records under legal hold (any flagged record, regardless of status)
+    # Count records under legal hold, regardless of status
     held_query = select(func.count(ServiceRequest.id)).where(
         and_(
             ServiceRequest.archived_at.is_(None),
             ServiceRequest.deleted_at.is_(None),
-            ServiceRequest.flagged == True
+            ServiceRequest.legal_hold == True
         )
     )
     held_result = await db.execute(held_query)

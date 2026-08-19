@@ -108,15 +108,18 @@ def research_visibility_conditions():
 
 
 def client_info(request: Optional[Request]) -> tuple:
-    """(ip, user_agent) for the access log, honouring the proxy header."""
+    """(ip, user_agent) for the access log, honouring the proxy header.
+
+    This took the FIRST X-Forwarded-For entry, which Caddy appends to rather
+    than replaces -- so a researcher (or anyone) could write any address they
+    liked into the access log recording who exported the town's data. The
+    resolution rule now lives in one place; see app/core/client_ip.py.
+    """
     if request is None:
         return None, None
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        ip = forwarded_for.split(",")[0].strip()
-    else:
-        ip = request.client.host if request.client else None
-    return ip, (request.headers.get("User-Agent") or "")[:500] or None
+    from app.core.client_ip import client_ip
+
+    return client_ip(request), (request.headers.get("User-Agent") or "")[:500] or None
 
 
 async def log_research_access(

@@ -26,13 +26,13 @@ from app.services.backlog_age import bucket_ages
 from app.services.enqueue import QUEUE_UNAVAILABLE
 from app.core.sanitize import sanitize_for_log
 from slowapi import Limiter
-from slowapi.util import get_remote_address
+from app.core.client_ip import client_ip, rate_limit_key
 
 router = APIRouter()
 
 # Tighter per-route limits for endpoints that call paid Google APIs, on top of
 # the app-wide default limit. Decorator-based enforcement (own in-memory store).
-_cost_limiter = Limiter(key_func=get_remote_address)
+_cost_limiter = Limiter(key_func=rate_limit_key)
 
 
 # ============ Settings ============
@@ -2952,12 +2952,11 @@ async def log_disclaimer_acknowledgment(
     body = await request.json()
     session_id = body.get("session_id", "unknown")
     
-    # Get real IP (handle proxies)
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        ip_address = forwarded_for.split(",")[0].strip()
-    else:
-        ip_address = request.client.host if request.client else "unknown"
+    # Get real IP (handle proxies). Resolved through the trusted-hop rule in
+    # app/core/client_ip.py rather than by reading the first X-Forwarded-For
+    # entry: Caddy appends to the header the client sent, so the first entry is
+    # whatever the caller wanted this legal-protection record to say.
+    ip_address = client_ip(request) or "unknown"
     
     user_agent = request.headers.get("User-Agent", "unknown")[:500]
     
@@ -3507,7 +3506,7 @@ async def preview_retention_run(
     # approving a deletion.
     held = (await db.execute(
         select(func.count(ServiceRequest.id)).where(
-            and_(ServiceRequest.status == "closed", ServiceRequest.flagged.is_(True))
+            and_(ServiceRequest.status == "closed", ServiceRequest.legal_hold.is_(True))
         )
     )).scalar() or 0
 
@@ -3633,13 +3632,18 @@ async def get_legal_hold_requests(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
-    """Get all requests currently under legal hold (flagged)"""
+    """Get all requests currently under legal hold.
+
+    Reads `legal_hold`, not `flagged`. This list used to be filled with reports
+    that had merely attracted a rude public comment, which both buried the real
+    holds and told the admin a hold existed where none had been placed.
+    """
     from app.models import ServiceRequest
     
     result = await db.execute(
         select(ServiceRequest).where(
             and_(
-                ServiceRequest.flagged == True,
+                ServiceRequest.legal_hold == True,
                 ServiceRequest.deleted_at.is_(None)
             )
         ).order_by(ServiceRequest.requested_datetime.desc())

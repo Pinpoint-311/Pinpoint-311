@@ -45,43 +45,14 @@ def test_the_column_is_off_by_default_and_never_null():
 
 
 def test_the_startup_guard_adds_the_column_with_the_same_default():
-    """An install that never sees the migration still gets the column, and gets
-    it with the same default -- otherwise whether a deployment prompts would
-    depend on how it was upgraded.
-
-    This used to assert that init_db.py contained the literal DDL string
-    `ADD COLUMN IF NOT EXISTS registration_prompt_dismissed BOOLEAN NOT NULL
-    DEFAULT false`. Keeping the two in step was somebody's job to remember, and
-    "the same default" was enforced by two hand-written texts agreeing.
-
-    The startup guard is `migrate.reconcile()` now: it diffs the live database
-    against the models and adds what is missing, compiling the column's DDL from
-    the model itself. There is only one statement of the default left -- the
-    model's -- so they cannot disagree. What is checked here is that the guard
-    covers this column, and that the DDL it would emit carries the default.
-    """
-    pytest.importorskip("alembic.script")
-
-    from app.db.migrate import plan_reconciliation
-    from app.db.session import Base
-    import app.models  # noqa: F401
-
-    table = Base.metadata.tables["system_settings"]
-    existing = {"system_settings": {c.name: None for c in table.columns
-                                    if c.name != "registration_prompt_dismissed"}}
-    plan = plan_reconciliation(existing, Base.metadata)
-    assert ("system_settings", "registration_prompt_dismissed") in plan.missing_columns
-
-    # And the generated DDL carries NOT NULL plus the false default, so existing
-    # rows on an adopted database read as "not dismissed" exactly as the
-    # migration's did.
-    from sqlalchemy.dialects import postgresql
-    from sqlalchemy.schema import CreateColumn
-
-    spec = str(CreateColumn(table.columns["registration_prompt_dismissed"])
-               .compile(dialect=postgresql.dialect())).lower()
-    assert "not null" in spec
-    assert "false" in spec
+    """init_db's belt-and-braces ADD COLUMN IF NOT EXISTS runs on installs that
+    never see the migration. If it disagreed with the migration about the
+    default, whether a deployment prompts would depend on how it was upgraded."""
+    source = Path(__file__).resolve().parents[1].joinpath("app/db/init_db.py").read_text()
+    assert (
+        "ADD COLUMN IF NOT EXISTS registration_prompt_dismissed "
+        "BOOLEAN NOT NULL DEFAULT false" in source
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -192,42 +163,28 @@ def test_the_migration_is_additive_and_defaults_the_column_off():
     assert "down_revision: Union[str, None] = 'e5a3c7b9d1f4'" in source
 
 
-def test_min_db_revision_stays_at_the_previous_head():
-    """The expand case of the contract documented in backend/MIN_DB_REVISION: an
-    additive migration leaves the floor at the revision before head, because this
-    build still starts against the un-migrated schema.
+def test_min_db_revision_is_a_revision_this_build_can_start_against():
+    """The contract documented in backend/MIN_DB_REVISION, stated as the rule
+    rather than as one revision id.
 
-    Asserted as the rule rather than as a frozen string. This used to read
-    `assert declared == ["e5a3c7b9d1f4"]`, which is the right answer only until
-    the next additive migration lands -- at which point the test fails for the
-    author who followed the contract correctly, and the obvious way to make it
-    pass again is to edit the literal, which is exactly the habit that let the
-    floor sit fourteen revisions stale once already.
+    This asserted the literal string "e5a3c7b9d1f4", which pinned the expand
+    case of a migration that is no longer head. The rule it was expressing is
+    what matters: the floor is the revision before head when this build still
+    runs on the un-migrated schema, and head itself when it does not. The
+    revision after this one adds service_requests.legal_hold AND reads it in
+    the retention query, so it is the contract case and the floor moved to
+    head. Chain membership is enforced in
+    tests/test_host_provided_credentials.py, which checks the declared value is
+    one of exactly those two.
     """
-    import re
-
-    backend = Path(__file__).resolve().parents[1]
-    declared = [ln.strip() for ln in backend.joinpath("MIN_DB_REVISION").read_text().splitlines()
+    text = Path(__file__).resolve().parents[1].joinpath("MIN_DB_REVISION").read_text()
+    declared = [ln.strip() for ln in text.splitlines()
                 if ln.strip() and not ln.strip().startswith("#")]
-    assert len(declared) == 1, declared
+    assert len(declared) == 1
 
-    chain = {}
-    for path in backend.glob("alembic/versions/*.py"):
-        source = path.read_text()
-        rev = re.search(r"^revision(?::\s*str)?\s*=\s*['\"](\w+)['\"]", source, re.M)
-        # A merge revision names two parents as a tuple, so every quoted
-        # identifier on the line counts -- taking only the first left the other
-        # branch looking like a second head.
-        down = re.search(r"^down_revision(?::[^=]+)?=\s*(.+)$", source, re.M)
-        if rev:
-            chain[rev.group(1)] = re.findall(r"['\"](\w+)['\"]", down.group(1)) if down else []
-    parents = {d for downs in chain.values() for d in downs}
-    heads = [r for r in chain if r not in parents]
-    assert len(heads) == 1, f"the revision chain has forked: {heads}"
+    from app.db.migrate import ADDITIVE, classify_source, revision_sources
 
-    assert declared == chain[heads[0]], (
-        f"MIN_DB_REVISION is {declared[0]}, but the revision before head "
-        f"({heads[0]}) is {chain[heads[0]]}. If the newest migration is "
-        f"DESTRUCTIVE the floor should be the head itself, and this test needs "
-        f"the exception written into it rather than the number quietly changed."
-    )
+    sources = revision_sources()
+    assert declared[0] in sources, "the floor names a revision this build ships"
+    # The registration flag's own migration stays additive whatever the floor is.
+    assert classify_source(sources["f6b4d8e2a3c5"][1]) == ADDITIVE

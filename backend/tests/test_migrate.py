@@ -372,6 +372,12 @@ EXPECTED_GATED = {
     # deliberately its own revision so the additive fix before it applies
     # unattended and only this tidy-up waits for an operator.
     "20260806_0910_a7029676a2bc_drop_dead_documents_pushed_flag.py",
+    # UPDATEs service_requests.legal_hold from the old flagged column when the
+    # legal hold is split out of the content-moderation flag. Gated on purpose:
+    # it rewrites rows, and it decides which of a town's records stay exempt
+    # from the retention schedule -- the one call a records officer should see
+    # before it runs, not after.
+    "20260819_0900_a1c2e3f4b5d6_separate_legal_hold_from_moderation_flag.py",
 }
 
 

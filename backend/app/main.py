@@ -56,16 +56,32 @@ from app.db.init_db import seed_database
 
 # Rate limiting setup
 from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from app.core.client_ip import rate_limit_key
 
-# Default per-IP rate limit. This used to be keyed off DEMO_MODE ("100/minute"
-# when set, "500/minute" otherwise) purely so a publicly-reachable instance
-# sharing one set of API keys could be throttled harder. That reason survives
-# demo mode, so the limit is now a plain env var: any instance that wants a
-# tighter ceiling sets RATE_LIMIT_DEFAULT instead of opting into a feature flag.
+# Default per-caller rate limit. This used to be keyed off DEMO_MODE
+# ("100/minute" when set, "500/minute" otherwise) purely so a publicly-reachable
+# instance sharing one set of API keys could be throttled harder. That reason
+# survives demo mode, so the limit is now a plain env var: any instance that
+# wants a tighter ceiling sets RATE_LIMIT_DEFAULT instead of opting into a
+# feature flag.
+#
+# `default_limits` means nothing until SlowAPIMiddleware is installed: without
+# it slowapi evaluates limits only inside the @limiter.limit decorator, so every
+# route that carried no decorator -- which was all but fourteen of them -- had
+# no limit whatsoever and RATE_LIMIT_DEFAULT was dead configuration. The
+# middleware is registered where the rest of the stack is assembled below.
+#
+# The key is the resolved client address rather than slowapi's
+# `get_remote_address`. Behind Caddy the latter is one container address shared
+# by the entire town, which turned "10 report submissions a minute" into a
+# town-wide budget that one script could exhaust for every resident. See
+# app/core/client_ip.py for how the forwarded address is made trustworthy --
+# naively trusting X-Forwarded-For would be worse than the bug, because a
+# spoofed header mints an unlimited supply of fresh buckets.
 _default_limit = os.environ.get("RATE_LIMIT_DEFAULT") or "500/minute"
-limiter = Limiter(key_func=get_remote_address, default_limits=[_default_limit])
+limiter = Limiter(key_func=rate_limit_key, default_limits=[_default_limit])
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -256,16 +272,16 @@ def _actor_from_request(request: Request) -> "str | None":
 def _client_ip(request: Request) -> "str | None":
     """The address the change came from, through the reverse proxy.
 
-    Caddy sits in front of everything, so `request.client.host` is Caddy's
-    address on the compose network -- 172.19.0.x, the same for every user.
-    The first entry in X-Forwarded-For is the caller.
+    This used to take the FIRST entry of X-Forwarded-For. Caddy appends to
+    whatever header the client sent, so a caller sending
+    `X-Forwarded-For: 8.8.8.8` wrote 8.8.8.8 into the admin audit row for their
+    own action -- an audit trail an attacker chooses the contents of is worse
+    than no audit trail, because it is believed. Resolution now lives in one
+    place; see app/core/client_ip.py for the trust rule.
     """
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        first = forwarded.split(",")[0].strip()
-        if first:
-            return first[:64]
-    return request.client.host if request.client else None
+    from app.core.client_ip import client_ip
+
+    return client_ip(request)
 
 
 
@@ -490,6 +506,17 @@ SwaggerUIBundle({
 # Rate limiting
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# What actually makes `default_limits` apply. Registered FIRST, which in
+# Starlette means innermost of the user middleware, deliberately: a 429 minted
+# here still travels back out through SecurityHeadersMiddleware and the CORS
+# layer, so a throttled caller gets the same headers as any other response. Put
+# outermost it would answer 429 with no security headers and no CORS, and a
+# browser would report the throttle as a CORS failure.
+#
+# Routes carrying an explicit @limiter.limit are skipped by the middleware
+# (slowapi's _should_exempt checks _route_limits), so nothing is counted twice.
+app.add_middleware(SlowAPIMiddleware)
 
 # Refuse an over-large body before any route, dependency or decorator sees it.
 app.add_middleware(BodySizeLimitMiddleware)
