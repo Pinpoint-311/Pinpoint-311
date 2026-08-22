@@ -69,6 +69,23 @@ const BUSY: PhotoState[] = ['uploading', 'checking'];
  * because two polite regions updating together is how a screen reader user
  * ends up hearing neither of them.
  */
+/** Only render an image source of a shape we recognise.
+ *
+ * A preview is either a `data:` URI the browser produced from the resident's
+ * own file, or one the screening endpoint handed back. An `<img src>` cannot
+ * execute script whatever it holds -- images do not run HTML -- so this is not
+ * closing an exploit. It is here because the value reaches an HTML attribute
+ * from file input and a network response, static analysis is right to notice
+ * that, and an explicit allowlist answers the question permanently instead of
+ * leaving a reviewer to re-derive the argument. Anything unrecognised renders
+ * as a neutral placeholder rather than being passed through.
+ */
+const RENDERABLE_SRC = /^(?:data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]*$|https?:\/\/)/i;
+
+export function renderableSrc(url: string): string | null {
+    return RENDERABLE_SRC.test(url) ? url : null;
+}
+
 export default function PhotoUpload({ previewUrls, onAdd, onRemove, maxPhotos = 3, statuses }: PhotoUploadProps) {
     const inputRef = useRef<HTMLInputElement>(null);
     const triggerRef = useRef<HTMLButtonElement>(null);
@@ -158,14 +175,22 @@ export default function PhotoUpload({ previewUrls, onAdd, onRemove, maxPhotos = 
                     const bad = status?.state === 'blocked';
                     return (
                         <div key={idx} className="relative group">
+                            {renderableSrc(url) ? (
                             <img
-                                src={url}
+                                src={renderableSrc(url) as string}
                                 // The state rides on the image's own name too, so a
                                 // resident arrowing through the thumbnails hears it
                                 // without waiting for the live region to repeat.
                                 alt={label ? `Photo ${idx + 1}, ${label}` : `Photo ${idx + 1}`}
                                 className={`w-24 h-24 object-cover rounded-xl border ${bad ? 'border-red-400/70 opacity-50' : 'border-white/20'}`}
                             />
+                            ) : (
+                                <div
+                                    role="img"
+                                    aria-label={`Photo ${idx + 1}, preview unavailable`}
+                                    className="w-24 h-24 rounded-xl border border-white/20 bg-white/5"
+                                />
+                            )}
                             {status && (
                                 <span
                                     // Announced through the single live region above,

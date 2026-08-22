@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import React from 'react';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import PhotoUpload from './PhotoUpload';
+import PhotoUpload, { renderableSrc } from './PhotoUpload';
 
 /**
  * The keyboard-only review found this control invisible to Tab: the picker
@@ -86,7 +86,7 @@ describe('PhotoUpload keyboard access', () => {
     it('makes remove buttons reachable and hides the trigger at the photo cap', () => {
         render(
             <PhotoUpload
-                previewUrls={['data:1', 'data:2', 'data:3']}
+                previewUrls={['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB1', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB2', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB3']}
                 onAdd={noop}
                 onRemove={noop}
             />,
@@ -98,7 +98,7 @@ describe('PhotoUpload keyboard access', () => {
     it('removes the photo the focused button names', async () => {
         const user = userEvent.setup();
         const onRemove = vi.fn();
-        render(<PhotoUpload previewUrls={['data:1', 'data:2']} onAdd={noop} onRemove={onRemove} />);
+        render(<PhotoUpload previewUrls={['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB1', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB2']} onAdd={noop} onRemove={onRemove} />);
 
         screen.getByRole('button', { name: 'Remove photo 2' }).focus();
         await user.keyboard('{Enter}');
@@ -111,7 +111,7 @@ describe('PhotoUpload keyboard access', () => {
         // than falling to <body>.
         const user = userEvent.setup();
         function Harness() {
-            const [urls, setUrls] = React.useState(['data:1', 'data:2']);
+            const [urls, setUrls] = React.useState(['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB1', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB2']);
             return (
                 <PhotoUpload
                     previewUrls={urls}
@@ -203,18 +203,18 @@ describe('PhotoUpload keyboard access', () => {
         // `statuses` is optional, and a host that does not pass it must get
         // exactly the pre-screening control back -- no badges, no extra text in
         // the image names, nothing new in the live region.
-        render(<PhotoUpload previewUrls={['data:1']} onAdd={noop} onRemove={noop} />);
+        render(<PhotoUpload previewUrls={['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB1']} onAdd={noop} onRemove={noop} />);
         expect(screen.getByRole('img', { name: 'Photo 1' })).toBeTruthy();
         expect(screen.getByRole('status').textContent).toBe('1 of 3 photos attached.');
     });
 
     it('announces the attached-photo count, and the cap, via a live region', () => {
-        const { rerender } = render(<PhotoUpload previewUrls={['data:1']} onAdd={noop} onRemove={noop} />);
+        const { rerender } = render(<PhotoUpload previewUrls={['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB1']} onAdd={noop} onRemove={noop} />);
         const status = screen.getByRole('status');
         expect(status.getAttribute('aria-live')).toBe('polite');
         expect(status.textContent).toMatch(/1 of 3 photos attached/);
 
-        rerender(<PhotoUpload previewUrls={['data:1', 'data:2', 'data:3']} onAdd={noop} onRemove={noop} />);
+        rerender(<PhotoUpload previewUrls={['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB1', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB2', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB3']} onAdd={noop} onRemove={noop} />);
         expect(status.textContent).toMatch(/3 of 3 photos attached/);
         expect(status.textContent).toMatch(/maximum reached/i);
     });
@@ -231,7 +231,10 @@ describe('PhotoUpload keyboard access', () => {
  * mostly about what a screen reader hears -- an NVDA audit is the audience.
  */
 describe('PhotoUpload screening status', () => {
-    const withStatus = (statuses: any[], urls = statuses.map((_, i) => `data:${i}`)) =>
+    const withStatus = (
+        statuses: any[],
+        urls = statuses.map((_, i) => `data:image/png;base64,iVBORw0KGgoAAAANSUhEUg${i}`),
+    ) =>
         render(
             <PhotoUpload previewUrls={urls} statuses={statuses} onAdd={noop} onRemove={noop} />,
         );
@@ -299,7 +302,7 @@ describe('PhotoUpload screening status', () => {
         // is not focusable and does not get between the photo's remove button
         // and the trigger, so Tab still walks remove-then-add.
         const user = userEvent.setup();
-        withStatus([{ state: 'ready' }], ['data:1']);
+        withStatus([{ state: 'ready' }], ['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB1']);
         await user.tab();
         expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove photo 1' }));
         await user.tab();
@@ -312,12 +315,42 @@ describe('PhotoUpload screening status', () => {
         // phantom fourth photo.
         render(
             <PhotoUpload
-                previewUrls={['data:1']}
+                previewUrls={['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB1']}
                 statuses={[{ state: 'ready' }, { state: 'checking' }]}
                 onAdd={noop}
                 onRemove={noop}
             />,
         );
         expect(screen.getByRole('status').textContent).not.toMatch(/Photo 2/);
+    });
+});
+
+describe('renderableSrc', () => {
+    it('accepts the two shapes a preview can legitimately have', () => {
+        // What FileReader.readAsDataURL produces from a resident's own photo.
+        expect(renderableSrc('data:image/jpeg;base64,/9j/4AAQSkZJRg==')).not.toBeNull();
+        expect(renderableSrc('data:image/png;base64,iVBORw0KGgo=')).not.toBeNull();
+        // What the screening endpoint hands back for a hosted image.
+        expect(renderableSrc('https://example.gov/uploads/a.jpg')).not.toBeNull();
+    });
+
+    it('refuses anything else rather than passing it to an attribute', () => {
+        expect(renderableSrc('javascript:alert(1)')).toBeNull();
+        expect(renderableSrc('data:text/html;base64,PHNjcmlwdD4=')).toBeNull();
+        expect(renderableSrc('vbscript:msgbox(1)')).toBeNull();
+        expect(renderableSrc('  data:image/png;base64,AAAA')).toBeNull();
+        expect(renderableSrc('')).toBeNull();
+    });
+
+    it('renders a labelled placeholder instead of an unrecognised source', () => {
+        render(
+            <PhotoUpload
+                previewUrls={['data:text/html;base64,PHNjcmlwdD4=']}
+                onAdd={noop}
+                onRemove={noop}
+            />,
+        );
+        expect(screen.getByLabelText('Photo 1, preview unavailable')).toBeTruthy();
+        expect(document.querySelector('img')).toBeNull();
     });
 });
