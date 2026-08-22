@@ -51,7 +51,7 @@ if SENTRY_DSN:
         before_send=_crash_reporting_wanted,
     )
 
-from app.api import auth, users, departments, services, system, open311, gis, map_layers, comments, research, health, audit, setup, api_usage, data_export, integrations, provisioning, telemetry, roads, feedback
+from app.api import auth, users, departments, services, system, open311, gis, map_layers, comments, research, health, audit, setup, api_usage, data_export, integrations, provisioning, telemetry, roads, feedback, deploy_templates
 from app.db.init_db import seed_database
 
 # Rate limiting setup
@@ -559,6 +559,11 @@ app.include_router(integrations.router, prefix="/api/integrations", tags=["GovTe
 # on it checks system_settings.modules.platform_feedback and 404s when the
 # town has not enabled it, so mounting it costs a disabled town nothing.
 app.include_router(feedback.router, prefix="/api/feedback", tags=["Platform Feedback"])
+# Public and unauthenticated by design: Azure and AWS fetch the file themselves,
+# anonymously, when an operator presses a deploy button on the setup page. The
+# templates hold resource definitions and no secret -- see the module docstring
+# and backend/tests/test_deploy_templates.py.
+app.include_router(deploy_templates.router, prefix="/api/deploy-templates", tags=["Deployment Templates"])
 
 # Mount uploads directory for serving uploaded files
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/project/uploads")

@@ -2160,7 +2160,14 @@ export interface CloudIdentity {
 
 /** Counts of what has not yet reached the storage the town selected. */
 export interface StorageStatus {
-    secrets: { count: number; store: string | null; reachable: boolean };
+    /** `unreadable` are credentials stored here that will not decrypt with the
+     *  current SECRET_KEY -- saved, present, and readable by nothing. Optional
+     *  because an older backend does not send them, and absent must read as
+     *  "none" rather than as an alarm nobody can act on. */
+    secrets: {
+        count: number; store: string | null; reachable: boolean;
+        unreadable?: number; unreadable_keys?: string[];
+    };
     pii: { total: number; stale: number; on_application_key: number; legacy: number; current: string | null };
     needs_attention: boolean;
 }

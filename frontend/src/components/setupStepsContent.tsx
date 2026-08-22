@@ -1,5 +1,7 @@
 import { Check, Copy } from 'lucide-react';
 
+import { awsDeployUrl, azureDeployUrl, templateBase } from './deployTemplateUrls';
+import type { TemplateBase } from './deployTemplateUrls';
 import { defineSteps } from './setupSteps';
 import type { StepContext } from './setupSteps';
 
@@ -54,25 +56,30 @@ const L = ({ href, children }: { href: string; children: React.ReactNode }) => (
 );
 
 /**
- * Where the deployment templates in `deploy/templates/` are published.
+ * One line saying where the file the cloud is about to read comes from.
  *
- * A deploy button does not upload anything: it hands the cloud a URL and the
- * cloud fetches the template itself, in the town's own browser and the
- * provider's own console. So this has to resolve publicly, and until it does
- * the buttons below are inert. One constant on purpose -- publishing these to a
- * different host, a mirror, or a town's own copy is a one-line change here, and
- * nothing else in the file knows where they live.
+ * Worth the space because it is the only answer available to "the deployment
+ * form came up empty". Both providers report a fetch they could not complete as
+ * a broken template rather than as a URL they could not reach, so without this
+ * there is nothing on the page to check and nothing to hand to whoever gets
+ * asked. Which of the two it says is decided in deployTemplateUrls.ts.
  */
-const TEMPLATE_BASE_URL = 'https://raw.githubusercontent.com/Pinpoint-311/Pinpoint-311/main/deploy/templates';
-
-/** Azure's documented portal entry point for a template at a URL. */
-const AZURE_DEPLOY_URL =
-    `https://portal.azure.com/#create/Microsoft.Template/uri/${encodeURIComponent(`${TEMPLATE_BASE_URL}/azure/pinpoint-311.json`)}`;
-
-/** CloudFormation's console entry point. Lands on the review screen, where a
- *  change set can be taken instead of a stack. */
-const AWS_DEPLOY_URL =
-    `https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=${encodeURIComponent(`${TEMPLATE_BASE_URL}/aws/pinpoint-311.yaml`)}&stackName=pinpoint-311`;
+const TemplateSourceNote = ({ from }: { from: TemplateBase }) => (
+    from.source === 'instance' ? (
+        <span className="mt-1.5 block text-[11px] text-white/40">
+            Your cloud fetches the template from this Pinpoint install, at{' '}
+            <C>{from.base}/</C>… — so it is the version this build knows how to consume. That
+            address has to be reachable from the internet, which it is if residents can reach
+            your portal.
+        </span>
+    ) : (
+        <span className="mt-1.5 block text-[11px] text-white/40">
+            This install has no public address a cloud provider could fetch from, so the button
+            uses the published copy on GitHub instead. That copy follows the latest release
+            rather than your build. Setting the town's domain switches it to serving its own.
+        </span>
+    )
+);
 
 /** A link that opens the provider's own deployment form. Drawn as a button
  *  because that is what it behaves like, and new-tab like every other console
@@ -1050,7 +1057,7 @@ defineSteps('kms', 'google', () => [
     },
 ]);
 
-defineSteps('kms', 'azure', () => [
+defineSteps('kms', 'azure', (ctx) => [
     {
         body: (
             <>
@@ -1058,7 +1065,8 @@ defineSteps('kms', 'azure', () => [
                 with our template loaded: the vault, purge protection and the RSA key, and optionally
                 the Azure OpenAI, Translator and Vision resources the other cards
                 need. {WHY_A_TEMPLATE_IS_SAFE}
-                <DeployButton href={AZURE_DEPLOY_URL}>Deploy to Azure</DeployButton>
+                <DeployButton href={azureDeployUrl(templateBase(ctx.origin).base)}>Deploy to Azure</DeployButton>
+                <TemplateSourceNote from={templateBase(ctx.origin)} />
             </>
         ),
         check: <>Azure's Custom deployment form, listing every name before you press Create.</>,
@@ -1139,7 +1147,7 @@ defineSteps('kms', 'azure', () => [
     },
 ]);
 
-defineSteps('kms', 'aws', () => [
+defineSteps('kms', 'aws', (ctx) => [
     {
         body: (
             <>
@@ -1147,7 +1155,8 @@ defineSteps('kms', 'aws', () => [
                 loaded: the key, its alias and its policy, plus one role carrying exactly the
                 permissions Pinpoint needs. No access keys, so a server on EC2 or ECS pastes no
                 credential at all. {WHY_A_TEMPLATE_IS_SAFE}
-                <DeployButton href={AWS_DEPLOY_URL}>Launch CloudFormation stack</DeployButton>
+                <DeployButton href={awsDeployUrl(templateBase(ctx.origin).base)}>Launch CloudFormation stack</DeployButton>
+                <TemplateSourceNote from={templateBase(ctx.origin)} />
             </>
         ),
         check: <>CloudFormation's review page, listing every resource before anything is created.</>,
