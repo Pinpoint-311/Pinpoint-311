@@ -67,6 +67,29 @@ export function StorageStatusLine() {
         );
     }
 
+    /* Credentials that are stored here and cannot be read back out.
+     *
+     * The same shape of problem as the legacy PII below, and separate from
+     * `pending` for the same reason: nothing scheduled will clear it. What
+     * makes this one worse is that it is otherwise completely invisible. An
+     * unreadable credential decrypts to an empty string, every reader treats
+     * that as absent, and the card renders an empty box -- so the page's own
+     * answer to "is this set up?" is "no", and the operator's next move is to
+     * go looking for a key they already entered. Re-entering it is the fix.
+     * Nobody could guess that from anywhere else on the page. */
+    const unreadable = status.secrets.unreadable ?? 0;
+    const unreadableNote = unreadable ? (
+        <p className="mt-1 text-amber-200/75">
+            {unreadable} saved {unreadable === 1 ? 'credential' : 'credentials'} cannot be decrypted
+            with this deployment's current SECRET_KEY — almost always because that key was replaced.
+            {unreadable === 1 ? ' It shows' : ' They show'} as blank on the cards below. Enter{' '}
+            {unreadable === 1 ? 'it' : 'them'} again, or restore the previous SECRET_KEY.
+            {status.secrets.unreadable_keys?.length ? (
+                <> Affected: <span className="font-mono">{status.secrets.unreadable_keys.join(', ')}</span>.</>
+            ) : null}
+        </p>
+    ) : null;
+
     /* Not "pending": no amount of waiting fixes these. Said separately, in its
      * own tone, because the honest message is the opposite of the pending one
      * -- something already happened (a key rotation left these behind), and a
@@ -82,6 +105,21 @@ export function StorageStatusLine() {
     ) : null;
 
     if (!pending.length) {
+        /* The green tick has to stop claiming everything is fine when a
+         * credential in this very store cannot be read. "Secrets are in the
+         * encrypted database" is true and beside the point. */
+        if (unreadable) {
+            return (
+                <div className="flex items-start gap-2 text-[11px] text-white/50">
+                    <RefreshCw className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-300" />
+                    <div>
+                        <p>Secrets are in {storeName}.</p>
+                        {unreadableNote}
+                        {legacy}
+                    </div>
+                </div>
+            );
+        }
         return (
             <div>
                 <p className="flex items-center justify-center gap-2 text-[11px] text-emerald-300/70">
@@ -103,6 +141,7 @@ export function StorageStatusLine() {
                     {pending.join(', and ')}. This happens automatically overnight — everything stays
                     encrypted and readable in the meantime, and there is nothing for you to do.
                 </p>
+                {unreadableNote}
                 {legacy}
             </div>
         </div>

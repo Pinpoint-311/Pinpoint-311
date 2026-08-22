@@ -35,10 +35,12 @@ async def secrets_outside_the_store(db) -> Dict[str, Any]:
     itself, and the KMS settings whose only readers look at the database. Those
     are not work outstanding; they are supposed to be there.
     """
-    result: Dict[str, Any] = {"count": 0, "store": None, "reachable": False}
+    result: Dict[str, Any] = {"count": 0, "store": None, "reachable": False,
+                              "unreadable": 0, "unreadable_keys": []}
     try:
         from sqlalchemy import select
 
+        from app.core.encryption import decrypt_safe
         from app.models import SystemSecret
         from app.services.secret_manager import DB_REQUIRED_KEYS, _secrets_provider
         from app.services.storage_maintenance import store_reachable
@@ -51,9 +53,41 @@ async def secrets_outside_the_store(db) -> Dict[str, Any]:
         result["reachable"] = store_reachable()
 
         rows = (await db.execute(
-            select(SystemSecret.key_name).where(SystemSecret.key_value.isnot(None))
+            select(SystemSecret.key_name, SystemSecret.key_value)
+            .where(SystemSecret.key_value.isnot(None))
         )).all()
-        result["count"] = sum(1 for (key,) in rows if key not in DB_REQUIRED_KEYS)
+        result["count"] = sum(1 for key, _ in rows if key not in DB_REQUIRED_KEYS)
+
+        # Credentials that are in the database and cannot be read out of it.
+        #
+        # `decrypt_safe` returns "" for a value that looks encrypted and will
+        # not decrypt, which is exactly what a SECRET_KEY rotation leaves
+        # behind. Every reader downstream treats "" as absent, so the card goes
+        # back to showing an empty box and the town's reasonable conclusion is
+        # that the credential was never saved. It was saved; it is stuck, and
+        # re-entering it is the fix -- but only if somebody says so.
+        #
+        # The migration already works this out: `migrate_to_secret_manager`
+        # files precisely these under `unreadable`. But `vault_secrets` returns
+        # early when `store_reachable()` is false, so a town keeping its
+        # credentials in the encrypted database -- a supported choice, and the
+        # one every managed tenancy is given -- had no surface anywhere that
+        # named SECRET_KEY as the cause. This is that surface. It costs one
+        # decrypt per row, on an endpoint that already exists to be advisory.
+        #
+        # Names only, deliberately: the point is to say which credentials to
+        # re-enter, and the values are the part that cannot be read anyway.
+        unreadable = []
+        for key, value in rows:
+            if not value:
+                continue
+            try:
+                if not decrypt_safe(value):
+                    unreadable.append(key)
+            except Exception:
+                unreadable.append(key)
+        result["unreadable"] = len(unreadable)
+        result["unreadable_keys"] = sorted(unreadable)
     except Exception as exc:
         logger.debug("storage status: could not count database secrets: %s", exc)
     return result
@@ -130,7 +164,14 @@ async def summary(db) -> Dict[str, Any]:
         "pii": pii,
         # The page shows nothing at all unless one of these is true, so a town
         # with nothing outstanding is never asked to think about any of it.
+        #
+        # `unreadable` counts here even though nothing scheduled will clear it.
+        # That is the reason it counts: the other two resolve themselves
+        # overnight, and this one waits for a person who currently has no way
+        # to learn it is waiting.
         "needs_attention": bool(
-            (secrets["count"] and secrets["reachable"]) or pii["stale"]
+            (secrets["count"] and secrets["reachable"])
+            or pii["stale"]
+            or secrets["unreadable"]
         ),
     }
