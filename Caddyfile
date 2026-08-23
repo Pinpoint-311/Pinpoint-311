@@ -112,3 +112,19 @@ centraldemo.pinpoint311.org {
 # covers both -- importing the custom-domain file separately as well would
 # define its site block twice, which Caddy refuses to start on.
 import /etc/caddy/tenants/*.caddy
+
+# Accessibility-testing clone of the demo (project pinpoint-a11y).
+# Separate stack, separate database, no reports. Auth0 is deliberately absent
+# there so the volunteer can reach staff screens through the bootstrap path
+# instead of an SSO account. Same snippet as the demo so the headers, CSP and
+# routing under test are the ones the real site ships.
+noauthdemo.pinpoint311.org {
+	import pinpoint_site pinpoint-a11y-backend-1:8000 pinpoint-a11y-frontend-1:80
+}
+
+# Second accessibility/demo clone (project pinpoint-passaic). Same shape as
+# noauthdemo: own database seeded from it, no reports, no identity provider so
+# the bootstrap gate stays open.
+demomunicipality-hawthorne.pinpoint311.org {
+	import pinpoint_site pinpoint-passaic-backend-1:8000 pinpoint-passaic-frontend-1:80
+}
