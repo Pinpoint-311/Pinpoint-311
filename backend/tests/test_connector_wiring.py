@@ -135,9 +135,25 @@ async def test_every_map_provider_resolves_its_own_credentials():
         # contract -- which is how this test first failed.
         arrived = {v for v in resolved.values() if v}
         for key in keys:
+            field = next(f for f in spec["credential_fields"] if f["key"] == key)
             if key.endswith("PRIVATE_KEY"):
                 assert values[key] not in arrived, \
                     f"{provider}: {key} must never reach a browser payload"
+            elif field.get("browser_twin"):
+                # A twin is configured by an admin but never resolved under its
+                # own name. gis.py reads every key through browser_secret_reader,
+                # which swaps the vendor-shaped name for the twin BEFORE the
+                # lookup -- so the twin's value arrives in the payload as
+                # `apiKey`, and resolving it a second time under its own name
+                # would publish the same secret twice.
+                #
+                # It cannot simply alias to `apiKey` either: geocode_dispatch
+                # calls this same resolver with the RAW reader to get the
+                # SERVER key, and a twin aliased to `apiKey` would overwrite it
+                # with the browser key on the server's own geocoding path.
+                assert values[key] not in arrived, \
+                    f"maps/{provider}: {key} is a setup-only twin and must not " \
+                    f"be resolved under its own name"
             else:
                 assert values[key] in arrived, \
                     f"maps/{provider}: {key} advertised but never resolved"

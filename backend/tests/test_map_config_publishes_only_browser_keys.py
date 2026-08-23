@@ -210,5 +210,24 @@ def test_every_billed_map_key_has_a_browser_twin():
         for spec in mp.MAP_CATALOG.values()
         for field in spec["credential_fields"]
         if field.get("secret") and not field["key"].endswith("PRIVATE_KEY")
+        # A twin is the browser-safe key itself. Requiring it to have a twin of
+        # its own would be asking the substitution to point somewhere past its
+        # own destination.
+        and not field.get("browser_twin")
     }
     assert billed <= set(gis.BROWSER_KEY_FOR), billed - set(gis.BROWSER_KEY_FOR)
+
+    # And the other direction: every substitution must land on a key an admin
+    # can actually set. The first version of this split named three browser
+    # secrets that existed nowhere else in the product -- not seeded, not a
+    # setup field, not in the UI -- so the endpoint withheld the map and left
+    # no way to fix it from the console.
+    settable = {
+        field["key"]
+        for spec in mp.MAP_CATALOG.values()
+        for field in spec["credential_fields"]
+    }
+    unsettable = set(gis.BROWSER_KEY_FOR.values()) - settable
+    assert not unsettable, (
+        f"{sorted(unsettable)} is substituted in but has no credential field, so "
+        f"the map stays blank and nobody can enter the key that would fix it")
