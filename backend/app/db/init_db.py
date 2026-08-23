@@ -291,7 +291,8 @@ async def seed_database():
             # a card is switched in `capability_switches`, which starts empty --
             # a fresh install has answered nothing, and an empty map reads as
             # "not answered" rather than as "off".
-            modules={"unlisted_reports": False, "research_portal": False},
+            modules={"unlisted_reports": False, "research_portal": False,
+                     "platform_feedback": False},
             capability_switches={},
         )
         db.add(settings_obj)
