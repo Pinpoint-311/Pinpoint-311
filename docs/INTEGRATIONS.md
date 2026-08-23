@@ -116,29 +116,26 @@ nothing on screen, so a known problem never becomes an invisible one.
 | **Accela** | Accela Civic Platform | Public API (Construct API v4, OAuth2) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Esri ArcGIS** | Esri (ArcGIS Online / Enterprise) | Public API (Feature Service REST, API key or token) | ✅ | ✅ | ✅ | — | ✅ | ✅ |
 | **Tyler Technologies** | Tyler 311 / MyCivic / EnerGov | Open311 GeoReport v2 | ✅ | — | ✅ | — | — | — |
-| **CivicPlus (SeeClickFix)** | CivicPlus | Public API (SeeClickFix API v2) | ✅ | — | ✅ | ✅ | — | — |
 | **Generic Open311** | any GeoReport v2 endpoint | Open standard | ✅ | — | ✅ | — | — | — |
 | **Other REST System** | any vendor with a JSON REST API | Generic, self-configured (⚠ not vendor-certified) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 Dashes reflect hard limits of the vendor's public interface: the Open311 spec
-has no third-party status-update, comment, or attachment endpoints, SeeClickFix's
-public API exposes comments but not document upload or asset inventories, and a
+has no third-party status-update, comment, or attachment endpoints, and a
 feature layer is a table of rows with no comment model of its own. Everything the
 vendor's interface allows is wired.
 
-**SeeClickFix report forms.** Creating an issue means answering the request
-type's report form: the connector fetches `/request_types/{id}`, fills the
-questions a resident's report answers (title, description, address, photo
-links), and sends the rest as `answers` keyed by each question's `primary_key`.
-Required questions Pinpoint cannot answer — "Depth of pothole?", say — are
-answered once per connection via the **Extra answers** setting
-(`{"142": "SHALLOW"}`); the connection check names any that are still missing
-rather than letting each resident's report take a 422. Authenticate with a
-Personal Access Token (`Authorization: Bearer`); username/password Basic remains
-only as a fallback for older service accounts.
+**Retired: CivicPlus (SeeClickFix).** Removed in August 2026. SeeClickFix is a
+311 CRM — the same category as Pinpoint itself — so no town runs both as its 311
+system and the connector had no realistic user. Accela (permitting), Tyler (ERP
+suite) and ArcGIS (GIS) are systems a town runs *alongside* Pinpoint, which is
+what earns a connector its place. The capability is not lost: SeeClickFix
+publishes an Open311 GeoReport v2 endpoint and is one of the standard's
+canonical implementations, so a town that needs to reach one configures the
+**Generic Open311** connector against it. A town that already had the connector
+keeps its stored row — nothing deletes a town's data — and the admin list marks
+it retired; no sync task, health sweep, or webhook acts on it.
 
-**Purpose-built vs. generic.** Accela, Esri ArcGIS, CivicPlus/SeeClickFix, and
-Tyler (Open311) are implemented against each platform's actual, documented API
+**Purpose-built vs. generic.** Accela, Esri ArcGIS and Tyler (Open311) are implemented against each platform's actual, documented API
 and work out of the box with account credentials or the jurisdiction's GeoReport
 v2 endpoint.
 
@@ -179,10 +176,6 @@ push/pull/comment/photo/asset code paths as production:
   enabled, point the connector at its `/FeatureServer/0` URL, and the connection
   check will report the layer name and exactly which of Create/Update/attachments
   are on.
-- **CivicPlus SeeClickFix** — public API docs at
-  [dev.seeclickfix.com](https://dev.seeclickfix.com) with a replicated test
-  environment at `test.seeclickfix.com`; personal access tokens come from any
-  account's Password & Security page.
 - **Open311/Tyler** — many cities run public GeoReport v2 endpoints (list at
   the [Open311 wiki](https://wiki.open311.org/GeoReport_v2/Servers/)) that
   allow read access without a key — enough to verify pull.
@@ -222,7 +215,6 @@ has one, and says so plainly where it does not. The result carries `verified`:
 | Platform | What the check does | `verified` |
 | :--- | :--- | :---: |
 | **Accela** | token from the sign-in's refresh token (or the password-grant fallback), then a records probe | ✅ |
-| **CivicPlus (SeeClickFix)** | signs in against `/profile` | ✅ with credentials |
 | **Other REST System** | calls the list endpoint with your key attached | ✅ with credentials |
 | **Open311 / Tyler** | reads `/services.json` | ❌ — see below |
 

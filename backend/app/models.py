@@ -919,7 +919,7 @@ class UptimeRecord(Base):
 
 
 class IntegrationConfig(Base):
-    """Connection settings for an external govtech platform (Accela, Tyler, CivicPlus, etc.).
+    """Connection settings for an external govtech platform (Accela, Esri ArcGIS, Tyler, etc.).
 
     Credentials are stored encrypted (Fernet via SECRET_KEY) as a JSON blob and
     only decrypted when a connector needs them.
@@ -927,7 +927,7 @@ class IntegrationConfig(Base):
     __tablename__ = "integration_configs"
 
     id = Column(Integer, primary_key=True, index=True)
-    platform = Column(String(50), nullable=False, index=True)  # accela, tyler, civicplus, sdl, edmunds, govpilot, fasttrackgov, polimorphic, open311
+    platform = Column(String(50), nullable=False, index=True)  # accela, arcgis, tyler, open311, generic_rest (see integrations/registry.py)
     display_name = Column(String(100), nullable=False)
     enabled = Column(Boolean, default=False, nullable=False)
 
