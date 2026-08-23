@@ -12,7 +12,7 @@ from app.models import ServiceRequest, ServiceDefinition, User, RequestAuditLog,
 from app.schemas import (
     ServiceRequestCreate, ServiceRequestResponse, ServiceRequestDetailResponse,
     ServiceRequestUpdate, ServiceRequestDelete, ManualIntakeCreate, RequestAuditLogResponse,
-    PublicArchiveUpdate
+    PublicArchiveUpdate, Open311CreatedRequestResponse
 )
 from app.core.auth import get_current_staff
 from slowapi import Limiter
@@ -111,10 +111,62 @@ def direct_link_filters():
     return (ServiceRequest.deleted_at.is_(None),)
 
 
+# GeoReport v2 defines `status`, `service_code` and `service_request_id` as
+# comma-delimited lists on GET Service Requests -- "can be declared multiple
+# times, comma delimited" -- and this API read all of them as one opaque
+# string. So `?status=open,closed`, the example a client copies straight out of
+# the spec, compared the literal text "open,closed" against a column that only
+# ever holds one word and returned an empty array. Not an error: an empty
+# array, which an integrator reads as "this town has no open or closed
+# reports". Two of the three filters below are fixed here; see the report for
+# service_request_id, which this API does not accept at all.
+VALID_REQUEST_STATUSES = ("open", "in_progress", "closed")
+
+
+def parse_csv_filter(raw: Optional[str]) -> Optional[List[str]]:
+    """Split a spec-style comma-delimited filter into values, or None.
+
+    Whitespace around a value is trimmed (`open, closed` is what a human types)
+    and empty segments are dropped, so a trailing comma is not a filter for the
+    empty string. Returns None when there is nothing left to filter on, which
+    the callers treat the same as the parameter being absent -- `?status=` and
+    `?status=,,` mean "no status filter", not "no results".
+    """
+    if raw is None:
+        return None
+    values = [v.strip() for v in raw.split(",")]
+    values = [v for v in values if v]
+    return values or None
+
+
+def validated_statuses(raw: Optional[str]) -> Optional[List[str]]:
+    """`parse_csv_filter` plus a 400 that names what it did not recognise.
+
+    A misspelt status is worth an error rather than an empty list for the same
+    reason the comma bug was worth fixing: silence is indistinguishable from a
+    town with no matching reports, and the caller has no way to tell which
+    happened. The valid set is closed and small, so the message can just say
+    it.
+    """
+    values = parse_csv_filter(raw)
+    if not values:
+        return None
+    unknown = [v for v in values if v not in VALID_REQUEST_STATUSES]
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Unknown status value(s): {', '.join(unknown)}. "
+                f"Valid values are: {', '.join(VALID_REQUEST_STATUSES)}."
+            ),
+        )
+    return values
+
+
 @router.get("/public/requests")
 async def list_public_requests(
-    status: Optional[str] = Query(None, description="Filter by status"),
-    service_code: Optional[str] = Query(None, description="Filter by service category"),
+    status: Optional[str] = Query(None, description="Filter by status (comma-delimited, e.g. open,closed)"),
+    service_code: Optional[str] = Query(None, description="Filter by service category (comma-delimited)"),
     limit: Optional[int] = Query(None, ge=1, description="Max number of results (no limit by default)"),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db)
@@ -124,11 +176,19 @@ async def list_public_requests(
     # changes the number expects the map to change, not to change in up to a
     # minute, and a cached list built under the old policy is exactly the wrong
     # thing to serve back. One indexed singleton row.
+    # Parsed before the cache is touched. A 400 for a misspelt status must not
+    # depend on whether some earlier caller warmed a key, and the normalised
+    # lists are what belongs in the key anyway -- `?status=open,closed` and
+    # `?status=closed, open` are the same query and should share one entry.
+    statuses = validated_statuses(status)
+    service_codes = parse_csv_filter(service_code)
+
     settings_row = await read_settings_row(db)
     archive_days = getattr(settings_row, "public_archive_days", None) or 0
 
     cache_key = (
-        f"public_requests:{status or 'all'}:{service_code or 'all'}:{limit}:{offset}"
+        f"public_requests:{','.join(sorted(statuses)) if statuses else 'all'}"
+        f":{','.join(sorted(service_codes)) if service_codes else 'all'}:{limit}:{offset}"
         f":arch{archive_days}"
     )
 
@@ -147,11 +207,11 @@ async def list_public_requests(
     # staff. See app/services/public_visibility.py.
     query = select(ServiceRequest).where(*publicly_listed_conditions(settings_row))
 
-    if status:
-        query = query.where(ServiceRequest.status == status)
-    if service_code:
-        query = query.where(ServiceRequest.service_code == service_code)
-    
+    if statuses:
+        query = query.where(ServiceRequest.status.in_(statuses))
+    if service_codes:
+        query = query.where(ServiceRequest.service_code.in_(service_codes))
+
     query = query.order_by(ServiceRequest.requested_datetime.desc())
     if limit:
         query = query.limit(limit)
@@ -229,10 +289,39 @@ async def get_public_request_detail(request_id: str, db: AsyncSession = Depends(
 
 
 from app.models import RequestComment
-from app.schemas import RequestCommentResponse
+# Only the narrowed model here. `RequestCommentResponse` still exists and is
+# still correct -- app/api/comments.py serves it behind get_current_staff and
+# the dashboard reads user_id and visibility off it -- but it is no longer in
+# scope in this module, so a public route added to this file cannot reach for
+# it by autocomplete.
+from app.schemas import PublicRequestCommentResponse
 
 
-@router.get("/public/requests/{request_id}/comments", response_model=List[RequestCommentResponse])
+def public_comment_author(c: RequestComment) -> tuple:
+    """(author_type, display name) for a comment on an unauthenticated route.
+
+    Three kinds of author, distinguished by what the writer left behind rather
+    than by parsing the name:
+
+      * `user_id` set  -- a staff member. Shown as "Staff", never by login
+        name, which is the same redaction the public audit log applies to
+        `actor_name`. A resident tracking a pothole does not get handed the
+        roster of everyone who touched their report, and those login names are
+        the first half of a credential.
+      * `external_ref` set -- a note synced in from Accela, Tyler and the like.
+        Its display name is the platform's, not a person's, so it survives.
+      * neither -- a resident, already stored anonymously as "Resident" by
+        add_public_comment below.
+    """
+    if c.user_id is not None:
+        return "staff", "Staff"
+    if getattr(c, "external_ref", None):
+        return "integration", c.username
+    return "resident", c.username
+
+
+@router.get("/public/requests/{request_id}/comments",
+            response_model=List[PublicRequestCommentResponse])
 async def get_public_comments(request_id: str, db: AsyncSession = Depends(get_db)):
     """Get external/public comments for a request - no auth required"""
     # Find the request
@@ -251,10 +340,26 @@ async def get_public_comments(request_id: str, db: AsyncSession = Depends(get_db
         .where(RequestComment.visibility == 'external')
         .order_by(RequestComment.created_at.asc())
     )
-    return comments_result.scalars().all()
+    # Projected field by field rather than handed to from_attributes, so a
+    # column added to RequestComment later cannot arrive here by default.
+    return [
+        PublicRequestCommentResponse(
+            id=c.id,
+            author_type=author_type,
+            username=display_name,
+            content=c.content,
+            visibility=c.visibility,
+            created_at=c.created_at,
+            updated_at=c.updated_at,
+        )
+        for c, (author_type, display_name) in (
+            (c, public_comment_author(c)) for c in comments_result.scalars().all()
+        )
+    ]
 
 
-@router.post("/public/requests/{request_id}/comments", response_model=RequestCommentResponse)
+@router.post("/public/requests/{request_id}/comments",
+             response_model=PublicRequestCommentResponse)
 @limiter.limit("5/minute")
 async def add_public_comment(
     request: Request,
@@ -328,7 +433,23 @@ async def add_public_comment(
     from app.tasks.service_requests import notify_staff_of_activity
     enqueue(notify_staff_of_activity, sr.id, "comments", actor="Resident")
 
-    return comment
+    # Same narrowed shape the GET above serves. The comment just written is
+    # always a resident's, so nothing here would have exposed a staff username
+    # -- but it would have echoed the internal integer `service_request_id`,
+    # and the two halves of one public route answering in two different shapes
+    # is how the next field gets added back to only one of them. The resident
+    # portal discards this body and re-fetches the thread
+    # (TrackRequests.tsx:257-261).
+    author_type, display_name = public_comment_author(comment)
+    return PublicRequestCommentResponse(
+        id=comment.id,
+        author_type=author_type,
+        username=display_name,
+        content=comment.content,
+        visibility=comment.visibility,
+        created_at=comment.created_at,
+        updated_at=comment.updated_at,
+    )
 
 
 # ============ Audit Log Endpoints ============
@@ -687,6 +808,21 @@ async def list_open311_services(db: AsyncSession = Depends(get_db)):
             "service_code": s.service_code,
             "service_name": s.service_name,
             "description": s.description,
+            # GeoReport v2 makes `metadata` the flag that tells a client
+            # whether GET /services/{code}.json is worth calling for this
+            # service. It was missing here while the definition endpoint
+            # hardcoded True, so the list said "no extended attributes" by
+            # omission about services that have nine of them, and a
+            # conformant client built its intake form without asking.
+            #
+            # True for every service, matching what that endpoint actually
+            # does: it serves the same attribute set for any active service,
+            # derived from the intake form rather than from per-service
+            # configuration. If service definitions ever become optional, this
+            # is the line that has to learn the difference -- and the test
+            # pins the two endpoints to each other so it cannot drift quietly
+            # again.
+            "metadata": True,
             "type": "realtime",
             "keywords": s.service_name.lower(),
             "group": "municipal"
@@ -859,7 +995,8 @@ async def screen_photo(
     }
 
 
-@router.post("/requests.json", response_model=ServiceRequestResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/requests.json", response_model=Open311CreatedRequestResponse,
+             status_code=status.HTTP_201_CREATED)
 @limiter.limit("10/minute")
 async def create_request(
     request: Request,
@@ -1134,8 +1271,10 @@ async def _finalize_new_request(
 
 @router.get("/requests.json", response_model=List[ServiceRequestResponse])
 async def list_requests(
-    status_filter: Optional[str] = Query(None, alias="status"),
-    service_code: Optional[str] = None,
+    status_filter: Optional[str] = Query(
+        None, alias="status", description="Filter by status (comma-delimited, e.g. open,closed)"),
+    service_code: Optional[str] = Query(
+        None, description="Filter by service code (comma-delimited)"),
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     include_deleted: bool = False,
@@ -1168,12 +1307,15 @@ async def list_requests(
             scope.append(ServiceRequest.assigned_department_id.in_(my_dept_ids))
         query = query.where(or_(*scope))
 
-    if status_filter:
-        query = query.where(ServiceRequest.status == status_filter)
-    
-    if service_code:
-        query = query.where(ServiceRequest.service_code == service_code)
-    
+    statuses = validated_statuses(status_filter)
+    if statuses:
+        query = query.where(ServiceRequest.status.in_(statuses))
+
+    service_codes = parse_csv_filter(service_code)
+    if service_codes:
+        query = query.where(ServiceRequest.service_code.in_(service_codes))
+
+
     if start_date:
         query = query.where(ServiceRequest.requested_datetime >= start_date)
     

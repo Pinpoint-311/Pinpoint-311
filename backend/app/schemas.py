@@ -299,6 +299,75 @@ class ServiceRequestResponse(BaseModel):
         from_attributes = True
 
 
+class Open311CreatedRequestResponse(BaseModel):
+    """What an anonymous poster is told back after creating a request.
+
+    `POST /api/open311/v2/requests.json` is unauthenticated -- anyone on the
+    internet can call it -- and it used to answer with `ServiceRequestResponse`,
+    the staff model built off the whole ORM row. That handed the poster the
+    internal integer `id`, the soft-delete triple, `flagged`, `priority`,
+    `source`, `is_public`/`public_archived`, `matched_asset`, `custom_fields`,
+    `ai_analysis`, `manual_priority_score`, `assigned_department_id` and
+    `assigned_to` -- a STAFF USERNAME, disclosed to a stranger by the act of
+    filing a pothole report. Auto-assignment runs inside that same handler, so
+    the field was reliably populated by the time it serialised.
+
+    The create path gets its own model rather than a filtered view of the staff
+    one, so that a field added to `ServiceRequestResponse` later for the
+    console cannot silently appear here as well.
+
+    The field set is the GeoReport v2 acknowledgement -- what a submitter needs
+    to know their report landed and to look it up again -- and nothing else.
+    The resident portal reads exactly one of them
+    (`result.service_request_id`, ResidentPortal.tsx:484); the rest are kept
+    because an Open311 client that is not our portal reasonably expects the
+    echo.
+
+    Deliberately absent though the spec would allow it: `media_urls`. On this
+    deployment those are base64 data URIs of several megabytes each and the
+    poster is the one who just uploaded them -- the public list endpoint omits
+    them for the same reason. The old response did not carry them either, so
+    leaving them out is not a removal.
+    """
+    service_request_id: str
+    service_code: str
+    service_name: str
+    description: str
+    status: str
+    address: Optional[str] = None
+    lat: Optional[float] = None
+    long: Optional[float] = None
+    requested_datetime: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PublicRequestCommentResponse(BaseModel):
+    """One external comment, as an unauthenticated reader may see it.
+
+    `RequestCommentResponse` carries the author's `user_id` and their real
+    `username` -- for a staff comment, a login name -- plus the internal
+    integer `service_request_id`. The public comments route served that model
+    verbatim, so the tracker page of any report published the roster of whoever
+    had touched it. The public audit log in the same file already gets this
+    right (`actor_name if actor_type == "resident" else "Staff"`); this is that
+    rule applied to the other public surface.
+
+    `author_type` is stated rather than inferred because the tracker renders a
+    badge per author and derived it from `user_id` being null (commentUI.tsx).
+    With the id gone that test would have labelled every staff comment an
+    integration sync note.
+    """
+    id: int
+    author_type: str  # "resident" | "staff" | "integration"
+    username: str
+    content: str
+    visibility: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
 class PublicServiceRequestResponse(BaseModel):
     """Public-facing response that strips all personal information"""
     service_request_id: str
