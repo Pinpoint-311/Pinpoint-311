@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Eye, EyeOff, Lock, CheckCircle, AlertCircle } from 'lucide-react';
 
 type FieldKind = 'url' | 'email' | 'json' | 'auto';
@@ -151,9 +151,30 @@ export default function SecretField({
     const paste = diagnosePaste(value);
     const placeholderish = !paste && looksLikePlaceholder(value);
 
+    /* A real label, tied to a real input.
+     *
+     * This markup had a <label> with no `htmlFor` and an <input> with no id, so
+     * every credential box on the setup page -- and there are dozens -- was an
+     * unlabelled text field to a screen reader, announced as "edit text, blank"
+     * with the placeholder as the only clue. The advisory lines underneath were
+     * likewise invisible: they are the difference between "your key is fine" and
+     * "this looks like example text", and nothing associated them with the box
+     * they are about. */
+    const id = useId();
+    const inputId = `${id}-input`;
+    const describedBy = [
+        paste ? `${id}-paste` : null,
+        placeholderish ? `${id}-placeholder` : null,
+        check && !paste ? `${id}-check` : null,
+        help ? `${id}-help` : null,
+    ].filter(Boolean).join(' ') || undefined;
+
     return (
         <div>
-            <label className="text-[11px] uppercase tracking-wider text-white/60 mb-1.5 font-semibold flex items-center gap-1.5">
+            <label
+                htmlFor={inputId}
+                className="text-[11px] uppercase tracking-wider text-white/60 mb-1.5 font-semibold flex items-center gap-1.5"
+            >
                 {secret && <Lock className="w-3 h-3 text-white/35" aria-hidden="true" />}
                 {label}
                 {required && !savedHint && <span className="normal-case tracking-normal text-amber-300 font-medium">(required)</span>}
@@ -165,9 +186,16 @@ export default function SecretField({
             </label>
             <div className="relative">
                 <input
+                    id={inputId}
                     type={isPassword ? 'password' : 'text'}
                     autoFocus={autoFocus}
+                    /* Never the label. A placeholder disappears the moment
+                       something is typed and is not announced as a name, so a
+                       field whose only identification is its placeholder has no
+                       identification at all. */
                     placeholder={savedHint ? '•••••••••  leave blank to keep' : (placeholder || '')}
+                    aria-required={required && !savedHint ? true : undefined}
+                    aria-describedby={describedBy}
                     value={value}
                     onChange={(e) => onChange(e.target.value)}
                     className={`w-full rounded-xl bg-white/[0.04] border border-white/10 text-white text-sm px-3.5 py-2.5 ${secret ? 'pr-10' : ''} placeholder:text-white/40 transition-all focus:outline-none focus:border-primary-400/50 focus:bg-white/[0.06] focus:shadow-[0_0_0_3px_rgba(99,102,241,0.15)]`}
@@ -179,9 +207,14 @@ export default function SecretField({
                         type="button"
                         onClick={() => setReveal(v => !v)}
                         className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-white/40 hover:text-white/80 hover:bg-white/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
-                        aria-label={reveal ? 'Hide value' : 'Show value'}
+                        /* Reachable by keyboard. It was tabIndex={-1}, which
+                           takes the only way to check a pasted key away from
+                           precisely the people most likely to have mis-pasted
+                           it -- and the reveal is a real, useful control, not
+                           decoration to be skipped over. */
+                        aria-label={`${reveal ? 'Hide' : 'Show'} ${label}`}
+                        aria-pressed={reveal}
                         title={reveal ? 'Hide' : 'Show'}
-                        tabIndex={-1}
                     >
                         {reveal ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
@@ -191,7 +224,7 @@ export default function SecretField({
                 credential is how you turn a visible paste mistake into an auth
                 error three days later that nobody can explain. */}
             {paste && (
-                <div className="mt-1.5 rounded-lg bg-amber-500/10 border border-amber-400/25 px-2.5 py-2 flex items-start gap-2">
+                <div id={`${id}-paste`} className="mt-1.5 rounded-lg bg-amber-500/10 border border-amber-400/25 px-2.5 py-2 flex items-start gap-2">
                     <AlertCircle className="w-3.5 h-3.5 text-amber-300/90 mt-0.5 shrink-0" aria-hidden="true" />
                     <div className="min-w-0 flex-1">
                         <p className="text-xs text-amber-100/85 leading-relaxed">{paste.label}</p>
@@ -206,18 +239,18 @@ export default function SecretField({
                 </div>
             )}
             {placeholderish && (
-                <p className="text-xs mt-1.5 flex items-start gap-1 text-amber-300/90">
+                <p id={`${id}-placeholder`} className="text-xs mt-1.5 flex items-start gap-1 text-amber-300/90">
                     <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" aria-hidden="true" />
                     This looks like example text rather than a real value.
                 </p>
             )}
             {check && !paste && (
-                <p className={`text-xs mt-1.5 flex items-center gap-1 ${check.ok ? 'text-emerald-300/80' : 'text-amber-300/90'}`}>
+                <p id={`${id}-check`} className={`text-xs mt-1.5 flex items-center gap-1 ${check.ok ? 'text-emerald-300/80' : 'text-amber-300/90'}`}>
                     {check.ok ? <CheckCircle className="w-3 h-3 shrink-0" aria-hidden="true" /> : <AlertCircle className="w-3 h-3 shrink-0" aria-hidden="true" />}
                     {check.msg}
                 </p>
             )}
-            {help && <p className="text-white/50 text-xs mt-1.5 leading-relaxed">{help}</p>}
+            {help && <p id={`${id}-help`} className="text-white/50 text-xs mt-1.5 leading-relaxed">{help}</p>}
         </div>
     );
 }

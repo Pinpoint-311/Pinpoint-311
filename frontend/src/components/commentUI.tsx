@@ -29,7 +29,16 @@ import type { RequestComment, CommentVisibility } from '../types';
  */
 export type CommentActor = 'staff' | 'resident' | 'integration';
 
-export function commentActor(c: Pick<RequestComment, 'username' | 'user_id'>): CommentActor {
+export function commentActor(
+    c: Pick<RequestComment, 'username' | 'user_id' | 'author_type'>,
+): CommentActor {
+    // The public comments route states authorship outright because it cannot
+    // let the client infer it: `user_id` is a staff member's internal id, and
+    // that route stopped emitting it. Without this line an absent id reads as
+    // null below, and every staff reply on the resident tracker would wear an
+    // "Integration" badge. The staff endpoint sends no author_type and falls
+    // through to the derivation below, unchanged.
+    if (c.author_type) return c.author_type;
     if (c.username === 'Resident') return 'resident';
     if (c.user_id == null) return 'integration';
     return 'staff';

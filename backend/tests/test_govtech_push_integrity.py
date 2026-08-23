@@ -322,7 +322,7 @@ def test_the_test_button_does_not_hand_the_browser_a_raw_vendor_string():
     block = source[source.index("async def check_integration_now"):]
     code = "\n".join(line.split("#")[0] for line in block.splitlines())
     assert '"detail": str(exc)' not in code
-    assert code.count('health.clean_error(exc)') >= 3
+    assert code.count('clean_error(exc)') >= 3
 
 
 # ---------------------------------------------------------------------------

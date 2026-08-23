@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useCallback, useEffect, useState } from 'react';
+import { announceStatus } from '../components/capabilityUI';
 
 interface AccessibilityContextType {
     /** Announce a message to screen readers */
@@ -50,25 +51,14 @@ export const AccessibilityProvider: React.FC<AccessibilityProviderProps> = ({ ch
         return () => mediaQuery.removeEventListener('change', handler);
     }, []);
 
-    // Screen reader announcement function
-    const announce = useCallback((message: string, priority: 'polite' | 'assertive' = 'polite') => {
-        const liveRegion = document.getElementById('aria-live-region');
-        if (liveRegion) {
-            // Clear and set the message to trigger announcement
-            liveRegion.setAttribute('aria-live', priority);
-            liveRegion.innerHTML = '';
-
-            // Use setTimeout to ensure the DOM change triggers the announcement
-            setTimeout(() => {
-                liveRegion.innerHTML = message;
-            }, 100);
-
-            // Clear after announcement (helps with repeated messages)
-            setTimeout(() => {
-                liveRegion.innerHTML = '';
-            }, 3000);
-        }
-    }, []);
+    /* Screen reader announcement.
+     *
+     * One implementation, in capabilityUI, because the setup page's cards
+     * announce from outside this provider and two copies of the clear/set/clear
+     * dance is two things to keep in step. It also writes textContent rather
+     * than innerHTML: a good deal of what gets announced is a vendor's own error
+     * string, and remote text should never be parsed as markup. */
+    const announce = useCallback(announceStatus, []);
 
     // Focus trap management
     const setFocusTrap = useCallback((element: HTMLElement | null) => {
