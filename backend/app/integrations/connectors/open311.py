@@ -3,7 +3,9 @@
 Works against any spec-compliant endpoint (http://wiki.open311.org/GeoReport_v2),
 which covers a large slice of the govtech market: Tyler Technologies 311,
 CivicPlus SeeClickFix, Cityworks, QAlert, and many municipal in-house systems
-expose GeoReport v2 endpoints.
+expose GeoReport v2 endpoints. The Tyler connector is this class under another
+platform name (see connectors/vendors.py), and this is also the supported route
+to a SeeClickFix instance now that the vendor-specific connector is retired.
 
 Config:
     base_url          e.g. https://city.example.gov/open311/v2  (required)

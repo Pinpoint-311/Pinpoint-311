@@ -155,6 +155,8 @@ def _vaulted_state(credentials: Dict[str, Any]) -> str:
 
 
 def _serialize(integration: IntegrationConfig) -> Dict[str, Any]:
+    from app.integrations.registry import RETIRED_PLATFORMS, connector_available
+
     catalog = PLATFORM_CATALOG.get(integration.platform, {})
     # Read once. `credentials` is a hybrid property that Fernet-decrypts on every
     # access, and this function touched it four times per row -- on a list of
@@ -164,7 +166,24 @@ def _serialize(integration: IntegrationConfig) -> Dict[str, Any]:
     return {
         "id": integration.id,
         "platform": integration.platform,
-        "platform_name": catalog.get("name", integration.platform),
+        "platform_name": (
+            catalog.get("name")
+            or RETIRED_PLATFORMS.get(integration.platform)
+            or integration.platform
+        ),
+        # A row for a platform Pinpoint no longer connects. The row is kept --
+        # a town's stored decision is not ours to delete -- and every sync task
+        # and the nightly health sweep skip it, so it costs nothing and raises
+        # no alerts. It has no catalog entry and therefore no card, so this flag
+        # is the one place the admin list can say what it is instead of the row
+        # simply vanishing from the page while still sitting in the database.
+        "retired": not connector_available(integration.platform),
+        "retired_reason": (
+            f"The {RETIRED_PLATFORMS[integration.platform]} connector has been removed "
+            "from Pinpoint. These settings are kept so nothing is lost, but nothing "
+            "syncs. To reach the same system, connect it through the generic Open311 "
+            "connector — it publishes a GeoReport v2 endpoint."
+        ) if integration.platform in RETIRED_PLATFORMS else None,
         "display_name": integration.display_name,
         "enabled": integration.enabled,
         "sync_direction": integration.sync_direction,

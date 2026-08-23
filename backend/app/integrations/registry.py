@@ -11,7 +11,6 @@ from app.integrations.base import BaseConnector
 from app.integrations.connectors.accela import AccelaConnector
 from app.integrations.connectors.arcgis import ArcGISConnector
 from app.integrations.connectors.open311 import Open311Connector
-from app.integrations.connectors.seeclickfix import SeeClickFixConnector
 from app.integrations.connectors.generic_rest import GenericRestConnector
 from app.integrations.connectors.vendors import TylerConnector
 
@@ -114,35 +113,6 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
             {"key": "default_service_code", "label": "Default Service Code", "placeholder": "", "required": False},
         ],
         "setup_notes": "Ask your Tyler implementation team for the jurisdiction's Open311 endpoint and an API key with write access.",
-    },
-    "civicplus": {
-        "name": "CivicPlus (SeeClickFix)",
-        "vendor": "CivicPlus",
-        "category": "311 CRM & citizen requests",
-        "integration_mode": "public_api",
-        "docs_url": "https://dev.seeclickfix.com",
-        "description": "Two-way sync with CivicPlus SeeClickFix via the public SeeClickFix API v2 — creates issues (filling the request type's report form), polls your place for status changes, and syncs comment threads both ways.",
-        "capabilities": ["push", "pull", "comments", "test"],
-        "credential_fields": [
-            {"key": "api_key", "label": "Personal Access Token", "secret": True},
-            {"key": "username", "label": "SeeClickFix Username (legacy sign-in only)", "secret": False},
-            {"key": "password", "label": "SeeClickFix Password (legacy sign-in only)", "secret": True},
-        ],
-        "config_fields": [
-            {"key": "request_type_id", "label": "Request Type ID", "placeholder": "1234 (or 'other')", "required": True},
-            {"key": "place_url", "label": "Place Slug", "placeholder": "your-town", "required": False},
-            {"key": "organization_id", "label": "Organization ID", "placeholder": "1234", "required": False},
-            {"key": "answers", "label": "Extra report-form answers (JSON)", "placeholder": '{"142": "SHALLOW"}', "required": False},
-        ],
-        "setup_notes": (
-            "Authenticate with a Personal Access Token: in SeeClickFix go to Account → Password & "
-            "Security (account.civicplus.com/security) → Personal Access Token, create one, and paste "
-            "it here. Username/password (HTTP Basic) still works for older service accounts but is not "
-            "the documented scheme. Issue creation needs a Request Type ID, and if that request type "
-            "asks required questions Pinpoint can't answer from a resident's report (e.g. 'Depth of "
-            "pothole?'), supply them once under Extra answers — the connection check names any that "
-            "are missing."
-        ),
     },
     "generic_rest": {
         "name": "Other REST System (Generic Connector)",
@@ -302,32 +272,6 @@ CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
         },
         "recommended_sync_direction": "bidirectional",
     },
-    "civicplus": {
-        "plain_summary": "Reports submitted here also appear in SeeClickFix, and SeeClickFix status changes and comments show up here.",
-        "what_you_need": [
-            "A Personal Access Token from a SeeClickFix account that can report in your town — "
-            "sign in, open the account menu → Password & Security (account.civicplus.com/security), "
-            "find the 'Personal Access Token' section, and create one. Copy it now; it is shown once.",
-            "The Request Type ID resident reports should be filed under — ask CivicPlus, or use "
-            "'other', which every place has",
-            "Optional: your town's SeeClickFix web address (the part after seeclickfix.com/, e.g. 'springfield')",
-        ],
-        "vendor_ask": {
-            "to_hint": "Your CivicPlus / SeeClickFix account manager",
-            "subject": "API access for our 311 system (Pinpoint 311)",
-            "body": "Hello,\n\nWe are connecting our resident request system (Pinpoint 311) to our SeeClickFix account.\n\nCould you please confirm:\n1. The account we should use for creating issues via the SeeClickFix API v2 (we will generate a Personal Access Token on it)\n2. Our place URL (the seeclickfix.com/... address for our town) and our organization id\n3. The request type ID resident reports should use, and the answers you want for any required questions on that request type\n\nThank you!",
-        },
-        "field_help": {
-            "api_key": "Your Personal Access Token. In SeeClickFix: account menu → Password & Security (account.civicplus.com/security) → Personal Access Token → create. Copy it straight away — SeeClickFix shows it only once. Treat it like a password.",
-            "username": "Only for older accounts set up before tokens. Leave blank if you pasted a token above.",
-            "password": "That account's password. Leave blank if you pasted a token above.",
-            "place_url": "The last part of your town's SeeClickFix page address, e.g. 'springfield' from seeclickfix.com/springfield.",
-            "organization_id": "Optional — the account number CivicPlus uses for your organization. Filling it in lets us read your private issues too, instead of only public ones.",
-            "request_type_id": "Which SeeClickFix category new reports are filed under. CivicPlus can tell you the number; 'other' works everywhere if you don't have one yet.",
-            "answers": "Only needed if your request type asks questions we can't answer from a resident's report. The connection check tells you the question id and the allowed answers, e.g. {\"142\": \"SHALLOW\"}.",
-        },
-        "recommended_sync_direction": "bidirectional",
-    },
     "generic_rest": {
         "plain_summary": "A do-it-yourself connector for a vendor system that isn't listed above and has a plain JSON API (Polimorphic and FastTrackGov, for example). You paste in the web address and key your vendor gives you, plus a few field names from their API guide if they differ from the common defaults. If your vendor has no public API — GovPilot, Edmunds, PubWorks — this cannot reach it; ask the vendor, or ask us.",
         "what_you_need": [
@@ -390,15 +334,63 @@ _CONNECTOR_CLASSES = {
     "accela": AccelaConnector,
     "arcgis": ArcGISConnector,
     "tyler": TylerConnector,
-    "civicplus": SeeClickFixConnector,
     "generic_rest": GenericRestConnector,
     "open311": Open311Connector,
 }
 
 
+# Platforms Pinpoint used to connect and no longer does.
+#
+# A town may still have an `integration_configs` row naming one. That row is
+# their record of a decision they made, not ours to delete, so nothing here
+# removes it — but nothing acts on it either. Every loop that walks the
+# integration rows asks `connector_available` first, so a retired platform
+# costs a beat tick nothing and never writes a health failure, a sync-log
+# error, or an alert email about a connector that no longer exists.
+#
+# The webhook endpoint needs no change: it already refuses any platform absent
+# from PLATFORM_CATALOG, so an orphaned row's token stops being a way in.
+RETIRED_PLATFORMS: Dict[str, str] = {
+    # Removed 2026-08. SeeClickFix is a 311 CRM — the same category as Pinpoint
+    # itself — so no town runs both as its 311 system, and the connector had no
+    # realistic user. Accela (permitting), Tyler (ERP suite) and ArcGIS (GIS)
+    # are systems a town runs *alongside* Pinpoint, which is what earns a
+    # connector its place.
+    #
+    # The capability is not lost: SeeClickFix publishes an Open311 GeoReport v2
+    # endpoint and is one of the standard's canonical implementations, so a town
+    # that genuinely needs to reach one configures the generic Open311
+    # connector against it.
+    "civicplus": "CivicPlus (SeeClickFix)",
+}
+
+
+def is_retired(platform: str) -> bool:
+    return platform in RETIRED_PLATFORMS
+
+
+def connector_available(platform: str) -> bool:
+    """Whether this platform can still be built into a working connector.
+
+    The predicate the sync tasks and the health sweep skip on. Kept separate
+    from catalog membership because the two answer different questions: the
+    catalog is what a town may connect *now*, this is what a stored row can
+    still *do*.
+    """
+    return platform in _CONNECTOR_CLASSES
+
+
 def build_connector(platform: str, config: Dict[str, Any], credentials: Dict[str, Any]) -> BaseConnector:
     cls = _CONNECTOR_CLASSES.get(platform)
     if not cls:
+        if is_retired(platform):
+            raise ValueError(
+                f"The {RETIRED_PLATFORMS[platform]} connector has been removed from "
+                "Pinpoint, so this connection can no longer sync. Its settings are "
+                "kept so nothing is lost — delete it when you no longer need the "
+                "record. To reach the same system, connect it through the generic "
+                "Open311 connector."
+            )
         raise ValueError(f"Unknown integration platform: {platform}")
     return cls(config, credentials)
 

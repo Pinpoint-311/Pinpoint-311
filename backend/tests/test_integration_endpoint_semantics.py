@@ -289,9 +289,9 @@ def test_the_paths_are_offered_as_wizard_fields():
 
 
 def test_the_purpose_built_connectors_are_unchanged():
-    """Accela and SeeClickFix are written against one documented API each, so
-    their capabilities are a fact about that API, not about configuration."""
+    """Accela and ArcGIS are written against one documented API each, so their
+    capabilities are a fact about that API, not about configuration."""
     accela = build_connector("accela", {"agency_name": "A"}, {})
     assert {"comments", "documents", "assets"} <= accela.capabilities
-    scf = build_connector("civicplus", {}, {})
-    assert "comments" in scf.capabilities
+    arcgis = build_connector("arcgis", {"layer_url": "https://x.test/FeatureServer/0"}, {})
+    assert {"documents", "assets"} <= arcgis.capabilities
