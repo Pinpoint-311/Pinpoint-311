@@ -42,6 +42,7 @@ that must keep free text out of a vendor system has a retention/redaction lever
 for that; this flag is not it.
 """
 
+import inspect
 import types
 from datetime import datetime, timezone
 
@@ -363,9 +364,16 @@ def test_the_work_order_has_never_heard_of_platform_feedback():
 
     The platform-feedback table must not be read, joined or imported anywhere in
     the outbound integration path at all -- there is no version of "a bit of it
-    goes to Accela" that is correct.
+    goes to Accela" that is correct. A resident's opinion of this software is
+    not work-order data, and aggregate sentiment about a vendor is not something
+    to hand that vendor.
+
+    Checked against the module source rather than a built payload because the
+    point is stronger than absence from one payload: the push path must not so
+    much as touch the table, in any branch, including ones a stand-in record
+    would not exercise.
     """
-    source = TASKS.read_text()
+    source = inspect.getsource(integrations)
     for token in ("PlatformFeedback", "platform_feedback", "platform_experience"):
         assert token not in source, (
             f"{token} appears in the govtech push path. Feedback about Pinpoint "
