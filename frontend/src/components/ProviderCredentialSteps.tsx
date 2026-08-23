@@ -1,8 +1,10 @@
 import { CheckCircle, AlertCircle, Info, ShieldCheck } from 'lucide-react';
+import { useId } from 'react';
 
 import SecretField from './SecretField';
-import { claimedFields, stepsFor } from './setupSteps';
-import type { StepContext } from './setupSteps';
+import { SetupPathBanner, SetupPathChoice, usePathChoice } from './setupPathChoice';
+import { claimedFields, cloudForkFor, forkFields, forkFor, stepsFor } from './setupSteps';
+import type { SetupStep, StepContext } from './setupSteps';
 import type { Capability, CloudIdentity, ProviderInfo } from '../services/api';
 
 /**
@@ -64,6 +66,24 @@ export default function ProviderCredentialSteps({
     /** Tighter spacing for the guide, which nests this inside a step list. */
     compact?: boolean;
 }) {
+    /* Two genuine ways to do this job, or one.
+     *
+     * Both registries have to answer for the fork to exist: the capability
+     * needs two walks, and the cloud needs the wording of the choice. Either
+     * one absent -- which is every provider that is not Azure or AWS -- and
+     * this collapses to the step list that was here before.
+     *
+     * The choice is read by CLOUD, not by capability, because one template
+     * deployment covers four cards. Provider ids on these clouds are the cloud
+     * ids, which is what makes `provider` the right key. */
+    const fork = forkFor(cap, provider, ctx);
+    const presentation = fork ? cloudForkFor(provider, ctx) : null;
+    const { chosen, pick, revealedRef } = usePathChoice(provider);
+
+    /* The same walk can be on screen twice -- once on the provider card and
+     * once inside the guide -- so ids have to be per mount, not per provider. */
+    const uid = useId();
+
     const field = (key: string) => {
         const f = active.credential_fields.find(x => x.key === key);
         if (!f) return null;  // the catalog changed under the steps
@@ -118,8 +138,18 @@ export default function ProviderCredentialSteps({
         );
     };
 
-    const steps = stepsFor(cap, provider, ctx);
-    const claimed = claimedFields(steps);
+    /* Which steps are on screen. A forked provider shows none until asked --
+     * that is the point of the fork -- and then exactly one path's, numbered
+     * from 1 by the same map that has always numbered them. */
+    const steps: SetupStep[] = fork && presentation
+        ? (chosen ? fork[chosen] : [])
+        : stepsFor(cap, provider, ctx);
+
+    /* Before a choice, both paths count as claiming their fields. Otherwise the
+     * "a field no step claims still renders" rule below would drop the entire
+     * credential form under the two buttons, which is the wall of text this
+     * change exists to remove. */
+    const claimed = fork && presentation && !chosen ? forkFields(fork) : claimedFields(steps);
     const leftover = active.credential_fields.filter(f => !claimed.has(f.key));
 
     /* What this provider needs and this card does not ask for.
@@ -167,6 +197,18 @@ export default function ProviderCredentialSteps({
                         </p>
                     )}
                 </div>
+            )}
+            {presentation && !chosen && (
+                <SetupPathChoice fork={presentation} uid={uid} onPick={pick} />
+            )}
+            {presentation && chosen && (
+                <SetupPathBanner
+                    fork={presentation}
+                    chosen={chosen}
+                    headingRef={revealedRef}
+                    uid={uid}
+                    onPick={pick}
+                />
             )}
             {steps.map((st, i) => (
                 <div key={i} className={compact ? 'mb-3' : 'mb-4'}>

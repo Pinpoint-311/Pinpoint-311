@@ -81,7 +81,21 @@
             "type": "string",
             "defaultValue": "",
             "metadata": {
-                "description": "OPTIONAL. The object id of the identity Pinpoint signs in as - a managed identity, or the service principal of an Entra app registration. Given one, this grants it Key Vault Crypto User and Key Vault Secrets Officer ON THIS VAULT ONLY, and nothing anywhere else. Leave blank and grant it by hand afterwards. This is an object id, not an application (client) id."
+                "description": "OPTIONAL, AND LEAVING IT BLANK IS SILENT. The object id of the identity Pinpoint signs in as. Given one, this grants it Key Vault Crypto User and Key Vault Secrets Officer ON THIS VAULT ONLY, and nothing anywhere else. LEAVE IT BLANK AND NO PERMISSION IS GRANTED AT ALL: the deployment still reports success, and you get a vault and a key that Pinpoint cannot use, with nothing on the form or in the deployment saying so. You must then add Key Vault Crypto User by hand - plus Key Vault Secrets Officer if this vault is also Pinpoint's secret store - on this vault's Access control (IAM) blade, or encryption will fail at first use. WHERE TO FIND IT: Entra ID > Enterprise applications > your app > Object ID (NOT the Application (client) ID, which is a different value on the same page), or the Overview blade of the managed identity. MUST BE A SERVICE PRINCIPAL: a managed identity or an app registration's service principal both qualify. The object id of a human USER account will be rejected - the role assignments below declare principalType ServicePrincipal so that a service principal created moments ago does not fail an Entra lookup that has not replicated yet."
+            }
+        },
+        "auditLogDestinationId": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "OPTIONAL. Resource id of a Log Analytics workspace or a storage account to send the vault's AuditEvent log to - every key wrap, unwrap and administrative change, with who did it. LEAVE IT EMPTY AND AZURE RETAINS NO KEY-ACCESS AUDIT TRAIL AT ALL: Key Vault does not keep one of its own, so there is nothing to go back and read after an incident, and nothing to show a records or security review. The id is the full /subscriptions/.../resourceGroups/.../providers/... string from the destination's Properties blade. Which kind it is is worked out from the id itself, so either will do."
+            }
+        },
+        "resourceTags": {
+            "type": "object",
+            "defaultValue": {},
+            "metadata": {
+                "description": "OPTIONAL. Tags applied to every resource this template creates - cost centre, owner, department, whatever your finance or governance policy requires. Enter it as JSON, e.g. {\"costCentre\":\"1234\",\"owner\":\"itdept@example.gov\"}. Empty means untagged, which some subscriptions refuse with an Azure Policy denial that names the missing tag."
             }
         },
         "deployAzureOpenAI": {
@@ -114,9 +128,9 @@
         },
         "openAiModelVersion": {
             "type": "string",
-            "defaultValue": "2024-07-18",
+            "defaultValue": "",
             "metadata": {
-                "description": "Model version. Must be one your region offers for the model above."
+                "description": "Model version. LEAVE IT EMPTY - the recommendation - and Azure deploys whatever version your region currently makes default, which is the only value guaranteed to exist there. A version pinned in this file goes stale: Microsoft retires model versions region by region, and a retired one fails the deployment outright with an unhelpful error about the model not being found. Pin a version only if you have a reason to want that exact one, and expect to change it when it is retired."
             }
         },
         "openAiCapacity": {
@@ -157,16 +171,28 @@
     },
     "variables": {
         "vaultId": "[resourceId('Microsoft.KeyVault/vaults', parameters('vaultName'))]",
-        "grantPinpoint": "[and(parameters('deployKeyVault'), not(empty(parameters('pinpointPrincipalObjectId'))))]"
+        "grantPinpoint": "[and(parameters('deployKeyVault'), not(empty(parameters('pinpointPrincipalObjectId'))))]",
+        "auditVaultAccess": "[and(parameters('deployKeyVault'), not(empty(parameters('auditLogDestinationId'))))]",
+        "auditToWorkspace": "[contains(toLower(parameters('auditLogDestinationId')), '/microsoft.operationalinsights/')]",
+        "openAiModelFloating": {
+            "format": "OpenAI",
+            "name": "[parameters('openAiModelName')]"
+        },
+        "openAiModelPinned": {
+            "format": "OpenAI",
+            "name": "[parameters('openAiModelName')]",
+            "version": "[parameters('openAiModelVersion')]"
+        }
     },
     "resources": [
         {
-            "comments": "The vault. enableRbacAuthorization picks Azure roles as the permission model, which is Azure's own default and what Pinpoint's setup steps assume. Soft delete is on and cannot be turned off. Purge protection is the irreversible one described in the parameter above.",
+            "comments": "The vault. enableRbacAuthorization picks Azure roles as the permission model, which is Azure's own default and what Pinpoint's setup steps assume. Soft delete is on and cannot be turned off. Purge protection is the irreversible one described in the parameter above. publicNetworkAccess Enabled and networkAcls.defaultAction Allow are a DELIBERATE CHOICE, not an oversight and not merely Azure's default: Pinpoint commonly runs outside Azure - the reference deployment is on Oracle Cloud - and a vault reachable only from a virtual network would be unreachable by the very application it exists to serve, so every resident record would fail to decrypt. The vault is not open in any meaningful sense: enableRbacAuthorization means reaching it still requires an Azure role assignment on this vault, every call is authenticated against Entra, and the two roles granted below are the whole of what Pinpoint can do. A town that DOES run Pinpoint inside Azure should close the vault afterwards - the README says how, in one az command - and that is left as a deliberate post-deployment step rather than a parameter here, because a firewall rule that silently omits the application's egress address locks the town out of its own resident data with no error until the first decrypt.",
             "condition": "[parameters('deployKeyVault')]",
             "type": "Microsoft.KeyVault/vaults",
             "apiVersion": "2023-07-01",
             "name": "[parameters('vaultName')]",
             "location": "[parameters('location')]",
+            "tags": "[parameters('resourceTags')]",
             "properties": {
                 "tenantId": "[subscription().tenantId]",
                 "sku": { "family": "A", "name": "standard" },
@@ -179,12 +205,13 @@
             }
         },
         {
-            "comments": "The RSA key. Created through Azure Resource Manager, which is why this route does not need the deployer to hold Key Vault Crypto Officer first - the requirement that stops the portal's Generate/Import screen working on a brand-new vault. keyOps is limited to wrapping and unwrapping, which is all Pinpoint ever asks of it.",
+            "comments": "The RSA key. Created through Azure Resource Manager, which is why this route does not need the deployer to hold Key Vault Crypto Officer first - the requirement that stops the portal's Generate/Import screen working on a brand-new vault. keyOps is limited to wrapping and unwrapping, which is all Pinpoint ever asks of it. NO rotationPolicy, on purpose: Azure will only auto-rotate a key that carries an expiry time, an expired version refuses unwrap, and every resident record already wrapped under an earlier version would become permanently unreadable the day that version expired - Pinpoint has no background job that re-wraps stored data. Rotate this key deliberately instead; the README says what has to happen alongside it.",
             "condition": "[parameters('deployKeyVault')]",
             "type": "Microsoft.KeyVault/vaults/keys",
             "apiVersion": "2023-07-01",
             "name": "[concat(parameters('vaultName'), '/', parameters('keyName'))]",
             "dependsOn": ["[variables('vaultId')]"],
+            "tags": "[parameters('resourceTags')]",
             "properties": {
                 "kty": "RSA",
                 "keySize": "[parameters('keySize')]",
@@ -193,7 +220,7 @@
             }
         },
         {
-            "comments": "Scoped to the vault, never to the resource group or the subscription. The assignment name is derived from the scope and the principal, so redeploying does not pile up duplicates.",
+            "comments": "Scoped to the vault, never to the resource group or the subscription. The assignment name is derived from the scope and the principal, so redeploying does not pile up duplicates. principalType is stated rather than left for Azure to look up: without it ARM resolves the object id against Entra, and a service principal created minutes earlier - which is exactly this flow, where the operator registers the app and then deploys - may not have replicated yet, so the deployment fails with PrincipalNotFound. Intermittently, which is the worst kind: it passes wherever the principal is old and fails on the first town that follows the instructions in order.",
             "condition": "[variables('grantPinpoint')]",
             "type": "Microsoft.Authorization/roleAssignments",
             "apiVersion": "2022-04-01",
@@ -202,7 +229,8 @@
             "dependsOn": ["[variables('vaultId')]"],
             "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', parameters('keyVaultCryptoUserRoleId'))]",
-                "principalId": "[parameters('pinpointPrincipalObjectId')]"
+                "principalId": "[parameters('pinpointPrincipalObjectId')]",
+                "principalType": "ServicePrincipal"
             }
         },
         {
@@ -215,11 +243,31 @@
             "dependsOn": ["[variables('vaultId')]"],
             "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', parameters('keyVaultSecretsOfficerRoleId'))]",
-                "principalId": "[parameters('pinpointPrincipalObjectId')]"
+                "principalId": "[parameters('pinpointPrincipalObjectId')]",
+                "principalType": "ServicePrincipal"
             }
         },
         {
-            "comments": "Azure OpenAI is its own kind of account and is not part of the multi-service one below. customSubDomainName is what gives it the per-resource endpoint Pinpoint needs.",
+            "comments": "Key Vault keeps no access log of its own. Without a diagnostic setting routing AuditEvent somewhere, Azure retains nothing about who used the key and when, and there is no way to reconstruct it afterwards - which is the whole of the audit trail Pinpoint's setup copy says a vault gives you. Created only when a destination is supplied, because a diagnostic setting has to point at something that already exists. The destination kind is inferred from the id: a Log Analytics workspace id contains /Microsoft.OperationalInsights/, anything else is treated as a storage account. json('null') drops the property that does not apply rather than sending an empty one, which ARM rejects.",
+            "condition": "[variables('auditVaultAccess')]",
+            "type": "Microsoft.Insights/diagnosticSettings",
+            "apiVersion": "2021-05-01-preview",
+            "scope": "[concat('Microsoft.KeyVault/vaults/', parameters('vaultName'))]",
+            "name": "pinpoint-311-audit",
+            "dependsOn": ["[variables('vaultId')]"],
+            "properties": {
+                "workspaceId": "[if(variables('auditToWorkspace'), parameters('auditLogDestinationId'), json('null'))]",
+                "storageAccountId": "[if(variables('auditToWorkspace'), json('null'), parameters('auditLogDestinationId'))]",
+                "logs": [
+                    {
+                        "category": "AuditEvent",
+                        "enabled": true
+                    }
+                ]
+            }
+        },
+        {
+            "comments": "Azure OpenAI is its own kind of account and is not part of the multi-service one below. customSubDomainName is what gives it the per-resource endpoint Pinpoint needs. publicNetworkAccess Enabled for the same deliberate reason as the vault: Pinpoint commonly runs outside Azure, so an account reachable only from a virtual network could not be called at all. Access is by key, the key is never emitted as an output, and the account can be closed afterwards by a town that runs inside Azure.",
             "condition": "[parameters('deployAzureOpenAI')]",
             "type": "Microsoft.CognitiveServices/accounts",
             "apiVersion": "2023-05-01",
@@ -227,6 +275,7 @@
             "location": "[parameters('location')]",
             "kind": "OpenAI",
             "sku": { "name": "S0" },
+            "tags": "[parameters('resourceTags')]",
             "properties": {
                 "customSubDomainName": "[parameters('openAiAccountName')]",
                 "publicNetworkAccess": "Enabled"
@@ -242,15 +291,12 @@
             ],
             "sku": { "name": "Standard", "capacity": "[parameters('openAiCapacity')]" },
             "properties": {
-                "model": {
-                    "format": "OpenAI",
-                    "name": "[parameters('openAiModelName')]",
-                    "version": "[parameters('openAiModelVersion')]"
-                }
+                "model": "[if(empty(parameters('openAiModelVersion')), variables('openAiModelFloating'), variables('openAiModelPinned'))]",
+                "versionUpgradeOption": "OnceCurrentVersionExpired"
             }
         },
         {
-            "comments": "One multi-service AI Services account, which is why three of Pinpoint's Azure cards can share a single key. Its endpoint serves the image-reading path Pinpoint uses for licence plates and the face-detection path it uses for faces, and the same key authenticates Translator against the global translator endpoint when the Region box is set to this account's region.",
+            "comments": "One multi-service AI Services account, which is why three of Pinpoint's Azure cards can share a single key. Its endpoint serves the image-reading path Pinpoint uses for licence plates and the face-detection path it uses for faces, and the same key authenticates Translator against the global translator endpoint when the Region box is set to this account's region. publicNetworkAccess Enabled is the same deliberate choice as the vault and the OpenAI account above, for the same reason: Pinpoint is usually not running inside Azure, and an account restricted to a virtual network would answer nothing.",
             "condition": "[parameters('deployCognitiveServices')]",
             "type": "Microsoft.CognitiveServices/accounts",
             "apiVersion": "2023-05-01",
@@ -258,6 +304,7 @@
             "location": "[parameters('location')]",
             "kind": "CognitiveServices",
             "sku": { "name": "S0" },
+            "tags": "[parameters('resourceTags')]",
             "properties": {
                 "customSubDomainName": "[parameters('cognitiveAccountName')]",
                 "publicNetworkAccess": "Enabled"

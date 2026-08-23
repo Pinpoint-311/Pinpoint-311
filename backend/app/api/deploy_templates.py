@@ -34,9 +34,23 @@ the Azure portal fetches the template with an XHR *from portal.azure.com*, so
 without it the browser refuses the read and the portal shows an empty form. The
 app's own CORS middleware allows only the town's origins, which is right for
 every other route and wrong for this one.
+
+**One thing is rewritten on the way out: default values, and nothing else.**
+The setup card says "Microsoft Azure - Key management, AI triage, Translation"
+and the Azure form used to arrive with `deployAzureOpenAI: false` and
+`deployCognitiveServices: false`, because those are the on-disk defaults. An
+operator who reads the card, presses Deploy and then presses Create gets a vault
+and no AI resources, and the two cards they came for stay empty with nothing
+saying why. Flipping the defaults in the repository is not the fix -- it would
+create billable resources in the account of every town that did not ask. Since
+the file is already served from the town's own instance, the town's own
+selections can be written into it as it leaves. See `_capability_defaults`.
 """
 
+import asyncio
+import json
 import os
+import re
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -126,9 +140,215 @@ def published_url(relative: str) -> str:
     return f"{PUBLISHED_BASE_URL}/{relative}"
 
 
+# ---------------------------------------------------------------------------
+# Defaults that match what the town actually asked for
+# ---------------------------------------------------------------------------
+
+# Which of the town's capability selections turns each template toggle on.
+#
+# Read as: `deployCognitiveServices` should arrive pre-ticked if the town runs
+# either translation *or* photo screening on Azure, because one multi-service
+# account serves both. `redaction` is Pinpoint's name for photo screening --
+# face blurring and licence plates; there is no separate `photo` capability.
+#
+# The provider names are the catalog's, not the cloud's: Azure's AI provider is
+# spelled `azure`, AWS's is spelled `bedrock`.
+AZURE_TOGGLE_SOURCES: Dict[str, Tuple[Tuple[str, str], ...]] = {
+    "deployKeyVault": (("kms", "azure"),),
+    "deployAzureOpenAI": (("ai", "azure"),),
+    "deployCognitiveServices": (("translation", "azure"), ("redaction", "azure")),
+}
+
+AWS_TOGGLE_SOURCES: Dict[str, Tuple[Tuple[str, str], ...]] = {
+    "AllowBedrock": (("ai", "bedrock"),),
+    "AllowTranslate": (("translation", "aws"),),
+    "AllowRekognition": (("redaction", "aws"),),
+    "AllowSecretsManager": (("secrets", "aws"),),
+}
+
+# How long the whole reading-our-own-settings step gets. The caller here is
+# Azure's portal or CloudFormation fetching a URL, and a secret store that has
+# gone slow must not turn into a deployment form that never renders. Past this,
+# the file goes out exactly as it is on disk.
+_SELECTION_BUDGET_SECONDS = 4.0
+
+
+async def _selected_providers() -> Dict[str, str]:
+    """The provider each capability is switched on and running under, right now.
+
+    Server-side state only. The cloud provider fetches this route anonymously --
+    there is no session, no town header and nothing trustworthy in the request
+    to read a selection out of -- so the answer has to come from the instance's
+    own settings or not at all.
+
+    A capability appears here only if it is both switched on and resolvable. A
+    capability that raises, times out, or cannot be read is simply absent, and
+    an absent capability leaves the on-disk default alone.
+    """
+    try:
+        from app.api.system import effective_provider_for
+        from app.services import capability_switches
+    except Exception:
+        return {}
+
+    wanted = set()
+    for sources in (AZURE_TOGGLE_SOURCES, AWS_TOGGLE_SOURCES):
+        for pairs in sources.values():
+            for capability, _provider in pairs:
+                wanted.add(capability)
+
+    async def one(capability: str) -> Tuple[str, Optional[str]]:
+        try:
+            if not await capability_switches.enabled(capability):
+                return capability, None
+            return capability, await effective_provider_for(capability)
+        except Exception:
+            return capability, None
+
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(*(one(c) for c in sorted(wanted))),
+            timeout=_SELECTION_BUDGET_SECONDS,
+        )
+    except Exception:
+        return {}
+
+    return {c: p.strip().lower() for c, p in results if isinstance(p, str) and p.strip()}
+
+
+def _capability_defaults(relative: str, selected: Dict[str, str]) -> Dict[str, bool]:
+    """Which template toggles this town's selections say should start ticked.
+
+    **One direction only: off to on, never on to off.** Turning a toggle on is
+    justified by a positive reading -- the town chose this cloud for that
+    capability, so the resource is one they asked for. Turning one off could not
+    be justified the same way, because "not selected" and "not selected *yet*"
+    read identically from here, and the operator deploying a key vault has
+    usually not finished choosing Azure inside Pinpoint at the moment they press
+    the button. Serving `deployKeyVault: false` to that operator would produce
+    no vault at all, which is a worse failure than the extra one this rewrite
+    exists to avoid.
+    """
+    sources = AZURE_TOGGLE_SOURCES if relative.startswith("azure/") else AWS_TOGGLE_SOURCES
+    return {
+        toggle: True
+        for toggle, pairs in sources.items()
+        if any(selected.get(capability) == provider for capability, provider in pairs)
+    }
+
+
+def _rewrite_arm_defaults(source: str, defaults: Dict[str, bool]) -> str:
+    """Set `defaultValue` on named ARM parameters, touching nothing else.
+
+    A line rewrite rather than parse-and-redump on purpose. Re-serialising the
+    template would reflow every line of it, and the promise this route makes is
+    that a reviewer diffing the served file against the published one sees
+    default values and nothing else.
+    """
+    out = source
+    for name, value in defaults.items():
+        pattern = re.compile(
+            r'("' + re.escape(name) + r'"\s*:\s*\{(?:[^{}]|\{[^{}]*\})*?"defaultValue"\s*:\s*)'
+            r"(true|false)",
+            re.S,
+        )
+        out, _count = pattern.subn(lambda m: m.group(1) + ("true" if value else "false"), out, count=1)
+    return out
+
+
+def _rewrite_cfn_defaults(source: str, defaults: Dict[str, bool]) -> str:
+    """Set `Default:` on named CloudFormation parameters, touching nothing else.
+
+    Line-oriented because there is no YAML parser here and there is deliberately
+    not going to be one -- see the test module. The parameters concerned are all
+    two-line `Type: String` / `Default: 'Yes'` blocks at a known indent, so this
+    stays a search for one line inside one named block.
+    """
+    lines = source.splitlines(keepends=True)
+    for name, value in defaults.items():
+        header = f"  {name}:\n"
+        try:
+            start = lines.index(header)
+        except ValueError:
+            continue
+        for index in range(start + 1, len(lines)):
+            line = lines[index]
+            if line.strip() and not line.startswith("    "):
+                break  # left the parameter's block
+            if line.startswith("    Default:"):
+                lines[index] = f"    Default: '{'Yes' if value else 'No'}'\n"
+                break
+    return "".join(lines)
+
+
+def apply_selected_defaults(relative: str, body: bytes, selected: Dict[str, str]) -> bytes:
+    """The served body: the file on disk, with defaults the town's own answer.
+
+    Returns the file unchanged if anything at all is off -- nothing to change,
+    an unrecognised template, or a rewrite that did not come back parseable.
+    """
+    defaults = _capability_defaults(relative, selected)
+    if not defaults:
+        return body
+    try:
+        source = body.decode("utf-8")
+    except UnicodeDecodeError:
+        return body
+
+    if relative.startswith("azure/"):
+        rewritten = _rewrite_arm_defaults(source, defaults)
+        try:
+            parsed = json.loads(rewritten)
+        except ValueError:
+            return body
+        # Belt and braces: the rewrite is a regex over a file we ship, so the
+        # thing worth checking is not that it worked but that it changed only
+        # what it was allowed to change.
+        if _arm_without_defaults(parsed) != _arm_without_defaults(json.loads(source)):
+            return body
+    else:
+        rewritten = _rewrite_cfn_defaults(source, defaults)
+        if _cfn_without_defaults(rewritten) != _cfn_without_defaults(source):
+            return body
+
+    return rewritten.encode("utf-8")
+
+
+def _arm_without_defaults(template: dict) -> str:
+    """An ARM template with every parameter default blanked, as a stable string.
+
+    The comparison key for "these two files differ only in default values".
+    """
+    stripped = json.loads(json.dumps(template))
+    for parameter in stripped.get("parameters", {}).values():
+        if isinstance(parameter, dict):
+            parameter.pop("defaultValue", None)
+    return json.dumps(stripped, sort_keys=True, indent=1)
+
+
+def _cfn_without_defaults(source: str) -> str:
+    """The same comparison key for the CloudFormation file, as text."""
+    return "".join(
+        line for line in source.splitlines(keepends=True) if not line.startswith("    Default:")
+    )
+
+
 @router.get("/{cloud}/{filename}")
 async def get_deploy_template(cloud: str, filename: str) -> Response:
-    """Serve one deployment template to whoever asks, including a cloud provider."""
+    """Serve one deployment template to whoever asks, including a cloud provider.
+
+    The body is the file on disk with **only `defaultValue` (ARM) and `Default:`
+    (CloudFormation) fields adjusted**, so that the form Azure or AWS draws
+    arrives with the capabilities this town selected already ticked rather than
+    at the repository's neutral defaults. Nothing else about the file is
+    touched: not a resource, not a permission, not a description, not the
+    formatting. That is the guarantee -- a security reviewer diffing what this
+    URL serves against the published copy must find default values and nothing
+    else, and `test_deploy_templates.py` holds it in place by normalising every
+    default away and asserting the two are then identical.
+
+    Anything unreadable leaves the on-disk defaults exactly as they are.
+    """
     relative = f"{cloud}/{filename}"
     entry = TEMPLATE_FILES.get(relative)
     if entry is None:
@@ -152,6 +372,13 @@ async def get_deploy_template(cloud: str, filename: str) -> Response:
         body = path.read_bytes()
     except OSError:
         return RedirectResponse(url=published_url(relative), status_code=302)
+
+    try:
+        body = apply_selected_defaults(relative, body, await _selected_providers())
+    except Exception:
+        # The published file is always a correct answer. A settings read that
+        # went wrong must not be the reason a town cannot deploy at all.
+        pass
 
     return Response(
         content=body,
