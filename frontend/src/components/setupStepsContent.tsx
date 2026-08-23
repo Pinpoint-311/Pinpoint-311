@@ -448,14 +448,18 @@ defineSteps('maps', 'google', (ctx) => [
     {
         body: (
             <>
-                Go to <B>APIs &amp; Services → Credentials → Create Credentials → API key</B>. Then open
-                the key and restrict it: under <B>Application restrictions</B> choose <B>Websites</B> and
-                add <CopyValue ctx={ctx} id="gmref" value={`${ctx.origin}/*`} /> — the <C>/*</C> matters.
-                Under <B>API restrictions</B> choose <B>Restrict key</B> and tick the same three APIs,
-                taking care to tick <C>Places API (New)</C> and not the older <C>Places API</C>.
+                Make <B>two</B> keys under <B>Credentials → Create Credentials → API key</B>. Google
+                allows one restriction per key and the two uses need opposite ones.
+                <br /><br />
+                <B>Browser key</B> — restrict to <B>Websites</B>, add{' '}
+                <CopyValue ctx={ctx} id="gmref" value={`${ctx.origin}/*`} /> (the <C>/*</C> matters), and
+                tick <C>Maps JavaScript API</C>.
+                <br /><br />
+                <B>Server key</B> — restrict to <B>IP addresses</B>, add this server's, and tick{' '}
+                <C>Geocoding API</C> and <C>Places API (New)</C>, not the older <C>Places API</C>.
             </>
         ),
-        check: <>your site under Website restrictions, and only those three APIs ticked — with <C>Places API (New)</C> among them.</>,
+        check: <>two keys: one restricted to your site with <C>Maps JavaScript API</C>, one restricted to this server's IP with <C>Geocoding API</C> and <C>Places API (New)</C>.</>,
         trouble: (
             <>
                 An unrestricted key can be lifted off your site and run up a bill on the town's card. A
@@ -465,8 +469,8 @@ defineSteps('maps', 'google', (ctx) => [
         ),
     },
     {
-        body: <>Paste the key here. The Map ID is optional and only changes how the map looks — leave it empty.</>,
-        fields: ['GOOGLE_MAPS_API_KEY', 'GOOGLE_MAPS_MAP_ID'],
+        body: <>Paste both keys in their own boxes. The Map ID is optional — leave it empty. To run one key for both, put the same value in both boxes.</>,
+        fields: ['GOOGLE_MAPS_API_KEY', 'GOOGLE_MAPS_BROWSER_API_KEY', 'GOOGLE_MAPS_MAP_ID'],
         note: <>Changes to a Google key can take up to five minutes. If the map is still grey straight after saving, wait before changing anything else.</>,
     },
 ]);
@@ -507,10 +511,12 @@ defineSteps('maps', 'esri', () => [
                 Paste the key. Both other boxes are optional: the basemap is an Esri style id (for
                 example <C>arcgis/navigation</C>) if you want something other than the default, and the
                 locator is the URL of your own address locator service if the GIS department publishes
-                one.
+                one. Two key boxes: the browser one goes into the page residents load, so scope that
+                credential to <B>Basemaps</B> and set its referrer to your domain; the server one does
+                the geocoding. The same value in both works if you would rather keep one key.
             </>
         ),
-        fields: ['ARCGIS_API_KEY', 'ARCGIS_BASEMAP_ID', 'ARCGIS_LOCATOR_URL'],
+        fields: ['ARCGIS_API_KEY', 'ARCGIS_BROWSER_API_KEY', 'ARCGIS_BASEMAP_ID', 'ARCGIS_LOCATOR_URL'],
         note: <>A town locator is worth asking for. It knows your street names, your address ranges and your recent subdivisions, which a national geocoder often does not.</>,
     },
 ]);
@@ -537,8 +543,8 @@ defineSteps('maps', 'azure', () => [
                 under Shared Key Authentication.
             </>
         ),
-        fields: ['AZURE_MAPS_KEY'],
-        note: <>Take the primary key and leave the secondary alone. The pair exists so a key can be rotated without downtime — using both at once removes the point of having two.</>,
+        fields: ['AZURE_MAPS_KEY', 'AZURE_MAPS_BROWSER_KEY'],
+        note: <>Take the primary key and leave the secondary alone. The pair exists so a key can be rotated without downtime — using both at once removes the point of having two. Azure shared keys cannot be restricted by origin, so unless you run a second Maps account for the browser, put the primary key in both boxes.</>,
     },
 ]);
 
