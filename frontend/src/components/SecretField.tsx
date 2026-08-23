@@ -227,12 +227,16 @@ export default function SecretField({
                     id={inputId}
                     type={isPassword ? 'password' : 'text'}
                     autoFocus={autoFocus}
+                    /* Never the label. A placeholder disappears the moment
+                       something is typed and is not announced as a name, so a
+                       field whose only identification is its placeholder has no
+                       identification at all. */
                     placeholder={savedHint ? '•••••••••  leave blank to keep' : (placeholder || '')}
+                    aria-required={required && !savedHint ? true : undefined}
+                    aria-describedby={describedBy}
                     value={value}
                     onChange={(e) => onChange(e.target.value)}
-                    aria-describedby={describedBy}
                     aria-invalid={invalid || undefined}
-                    aria-required={required || undefined}
                     className={`w-full rounded-xl bg-white/[0.04] border border-white/10 text-white text-sm px-3.5 py-2.5 ${secret ? 'pr-10' : ''} placeholder:text-white/40 transition-all focus:outline-none focus:border-primary-400/50 focus:bg-white/[0.06] focus:shadow-[0_0_0_3px_rgba(99,102,241,0.15)]`}
                     spellCheck={false}
                     autoComplete="off"

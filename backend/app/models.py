@@ -937,7 +937,7 @@ class UptimeRecord(Base):
 
 
 class IntegrationConfig(Base):
-    """Connection settings for an external govtech platform (Accela, Tyler, CivicPlus, etc.).
+    """Connection settings for an external govtech platform (Accela, Esri ArcGIS, Tyler, etc.).
 
     Credentials are stored encrypted (Fernet via SECRET_KEY) as a JSON blob and
     only decrypted when a connector needs them.
@@ -945,7 +945,7 @@ class IntegrationConfig(Base):
     __tablename__ = "integration_configs"
 
     id = Column(Integer, primary_key=True, index=True)
-    platform = Column(String(50), nullable=False, index=True)  # accela, tyler, civicplus, sdl, edmunds, govpilot, fasttrackgov, polimorphic, open311
+    platform = Column(String(50), nullable=False, index=True)  # accela, arcgis, tyler, open311, generic_rest (see integrations/registry.py)
     display_name = Column(String(100), nullable=False)
     enabled = Column(Boolean, default=False, nullable=False)
 
@@ -964,6 +964,33 @@ class IntegrationConfig(Base):
     last_sync_at = Column(DateTime(timezone=True))
     last_sync_status = Column(String(20))  # success, error
     last_sync_error = Column(Text)
+
+    # The vendor's own lookup lists, pulled down while we had their credentials.
+    #
+    # A mapping is a promise about codes that live in the *vendor's data* -- this
+    # town's service codes, this layer's status domain -- and nothing published
+    # anywhere says what they are. So the setup form asked an admin to type
+    # them, and a typo is not an error: it is a status that silently never maps,
+    # or a 422 on the first real report.
+    #
+    # Deliberately NOT inside `config`. Config is the admin-writable blob and
+    # every key in it is allowlisted; this is server-written, refreshed from the
+    # vendor, and must not be settable by the thing it exists to check.
+    #
+    # Shape: {"services": [{"code": .., "name": ..}], "statuses": [{"code": ..,
+    # "name": ..}], ...} plus "_source" naming where each list came from, so a
+    # card can say "your 14 ArcGIS status values" rather than "14 values".
+    lookups_cache = Column(JSON, default=dict)
+    lookups_fetched_at = Column(DateTime(timezone=True))
+
+    # Who last looked at the mapping and said yes, and when.
+    #
+    # Distinct from "a mapping exists": an empty mapping that an admin
+    # deliberately approved (this vendor's words happen to match ours) and one
+    # nobody has ever opened look identical in the config blob, and only one of
+    # them is a decision.
+    mapping_approved_at = Column(DateTime(timezone=True))
+    mapping_approved_by = Column(String(100))
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -1039,6 +1066,67 @@ class IntegrationLink(Base):
 
     integration = relationship("IntegrationConfig")
     service_request = relationship("ServiceRequest")
+
+
+class IntegrationDeadLetter(Base):
+    """An outbound sync that failed, kept until it succeeds or somebody says stop.
+
+    A push that fails writes a row to `integration_sync_logs` and stops. The log
+    is an audit trail -- nothing reads it back, nothing retries from it -- so the
+    resident's report simply never reaches the county, and the only trace is a
+    line in a drawer nobody opens. A vendor outage of twenty minutes silently
+    costs the town every report filed during it.
+
+    One row per (integration, operation, subject), so a report that fails four
+    times is one item with `attempts = 4` rather than four items. `next_attempt_at`
+    is the backoff; `resolved_at` closes it. A row is never deleted by the retry
+    loop: it either succeeds, or it is still here for somebody to look at. Giving
+    up quietly is the failure this table exists to prevent.
+
+    `payload` deliberately holds no PII. Replay re-reads the ServiceRequest and
+    rebuilds the outbound payload from scratch, so what is stored is the
+    identifiers needed to find the work again -- not a copy of a resident's name
+    and phone number sitting in a second table with its own retention story.
+    """
+    __tablename__ = "integration_dead_letters"
+
+    id = Column(Integer, primary_key=True, index=True)
+    integration_id = Column(Integer, ForeignKey("integration_configs.id", ondelete="CASCADE"),
+                            nullable=False, index=True)
+    # push | push_status | push_comment
+    operation = Column(String(30), nullable=False)
+    # The thing that failed to sync. A service request for push/push_status, a
+    # comment for push_comment. Both cascade, so a deleted request takes its
+    # backlog with it rather than leaving a row that can never be replayed.
+    service_request_id = Column(Integer, ForeignKey("service_requests.id", ondelete="CASCADE"),
+                                nullable=True, index=True)
+    comment_id = Column(Integer, ForeignKey("request_comments.id", ondelete="CASCADE"),
+                        nullable=True, index=True)
+    # Non-PII context the replay needs and cannot re-derive: the status note on a
+    # push_status, for instance.
+    payload = Column(JSON, default=dict)
+
+    attempts = Column(Integer, default=0, nullable=False)
+    last_error = Column(Text)
+    first_failed_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_attempt_at = Column(DateTime(timezone=True))
+    next_attempt_at = Column(DateTime(timezone=True), index=True)
+
+    # Set when the replay finally lands, or when an admin decides it should not.
+    resolved_at = Column(DateTime(timezone=True), index=True)
+    resolution = Column(String(20))          # succeeded | discarded
+    resolved_by = Column(String(100))        # the admin, for a discard
+    resolution_note = Column(Text)
+
+    __table_args__ = (
+        # One open item per piece of work. Without it the retry loop and the
+        # push path race to insert on the same failure and the backlog counts
+        # the same report twice.
+        UniqueConstraint("integration_id", "operation", "service_request_id",
+                         "comment_id", name="uq_dead_letter_subject"),
+    )
+
+    integration = relationship("IntegrationConfig")
 
 
 class IntegrationSyncLog(Base):

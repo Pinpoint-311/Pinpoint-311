@@ -177,16 +177,16 @@ def test_one_broken_integration_does_not_hide_the_others():
     """Aborting on the first raise would leave every connector after it
     unreported, which is the state this replaces."""
     checked, _ = sweep(
-        [Row("accela"), Row("civicplus"), Row("open311")],
+        [Row("accela"), Row("arcgis"), Row("open311")],
         {
             "accela": connector(raises=RuntimeError("boom")),
-            "civicplus": connector({"ok": True, "verified": True}),
+            "arcgis": connector({"ok": True, "verified": True}),
             "open311": connector({"ok": True, "verified": False, "detail": "anonymous"}),
         },
     )
     assert checked == {
         "govtech:accela": "error",
-        "govtech:civicplus": "working",
+        "govtech:arcgis": "working",
         "govtech:open311": "unverifiable",
     }
 
