@@ -1,0 +1,259 @@
+import type { Capability } from '../services/api';
+
+/**
+ * What a deployment gives back, and which box each value belongs in.
+ *
+ * The templates were the easy half. A town pressed Deploy, Azure created seven
+ * resources and printed seven values, and then the operator was on their own:
+ * find the AI card, find the right box, retype an endpoint; find the Translation
+ * card, retype a region. Made, but not connected. This file is the other half --
+ * one paste, distributed to the boxes the values belong to.
+ *
+ * The mapping is deliberately data rather than code. Each entry names an output
+ * exactly as the template emits it and the credential keys it fills, so the
+ * whole contract between a template and the cards is one table a reviewer can
+ * read. backend/tests/test_deploy_templates.py holds the other end of it: every
+ * output labelled `Pinpoint box: <label>` must name a label a catalog really
+ * has, so an output that stops matching anything is a failing test rather than
+ * a box nobody can find.
+ *
+ * Two rules, both learned from the failure this replaces:
+ *
+ *   * An output that matches nothing is REPORTED, not dropped. It means the
+ *     template and the catalogs have drifted, which is a bug, and swallowing it
+ *     turns that bug into "some of my boxes filled in and I don't know why".
+ *   * Nothing is saved silently. What matched, what did not, and what is still
+ *     missing is on screen before anything is written.
+ */
+
+/** One value a deployment emits, and where it goes. */
+export interface OutputMapping {
+    /** The output's name, exactly as the template emits it. */
+    output: string;
+    /** Credential keys it fills. More than one where the same value serves two
+     *  boxes -- Azure's multi-service account is one endpoint for Vision and
+     *  Face both. */
+    keys: string[];
+    /** Human name for the value, for the matched/unmatched list. */
+    label: string;
+}
+
+/**
+ * A credential the deployment deliberately does not give back.
+ *
+ * Both templates emit no key, password or secret, because deployment history is
+ * readable by more people than the person deploying. That is a good decision
+ * with a bad failure mode: the operator pastes the outputs, sees boxes still
+ * empty, and concludes the paste did not work. So the ones that are still a
+ * human's job are listed by name, with where each one lives.
+ */
+export interface ManualCredential {
+    key: string;
+    label: string;
+    /** Where to get it. One clause, no navigation essay. */
+    where: string;
+    /** Which card it belongs to, so the list groups the way the page does. */
+    cap: Capability;
+}
+
+export interface CloudOutputs {
+    /** What the operator is copying, named the way their console names it. */
+    sourceLabel: string;
+    /** One line on where to find it in that console. */
+    sourceHint: string;
+    mappings: OutputMapping[];
+    manual: ManualCredential[];
+}
+
+export const DEPLOY_OUTPUTS: Record<string, CloudOutputs> = {
+    azure: {
+        sourceLabel: 'the deployment Outputs',
+        sourceHint: 'Resource group → Deployments → your deployment → Outputs. Copy the JSON.',
+        mappings: [
+            { output: 'keyVaultUrl', keys: ['AZURE_KEYVAULT_URL'], label: 'Key Vault URL' },
+            { output: 'keyName', keys: ['AZURE_KEYVAULT_KEY'], label: 'Key name' },
+            { output: 'directoryTenantId', keys: ['AZURE_TENANT_ID'], label: 'Directory (tenant) ID' },
+            { output: 'azureOpenAiEndpoint', keys: ['AZURE_OPENAI_ENDPOINT'], label: 'Azure OpenAI endpoint' },
+            { output: 'azureOpenAiDeploymentName', keys: ['AZURE_OPENAI_DEPLOYMENT'], label: 'Deployment name' },
+            // One multi-service account serves both, which is the whole reason
+            // the template creates one account rather than three.
+            { output: 'aiServicesEndpoint', keys: ['AZURE_VISION_ENDPOINT', 'AZURE_FACE_ENDPOINT'], label: 'AI Services endpoint' },
+            { output: 'translatorRegion', keys: ['AZURE_TRANSLATOR_REGION'], label: 'Translator region' },
+        ],
+        manual: [
+            { key: 'AZURE_KEYVAULT_CLIENT_ID', label: 'Application (client) ID', where: 'Entra ID → App registrations → your app → Overview', cap: 'kms' },
+            { key: 'AZURE_KEYVAULT_CLIENT_SECRET', label: 'Client secret', where: 'the same app → Certificates & secrets. Shown once', cap: 'kms' },
+            { key: 'AZURE_OPENAI_API_KEY', label: 'Azure OpenAI key', where: 'the OpenAI account → Keys and Endpoint', cap: 'ai' },
+            { key: 'AZURE_TRANSLATOR_KEY', label: 'Translator key', where: 'the AI Services account → Keys and Endpoint', cap: 'translation' },
+            { key: 'AZURE_VISION_KEY', label: 'Vision key', where: 'the same AI Services account, same key', cap: 'redaction' },
+            { key: 'AZURE_FACE_KEY', label: 'Face key', where: 'the same AI Services account, same key', cap: 'redaction' },
+        ],
+    },
+    aws: {
+        sourceLabel: 'the stack Outputs',
+        sourceHint: 'CloudFormation → your stack → Outputs. Copy the JSON, or the two values below.',
+        mappings: [
+            { output: 'PinpointBoxAwsRegion', keys: ['AWS_REGION'], label: 'AWS Region' },
+            { output: 'PinpointBoxKeyIdOrArn', keys: ['AWS_KMS_KEY_ID'], label: 'Key ID or ARN' },
+        ],
+        // Nothing. The stack creates a role, not a key, which is the point of
+        // it: on AWS compute there is no credential to enter anywhere.
+        manual: [],
+    },
+};
+
+/** A value the paste produced, and what became of it. */
+export interface MatchedOutput {
+    output: string;
+    label: string;
+    value: string;
+    keys: string[];
+}
+
+export interface ParsedOutputs {
+    matched: MatchedOutput[];
+    /** Outputs the template gave back that no box wanted. Reported, never
+     *  dropped: on a real deployment this means drift between the template and
+     *  the catalogs, which somebody needs to know about. */
+    unmatched: { output: string; value: string }[];
+    /** Boxes this cloud's outputs should have filled and did not, because the
+     *  paste did not contain them -- an unticked toggle at deploy time, most
+     *  often, which is worth saying rather than leaving as an empty box. */
+    absent: OutputMapping[];
+    /** Why nothing could be read, when nothing could. */
+    error: string | null;
+}
+
+const EMPTY: ParsedOutputs = { matched: [], unmatched: [], absent: [], error: null };
+
+/**
+ * Flatten whatever the operator pasted into `{name: value}`.
+ *
+ * Four shapes reach this, because two consoles and two command lines all call
+ * the same thing by a different name:
+ *
+ *   * Azure's portal and `az deployment group show`: `{"keyVaultUrl": {"type":
+ *     "String", "value": "..."}}`, sometimes still wrapped in
+ *     `{"properties": {"outputs": {...}}}`.
+ *   * CloudFormation: `[{"OutputKey": "...", "OutputValue": "..."}]`, wrapped
+ *     in `{"Stacks": [{"Outputs": [...]}]}` from `describe-stacks`.
+ *   * A plain `{"name": "value"}`, which is what somebody produces by hand.
+ *
+ * Accepting all four costs twenty lines and removes the single most likely way
+ * for this to fail in front of somebody -- pasting the right thing from the
+ * wrong screen.
+ */
+function flatten(raw: unknown): Record<string, string> | null {
+    if (raw === null || typeof raw !== 'object') return null;
+
+    // describe-stacks
+    const stacks = (raw as Record<string, unknown>).Stacks;
+    if (Array.isArray(stacks) && stacks.length > 0) return flatten(stacks[0]);
+
+    const outputsField = (raw as Record<string, unknown>).Outputs
+        ?? (raw as Record<string, unknown>).outputs
+        ?? ((raw as Record<string, unknown>).properties as Record<string, unknown> | undefined)?.outputs;
+    if (outputsField !== undefined && outputsField !== raw) {
+        const inner = flatten(outputsField);
+        if (inner) return inner;
+    }
+
+    // CloudFormation's array of pairs.
+    if (Array.isArray(raw)) {
+        const flat: Record<string, string> = {};
+        for (const entry of raw) {
+            if (entry && typeof entry === 'object') {
+                const k = (entry as Record<string, unknown>).OutputKey;
+                const v = (entry as Record<string, unknown>).OutputValue;
+                if (typeof k === 'string' && typeof v === 'string') flat[k] = v;
+            }
+        }
+        return Object.keys(flat).length > 0 ? flat : null;
+    }
+
+    const flat: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+        if (typeof v === 'string' || typeof v === 'number') {
+            flat[k] = String(v);
+        } else if (v && typeof v === 'object' && 'value' in (v as Record<string, unknown>)) {
+            const inner = (v as Record<string, unknown>).value;
+            if (typeof inner === 'string' || typeof inner === 'number') flat[k] = String(inner);
+        }
+    }
+    return Object.keys(flat).length > 0 ? flat : null;
+}
+
+/**
+ * Read a pasted outputs blob against one cloud's mapping.
+ *
+ * Never throws and never half-reports: a blob it cannot read comes back as an
+ * error with nothing matched, so the caller has one thing to render rather than
+ * a partial result to reason about.
+ */
+export function parseDeployOutputs(cloud: string, text: string): ParsedOutputs {
+    const spec = DEPLOY_OUTPUTS[cloud];
+    if (!spec) return EMPTY;
+    if (!text.trim()) return EMPTY;
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(text);
+    } catch {
+        return { ...EMPTY, error: 'That is not JSON. Copy the whole Outputs block, braces included.' };
+    }
+
+    const flat = flatten(parsed);
+    if (!flat) {
+        return { ...EMPTY, error: 'No output values in there. Copy the Outputs block rather than the deployment summary.' };
+    }
+
+    // Names are compared case-insensitively. The two consoles disagree with
+    // their own CLIs about capitalisation often enough that a correct paste
+    // failing on a capital letter is a real outcome, and there is no output
+    // whose meaning depends on its case.
+    const byLowerName = new Map<string, string>();
+    for (const [k, v] of Object.entries(flat)) byLowerName.set(k.toLowerCase(), v);
+
+    const matched: MatchedOutput[] = [];
+    const absent: OutputMapping[] = [];
+    const consumed = new Set<string>();
+
+    for (const mapping of spec.mappings) {
+        const value = byLowerName.get(mapping.output.toLowerCase());
+        if (value === undefined || value === '') {
+            absent.push(mapping);
+            continue;
+        }
+        consumed.add(mapping.output.toLowerCase());
+        matched.push({ output: mapping.output, label: mapping.label, value, keys: mapping.keys });
+    }
+
+    const unmatched = Object.entries(flat)
+        // `readMeFirst` is prose the template prints deliberately, not a value
+        // anybody needs to place. Reporting it as drift would cry wolf on every
+        // single paste, which is how a drift report stops being read.
+        .filter(([k]) => !consumed.has(k.toLowerCase()) && !IGNORED.has(k.toLowerCase()))
+        .map(([output, value]) => ({ output, value }));
+
+    /* A paste with nothing in it we recognise is almost always the wrong
+     * screen -- the deployment summary, the parameters, the activity log. The
+     * unmatched list below says what was in there, but on its own it reads as
+     * "seven bugs" rather than "wrong blob", so say which it is. */
+    if (matched.length === 0) {
+        return {
+            matched, unmatched, absent,
+            error: 'No Outputs values in there. Copy the deployment\u2019s Outputs, not its summary.',
+        };
+    }
+
+    return { matched, unmatched, absent, error: null };
+}
+
+const IGNORED = new Set(['readmefirst', 'keyarn', 'rolearntoattach', 'instanceprofilename']);
+
+/** The values a set of matches would write, as `{credentialKey: value}`. */
+export function outputsToValues(matched: MatchedOutput[]): Record<string, string> {
+    const values: Record<string, string> = {};
+    for (const m of matched) for (const key of m.keys) values[key] = m.value;
+    return values;
+}

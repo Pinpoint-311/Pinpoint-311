@@ -1,7 +1,9 @@
 import { Check, Copy } from 'lucide-react';
 
-import { defineSteps } from './setupSteps';
-import type { StepContext } from './setupSteps';
+import { awsDeployUrl, azureDeployUrl, templateBase } from './deployTemplateUrls';
+import type { TemplateBase } from './deployTemplateUrls';
+import { defineCloudFork, defineFork, defineSteps } from './setupSteps';
+import type { StepBuilder, StepContext } from './setupSteps';
 
 /**
  * The steps themselves, one registration per provider.
@@ -61,25 +63,30 @@ const L = ({ href, children }: { href: string; children: React.ReactNode }) => (
 );
 
 /**
- * Where the deployment templates in `deploy/templates/` are published.
+ * One line saying where the file the cloud is about to read comes from.
  *
- * A deploy button does not upload anything: it hands the cloud a URL and the
- * cloud fetches the template itself, in the town's own browser and the
- * provider's own console. So this has to resolve publicly, and until it does
- * the buttons below are inert. One constant on purpose -- publishing these to a
- * different host, a mirror, or a town's own copy is a one-line change here, and
- * nothing else in the file knows where they live.
+ * Worth the space because it is the only answer available to "the deployment
+ * form came up empty". Both providers report a fetch they could not complete as
+ * a broken template rather than as a URL they could not reach, so without this
+ * there is nothing on the page to check and nothing to hand to whoever gets
+ * asked. Which of the two it says is decided in deployTemplateUrls.ts.
  */
-const TEMPLATE_BASE_URL = 'https://raw.githubusercontent.com/Pinpoint-311/Pinpoint-311/main/deploy/templates';
-
-/** Azure's documented portal entry point for a template at a URL. */
-const AZURE_DEPLOY_URL =
-    `https://portal.azure.com/#create/Microsoft.Template/uri/${encodeURIComponent(`${TEMPLATE_BASE_URL}/azure/pinpoint-311.json`)}`;
-
-/** CloudFormation's console entry point. Lands on the review screen, where a
- *  change set can be taken instead of a stack. */
-const AWS_DEPLOY_URL =
-    `https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=${encodeURIComponent(`${TEMPLATE_BASE_URL}/aws/pinpoint-311.yaml`)}&stackName=pinpoint-311`;
+const TemplateSourceNote = ({ from }: { from: TemplateBase }) => (
+    from.source === 'instance' ? (
+        <span className="mt-1.5 block text-[11px] text-white/40">
+            Your cloud fetches the template from this Pinpoint install, at{' '}
+            <C>{from.base}/</C>… — so it is the version this build knows how to consume. That
+            address has to be reachable from the internet, which it is if residents can reach
+            your portal.
+        </span>
+    ) : (
+        <span className="mt-1.5 block text-[11px] text-white/40">
+            This install has no public address a cloud provider could fetch from, so the button
+            uses the published copy on GitHub instead. That copy follows the latest release
+            rather than your build. Setting the town's domain switches it to serving its own.
+        </span>
+    )
+);
 
 /** A link that opens the provider's own deployment form. Drawn as a button
  *  because that is what it behaves like, and new-tab like every other console
@@ -112,6 +119,61 @@ const WHY_A_TEMPLATE_IS_SAFE = (
 const C = ({ children }: { children: React.ReactNode }) => (
     <code className="bg-black/30 px-1 rounded text-[11px] text-primary-200">{children}</code>
 );
+
+// ===========================================================================
+// The one choice a cloud gets asked, before any of its cards
+//
+// Asked once, straight after "which company hosts your town's services", and it
+// governs every capability on that cloud rather than one card. Azure's template
+// creates the key vault AND the OpenAI account AND the multi-service AI account
+// in a single deployment -- resources belonging to four different cards -- so
+// the control that sets up nearly everything cannot live inside Key management,
+// where a town that unticked key management would never see it at all.
+//
+// Google is absent from this registry on purpose. There is no one-click
+// equivalent on Google and there is deliberately not going to be one: the
+// honest alternative is Terraform, which needs a toolchain and a state file
+// rather than a click. Offering a greyed-out button there would be a worse
+// answer than the sentence in the Google walk that says so.
+// ===========================================================================
+
+defineCloudFork('azure', () => ({
+    question: <>Two ways to set up Azure. Both are fully supported, both are kept current, and you can switch at any point.</>,
+    template: {
+        label: 'Deploy with the Azure template',
+        blurb: <>One form, about two minutes. Creates the key vault and, if you want them, the OpenAI, Translator and Vision resources.</>,
+        switchLabel: 'Use the template instead',
+    },
+    manual: {
+        label: 'Set it up by hand',
+        blurb: <>The Azure portal, screen by screen. No template and no cloud shell, which some IT departments require.</>,
+        switchLabel: 'Set it up by hand instead',
+    },
+    trust: {
+        line: <>The template runs in your subscription and creates nothing outside it.</>,
+        summary: 'What it can and cannot touch',
+        body: WHY_A_TEMPLATE_IS_SAFE,
+    },
+}));
+
+defineCloudFork('aws', () => ({
+    question: <>Two ways to set up AWS. Both are fully supported, both are kept current, and you can switch at any point.</>,
+    template: {
+        label: 'Deploy with the CloudFormation template',
+        blurb: <>One review page listing every resource first. Creates a role rather than an access key, so on AWS compute there is nothing to paste.</>,
+        switchLabel: 'Use the template instead',
+    },
+    manual: {
+        label: 'Set it up by hand',
+        blurb: <>The AWS console, screen by screen. No template and no cloud shell, which some IT departments require.</>,
+        switchLabel: 'Set it up by hand instead',
+    },
+    trust: {
+        line: <>The stack runs in your account and creates nothing outside it.</>,
+        summary: 'What it can and cannot touch',
+        body: WHY_A_TEMPLATE_IS_SAFE,
+    },
+}));
 
 // ===========================================================================
 // Staff sign-in
@@ -963,11 +1025,9 @@ defineSteps('sms', 'http', () => [
  */
 const ACCOUNT_SURVIVES = (
     <>
-        <B>The boring one that matters most.</B> Everything above protects the key. Nothing protects
-        the <em>account</em>, and a closed account takes the key with it. So put the cloud account in
-        the town's name on a town payment method, make more than one person an administrator, and send
-        billing alerts to a shared address. This, not a mis-click, is how towns actually lose the
-        data — a lapsed card between budget cycles.
+        <B>Look after the account, not only the key.</B> A closed account takes the key with it, so
+        put the cloud account in the town's name on a town payment method, make more than one person
+        an administrator, and send billing alerts to a shared address.
     </>
 );
 
@@ -1000,31 +1060,29 @@ defineSteps('kms', 'google', () => [
         body: (
             <>
                 In <L href="https://console.cloud.google.com">Google Cloud</L>, enable{' '}
-                <C>Cloud KMS API</C>, then under <B>Security → Key Management</B> create a{' '}
-                <B>key ring</B> and a <B>key</B> inside it. Purpose{' '}
-                <B>Symmetric encrypt/decrypt</B>, rotation 90 days. Set the <B>destroy scheduled
-                duration</B> to the longest offered while you are on that form — it defaults to 24
-                hours, goes to 120 days, and is only offered at creation.
+                <C>Cloud KMS API</C>. Under <B>Security → Key Management</B>, create a <B>key ring</B>,
+                then a <B>key</B> inside it: purpose <B>Symmetric encrypt/decrypt</B>, rotation 90 days.
             </>
         ),
         check: <>your key listed inside your key ring.</>,
-        note: <>Needs Cloud KMS Admin or Owner. Project Editor cannot create keys — worth knowing now rather than three screens in. Azure and AWS have a one-click template on their cards and Google has none, because Google has no equivalent: the honest alternative is Terraform, which needs a toolchain and a state file rather than a click. This walk is maintained on the same footing as the other two.</>,
+        trouble: <>Set the <B>destroy scheduled duration</B> on that same form — it starts at 24 hours, goes up to 120 days, and is only offered at creation.</>,
+        note: <>Needs Cloud KMS Admin or Owner; Project Editor cannot create keys. Azure and AWS have a one-click template and Google has none, because there is no equivalent — the alternative there is Terraform, which needs a toolchain and a state file. This walk is maintained on the same footing as the other two.</>,
     },
     {
         body: (
             <>
-                Grant the service account this deployment uses the role <B>Cloud KMS CryptoKey
-                Encrypter/Decrypter</B> from the key's own permissions panel — on the key, not on the
+                On the key's own permissions panel, grant the service account this deployment uses{' '}
+                <B>Cloud KMS CryptoKey Encrypter/Decrypter</B> — on the key, not on the
                 project. {ATTACHED_IDENTITY}
             </>
         ),
         check: <>the service account listed in the key's permissions, not only in the project's.</>,
-        trouble: <>Without this the key exists, the settings save, and resident data is quietly encrypted with the application key instead. The health dashboard will say so — it is the one place that reports it.</>,
+        trouble: <>Without it the settings save and resident data is quietly encrypted with the application key instead. The health dashboard reports that; nothing else does.</>,
     },
     {
         body: (
             <>
-                Exactly as the console shows them. The location is the short form, like{' '}
+                Enter them as the console shows them. The location is the short form, like{' '}
                 <C>us-central1</C>. The project and service account JSON go in Setup, not here.
             </>
         ),
@@ -1033,140 +1091,202 @@ defineSteps('kms', 'google', () => [
     {
         body: (
             <>
-                <B>Check who can destroy a version.</B> Keys and key rings cannot be deleted, but a key{' '}
-                <em>version</em> can be, which loses the data just as well. Check no everyday account
-                holds <C>cloudkms.cryptoKeyVersions.destroy</C>.
+                <B>Check who can destroy a version.</B> Rotating is safe — old versions stay and keep
+                decrypting old rows. Destroying a version is not, and the two sit together in the
+                console, so check that no everyday account holds{' '}
+                <C>cloudkms.cryptoKeyVersions.destroy</C> on this key.
             </>
         ),
         check: <>only administrators holding destroy on this key.</>,
-        trouble: <>Rotating is safe — old versions stay and keep decrypting old rows. <B>Destroying</B> a version is the fatal one, and the two sit next to each other in the console. Google cannot recover a destroyed version for anyone.</>,
+        trouble: <>A destroyed version cannot be recovered, by you or by Google.</>,
     },
     {
         body: (
             <>
-                <B>Protect the project too.</B> Deleting the project takes the key ring with it, whatever
-                is set on the key. A <B>lien</B> blocks that until somebody removes the lien:
+                <B>Protect the project too.</B> Deleting the project takes the key ring with it,
+                whatever is set on the key. A <B>lien</B> blocks that until somebody removes the lien:
                 <span className="mt-2 block"><C>gcloud alpha resource-manager liens create --project=YOUR_PROJECT --restrictions=resourcemanager.projects.delete --reason="Holds the Pinpoint 311 PII encryption key"</C></span>
             </>
         ),
         check: <>the lien returned by <C>liens list</C>.</>,
-        trouble: <>No command line? Ask whoever manages your Google Cloud billing to run it. It is free, and it is the difference between a mis-click being an inconvenience and being permanent.</>,
+        note: <>No command line? Whoever manages your Google Cloud billing can run it. It is free.</>,
     },
     {
         body: <>{ACCOUNT_SURVIVES}</>,
     },
 ]);
 
-defineSteps('kms', 'azure', () => [
+/**
+ * The Azure walk, done in the portal.
+ *
+ * Complete on its own and numbered from 1, because for a good number of towns
+ * it is the only path there is: templates and cloud shells are forbidden
+ * outright by plenty of government IT policies. A walk written as the
+ * consolation prize for those readers would be both insulting and, in the end,
+ * the one nobody maintains.
+ */
+const azureManualSteps: StepBuilder = () => [
     {
         body: (
             <>
-                <B>One form, instead of six screens.</B> This opens Azure's own Custom deployment page
-                with our template loaded: the vault, purge protection and the RSA key, and optionally
-                the Azure OpenAI, Translator and Vision resources the other cards
-                need. {WHY_A_TEMPLATE_IS_SAFE}
-                <DeployButton href={AZURE_DEPLOY_URL}>Deploy to Azure</DeployButton>
-            </>
-        ),
-        check: <>Azure's Custom deployment form, listing every name before you press Create.</>,
-        note: <>Template and README: <C>deploy/templates/azure/</C>. For a diff from Azure rather than a description from us, run <C>az deployment group what-if</C> against it. It cannot create the app registration in step 5 — directory objects are outside the reach of resource templates.</>,
-    },
-    {
-        body: (
-            <>
-                <B>Or build it by hand</B> — equally supported, and complete on its own. In the{' '}
-                <L href="https://portal.azure.com">Azure portal</L>, create a <B>Key Vault</B>. Before
-                creating it, open the <B>Access configuration</B> tab: it sets how permissions on this
-                vault work, and governs every step below. Leave it on <B>Azure role-based access
-                control</B>, the default these steps assume. Turn on <B>purge protection</B> beside
-                the retention period.
+                In the <L href="https://portal.azure.com">Azure portal</L>, create a <B>Key Vault</B>.
+                On the <B>Access configuration</B> tab, leave <B>Azure role-based access control</B>
+                {' '}selected — that is what the steps below assume. Turn on <B>purge protection</B>{' '}
+                beside the retention period.
             </>
         ),
         check: <>the vault's overview, showing a URL ending <C>.vault.azure.net</C>.</>,
-        trouble: <>Take purge protection now. On some configurations it cannot be turned on later, and it is the only setting that makes an accidental deletion survivable. Nor can it be turned off again — the point of it.</>,
+        trouble: <>Purge protection cannot be turned on later on some configurations, and cannot be turned off once on. Set it now.</>,
     },
     {
         body: (
             <>
-                <B>Give yourself permission to use the vault.</B> Creating a vault grants its creator
-                no access to the keys inside it — a separate grant, whose absence is why the key screen
-                refuses to work for whoever just built the vault. On the vault's <B>Access control
-                (IAM)</B>, assign yourself <B>Key Vault Crypto Officer</B>.
+                <B>Give yourself permission to use the vault.</B> Creating one grants its creator no
+                access to the keys inside. On the vault's <B>Access control (IAM)</B>, assign yourself{' '}
+                <B>Key Vault Crypto Officer</B>.
             </>
         ),
         check: <>your account on the vault's role assignments as Key Vault Crypto Officer.</>,
-        note: <>Give it a minute. On the older access policy model, add yourself under the vault's access policies instead.</>,
+        note: <>Give it a minute to take effect. On the older access policy model, add yourself under the vault's access policies instead.</>,
     },
     {
         body: <>Open the vault's <B>Objects → Keys</B> and use <B>Generate/Import</B> to create an <B>RSA</B> key. 2048 or 4096, either is fine. Note its name.</>,
         check: <>the key listed, status Enabled.</>,
-        trouble: <>If this screen says you are not authorised to view the contents, the role above has not arrived yet, or was assigned somewhere other than the vault itself.</>,
+        trouble: <>"Not authorised to view the contents" means the role above has not arrived yet, or went on something other than the vault.</>,
     },
     {
         body: (
             <>
                 Now the identity Pinpoint signs in as. {ATTACHED_IDENTITY} Otherwise register an app
                 under <B>Microsoft Entra ID → App registrations</B>, open its{' '}
-                <B>Certificates &amp; secrets</B> and add a client secret. Copy its <B>Value</B> at once.
+                <B>Certificates &amp; secrets</B> and add a client secret. Copy its <B>Value</B> now.
             </>
         ),
         check: <>an Application (client) ID and Directory (tenant) ID on the app's overview, and a copied Value.</>,
-        trouble: <>Entra shows the secret once and then replaces it with dots forever. The box beside it labelled <B>Secret ID</B> is not the secret.</>,
+        trouble: <>Entra shows the Value once. The box beside it labelled <B>Secret ID</B> is a different thing.</>,
     },
     {
         body: (
             <>
                 Back on the vault's <B>Access control (IAM)</B>, assign that identity <B>Key Vault
-                Crypto User</B>: it wraps and unwraps with this key and does nothing else. On the
-                older model, grant <B>Get</B>, <B>Wrap Key</B> and <B>Unwrap Key</B> instead.
+                Crypto User</B>: it wraps and unwraps with this key and does nothing else.
             </>
         ),
         check: <>that identity on the vault's role assignments as Key Vault Crypto User.</>,
-        trouble: <>On the access policy model, Wrap and Unwrap are the two people miss. Get on its own is not enough, and the failure is silent.</>,
+        trouble: <>On the older access policy model, grant <B>Get</B>, <B>Wrap Key</B> and <B>Unwrap Key</B>. Get alone is not enough, and the failure is silent.</>,
     },
     {
         body: <>Fill these in. The vault URL is the <C>https://yourvault.vault.azure.net/</C> address on the overview.</>,
         fields: ['AZURE_KEYVAULT_URL', 'AZURE_KEYVAULT_KEY', 'AZURE_TENANT_ID', 'AZURE_KEYVAULT_CLIENT_ID', 'AZURE_KEYVAULT_CLIENT_SECRET'],
-        note: <>On a managed identity the last three stay empty. With a client secret, put its expiry in the town's calendar a month ahead — when it lapses, resident data stops decrypting and nothing about that failure points at a calendar.</>,
+        note: <>On a managed identity the last three stay empty. A client secret expires — put the date in the town's calendar a month ahead, because when it lapses decryption stops and nothing about that points at a calendar.</>,
     },
     {
         body: (
             <>
-                Lock it down. On <B>Properties</B>, confirm soft delete and purge protection are both
-                enabled, then under <B>Settings → Locks</B> add a <B>Delete</B> lock, which stops
-                anyone deleting the vault even with permission to. Drop your own Crypto Officer role
-                now if you like — the key exists, and Pinpoint never uses it.
+                Under <B>Settings → Locks</B>, add a <B>Delete</B> lock. It stops the vault being
+                deleted by anyone, including people with permission to. You can drop your own Crypto
+                Officer role now — Pinpoint never uses it.
             </>
         ),
-        check: <>Soft delete: Enabled, Purge protection: Enabled, and a Delete lock on the vault.</>,
-        note: <>Check too that everyday accounts hold neither Delete nor Purge on keys.</>,
+        check: <>a Delete lock on the vault, and Properties showing soft delete and purge protection enabled.</>,
+        note: <>Worth checking that everyday accounts hold neither Delete nor Purge on keys.</>,
+    },
+    {
+        body: (
+            <>
+                <B>Decide about the audit trail.</B> Azure keeps no record of key use unless a
+                diagnostic setting routes it somewhere. Under the vault's <B>Monitoring → Diagnostic
+                settings</B>, add one for <C>AuditEvent</C> pointing at a Log Analytics workspace or a
+                storage account.
+            </>
+        ),
+        check: <>a diagnostic setting on the vault with AuditEvent ticked.</>,
+        note: <>Not retroactive: it records from the moment you add it. Skip it deliberately if your town does not need the trail.</>,
     },
     {
         body: <>{ACCOUNT_SURVIVES}</>,
     },
-]);
+];
 
-defineSteps('kms', 'aws', () => [
+/**
+ * The Azure walk, done by handing the template to Azure's own form.
+ *
+ * Shorter than the manual walk but not a subset of it: what the template cannot
+ * do — the directory objects — is still here, because a path that stops before
+ * the deployment can actually use the key is not a path.
+ */
+const azureTemplateSteps: StepBuilder = (ctx) => [
     {
         body: (
             <>
-                <B>One stack, instead of the console.</B> This opens CloudFormation with our template
-                loaded: the key, its alias and its policy, plus one role carrying exactly the
-                permissions Pinpoint needs. No access keys, so a server on EC2 or ECS pastes no
-                credential at all. {WHY_A_TEMPLATE_IS_SAFE}
-                <DeployButton href={AWS_DEPLOY_URL}>Launch CloudFormation stack</DeployButton>
+                <DeployButton href={azureDeployUrl(templateBase(ctx.origin).base)}>Deploy to Azure</DeployButton>
+                Opens Azure's Custom deployment form with our template loaded: the vault, purge
+                protection and the RSA key, plus the OpenAI, Translator and Vision resources the other
+                cards need.
+                <TemplateSourceNote from={templateBase(ctx.origin)} />
             </>
         ),
-        check: <>CloudFormation's review page, listing every resource before anything is created.</>,
-        note: <>Template and README: <C>deploy/templates/aws/</C>. Take a <B>change set</B> rather than a stack for a diff from Amazon instead of a description from us. It fails rather than touching anything if the alias or role name is taken.</>,
+        check: <>Azure's Custom deployment form, listing every name before you press Create.</>,
+        trouble: <>One box on that form decides whether the key is usable: <B>Pinpoint principal object id</B>. Have it before you go — it is the <B>Object ID</B> on <B>Entra ID → Enterprise applications</B> for the app in step 2, or on the managed identity's overview. Not the Application (client) ID, which sits beside it.</>,
+        note: <>Template and README: <C>deploy/templates/azure/</C>. For a diff from Azure rather than a description from us, run <C>az deployment group what-if</C> against it.</>,
     },
     {
         body: (
             <>
-                <B>Or build it by hand</B> — equally supported, and complete on its own. In the{' '}
-                <L href="https://console.aws.amazon.com/kms">KMS console</L> set your region, choose{' '}
-                <B>Customer managed keys</B>, then <B>Create key</B>. Key type <B>Symmetric</B>, usage{' '}
-                <B>Encrypt and decrypt</B> — both are the defaults. Give it an alias like{' '}
+                The identity Pinpoint signs in as — the one thing a resource template cannot create,
+                because directory objects are outside its reach. {ATTACHED_IDENTITY} Otherwise
+                register an app under <B>Microsoft Entra ID → App registrations</B>, open its{' '}
+                <B>Certificates &amp; secrets</B> and add a client secret. Copy its <B>Value</B> now.
+            </>
+        ),
+        check: <>an Application (client) ID and Directory (tenant) ID on the app's overview, and a copied Value.</>,
+        trouble: <>Entra shows the Value once. The box beside it labelled <B>Secret ID</B> is a different thing.</>,
+    },
+    {
+        body: (
+            <>
+                <B>Only if you left the object id blank.</B> The template grants <B>Key Vault Crypto
+                User</B> and <B>Key Vault Secrets Officer</B> to whichever principal you named, so
+                naming one leaves nothing to do here. Otherwise open the vault's <B>Access control
+                (IAM)</B> and assign that identity <B>Key Vault Crypto User</B>.
+            </>
+        ),
+        check: <>that identity on the vault's role assignments as Key Vault Crypto User.</>,
+        trouble: <>Skipping it leaves a working-looking vault Pinpoint cannot open, and resident data is quietly encrypted with the application key instead. The health dashboard reports that; nothing else does.</>,
+    },
+    {
+        body: <>Fill these in from the deployment's <B>Outputs</B>, or paste the whole Outputs block into the box at the top of this cloud's setup.</>,
+        fields: ['AZURE_KEYVAULT_URL', 'AZURE_KEYVAULT_KEY', 'AZURE_TENANT_ID', 'AZURE_KEYVAULT_CLIENT_ID', 'AZURE_KEYVAULT_CLIENT_SECRET'],
+        note: <>On a managed identity the last three stay empty. A client secret expires — put the date in the town's calendar a month ahead, because when it lapses decryption stops and nothing about that points at a calendar.</>,
+    },
+    {
+        body: (
+            <>
+                Purge protection and soft delete are already on; Azure does not allow either to be
+                turned off. Add what the template cannot: under the vault's <B>Settings → Locks</B>, a{' '}
+                <B>Delete</B> lock.
+            </>
+        ),
+        check: <>a Delete lock on the vault.</>,
+        note: <>The form also offers a diagnostic setting for <C>AuditEvent</C>. Left empty, Azure keeps no record of key use, and it is not retroactive.</>,
+    },
+    {
+        body: <>{ACCOUNT_SURVIVES}</>,
+    },
+];
+
+defineFork('kms', 'azure', (ctx) => ({
+    template: azureTemplateSteps(ctx),
+    manual: azureManualSteps(ctx),
+}));
+
+const awsManualSteps: StepBuilder = () => [
+    {
+        body: (
+            <>
+                In the <L href="https://console.aws.amazon.com/kms">KMS console</L>, set your region,
+                choose <B>Customer managed keys</B>, then <B>Create key</B>. Key type <B>Symmetric</B>,
+                usage <B>Encrypt and decrypt</B> — both are the defaults. Give it an alias like{' '}
                 <C>pinpoint-311-pii</C> and turn on automatic rotation.
             </>
         ),
@@ -1176,37 +1296,98 @@ defineSteps('kms', 'aws', () => [
         body: (
             <>
                 The wizard then asks who administers the key and who may use it. Add the identity this
-                deployment signs in to AWS as under <B>key users</B>. {ATTACHED_IDENTITY} On EC2 or
-                ECS that is the instance or task role, and it is the better answer: nothing
-                long-lived exists to leak or expire.
+                deployment signs in as under <B>key users</B>. {ATTACHED_IDENTITY} On EC2 or ECS that
+                is the instance or task role, which is the better answer: nothing long-lived to leak
+                or expire.
             </>
         ),
         check: <>your role or user listed as a key user on this key and no other.</>,
-        trouble: <>Keep your own administrators in that policy. A KMS key whose policy locks out the account that owns it cannot be repaired afterwards by anybody, including AWS support.</>,
+        trouble: <>Keep your own administrators in that policy. A key policy that locks out the account owning it cannot be repaired afterwards, including by AWS support.</>,
     },
     {
         body: <>Enter the region and the key ID — the alias works, but the ID is unambiguous.</>,
         fields: ['AWS_REGION', 'AWS_KMS_KEY_ID'],
-        note: <>No secret to enter. Pinpoint reaches this key with the identity added above, which is why an instance role beats an access key.</>,
+        note: <>No secret to enter. Pinpoint reaches this key with the identity added above.</>,
     },
     {
         body: (
             <>
-                <B>Make deletion impossible, not just inadvisable.</B> AWS has no switch for this, so
-                do it in the key policy: add a statement that <B>denies</B>{' '}
-                <C>kms:ScheduleKeyDeletion</C> and <C>kms:DisableKey</C> to everyone. An explicit deny
-                beats every allow, including the account root, so nobody can start a deletion. To
-                retire the key later, an administrator edits the policy first — one deliberate step
-                where there was none.
+                <B>Make deletion deliberate.</B> AWS has no switch for it, so add a statement to the
+                key policy that <B>denies</B> <C>kms:ScheduleKeyDeletion</C> and <C>kms:DisableKey</C>{' '}
+                to everyone. An explicit deny beats every allow, including the account root, so
+                retiring the key later takes one deliberate edit first.
             </>
         ),
         check: <>a Deny statement naming both actions in the key policy.</>,
-        trouble: <>The key stops working the moment deletion is <em>scheduled</em>, not when the 30 days end — so resident data breaks at the start of the window. It can be cancelled inside those 30 days. After that the data is <B>unrecoverable</B>, by you and by AWS.</>,
+        trouble: <>A key stops working when deletion is <em>scheduled</em>, not when the 30 days end. Cancelling inside the window restores it; after it closes the data cannot be recovered.</>,
+    },
+    {
+        body: (
+            <>
+                <B>Decide about the audit trail.</B> CloudTrail records this key being created and its
+                policy being changed. It records key <em>use</em> only if a trail carries a data event
+                selector for KMS, so add one if your town needs to show who decrypted what.
+            </>
+        ),
+        check: <>a trail with a data event selector naming this key, or a deliberate decision to do without.</>,
+        note: <>Data events are charged per event and a busy portal decrypts often, so this is a cost decision as much as a compliance one. Not retroactive.</>,
     },
     {
         body: <>{ACCOUNT_SURVIVES}</>,
     },
-]);
+];
+
+const awsTemplateSteps: StepBuilder = (ctx) => [
+    {
+        body: (
+            <>
+                <DeployButton href={awsDeployUrl(templateBase(ctx.origin).base)}>Launch CloudFormation stack</DeployButton>
+                Opens CloudFormation with our template loaded: the key, its alias and its policy, plus
+                one role carrying exactly the permissions Pinpoint needs. No access keys.
+                <TemplateSourceNote from={templateBase(ctx.origin)} />
+            </>
+        ),
+        check: <>CloudFormation's review page, listing every resource before anything is created.</>,
+        note: <>Template and README: <C>deploy/templates/aws/</C>. Take a <B>change set</B> instead of a stack for a diff from Amazon rather than a description from us. It fails without touching anything if the alias or role name is taken.</>,
+    },
+    {
+        body: (
+            <>
+                Attach the identity the stack created. On EC2, assign the new <B>instance profile</B>{' '}
+                to the instance running Pinpoint; on ECS, name the new <B>role</B> as the task role.
+                That is the whole credential step — the application picks the identity up from the
+                platform.
+            </>
+        ),
+        check: <>the instance profile on the instance, or the task role on the task definition.</>,
+        note: <>Running Pinpoint outside AWS? Create an IAM user and attach the same policy the stack made.</>,
+    },
+    {
+        body: <>Enter the region and the key ID, both on the stack's <B>Outputs</B> tab — or paste the whole Outputs block into the box at the top of this cloud's setup.</>,
+        fields: ['AWS_REGION', 'AWS_KMS_KEY_ID'],
+        note: <>No secret to enter, which is the point of the role above.</>,
+    },
+    {
+        body: (
+            <>
+                Two things to confirm on the review page. <B>PreventAccidentalKeyDeletion</B>, on its
+                default <B>Yes</B>, denies everyone — the account root included — the ability to
+                schedule this key for deletion. And the key carries <C>DeletionPolicy: Retain</C>, so
+                deleting the stack later leaves the key in place.
+            </>
+        ),
+        check: <>a Deny statement naming <C>kms:ScheduleKeyDeletion</C> and <C>kms:DisableKey</C> in the key policy.</>,
+        note: <>CloudTrail records no key <em>use</em> without a data event selector, which the template cannot add to a trail it does not own. Add one to an existing trail if your town needs that; it is not retroactive.</>,
+    },
+    {
+        body: <>{ACCOUNT_SURVIVES}</>,
+    },
+];
+
+defineFork('kms', 'aws', (ctx) => ({
+    template: awsTemplateSteps(ctx),
+    manual: awsManualSteps(ctx),
+}));
 
 // ===========================================================================
 // Secret storage
@@ -1225,18 +1406,16 @@ defineSteps('secrets', 'azure', () => [
         body: (
             <>
                 This is the vault from the PII Encryption card, so there is nothing to create and
-                nothing to enter below — only one more role. On the vault's <B>Access control
-                (IAM)</B>, add a role assignment of <B>Key Vault Secrets Officer</B> to the identity
-                you gave Crypto User there. Keys and secrets are separate permissions on the same
-                vault, so the key role grants nothing here.
+                nothing to enter — only one more role. On the vault's <B>Access control (IAM)</B>, add{' '}
+                <B>Key Vault Secrets Officer</B> for the identity you gave Crypto User there.
             </>
         ),
         check: <>that identity listed twice on the vault's role assignments: Key Vault Crypto User, and Key Vault Secrets Officer.</>,
-        trouble: <>Officer, not User. Pinpoint writes credentials into this vault as well as reading them, and Key Vault Secrets User can only read — which fails on the first save rather than on the connection test.</>,
+        trouble: <>Officer, not User. Pinpoint writes credentials into this vault as well as reading them, and Secrets User can only read — which fails on the first save rather than on the connection test.</>,
     },
     {
-        body: <>Creating the vault did not give <em>you</em> access to its secrets either, for the same reason it did not give you access to its keys.</>,
-        note: <>If you want to read these credentials yourself in the portal, grant your own account Key Vault Secrets Officer on the vault as well.</>,
+        body: <>Creating the vault did not give <em>you</em> access to its secrets either.</>,
+        note: <>To read these credentials yourself in the portal, grant your own account Key Vault Secrets Officer on the vault as well.</>,
     },
 ]);
 
@@ -1245,13 +1424,13 @@ defineSteps('secrets', 'google', () => [
         body: (
             <>
                 This uses the service account already entered in Setup, so there is nothing to enter
-                below. Enable <C>Secret Manager API</C> on the project, then grant that service account{' '}
-                <B>Secret Manager Admin</B>:
+                below. Enable <C>Secret Manager API</C> on the project, then grant that service
+                account <B>Secret Manager Admin</B>:
                 <span className="mt-2 block"><C>gcloud projects add-iam-policy-binding YOUR_PROJECT --member=serviceAccount:YOUR_SERVICE_ACCOUNT --role=roles/secretmanager.admin</C></span>
             </>
         ),
         check: <>the service account listed with Secret Manager Admin on the project's IAM page.</>,
-        trouble: <>Secret Manager Secret Accessor is not enough. Pinpoint creates and updates secrets here as well as reading them, so an accessor-only grant saves the choice and then fails on the first credential written.</>,
+        trouble: <>Secret Accessor is not enough. Pinpoint creates and updates secrets here, so an accessor-only grant saves the choice and then fails on the first credential written.</>,
     },
 ]);
 
@@ -1267,7 +1446,7 @@ defineSteps('secrets', 'aws', () => [
             </>
         ),
         check: <>those five actions on the role or user's attached policy.</>,
-        note: <>Pinpoint names each secret after the credential it holds, so none of them exists until the first save — which is why the create permission is needed, and why a policy scoped to an existing secret's ARN will not work on a fresh install.</>,
+        note: <>Pinpoint names each secret after the credential it holds, so none exists until the first save. That is why create is needed, and why a policy scoped to an existing secret's ARN will not work on a fresh install.</>,
     },
 ]);
 

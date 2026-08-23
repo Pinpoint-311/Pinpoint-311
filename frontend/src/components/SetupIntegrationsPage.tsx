@@ -15,6 +15,8 @@ import type { Capability, ProviderStatusMap } from '../services/api';
 import GovtechIntegrations from './GovtechIntegrations';
 import ServiceProviders from './ServiceProviders';
 import SetupWizard from './SetupWizard';
+import CloudSetupPath from './setupPathChoice';
+import DeploymentOutputs from './DeploymentOutputs';
 import { buildPlan, summarise, nameList, BACKUP_SECRETS, SENTRY_SECRETS } from './setupPlan';
 import { townSystemHealth } from './integrationState';
 // Registers every provider's setup steps as a side effect, so the guide can
@@ -745,11 +747,22 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
     const isConfigured = (key: string) => secrets.find(s => s.key_name === key)?.is_configured;
 
-    const handleSave = async (key: string) => {
-        if (!secretValues[key]) return;
+    /* `explicit` exists for values that were never typed.
+     *
+     * The outputs paste hands over seven values at once. Setting them into
+     * `secretValues` and then calling this would have saved nothing: the state
+     * update has not landed by the time the next line runs, so every read here
+     * would see the render's old map. Passing the value through is the fix, and
+     * it deliberately goes through this same function rather than reaching for
+     * `onSaveSecret` directly -- one write path, so the secret store, the
+     * encryption and the refresh cannot be got right in one place and wrong in
+     * the other. */
+    const handleSave = async (key: string, explicit?: string) => {
+        const value = explicit ?? secretValues[key];
+        if (!value) return;
         setSavingKey(key);
         try {
-            await onSaveSecret(key, secretValues[key]);
+            await onSaveSecret(key, value);
             setSecretValues(prev => ({ ...prev, [key]: '' }));
             onRefresh();
         } catch (err) {
@@ -1010,6 +1023,55 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * different words, in each of the four sections that needed it.
      */
     const renderFoundation = (cloud: 'google' | 'azure' | 'aws') => (
+        <CloudSetupPath
+            cloud={cloud}
+            ctx={{ origin: publicOrigin || window.location.origin, copy: () => {}, copied: null }}
+            template={renderTemplateFoundation(cloud)}
+            manual={renderManualFoundation(cloud)}
+        />
+    );
+
+    /* The template path's foundation.
+     *
+     * Short on purpose: the deployment creates the resources, so what is left
+     * is the group to put them in and the place to paste back what came out.
+     * Only reachable on a cloud that has a template, so there is no Google
+     * branch here.
+     */
+    const renderTemplateFoundation = (cloud: 'google' | 'azure' | 'aws') => {
+        if (cloud === 'google') return null;
+        return (
+            <div className="space-y-2.5">
+                <p className="text-[11px] uppercase tracking-wider text-white/45 font-semibold">First, the account</p>
+                {cloud === 'azure' ? (
+                    <InstructionStep num={1} check={<>a resource group, and a region set on it.</>}>
+                        In the <a href="https://portal.azure.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">Azure Portal</a>, create a <strong className="text-white/90">Resource group</strong> called <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pinpoint311-rg</code>. The deployment goes into it, so everything sits together and bills together.
+                    </InstructionStep>
+                ) : (
+                    <InstructionStep num={1} check={<>the region name at the top right of the console.</>}>
+                        In the <a href="https://console.aws.amazon.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">AWS Console</a>, pick a <strong className="text-white/90">Region</strong> and use the same one throughout.
+                    </InstructionStep>
+                )}
+                <InstructionStep num={2} check={<>the deployment's Outputs page.</>}>
+                    Run the deployment from the card below, then come back here.
+                </InstructionStep>
+                <div className="pl-9">
+                    <DeploymentOutputs
+                        cloud={cloud}
+                        values={secretValues}
+                        onChange={(key, value) => setSecretValues(prev => ({ ...prev, [key]: value }))}
+                        onSave={async (entries) => {
+                            for (const [key, value] of Object.entries(entries)) await handleSave(key, value);
+                        }}
+                        saving={savingKey !== null}
+                        isConfigured={(key) => !!isConfigured(key)}
+                    />
+                </div>
+            </div>
+        );
+    };
+
+    const renderManualFoundation = (cloud: 'google' | 'azure' | 'aws') => (
         <div className="space-y-2.5">
             <p className="text-[11px] uppercase tracking-wider text-white/45 font-semibold">First, the account</p>
             {cloud === 'google' && <>
