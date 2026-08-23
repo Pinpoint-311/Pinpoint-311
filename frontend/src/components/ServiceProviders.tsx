@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 
 import { CollapsibleSection } from './ui';
-import { StatusPill, CapabilityTile, Action, hasAlert, type CapabilityState } from './capabilityUI';
+import { StatusPill, CapabilityTile, Action, Switch, ResultNote, hasAlert, type CapabilityState } from './capabilityUI';
 import { PlainSecrets } from './SetupWizard';
 import { api, ProviderCatalog, ProviderInfo, ProviderModelSpec, CloudIdentity } from '../services/api';
 import type { ConnectorHealth } from '../types';
@@ -58,36 +58,10 @@ const CAPS: { key: Capability; title: string; blurb: string; icon: typeof Sparkl
     { key: 'secrets', title: 'Secret Storage', blurb: 'Where every credential on this page is kept. The check writes a throwaway key, reads it back and removes it.', icon: ShieldCheck },
 ];
 
-/** The same sliding pill the Modules screen uses, so on/off looks like on/off
- * everywhere in the console rather than being a labelled button here and a
- * toggle there. Held to the exact geometry of the modules one on purpose. */
-function Switch({ on, busy, disabled, onChange, label, 'aria-describedby': describedBy }: {
-    on: boolean; busy?: boolean; disabled?: boolean;
-    onChange: () => void; label: string;
-    /* The prop list was closed, so a caller could not attach the sentence
-     * explaining what the switch does even when it had written one. */
-    'aria-describedby'?: string;
-}) {
-    return (
-        <button
-            type="button"
-            onClick={onChange}
-            disabled={disabled}
-            role="switch"
-            aria-checked={on}
-            aria-label={label}
-            aria-describedby={describedBy}
-            className={`relative inline-flex items-center rounded-full transition-colors duration-300 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 disabled:opacity-50 ${on ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-slate-600'}`}
-            style={{ width: 44, height: 24, minHeight: 24, maxHeight: 24, padding: 0 }}
-        >
-            <span
-                className={`inline-block rounded-full bg-white shadow-md transition-transform duration-300 ${on ? 'translate-x-6' : 'translate-x-1'} ${busy ? 'animate-pulse' : ''}`}
-                style={{ width: 16, height: 16 }}
-                aria-hidden="true"
-            />
-        </button>
-    );
-}
+/* The on/off Switch moved to capabilityUI, alongside the pill, the tile and the
+ * buttons. It was defined here and so unreachable from the town-system cards,
+ * which drew their own at 30x18 with a different focus ring -- exactly the
+ * drift that shared module exists to end. */
 
 /** A numbered section heading inside a provider card.
  *
@@ -969,35 +943,9 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                 </div>
             )}
             {!compact && shownResult && (
-                <motion.div
-                    /* The outcome of "Save & Test", as visible text only.
-                       It used to be role="status" as well, and it lands in the
-                       same React batch as the onStatus() call that flips the
-                       card's StatusPill -- two polite regions written in one
-                       tick, which a screen reader announces as neither. The
-                       pill's announcement, which names the capability, is the
-                       spoken half; this is the readable half. */
-                    initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
-                    className={`mt-3 rounded-xl px-3 py-2.5 text-xs border flex items-start gap-2 ${shownResult.ok
-                        ? 'bg-emerald-500/10 border-emerald-400/30 text-emerald-200'
-                        : resultUncheckable
-                            ? 'bg-white/[0.05] border-white/15 text-white/70'
-                            : 'bg-amber-500/10 border-amber-400/30 text-amber-200'}`}
-                >
-                    {shownResult.ok
-                        ? <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
-                        : resultUncheckable
-                            ? <HelpCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
-                            : <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />}
-                    {/* Pass and fail were otherwise glyph plus colour only. */}
-                    <span className="sr-only">
-                        {shownResult.ok ? 'Test passed. ' : resultUncheckable ? 'Could not be checked. ' : 'Test failed. '}
-                    </span>
-                    {/* pre-line: the tests report their work as numbered steps,
-                        one per line — collapsing them to a paragraph turns a
-                        verifiable log back into a claim. */}
-                    <span className="whitespace-pre-line">{shownResult.detail}</span>
-                </motion.div>
+                <ResultNote tone={shownResult.ok ? 'ok' : resultUncheckable ? 'unknown' : 'bad'}>
+                    {shownResult.detail}
+                </ResultNote>
             )}
 
             {/* Configuration is always visible. It used to sit behind a

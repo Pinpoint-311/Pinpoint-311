@@ -16,29 +16,24 @@
 # Blank or missing means "the revision immediately before head", which is the
 # expand case. Get it wrong in the safe direction: naming a NEWER revision only
 # blocks a rollout, while naming an older one lets a broken build reach towns.
-# Head is a8c6e2f4b9d1 (platform_feedback_module) -- a new table plus a nullable
-# column, purely additive with nothing existing touched, so the rule above puts
-# this at the revision immediately before it: f6b4d8e2a3c5
-# (registration_prompt_dismissed), itself additive.
+#
+# Head is d8f0b2c4e6a3 (integration_lookup_cache) — four nullable columns on an
+# existing table, purely additive — so the rule above puts the floor at the
+# revision immediately before it: c7e9a1b3d5f2 (integration_dead_letters),
+# itself a new table and equally additive.
+#
+# a1c2e3f4b5d6 (separate_legal_hold_from_moderation_flag) further down the same
+# chain IS a contract migration for this build — retention selects on
+# service_requests.legal_hold — but it does not move the floor, because it sits
+# BELOW c7e9a1b3d5f2: a town at c7e9a1b3d5f2 already has the column. The floor
+# is the oldest schema the build can serve, and that is still head's parent.
+#
+# Two legal values, not a range. The orchestrator's compatibility check is set
+# membership on exactly {min_db_revision, db_revision} -- naming some third
+# revision further down refuses every town sitting between them.
 #
 # It had once been left at c3d4e5f6a7b8 for fourteen revisions, several of them
 # contract migrations (retire_hard_delete, drop_dead_documents_pushed_flag, the
 # NOT NULL on retention state) that this build genuinely cannot start against --
 # so the declared floor was claiming compatibility the image does not have.
-a1c2e3f4b5d6
-# Head is b8c4d2e6f0a1 (screen photos at pick time): a new table plus a nullable
-# column, purely additive, so the rule above puts this at the revision
-# immediately before it. It had once been left at c3d4e5f6a7b8 for fourteen
-# revisions, several of them contract migrations (retire_hard_delete,
-# drop_dead_documents_pushed_flag, the NOT NULL on retention state) that this
-# build genuinely cannot start against -- so the declared floor was claiming
-# compatibility the image does not have.
-# Head is a1c2e3f4b5d6 (separate_legal_hold_from_moderation_flag). It adds a
-# column AND this build reads it: retention selects on service_requests
-# .legal_hold, so the new image genuinely cannot start against the old schema
-# and the orchestrator must see a town already migrated. That is the contract
-# case, so this names the NEW head rather than the one before it. It had once
-# been left at c3d4e5f6a7b8 for fourteen revisions, several of them contract
-# migrations (retire_hard_delete, drop_dead_documents_pushed_flag, the NOT NULL
-# on retention state) that this build genuinely cannot start against -- so the
-# declared floor was claiming compatibility the image does not have.
+c7e9a1b3d5f2

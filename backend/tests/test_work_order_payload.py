@@ -158,6 +158,15 @@ REQUIRED = {
     "source", "preferred_language", "matched_asset", "custom_fields",
 }
 
+# Allowed, but not always present: sent only when there is a value, and absent
+# rather than null when there is not. Kept apart from REQUIRED so the two
+# assertions below stay honest -- "may appear" is not "must appear", and
+# collapsing them would let a mandatory field go missing unnoticed.
+CONDITIONAL = {
+    # Only when the category carries an SLA. See the two due-date tests.
+    "due_date",
+}
+
 PII_KEYS = set(PII_PROPERTIES)
 
 
@@ -178,10 +187,11 @@ def test_the_payload_is_exactly_the_agreed_key_set():
     None of them changed the text the previous version of this file read.
     """
     payload = _build_payload(_stand_in(), {}, "Public Works")
-    unexpected = set(payload) - REQUIRED
+    unexpected = set(payload) - REQUIRED - CONDITIONAL
     assert not unexpected, (
         f"the outbound work order has grown {sorted(unexpected)}. Add each to "
-        f"REQUIRED with a reason, or take it back out of the payload."
+        f"REQUIRED or CONDITIONAL with a reason, or take it back out of the "
+        f"payload."
     )
 
 
@@ -402,3 +412,23 @@ def test_the_priority_the_town_set_wins_over_the_stored_one():
     assert _build_payload(sr, {}, "Public Works")["priority"] == 9.0
     sr = _stand_in(manual_priority_score=None, priority=2)
     assert _build_payload(sr, {}, "Public Works")["priority"] == 2
+
+
+# ------------------------------------------------------------------ due date
+
+def test_a_due_date_is_sent_when_the_category_has_an_sla():
+    payload = _build_payload(_stand_in(), {}, "Public Works", "2026-09-01T12:00:00+00:00")
+    assert payload["due_date"] == "2026-09-01T12:00:00+00:00"
+
+
+def test_no_due_date_means_the_key_is_absent_not_null():
+    """Absent, not null, and the distinction is the point.
+
+    A vendor mapping `due_date` into its own column reads null as "clear it",
+    so a category with no SLA would have Pinpoint blanking a deadline the
+    vendor's own staff had set. This is the failure the field was carrying
+    before it was fixed -- it read a `due_datetime` attribute ServiceRequest
+    has never had, so every work order went out with an explicit null.
+    """
+    payload = _build_payload(_stand_in(), {}, "Public Works")
+    assert "due_date" not in payload

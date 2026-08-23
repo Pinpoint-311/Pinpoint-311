@@ -213,11 +213,11 @@ describe('the town-systems health rollup', () => {
     it('picks out the town\'s own connections', () => {
         const { all, broken } = townSystemHealth({
             'govtech:accela': 'down',
-            'govtech:civicplus': 'working',
+            'govtech:arcgis': 'working',
             email: 'down',
             'system:disk': 'down',
-        }, enabled('accela', 'civicplus'));
-        expect(all.sort()).toEqual(['accela', 'civicplus']);
+        }, enabled('accela', 'arcgis'));
+        expect(all.sort()).toEqual(['accela', 'arcgis']);
         expect(broken).toEqual(['accela']);
     });
 
@@ -249,7 +249,7 @@ describe('the town-systems health rollup', () => {
          * the fix, not the fault. */
         const { all, broken } = townSystemHealth({
             'govtech:accela': 'down',      // disabled after it broke
-            'govtech:seeclickfix': 'down', // deleted entirely
+            'govtech:arcgis': 'down',      // deleted entirely
             'govtech:tyler': 'working',
         }, enabled('tyler'));
         expect(all).toEqual(['tyler']);

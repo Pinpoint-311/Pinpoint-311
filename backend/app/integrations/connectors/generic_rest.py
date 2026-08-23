@@ -426,6 +426,13 @@ class GenericRestConnector(BaseConnector):
             )
             self._raise_for_status(resp, f"{self.platform} upload document")
 
+    # ---- Vendor lookups: not possible here, by definition ----------------
+    #
+    # This connector exists because the vendor has no universal published API;
+    # its shape is whatever an admin described in config. There is no endpoint
+    # to ask for a code list, and no convention worth guessing at -- so the
+    # mapping fields stay text boxes here, which is honest about what is known.
+
     # ---- Assets ----
     # Config: assets_path (default "/assets"). The endpoint may return a GeoJSON
     # FeatureCollection directly, or a JSON list mapped via asset_*_field keys.

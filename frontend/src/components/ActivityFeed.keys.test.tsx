@@ -46,6 +46,17 @@ vi.mock('framer-motion', async () => {
     };
 });
 
+/* jsdom ships no matchMedia, and the accessibility provider asks it about
+ * reduced motion and contrast on mount. Same stub the other suites that mount
+ * inside the provider carry. */
+if (!window.matchMedia) {
+    (window as any).matchMedia = (query: string) => ({
+        matches: false, media: query, onchange: null,
+        addEventListener: () => { }, removeEventListener: () => { },
+        addListener: () => { }, removeListener: () => { }, dispatchEvent: () => false,
+    });
+}
+
 let host: HTMLDivElement;
 let root: Root;
 let consoleError: ReturnType<typeof vi.spyOn>;
@@ -76,17 +87,23 @@ function makeRequest(over: Partial<ServiceRequest> & { id: number }): ServiceReq
     } as ServiceRequest;
 }
 
+/* Inside the provider, not bare. The feed announces its unread count through
+   the app's single pair of live regions, and useAnnounce() throws outright when
+   the provider is missing -- so a keys test mounting it alone would fail on
+   something it is not about. Same wrapper OperationsPanel.mute.test.tsx uses. */
 async function mount(requests: ServiceRequest[], userDepartmentIds: number[] = []) {
     const ActivityFeed = (await import('./ActivityFeed')).default;
+    const { AccessibilityProvider } = await import('../context/AccessibilityContext');
     await act(async () => {
-        root.render(React.createElement(ActivityFeed as any, {
-            isOpen: true,
-            onClose: () => { },
-            requests,
-            userId: 'staff-1',   // an empty department list means all activity is relevant
-            userDepartmentIds,
-            onSelectRequest: () => { },
-        }));
+        root.render(React.createElement(AccessibilityProvider as any, null,
+            React.createElement(ActivityFeed as any, {
+                isOpen: true,
+                onClose: () => { },
+                requests,
+                userId: 'staff-1',   // an empty department list means all activity is relevant
+                userDepartmentIds,
+                onSelectRequest: () => { },
+            })));
     });
 }
 

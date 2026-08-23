@@ -44,14 +44,29 @@ def test_the_column_is_off_by_default_and_never_null():
     assert "false" in str(col.server_default.arg).lower()
 
 
-def test_the_startup_guard_adds_the_column_with_the_same_default():
-    """init_db's belt-and-braces ADD COLUMN IF NOT EXISTS runs on installs that
-    never see the migration. If it disagreed with the migration about the
-    default, whether a deployment prompts would depend on how it was upgraded."""
-    source = Path(__file__).resolve().parents[1].joinpath("app/db/init_db.py").read_text()
-    assert (
-        "ADD COLUMN IF NOT EXISTS registration_prompt_dismissed "
-        "BOOLEAN NOT NULL DEFAULT false" in source
+def test_the_column_is_covered_by_the_schema_reconciler():
+    """Belt and braces alongside the alembic revision, for installs that never
+    see the migration. If the fallback disagreed with the migration about the
+    default, whether a deployment prompts would depend on how it was upgraded.
+
+    This used to assert an `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` line in
+    init_db. That mechanism is gone on purpose: init_db keeping its own
+    hand-maintained column list made it a second schema authority racing
+    alembic over the same columns. Columns are now derived from the ORM and
+    reconciled after alembic runs, so there is only one place the default is
+    written down -- the model, asserted directly above -- and no second copy
+    to drift from it.
+    """
+    from app.models import SystemSettings
+
+    assert "registration_prompt_dismissed" in SystemSettings.__table__.columns, (
+        "the reconciler derives columns from the model, so a column absent "
+        "from the model is a column it will never create"
+    )
+    migrate = Path(__file__).resolve().parents[1].joinpath("app/db/migrate.py").read_text()
+    assert "reconcil" in migrate, (
+        "the reconciliation step is what replaces init_db's column list; "
+        "without it nothing backfills a column on an adopted database"
     )
 
 
