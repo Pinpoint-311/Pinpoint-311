@@ -107,7 +107,7 @@ def _from_epoch_ms(value: Any) -> Optional[datetime]:
 
 class ArcGISConnector(BaseConnector):
     platform = "arcgis"
-    capabilities = {"test", "push", "push_status", "pull", "documents", "assets"}
+    capabilities = {"test", "push", "push_status", "pull", "documents", "assets", "lookups"}
 
     # A feature layer has no status vocabulary of its own — the town's domain
     # list does. These are the values Esri's citizen-request templates ship
@@ -596,6 +596,61 @@ class ArcGISConnector(BaseConnector):
         if not features:
             return None
         return await self._record_from_feature(features[0])
+
+    # ---- Vendor lookups (capability "lookups") --------------------------
+
+    async def pull_lookups(self) -> Dict[str, Any]:
+        """The layer's own status values and column names.
+
+        A feature layer has no status vocabulary of its own -- the town's coded
+        -value domain does, and it is right there in the layer metadata this
+        connector already fetches. So the status list is the layer's actual
+        allowed values, read from the domain on whichever column the field map
+        points `status` at, which is precisely the set an applyEdits will
+        accept. Typing one of these wrong does not fail loudly: ArcGIS takes the
+        edit and the value is simply not in the domain.
+
+        `fields` is every column on the layer, so a field_map is picked rather
+        than spelled. Nothing new is requested: this is the same `?f=json` the
+        connection check reads.
+
+        A layer whose status column has no domain attached returns an empty
+        status list rather than a made-up one -- that town really does have a
+        free-text column, and pretending otherwise would offer a menu that is
+        not the truth.
+        """
+        metadata = await self._layer_metadata()
+        status_field = self._field_map().get("status") or "status"
+        statuses: List[Dict[str, str]] = []
+        fields: List[Dict[str, str]] = []
+        for field in (metadata.get("fields") or []):
+            if not isinstance(field, dict) or not field.get("name"):
+                continue
+            name = str(field["name"])
+            fields.append({"code": name, "name": str(field.get("alias") or name)})
+            if name != status_field:
+                continue
+            domain = field.get("domain")
+            if isinstance(domain, dict) and domain.get("type") == "codedValue":
+                statuses = [
+                    {"code": str(v.get("code")), "name": str(v.get("name") or v.get("code"))}
+                    for v in (domain.get("codedValues") or [])
+                    if isinstance(v, dict) and v.get("code") is not None
+                ]
+        layer_name = metadata.get("name") or self.layer_url
+        return {
+            "statuses": statuses,
+            "fields": fields,
+            "_source": {
+                "statuses": (
+                    f"the coded-value domain on \"{status_field}\" in layer \"{layer_name}\""
+                    if statuses else
+                    f"\"{status_field}\" on layer \"{layer_name}\" has no coded-value "
+                    "domain, so it accepts any text and there is no list to offer"
+                ),
+                "fields": f"the columns of layer \"{layer_name}\"",
+            },
+        }
 
     # ---- Attachments (capability "documents") ---------------------------
 

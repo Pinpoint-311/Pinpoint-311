@@ -369,8 +369,13 @@ def test_the_migration_chains_onto_the_previous_head():
     assert any(re.search(rf"^revision[^=]*=\s*'{down}'", t, re.M) for t in sources.values()), (
         f"down_revision {down} names no existing revision"
     )
+    # At most one revision may chain onto this one. More than one is a fork,
+    # which alembic reports as two heads and which an upgrade cannot resolve on
+    # its own -- the failure this guards is a rebase somebody skipped.
     mine_rev = re.search(r"^revision[^=]*=\s*'([^']+)'", mine, re.M).group(1)
     others = [t for t in sources.values() if "integration_dead_letters" not in t]
-    assert not any(re.search(rf"^down_revision[^=]*=\s*'{mine_rev}'", t, re.M) for t in others), (
-        "something already chains onto this revision — rebase rather than fork the chain"
+    children = [t for t in others
+                if re.search(rf"^down_revision[^=]*=\s*'{mine_rev}'", t, re.M)]
+    assert len(children) <= 1, (
+        f"{len(children)} revisions chain onto {mine_rev} — that is a fork, not a chain"
     )

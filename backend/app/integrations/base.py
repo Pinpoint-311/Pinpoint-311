@@ -234,7 +234,7 @@ class BaseConnector:
     platform: str = "base"
     # What this connector supports: subset of
     #   {"push", "push_status", "pull", "comments", "documents", "assets",
-    #    "work_orders", "test"}
+    #    "work_orders", "lookups", "test"}
     # "work_orders" means pull_updates / fetch_record populate the work-order
     # fields on ExternalRecord (assignment, schedule, resolution) and push
     # carries assignment/priority outbound.
@@ -308,6 +308,32 @@ class BaseConnector:
                             content: bytes, content_type: str) -> None:
         """Attach a file (photo, document) to the external record."""
         raise ConnectorError(f"{self.platform} connector does not support document upload")
+
+    # -- Vendor lookup tables (capability "lookups") --
+
+    async def pull_lookups(self) -> Dict[str, Any]:
+        """The vendor's own code lists, for building a mapping against.
+
+        A mapping -- our status to theirs, our service code to theirs -- is a
+        promise about values that live in the vendor's *data*, not in any
+        published metadata. So the setup form asked an admin to type them, and a
+        typo is not an error: it is a status that silently never maps, or a 422
+        on the first real report.
+
+        Returns ``{"<list name>": [{"code": str, "name": str}, ...], "_source":
+        {"<list name>": "where it came from"}}``. The source string is shown to
+        the admin, because "your 14 ArcGIS status values, read from the layer's
+        own domain" is a different claim from "14 values".
+
+        Only implemented where the vendor genuinely publishes such a list to a
+        call this connector already makes. A connector that would have to guess
+        at an endpoint raises instead: an invented URL produces a mapping screen
+        full of nothing, which is worse than the text box it replaced.
+        """
+        raise ConnectorError(
+            f"{self.platform} does not publish a list of its own codes, so a "
+            f"mapping has to be entered from what the vendor told you."
+        )
 
     # -- Asset management (capability "assets") --
 

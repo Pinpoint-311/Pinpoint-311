@@ -34,7 +34,7 @@ def _parse_dt(value: Optional[str]) -> Optional[datetime]:
 
 class Open311Connector(BaseConnector):
     platform = "open311"
-    capabilities = {"test", "push", "pull"}
+    capabilities = {"test", "push", "pull", "lookups"}
 
     DEFAULT_STATUS_MAP_OUT = {"open": "open", "in_progress": "open", "closed": "closed"}
     DEFAULT_STATUS_MAP_IN = {"open": "open", "closed": "closed"}
@@ -96,6 +96,46 @@ class Open311Connector(BaseConnector):
             detail += ("No API key is saved. Most Open311 servers need one to create "
                        "records, so pushes may be refused until you add it.")
         return {"ok": True, "verified": False, "detail": detail}
+
+    async def pull_lookups(self) -> Dict[str, Any]:
+        """This endpoint's service codes, and the status words the spec fixes.
+
+        `/services.json` is the one call GeoReport v2 requires of every server
+        and the only one this connector already makes on a connection check, so
+        hydrating costs nothing new and needs no endpoint anybody had to guess
+        at. The codes it returns are the exact strings a push has to send, which
+        is what makes them worth picking from rather than typing.
+
+        The status list is not fetched, because there is nothing to fetch: the
+        spec defines the vocabulary as `open` and `closed` and that is the whole
+        set. A server that answers with its own words -- and plenty do -- is
+        outside the spec, so `status_map_in` still exists for it; what this
+        removes is the guesswork on the outbound side, where the spec is
+        binding.
+        """
+        async with self._client() as client:
+            resp = await client.get(f"{self.base_url}/services.json",
+                                    params=self._common_params())
+            self._raise_for_status(resp, "Open311 services list")
+            services = resp.json()
+        if not isinstance(services, list):
+            services = []
+        return {
+            "services": [
+                {"code": str(item.get("service_code")),
+                 "name": str(item.get("service_name") or item.get("service_code") or "")}
+                for item in services
+                if isinstance(item, dict) and item.get("service_code")
+            ],
+            "statuses": [
+                {"code": "open", "name": "Open"},
+                {"code": "closed", "name": "Closed"},
+            ],
+            "_source": {
+                "services": f"{self.base_url}/services.json",
+                "statuses": "fixed by the GeoReport v2 specification",
+            },
+        }
 
     async def push_request(self, payload: Dict[str, Any]) -> ExternalRecord:
         data = dict(self._common_params())

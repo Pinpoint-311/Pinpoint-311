@@ -207,6 +207,17 @@ def _serialize(integration: IntegrationConfig) -> Dict[str, Any]:
         # yes-or-no. Partial is the state worth naming: it means at least one
         # secret is in the application database after all.
         "credentials_vaulted_state": vaulted,
+        # The vendor's own code lists, so the mapping fields are a menu rather
+        # than a text box. Empty for a vendor that publishes no such list --
+        # which is a real answer, not a missing one.
+        "lookups": integration.lookups_cache or {},
+        "lookups_fetched_at": (integration.lookups_fetched_at.isoformat()
+                               if integration.lookups_fetched_at else None),
+        # "somebody looked at the mapping and said yes" is not the same fact as
+        # "a mapping exists", and an empty approved mapping is a decision.
+        "mapping_approved_at": (integration.mapping_approved_at.isoformat()
+                                if integration.mapping_approved_at else None),
+        "mapping_approved_by": integration.mapping_approved_by,
         "webhook_path": f"/api/integrations/webhook/{integration.platform}/{integration.webhook_token}",
         "last_sync_at": integration.last_sync_at.isoformat() if integration.last_sync_at else None,
         "last_sync_status": integration.last_sync_status,
@@ -897,6 +908,138 @@ async def accela_oauth_callback(
 
     logger.info("[Integrations] Accela authorization stored for integration %s", integration.id)
     return _oauth_result_page(True, "Pinpoint can now sync with Accela on your behalf.")
+
+
+class MappingApproval(BaseModel):
+    """A mapping an admin has looked at and accepted."""
+    status_map_out: Optional[Dict[str, str]] = None
+    status_map_in: Optional[Dict[str, str]] = None
+    service_code_map: Optional[Dict[str, str]] = None
+
+
+def _unknown_codes(mapping: Optional[Dict[str, str]], known: List[Dict[str, Any]]) -> List[str]:
+    """Values in a mapping that the vendor's own list does not contain.
+
+    Only meaningful when there IS a list. A vendor that publishes none gets an
+    empty `known` and nothing is rejected -- refusing a code because we could
+    not check it would make the honest "we don't know" state unusable.
+    """
+    if not mapping or not known:
+        return []
+    codes = {str(item.get("code")) for item in known if isinstance(item, dict)}
+    return sorted({str(v) for v in mapping.values() if str(v) not in codes})
+
+
+@router.post("/{integration_id}/lookups/refresh")
+@limiter.limit("10/minute")  # live vendor API call
+async def refresh_integration_lookups(
+    request: Request,
+    integration_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Pull this vendor's own code lists down and keep them.
+
+    A mapping is a promise about codes that live in the vendor's data -- this
+    town's service codes, this layer's status domain -- and nothing published
+    anywhere says what they are. Typed from memory, a wrong one is not an
+    error: it is a status that silently never maps, or a 422 on the first real
+    report. Hydrated, the admin picks from their own live values.
+
+    Only where the vendor genuinely publishes such a list to a call the
+    connector already makes. Where they do not, this says so plainly rather
+    than offering a menu that is not the truth.
+    """
+    integration = await _get_integration(db, integration_id)
+    try:
+        connector = await build_connector_for(integration)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=_friendly_test_error(str(e)))
+    if "lookups" not in connector.capabilities:
+        return {
+            "ok": False,
+            "supported": False,
+            "detail": (f"{PLATFORM_CATALOG.get(integration.platform, {}).get('name', integration.platform)} "
+                       "does not publish a list of its own codes, so the mapping has to be "
+                       "entered from what the vendor told you."),
+        }
+    from app.services import connector_health
+    from app.services.connector_verification import health_key
+
+    try:
+        lookups = await connector.pull_lookups()
+    except Exception as e:
+        # Recorded like any other real call to this vendor -- a hydration that
+        # fails on an expired credential is the same evidence as a failed push.
+        await connector_health.record_failure(
+            db, health_key(integration.platform), e, provider=integration.platform)
+        detail = connector_health.clean_error(e)
+        raise HTTPException(status_code=502, detail=_friendly_test_error(detail) + f" ({detail})")
+
+    integration.lookups_cache = lookups
+    integration.lookups_fetched_at = datetime.now(timezone.utc)
+    db.add(IntegrationSyncLog(
+        integration_id=integration.id, operation="lookups", status="success",
+        detail=", ".join(f"{name}: {len(items)}" for name, items in lookups.items()
+                         if isinstance(items, list))[:2000],
+    ))
+    await db.commit()
+    await db.refresh(integration)
+    return {"ok": True, "supported": True, "lookups": lookups,
+            "fetched_at": integration.lookups_fetched_at.isoformat()}
+
+
+@router.post("/{integration_id}/mapping")
+async def approve_integration_mapping(
+    integration_id: int,
+    data: MappingApproval,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """Store a mapping somebody has actually looked at.
+
+    Checked against the hydrated lists where there are any: a code the vendor
+    does not have is refused here, by name, rather than becoming a 422 on the
+    first real report or a status that quietly never maps.
+
+    The approval is recorded separately from the mapping itself. An empty
+    mapping an admin deliberately approved -- the vendor's words happen to match
+    ours -- and one nobody has ever opened are the same JSON, and only one of
+    them is a decision.
+    """
+    integration = await _get_integration(db, integration_id)
+    lookups = integration.lookups_cache or {}
+
+    problems = []
+    for label, mapping, known in (
+        ("status", data.status_map_out, lookups.get("statuses") or []),
+        ("service code", data.service_code_map, lookups.get("services") or []),
+    ):
+        unknown = _unknown_codes(mapping, known)
+        if unknown:
+            problems.append(
+                f"{label}(s) this vendor does not have: {', '.join(unknown)}")
+    if problems:
+        raise HTTPException(
+            status_code=400,
+            detail=("Checked against the list pulled from your vendor — "
+                    + "; ".join(problems)
+                    + ". Refresh the list if these were added at the vendor recently."),
+        )
+
+    config = dict(integration.config or {})
+    for key, value in (("status_map_out", data.status_map_out),
+                       ("status_map_in", data.status_map_in),
+                       ("service_code_map", data.service_code_map)):
+        if value is not None:
+            config[key] = value
+    integration.config = config
+    integration.mapping_approved_at = datetime.now(timezone.utc)
+    integration.mapping_approved_by = current_user.username[:100]
+    integration.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(integration)
+    return _serialize(integration)
 
 
 class BacklogDiscard(BaseModel):
