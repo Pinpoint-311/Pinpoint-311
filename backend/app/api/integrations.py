@@ -25,6 +25,7 @@ from app.integrations import (
 )
 from app.models import (
     IntegrationConfig,
+    IntegrationDeadLetter,
     IntegrationLink,
     IntegrationSyncLog,
     RequestAuditLog,
@@ -239,7 +240,50 @@ async def list_integrations(
     integrations = (await db.execute(
         select(IntegrationConfig).order_by(IntegrationConfig.created_at.asc())
     )).scalars().all()
-    return [_serialize(i) for i in integrations]
+    # How much work is still owed to each vendor, in one aggregate rather than a
+    # query per card. A card that says "Working" while nine reports sit in the
+    # backlog is telling the truth about the connection and nothing about the
+    # town, which is the gap this closes.
+    backlog = await _backlog_counts(db)
+    return [{**_serialize(i), **backlog.get(i.id, _EMPTY_BACKLOG)} for i in integrations]
+
+
+# What a connection owes when it owes nothing.
+_EMPTY_BACKLOG = {"backlog_open": 0, "backlog_stalled": 0}
+
+
+async def _backlog_counts(db: AsyncSession) -> Dict[int, Dict[str, int]]:
+    """Open backlog per integration, split by whether it is still being retried.
+
+    `stalled` is the number past the automatic schedule -- those have
+    `next_attempt_at` NULL and will not move again on their own. They are the
+    ones worth a badge: everything else is a connection that is already
+    recovering by itself.
+
+    Never raises. A deployment that has not run the migration has no table, and
+    a missing backlog count must not take the whole connections list down with
+    it.
+    """
+    from sqlalchemy import func
+
+    try:
+        rows = (await db.execute(
+            select(
+                IntegrationDeadLetter.integration_id,
+                func.count().label("open"),
+                func.count(IntegrationDeadLetter.id).filter(
+                    IntegrationDeadLetter.next_attempt_at.is_(None)
+                ).label("stalled"),
+            )
+            .where(IntegrationDeadLetter.resolved_at.is_(None))
+            .group_by(IntegrationDeadLetter.integration_id)
+        )).all()
+    except Exception as exc:
+        from app.core.sanitize import sanitize_for_log
+        logger.warning("[Integrations] could not read the push backlog: %s",
+                       sanitize_for_log(str(exc)[:300]))
+        return {}
+    return {r[0]: {"backlog_open": r[1] or 0, "backlog_stalled": r[2] or 0} for r in rows}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -853,6 +897,159 @@ async def accela_oauth_callback(
 
     logger.info("[Integrations] Accela authorization stored for integration %s", integration.id)
     return _oauth_result_page(True, "Pinpoint can now sync with Accela on your behalf.")
+
+
+class BacklogDiscard(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
+@router.get("/{integration_id}/backlog")
+async def get_push_backlog(
+    integration_id: int,
+    include_resolved: bool = False,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Reports and updates that have not reached this vendor yet.
+
+    The sync log says what happened; this says what is still owed. They are
+    different questions and the log could only ever answer the first, which is
+    why a failed push used to be indistinguishable from a push that never
+    happened.
+    """
+    await _get_integration(db, integration_id)
+    query = (
+        select(IntegrationDeadLetter, ServiceRequest.service_request_id)
+        .outerjoin(ServiceRequest,
+                   IntegrationDeadLetter.service_request_id == ServiceRequest.id)
+        .where(IntegrationDeadLetter.integration_id == integration_id)
+        .order_by(IntegrationDeadLetter.first_failed_at.desc())
+        .limit(min(max(1, limit), 500))
+    )
+    if not include_resolved:
+        query = query.where(IntegrationDeadLetter.resolved_at.is_(None))
+    try:
+        rows = (await db.execute(query)).all()
+    except Exception:
+        # Migration pending. An empty backlog is the honest answer here: there
+        # is no table, so nothing has been recorded in one.
+        await db.rollback()
+        return []
+    return [
+        {
+            "id": item.id,
+            "operation": item.operation,
+            "request_id": public_id,
+            "comment_id": item.comment_id,
+            "attempts": item.attempts,
+            # Already scrubbed on the way in by tasks.integrations._safe_error.
+            "last_error": item.last_error,
+            "first_failed_at": item.first_failed_at.isoformat() if item.first_failed_at else None,
+            "last_attempt_at": item.last_attempt_at.isoformat() if item.last_attempt_at else None,
+            "next_attempt_at": item.next_attempt_at.isoformat() if item.next_attempt_at else None,
+            # No further automatic attempt is scheduled. Not "given up" -- the
+            # row is still here -- but it needs somebody to decide.
+            "stalled": item.resolved_at is None and item.next_attempt_at is None,
+            "resolved_at": item.resolved_at.isoformat() if item.resolved_at else None,
+            "resolution": item.resolution,
+            "resolution_note": item.resolution_note,
+        }
+        for item, public_id in rows
+    ]
+
+
+async def _open_backlog_item(db: AsyncSession, integration_id: int, item_id: int):
+    item = (await db.execute(
+        select(IntegrationDeadLetter).where(
+            IntegrationDeadLetter.id == item_id,
+            IntegrationDeadLetter.integration_id == integration_id,
+        )
+    )).scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="No such item in this connection's backlog")
+    if item.resolved_at is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=("That item is already closed — it either went through or was "
+                    "discarded. Reload the list to see its current state."),
+        )
+    return item
+
+
+@router.post("/{integration_id}/backlog/{item_id}/retry")
+@limiter.limit("20/minute")
+async def retry_backlog_item(
+    request: Request,
+    integration_id: int,
+    item_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """Try this one again now, rather than waiting out its backoff.
+
+    The point of the button is the case the schedule cannot know about: somebody
+    has just fixed the credential, or the vendor has just come back, and the
+    next automatic attempt is six hours away. It also un-stalls an item that has
+    run out of automatic attempts, which is the only way one moves again.
+    """
+    integration = await _get_integration(db, integration_id)
+    if not integration.enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="Turn this connection on before retrying — a disabled connection is not pushed to.")
+    item = await _open_backlog_item(db, integration_id, item_id)
+    # Reset the clock rather than the attempt count. The count is the history of
+    # how hard this has been, and an admin pressing Retry does not un-happen the
+    # eight failures behind it.
+    item.next_attempt_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    from app.tasks.integrations import retry_integration_dead_letters
+    if not enqueue(retry_integration_dead_letters, 50):
+        # Rescheduled but not started: the row is due now and the beat will take
+        # it within ten minutes. Saying so beats a 503 that implies nothing
+        # happened, because something did.
+        return {"ok": True, "started": False, "detail": QUEUE_UNAVAILABLE}
+    from app.core.sanitize import sanitize_for_log
+    logger.info("[Integrations] %s retried backlog item %s on %s",
+                sanitize_for_log(current_user.username), item_id,
+                sanitize_for_log(integration.platform))
+    return {"ok": True, "started": True,
+            "detail": "Trying again now — the result appears in the activity trail."}
+
+
+@router.post("/{integration_id}/backlog/{item_id}/discard")
+@limiter.limit("20/minute")
+async def discard_backlog_item(
+    request: Request,
+    integration_id: int,
+    item_id: int,
+    data: BacklogDiscard,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """Decide this one should not be sent after all.
+
+    A reason is required, and the row is kept rather than deleted. "This report
+    never reached the county and we chose not to send it" is a decision about a
+    public record, and it needs a name and a sentence against it -- which is
+    also the difference between this and the silent drop it replaces.
+    """
+    await _get_integration(db, integration_id)
+    item = await _open_backlog_item(db, integration_id, item_id)
+    item.resolved_at = datetime.now(timezone.utc)
+    item.resolution = "discarded"
+    item.resolved_by = current_user.username[:100]
+    item.resolution_note = data.reason
+    item.next_attempt_at = None
+    db.add(IntegrationSyncLog(
+        integration_id=integration_id, operation=item.operation, status="warning",
+        detail=(f"Backlog item {item_id} discarded by {current_user.username} "
+                f"after {item.attempts} attempt(s): {data.reason}")[:2000],
+    ))
+    await db.commit()
+    return {"ok": True, "detail": "Removed from the backlog and recorded in the activity trail."}
 
 
 @router.get("/{integration_id}/logs")

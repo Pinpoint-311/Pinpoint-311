@@ -137,6 +137,14 @@ celery_app.conf.update(
             "task": "app.tasks.integrations.pull_integration_comments",
             "schedule": 60 * 15,  # Every 15 minutes
         },
+        # Push again whatever failed to reach a vendor and is due another try.
+        # Ten minutes rather than fifteen: the first backoff step is five, and a
+        # slower beat than the schedule it serves would round every early
+        # attempt up to the beat interval.
+        "retry-integration-dead-letters": {
+            "task": "app.tasks.integrations.retry_integration_dead_letters",
+            "schedule": 60 * 10,
+        },
         # Mirror external asset inventories into Pinpoint map layers
         "sync-integration-assets": {
             "task": "app.tasks.integrations.sync_integration_assets",
