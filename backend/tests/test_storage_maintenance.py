@@ -552,3 +552,111 @@ def test_every_status_carries_a_reason():
         out = sm.migration_status(**args)
         assert set(out) == {"status", "reason"}
         assert out["reason"]
+
+
+# ---------------------------------------------------------------------------
+# The database store's blind spot
+# ---------------------------------------------------------------------------
+#
+# `migrate_to_secret_manager` already separates a credential that cannot be
+# decrypted from one that is simply still here -- see the `unreadable` tests
+# above. But `vault_secrets` returns early when `store_reachable()` is false,
+# and it is false for the `database` store, so a town keeping its credentials
+# in the encrypted database never ran that code and had nothing anywhere that
+# named SECRET_KEY as the reason a card had gone blank.
+#
+# That is the worst place for the blind spot to be: an unreadable credential
+# decrypts to "", every reader treats "" as absent, and the card renders the
+# empty box it would render for a credential that had never been entered. The
+# operator's own page tells them, truthfully as far as it knows, that they have
+# not set it up.
+
+class _RowResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _RowSession:
+    """Returns (key_name, key_value) tuples, which is what the status query selects."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def execute(self, *_args, **_kwargs):
+        return _RowResult(self._rows)
+
+
+def _status_for(monkeypatch, rows):
+    import asyncio
+
+    from app.core import encryption
+    from app.services import storage_status
+
+    # Patch the Fernet rather than the settings: `_get_fernet` is lru_cached, so
+    # a settings patch is silently ineffective if anything earlier in the
+    # session already derived a key. Same reason and same shape as the
+    # `run_migration` fixture above.
+    monkeypatch.setattr(encryption, "_get_fernet", lambda: _fernet_for(CURRENT_SECRET_KEY))
+    # The status line asks the secret manager which store is in use; this
+    # section is about the one where nothing else looks.
+    monkeypatch.setattr("app.services.secret_manager._secrets_provider", lambda: "database")
+    monkeypatch.setattr("app.services.storage_maintenance.store_reachable", lambda: False)
+    return asyncio.run(storage_status.secrets_outside_the_store(_RowSession(rows)))
+
+
+def test_a_credential_from_a_previous_secret_key_is_counted_and_named(monkeypatch):
+    """The whole point of the count. Without it the only signal reaching the
+    operator is an empty box, and the only conclusion available from an empty
+    box is that nobody ever filled it in."""
+    status = _status_for(monkeypatch, [
+        ("GOOGLE_MAPS_API_KEY", _encrypted_under_an_old_key("AIzaSy-stuck")),
+        ("TWILIO_AUTH_TOKEN", _encrypted_now("readable")),
+    ])
+    assert status["unreadable"] == 1
+    assert status["unreadable_keys"] == ["GOOGLE_MAPS_API_KEY"], (
+        "the operator needs the key name; 'one of your credentials' is not actionable"
+    )
+
+
+def test_a_readable_database_of_credentials_reports_none(monkeypatch):
+    """The false positive that would matter: an amber warning telling a town to
+    re-enter working credentials is worse than the silence it replaces."""
+    status = _status_for(monkeypatch, [
+        ("GOOGLE_MAPS_API_KEY", _encrypted_now("AIzaSy-fine")),
+        ("TWILIO_AUTH_TOKEN", _encrypted_now("also-fine")),
+    ])
+    assert status["unreadable"] == 0
+    assert status["unreadable_keys"] == []
+
+
+def test_a_legacy_plaintext_value_is_not_called_unreadable(monkeypatch):
+    """`decrypt_safe` returns an unencrypted legacy value unchanged. It is
+    readable, so it is not this problem -- it is the one `count` reports."""
+    status = _status_for(monkeypatch, [("SOME_OLD_KEY", "plain-text-from-before-encryption")])
+    assert status["unreadable"] == 0
+
+
+def test_the_status_asks_for_attention_when_nothing_scheduled_will_fix_it(monkeypatch):
+    """`needs_attention` drives whether the panel appears at all. The other two
+    conditions clear themselves overnight; this one waits for a person, so it
+    is the one that most needs to raise a hand."""
+    import asyncio
+
+    from app.services import storage_status
+
+    monkeypatch.setattr(storage_status, "secrets_outside_the_store",
+                        _async_returning({"count": 0, "store": "database", "reachable": False,
+                                          "unreadable": 2, "unreadable_keys": ["A", "B"]}))
+    monkeypatch.setattr(storage_status, "pii_wrapped_with_other_keys",
+                        _async_returning({"total": 0, "stale": 0, "on_application_key": 0,
+                                          "legacy": 0, "current": "local"}))
+    assert asyncio.run(storage_status.summary(None))["needs_attention"] is True
+
+
+def _async_returning(value):
+    async def _fn(_db):
+        return value
+    return _fn
