@@ -122,6 +122,10 @@ def test_the_admin_list_names_a_retired_row_rather_than_hiding_it():
         config = {}
         credentials = {"api_key": "x"}
         webhook_token = "tok"
+        lookups_cache = {}
+        lookups_fetched_at = None
+        mapping_approved_at = None
+        mapping_approved_by = None
         last_sync_at = None
         last_sync_status = None
         last_sync_error = None

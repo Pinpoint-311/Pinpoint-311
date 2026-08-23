@@ -947,6 +947,33 @@ class IntegrationConfig(Base):
     last_sync_status = Column(String(20))  # success, error
     last_sync_error = Column(Text)
 
+    # The vendor's own lookup lists, pulled down while we had their credentials.
+    #
+    # A mapping is a promise about codes that live in the *vendor's data* -- this
+    # town's service codes, this layer's status domain -- and nothing published
+    # anywhere says what they are. So the setup form asked an admin to type
+    # them, and a typo is not an error: it is a status that silently never maps,
+    # or a 422 on the first real report.
+    #
+    # Deliberately NOT inside `config`. Config is the admin-writable blob and
+    # every key in it is allowlisted; this is server-written, refreshed from the
+    # vendor, and must not be settable by the thing it exists to check.
+    #
+    # Shape: {"services": [{"code": .., "name": ..}], "statuses": [{"code": ..,
+    # "name": ..}], ...} plus "_source" naming where each list came from, so a
+    # card can say "your 14 ArcGIS status values" rather than "14 values".
+    lookups_cache = Column(JSON, default=dict)
+    lookups_fetched_at = Column(DateTime(timezone=True))
+
+    # Who last looked at the mapping and said yes, and when.
+    #
+    # Distinct from "a mapping exists": an empty mapping that an admin
+    # deliberately approved (this vendor's words happen to match ours) and one
+    # nobody has ever opened look identical in the config blob, and only one of
+    # them is a decision.
+    mapping_approved_at = Column(DateTime(timezone=True))
+    mapping_approved_by = Column(String(100))
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

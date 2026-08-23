@@ -71,7 +71,7 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
             "Builder all read and write the same feature layer, a crew editing a report in the "
             "field updates Pinpoint too. Works with ArcGIS Online and ArcGIS Enterprise."
         ),
-        "capabilities": ["push", "push_status", "pull", "documents", "assets", "test"],
+        "capabilities": ["push", "push_status", "pull", "documents", "assets", "lookups", "test"],
         "credential_fields": [
             {"key": "api_key", "label": "ArcGIS API Key", "secret": True},
             {"key": "username", "label": "ArcGIS Username (instead of an API key)", "secret": False},
@@ -103,7 +103,7 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "integration_mode": "open311",
         "docs_url": "https://www.tylertech.com/products/my-civic",
         "description": "Connects to Tyler's Open311 GeoReport v2 endpoint for your jurisdiction: pushes new requests and polls for status changes.",
-        "capabilities": ["push", "pull", "test"],
+        "capabilities": ["push", "pull", "lookups", "test"],
         "credential_fields": [
             {"key": "api_key", "label": "Open311 API Key", "secret": True, "required": True},
         ],
@@ -175,7 +175,7 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "integration_mode": "open311",
         "docs_url": "http://wiki.open311.org/GeoReport_v2",
         "description": "Connects to any Open311 GeoReport v2 compliant endpoint — a catch-all for vendors and cities not listed above.",
-        "capabilities": ["push", "pull", "test"],
+        "capabilities": ["push", "pull", "lookups", "test"],
         "credential_fields": [
             {"key": "api_key", "label": "API Key", "secret": True},
         ],
