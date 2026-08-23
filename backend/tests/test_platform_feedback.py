@@ -85,12 +85,27 @@ def test_the_module_is_off_in_the_seed():
     assert f'"{MODULE_KEY}": False' in block, block
 
 
-def test_the_new_column_has_an_add_column_if_not_exists_guard():
-    """Belt and braces alongside the alembic revision, the way recent columns do."""
-    source = INIT_DB.read_text()
-    assert (
-        "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS platform_feedback_email"
-        in source
+def test_the_new_column_is_covered_by_the_schema_reconciler():
+    """Belt and braces alongside the alembic revision.
+
+    This used to assert an `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` line in
+    init_db. That mechanism is gone on purpose: init_db keeping its own
+    hand-maintained column list made it a second schema authority racing
+    alembic over the same columns, which is how the phone column got silently
+    re-shrunk in production. Columns are now derived from the ORM and
+    reconciled after alembic runs, so the guarantee is the same and the
+    duplication is not.
+    """
+    from app.models import SystemSettings
+
+    assert "platform_feedback_email" in SystemSettings.__table__.columns, (
+        "the reconciler derives columns from the model, so a column absent "
+        "from the model is a column it will never create"
+    )
+    migrate = (ROOT / "backend/app/db/migrate.py").read_text()
+    assert "reconcil" in migrate, (
+        "the reconciliation step is what replaces init_db's column list; "
+        "without it nothing backfills a column on an adopted database"
     )
 
 
@@ -340,48 +355,60 @@ def test_the_migration_creates_the_check_constraint():
         assert answer in source
 
 
-def test_min_db_revision_is_the_revision_before_head():
-    """Additive migration: the new build still runs on the old schema, so the
-    declared floor is the revision immediately before whatever head is.
+def test_min_db_revision_follows_the_rule_not_a_literal():
+    """The floor is whichever revision this build can actually start against.
 
-    Derived from the revision chain rather than hardcoded. An earlier version
-    pinned the literal 'f6b4d8e2a3c5', which meant every later migration failed
-    this test whether or not the floor was right -- and the path of least
-    resistance was to edit the expected string instead of checking the rule.
-    A test that has to be silenced to land ordinary work protects nothing.
+    Two cases, and the head migration decides which: if head is additive the
+    build still runs on the schema before it, so the floor is head's parent;
+    if head is a contract migration -- it removes or repurposes something the
+    new code reads -- the build cannot start on the old schema and the floor is
+    head itself.
+
+    Derived, never pinned to a literal. An earlier version hardcoded the
+    revision id, so every later migration failed this test whether or not the
+    floor was right, and the path of least resistance was to edit the expected
+    string instead of checking the rule. A test that has to be silenced to land
+    ordinary work stops protecting anything.
     """
-    versions = ROOT / "backend/alembic/versions"
-    revs = {}
-    for path in versions.glob("*.py"):
-        text = path.read_text()
-        rev = re.search(r"(?m)^revision(?::[^=]*)?\s*=\s*['\"]([^'\"]+)", text)
-        if not rev:
-            continue
-        down = re.search(
+    from app.db.migrate import ADDITIVE, classify_source, revision_sources
+
+    sources = revision_sources()
+    parents = {}
+    for rev, (_, text) in sources.items():
+        m = re.search(
             r"(?m)^down_revision(?::[^=]*)?\s*=\s*(?:\(([^)]*)\)|['\"]([^'\"]+)['\"]|None)",
             text,
         )
-        parents = []
-        if down:
-            if down.group(1):
-                parents = [x.strip().strip("'\"") for x in down.group(1).split(",") if x.strip()]
-            elif down.group(2):
-                parents = [down.group(2)]
-        revs[rev.group(1)] = parents
+        got = []
+        if m:
+            if m.group(1):
+                got = [x.strip().strip("'\"") for x in m.group(1).split(",") if x.strip()]
+            elif m.group(2):
+                got = [m.group(2)]
+        parents[rev] = got
 
     children = {}
-    for rev, parents in revs.items():
-        for parent in parents:
+    for rev, ps in parents.items():
+        for parent in ps:
             children.setdefault(parent, []).append(rev)
-    heads = [r for r in revs if r not in children]
+    heads = [r for r in parents if r not in children]
     assert len(heads) == 1, f"expected one head, found {heads}"
-
-    expected = revs[heads[0]]
-    assert len(expected) == 1, f"head {heads[0]} is a merge revision: {expected}"
+    head = heads[0]
 
     declared = [
         line.strip()
         for line in (ROOT / "backend/MIN_DB_REVISION").read_text().splitlines()
         if line.strip() and not line.strip().startswith("#")
     ]
-    assert declared == expected, f"declared {declared}, head's parent is {expected}"
+    assert len(declared) == 1
+
+    if classify_source(sources[head][1]) == ADDITIVE:
+        assert declared == parents[head], (
+            f"head {head} is additive, so the floor is its parent "
+            f"{parents[head]}, not {declared}"
+        )
+    else:
+        assert declared == [head], (
+            f"head {head} is a contract migration, so the build cannot start "
+            f"on the older schema and the floor is head itself, not {declared}"
+        )
