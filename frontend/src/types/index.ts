@@ -229,8 +229,15 @@ export interface ServiceRequestDetail extends ServiceRequest {
 
 export interface RequestComment {
     id: number;
-    service_request_id: number;
-    user_id: number | null;
+    // Absent on the public tracker's copy: both are internal identifiers the
+    // unauthenticated comments route no longer emits (open311.py,
+    // PublicRequestCommentResponse). Present on the staff endpoint.
+    service_request_id?: number;
+    user_id?: number | null;
+    // Stated by the public route, which cannot expose user_id for the client
+    // to infer authorship from. Absent on the staff endpoint, where
+    // commentActor still derives it. See commentUI.tsx.
+    author_type?: 'staff' | 'resident' | 'integration';
     username: string;
     content: string;
     visibility: CommentVisibility;

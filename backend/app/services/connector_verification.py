@@ -279,6 +279,11 @@ async def check_integration_now(db, integration, *, build=None, guard=None,
     # sweep: `guard` writes the health row for a call that failed, so recording
     # it again here would count one rejected password twice and take the
     # connector to "down" a sweep early.
+    # Scrubbed by the real module, not the injected `health`. Injection exists
+    # so a test can watch what gets *recorded*; how a vendor string is made safe
+    # to render is not a policy a caller gets to stub out.
+    from app.services.connector_health import clean_error
+
     # Scrubbed before it leaves: this `detail` is returned to the browser and
     # written verbatim into integration_sync_logs by the Test endpoint. The
     # health row was already scrubbed by `record_failure`; the copy an admin
@@ -289,7 +294,7 @@ async def check_integration_now(db, integration, *, build=None, guard=None,
         connector = await build(integration)
     except Exception as exc:
         await health.record_failure(db, name, str(exc)[:300], provider=platform)
-        return {"ok": False, "detail": health.clean_error(exc)}
+        return {"ok": False, "detail": clean_error(exc)}
 
     try:
         result = await guard(name, connector.test_connection, db=db, provider=platform)
@@ -298,9 +303,9 @@ async def check_integration_now(db, integration, *, build=None, guard=None,
         try:
             result = await guard(name, connector.test_connection, db=db, provider=platform)
         except Exception as exc:
-            return {"ok": False, "detail": health.clean_error(exc)}
+            return {"ok": False, "detail": clean_error(exc)}
     except Exception as exc:
-        return {"ok": False, "detail": health.clean_error(exc)}
+        return {"ok": False, "detail": clean_error(exc)}
 
     breaker.reset(name)
     if isinstance(result, dict) and result.get("verified") is False:

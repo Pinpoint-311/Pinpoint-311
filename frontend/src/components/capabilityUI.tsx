@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Check, AlertCircle, CircleDashed, HelpCircle, ChevronDown, Loader2, PowerOff } from 'lucide-react';
+import { Check, CheckCircle, AlertCircle, CircleDashed, HelpCircle, ChevronDown, Loader2, PowerOff } from 'lucide-react';
 
 /**
  * The shared vocabulary for a capability, wherever it appears.
@@ -156,6 +156,7 @@ export function CapabilityTile({ icon: Icon, label, size = 'md', tone = 'normal'
  */
 export function Action({
     variant = 'ghost', size = 'md', busy = false, disabled, onClick, children, title, chevron = false,
+    expanded, controls,
 }: {
     variant?: 'primary' | 'ghost';
     size?: 'sm' | 'md';
@@ -165,6 +166,11 @@ export function Action({
     children: ReactNode;
     title?: string;
     chevron?: boolean;
+    /* When the button opens a drawer rather than doing something. The chevron
+     * says so to anyone who can see it and to nobody else, so a button that
+     * carries one and controls a panel has to say which state it is in. */
+    expanded?: boolean;
+    controls?: string;
 }) {
     const pad = size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm';
     const skin = variant === 'primary'
@@ -176,13 +182,110 @@ export function Action({
             onClick={onClick}
             disabled={disabled || busy}
             title={title}
+            aria-expanded={expanded}
+            aria-controls={controls}
+            aria-busy={busy || undefined}
             className={`${pad} ${skin} rounded-2xl border inline-flex items-center gap-1.5 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300`}
         >
             {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />}
             {children}
-            {chevron && <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />}
+            {chevron && (
+                <ChevronDown
+                    className={`w-3.5 h-3.5 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+                    aria-hidden="true"
+                />
+            )}
         </button>
     );
+}
+
+/**
+ * The verdict of the last action, in the one treatment both card surfaces use.
+ *
+ * Both the provider cards and the town-system cards render "here is what the
+ * check found" directly under the card's buttons, and both had hand-rolled it:
+ * one at `rounded-xl px-3 py-2.5` with an icon, the other at `rounded-lg px-3
+ * py-2` with none. The colours also carried the whole meaning on the second
+ * one, which is the version a colour-blind clerk reads as three identical grey
+ * boxes. Icon and a screen-reader word, so the outcome survives losing colour.
+ *
+ * `unknown` is not a soft failure: it is "we reached it and there was nothing
+ * here to verify", which the pill vocabulary spells `unverifiable`. Amber for
+ * that would be a warning about something nobody can act on.
+ */
+export function ResultNote({ tone, children }: { tone: 'ok' | 'bad' | 'unknown'; children: ReactNode }) {
+    const skin = {
+        ok: { cls: 'bg-emerald-500/10 border-emerald-400/30 text-emerald-200', Icon: CheckCircle, word: 'Success' },
+        bad: { cls: 'bg-amber-500/10 border-amber-400/30 text-amber-200', Icon: AlertCircle, word: 'Problem' },
+        unknown: { cls: 'bg-white/[0.05] border-white/15 text-white/70', Icon: HelpCircle, word: 'Note' },
+    }[tone];
+    return (
+        <div className={`mt-3 rounded-xl px-3 py-2.5 text-xs border flex items-start gap-2 ${skin.cls}`}>
+            <skin.Icon className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+            <span className="sr-only">{skin.word}: </span>
+            {/* pre-line: the tests report their work as numbered steps, one per
+                line — collapsing them to a paragraph turns a verifiable log back
+                into a claim. */}
+            <span className="min-w-0 whitespace-pre-line">{children}</span>
+        </div>
+    );
+}
+
+/** The same sliding pill the Modules screen uses, so on/off looks like on/off
+ * everywhere in the console rather than being a labelled button here and a
+ * toggle there. Held to the exact geometry of the modules one on purpose.
+ *
+ * Lived in ServiceProviders, which meant the town-system cards drew their own
+ * at a different size with a different focus ring — the exact drift this module
+ * exists to stop. */
+export function Switch({ on, busy, disabled, onChange, label }: {
+    on: boolean; busy?: boolean; disabled?: boolean;
+    onChange: () => void; label: string;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onChange}
+            disabled={disabled}
+            role="switch"
+            aria-checked={on}
+            aria-label={label}
+            className={`relative inline-flex items-center rounded-full transition-colors duration-300 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 disabled:opacity-50 ${on ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-slate-600'}`}
+            style={{ width: 44, height: 24, minHeight: 24, maxHeight: 24, padding: 0 }}
+        >
+            <span
+                className={`inline-block rounded-full bg-white shadow-md transition-transform duration-300 ${on ? 'translate-x-6' : 'translate-x-1'} ${busy ? 'animate-pulse' : ''}`}
+                style={{ width: 16, height: 16 }}
+                aria-hidden="true"
+            />
+        </button>
+    );
+}
+
+/**
+ * Say something to a screen reader, through the one live region this app has.
+ *
+ * `#aria-live-region` is declared once in index.html and is the only polite
+ * region on any page; AccessibilityContext.announce writes to the same element,
+ * and delegates here so there is a single implementation of the clear/set/clear
+ * dance. Cards must not mount their own: several live regions on one screen is
+ * how a stale message gets read over a fresh one, and the setup page can carry
+ * a dozen cards that all want to report a check result.
+ *
+ * textContent, never innerHTML: most of what gets announced here is a vendor's
+ * own error string, which is remote text and has no business being parsed as
+ * markup.
+ */
+export function announceStatus(message: string, priority: 'polite' | 'assertive' = 'polite') {
+    if (typeof document === 'undefined') return;
+    const region = document.getElementById('aria-live-region');
+    if (!region) return;
+    region.setAttribute('aria-live', priority);
+    region.textContent = '';
+    // A same-text rewrite is not a change, so the region has to empty first and
+    // land the message on a later tick for the reading to be triggered at all.
+    setTimeout(() => { region.textContent = message; }, 100);
+    setTimeout(() => { region.textContent = ''; }, 3000);
 }
 
 /* CapabilityRow was here.

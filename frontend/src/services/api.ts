@@ -118,7 +118,7 @@ export interface IntegrationTestResult {
     // from a connection that had never been authenticated.
     verified?: boolean;
     // Things that work today but will stop a report from being filed — e.g. a
-    // SeeClickFix request type asking a required question we cannot answer.
+    // vendor request type asking a required question we cannot answer.
     warnings?: string[];
 }
 
