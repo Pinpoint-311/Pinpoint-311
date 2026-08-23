@@ -115,10 +115,28 @@ def _catalog_labels():
     return labels
 
 
-def test_every_arm_output_that_claims_a_box_names_a_real_one():
+def _boxes_claimed_in(text: str) -> list:
+    """Every label a "Pinpoint box: ..." phrase in this text points a clerk at."""
+    claimed = []
+    for match in re.findall(r"Pinpoint box(?:es)?:\s*([^.\n']+)", text):
+        for label in re.split(r"\s+and\s+|,", match):
+            label = label.strip().rstrip(".")
+            # Trailing prose after the label, e.g. "- the same value in both".
+            label = re.split(r"\s+[-–—]\s+", label)[0].strip()
+            if label:
+                claimed.append(label)
+    return claimed
+
+
+def test_every_output_that_claims_a_box_names_a_real_one():
     """The outputs say "Pinpoint box: Key Vault URL". If that label stops
     existing -- renamed, or the field dropped -- the template is directing an
-    operator at a box that is not on the card, and nothing else would say so."""
+    operator at a box that is not on the card, and nothing else would say so.
+
+    Both templates, scanned as they are written rather than through the pinned
+    maps below: the maps are a second, deliberate copy, and a label added to a
+    template and to the map together would sail past a check that only read the
+    map."""
     template = _arm()
     labels = _catalog_labels()
     if not labels:
@@ -126,16 +144,17 @@ def test_every_arm_output_that_claims_a_box_names_a_real_one():
 
     claimed = []
     for output in template["outputs"].values():
-        description = output.get("metadata", {}).get("description", "")
-        for match in re.findall(r"Pinpoint box(?:es)?:\s*([^.]+)", description):
-            for label in re.split(r"\s+and\s+|,", match):
-                label = label.strip().rstrip(".")
-                # Trailing prose after the label, e.g. "- the same value in both".
-                label = re.split(r"\s+[-–—]\s+", label)[0].strip()
-                if label:
-                    claimed.append(label)
+        claimed.extend(_boxes_claimed_in(output.get("metadata", {}).get("description", "")))
+    arm_claims = list(claimed)
+    assert arm_claims, "no ARM output claims a Pinpoint box; the labelling convention moved"
 
-    assert claimed, "no ARM output claims a Pinpoint box; the labelling convention moved"
+    if CFN.exists():
+        cfn_claims = _boxes_claimed_in(CFN.read_text())
+        assert cfn_claims, (
+            "no CloudFormation output claims a Pinpoint box; the labelling convention moved"
+        )
+        claimed.extend(cfn_claims)
+
     unknown = [c for c in claimed if c not in labels]
     assert not unknown, (
         f"ARM outputs name boxes that no catalog has: {unknown}. "
@@ -146,6 +165,116 @@ def test_every_arm_output_that_claims_a_box_names_a_real_one():
 # ---------------------------------------------------------------------------
 # Least privilege, and scoped to what was created
 # ---------------------------------------------------------------------------
+
+def test_arm_role_assignments_say_what_kind_of_principal_they_are_granting_to():
+    """Without `principalType`, ARM looks the object id up in Entra, and a
+    service principal created minutes earlier -- which is this exact flow, where
+    the operator registers the app and then deploys -- may not have replicated.
+    The deployment then fails with PrincipalNotFound, intermittently: it passes
+    wherever the principal is old and fails on the first town that follows the
+    steps in order. Stating it removes the lookup."""
+    template = _arm()
+    assignments = [r for r in template["resources"]
+                   if r["type"] == "Microsoft.Authorization/roleAssignments"]
+    assert assignments, "the ARM template grants nothing; the vault would be unusable"
+    for assignment in assignments:
+        assert assignment["properties"].get("principalType") == "ServicePrincipal", (
+            f"role assignment {assignment['name']} does not declare "
+            "principalType ServicePrincipal, so ARM will resolve the principal against "
+            "Entra and may fail on replication lag"
+        )
+
+
+def test_the_optional_principal_says_what_leaving_it_blank_costs():
+    """Azure's form shows the parameter description and nothing else. Blank is a
+    legitimate answer, but the consequence -- a vault and a key Pinpoint has no
+    permission to use, reported as a successful deployment -- is invisible unless
+    the description says it. The same description is also the only place the
+    operator is told which of the two near-identical ids on the Entra page to
+    copy, and that a user object id will now be rejected."""
+    description = _arm()["parameters"]["pinpointPrincipalObjectId"]["metadata"]["description"]
+    lowered = description.lower()
+    for fragment in ("blank", "by hand", "access control", "crypto user"):
+        assert fragment in lowered, (
+            f"the pinpointPrincipalObjectId description no longer says {fragment!r}: "
+            "an operator leaving it empty is not told what they must do afterwards"
+        )
+    assert "object id" in lowered and "client) id" in lowered, (
+        "the description no longer distinguishes the object id from the application "
+        "(client) id, which are adjacent and identical-looking on the same Entra page"
+    )
+    assert "serviceprincipal" in lowered.replace(" ", ""), (
+        "the description does not warn that a user object id is now rejected, which is "
+        "the behaviour change principalType introduces"
+    )
+
+
+def test_the_vault_audit_log_is_offered_and_only_created_when_asked_for():
+    """Key Vault retains nothing about key access on its own. A diagnostic
+    setting is the whole of the audit trail our setup copy implies, and it has to
+    be conditional because it can only point at a destination that already
+    exists."""
+    template = _arm()
+    parameter = template["parameters"]["auditLogDestinationId"]
+    assert parameter["defaultValue"] == "", "the audit destination is no longer optional"
+    lowered = parameter["metadata"]["description"].lower()
+    assert "audit" in lowered and ("no key-access" in lowered or "retains no" in lowered), (
+        "the auditLogDestinationId description no longer states that leaving it empty "
+        "means no key-access audit trail is retained"
+    )
+
+    settings = [r for r in template["resources"]
+                if r["type"] == "Microsoft.Insights/diagnosticSettings"]
+    assert len(settings) == 1, "the vault's diagnostic setting is missing"
+    setting = settings[0]
+    assert setting.get("condition"), (
+        "the diagnostic setting is unconditional, so a deployment with no destination "
+        "would fail on a resource that cannot be created"
+    )
+    # The condition may go through a variable; follow it to the parameter.
+    resolved = setting["condition"]
+    for name, expression in template.get("variables", {}).items():
+        if f"variables('{name}')" in resolved and isinstance(expression, str):
+            resolved += " " + expression
+    assert "auditLogDestinationId" in resolved, (
+        "the diagnostic setting is not conditional on a destination being supplied"
+    )
+    assert "Microsoft.KeyVault/vaults/" in setting.get("scope", ""), (
+        "the diagnostic setting is not scoped to the vault"
+    )
+    categories = [entry["category"] for entry in setting["properties"]["logs"]]
+    assert "AuditEvent" in categories, (
+        "the diagnostic setting routes no AuditEvent category, which is the one that "
+        "records who used the key"
+    )
+
+
+def test_the_vault_says_why_it_is_reachable_from_the_internet():
+    """Deliberate, and a government security review will ask. `publicNetwork-
+    Access: Enabled` because Pinpoint commonly runs outside Azure -- a vault
+    behind a virtual network would be unreachable by the application it exists to
+    serve. "It is the default" is not an answer; the file has to carry the
+    reasoning where a reviewer reads it."""
+    template = _arm()
+    vault = next(r for r in template["resources"] if r["type"] == "Microsoft.KeyVault/vaults")
+    assert vault["properties"]["publicNetworkAccess"] == "Enabled", (
+        "the vault's network access changed; if that is deliberate this test and the "
+        "README paragraph explaining the old choice both need rewriting"
+    )
+    comments = vault.get("comments", "").lower()
+    assert "publicnetworkaccess" in comments.replace(" ", ""), (
+        "the vault no longer explains its network posture in the template itself"
+    )
+    assert "outside azure" in comments or "oracle" in comments, (
+        "the vault's comment no longer gives the reason -- Pinpoint usually runs outside "
+        "Azure -- which is the whole of the justification"
+    )
+
+    readme = (TEMPLATES / "azure/README.md").read_text().lower()
+    assert "publicnetworkaccess" in readme.replace(" ", "") or "reachable from the internet" in readme, (
+        "the Azure README does not document why the vault is reachable from the internet"
+    )
+
 
 def test_arm_role_assignments_are_scoped_to_the_vault():
     """A role assignment with no `scope` lands on the resource group, which is
@@ -418,6 +547,165 @@ def test_every_box_a_template_names_is_a_real_field_in_a_real_catalog():
     )
 
 
+# ---------------------------------------------------------------------------
+# AWS, on its own terms
+# ---------------------------------------------------------------------------
+
+def _cfn() -> str:
+    _skip_without(CFN)
+    return CFN.read_text()
+
+
+def test_the_kms_key_policy_cannot_lock_the_account_out_of_its_own_key():
+    """The one mistake in AWS that nobody can repair afterwards -- not the
+    account team, not AWS support. The root statement is what keeps the key
+    administrable, and it is also what lets an IAM policy in the account grant
+    access to it at all."""
+    source = _cfn()
+    policy = source.split("      KeyPolicy:", 1)
+    assert len(policy) == 2, "the KMS key policy was restructured; re-point this test"
+    body = policy[1].split("\n  PiiKeyAlias:", 1)[0]
+
+    assert "iam::${AWS::AccountId}:root" in body and "Action: 'kms:*'" in body, (
+        "the account root no longer holds kms:* on this key. A KMS key whose policy "
+        "locks out the account that owns it cannot be repaired by anybody."
+    )
+    grant = body.split("Sid: Pinpoint311MayUseTheKey", 1)
+    assert len(grant) == 2, "Pinpoint's grant on the key was renamed"
+    grant = grant[1].split("- !If", 1)[0]
+    assert "kms:Encrypt" in grant and "kms:Decrypt" in grant and "kms:GenerateDataKey" in grant, (
+        "Pinpoint's grant no longer covers the three actions it needs"
+    )
+    for administrative in ("kms:*", "kms:PutKeyPolicy", "kms:ScheduleKeyDeletion",
+                           "kms:CreateGrant", "kms:Delete"):
+        assert administrative not in grant, (
+            f"Pinpoint's grant on the key now includes {administrative}, which is key "
+            "administration rather than key use"
+        )
+
+
+def test_the_key_is_retained_rotated_and_hard_to_delete_by_accident():
+    """Three claims the README makes about this key. Each is one line in the
+    file and each would be silently untrue if the line were dropped."""
+    source = _cfn()
+    key = source.split("  PiiKey:", 1)[1].split("\n  PiiKeyAlias:", 1)[0]
+    assert "DeletionPolicy: Retain" in key
+    assert "UpdateReplacePolicy: Retain" in key
+    assert "EnableKeyRotation: true" in key, "automatic key rotation is off"
+    assert "Sid: NobodyMayStartDeletingThisKey" in key, (
+        "PreventAccidentalKeyDeletion no longer adds a deny statement, which the README "
+        "and the parameter description both promise it does"
+    )
+    assert "kms:ScheduleKeyDeletion" in key and "kms:DisableKey" in key
+
+
+def test_the_role_can_be_assumed_by_both_ways_pinpoint_actually_signs_in():
+    """The application probes the ECS container credentials endpoint and then
+    EC2 IMDSv2. A trust policy naming only one of those leaves whichever the town
+    used unable to assume the role at all, and the failure reads as bad
+    credentials rather than as a missing trust relationship."""
+    source = _cfn()
+    trust = source.split("      AssumeRolePolicyDocument:", 1)
+    assert len(trust) == 2, "the role's trust policy was restructured"
+    body = trust[1].split("\n  PinpointInstanceProfile:", 1)[0]
+    assert "ec2.amazonaws.com" in body, "the instance-profile path cannot assume this role"
+    assert "ecs-tasks.amazonaws.com" in body, "the ECS task-role path cannot assume this role"
+    assert "sts:AssumeRole" in body
+
+    # And the template says which arrangement it assumes, in the place a reader
+    # of the file will see it.
+    lowered = source.lower()
+    assert "imds" in lowered, (
+        "the template no longer mentions IMDS, so nothing tells an operator running "
+        "Pinpoint in a container on EC2 that the default metadata hop limit of 1 stops "
+        "the application seeing any credentials"
+    )
+    assert "task role" in lowered, (
+        "the template no longer says to use the ECS *task* role rather than the task "
+        "execution role, which is the adjacent field that silently does not work"
+    )
+
+
+def test_secrets_manager_access_is_scoped_to_pinpoints_own_secrets():
+    """`Resource: '*'` on GetSecretValue lets a 311 portal read every secret in
+    the account, including ones belonging to systems it has nothing to do with.
+    Scoped to the prefix Pinpoint names its own under; ListSecrets is the one
+    action AWS refuses to let a policy scope, so it stands alone."""
+    source = _cfn()
+    assert "SecretsPrefix" in source.split("Parameters:", 1)[1].split("Conditions:", 1)[0], (
+        "the secrets prefix is no longer a parameter, so the grant cannot be scoped"
+    )
+    block = source.split("Sid: KeepTownCredentialsInSecretsManager", 1)
+    assert len(block) == 2, "the Secrets Manager grant was renamed"
+    block = block[1].split("- !If", 1)[0]
+    assert "secretsmanager:GetSecretValue" in block
+    assert "${SecretsPrefix}*" in block, (
+        "the Secrets Manager grant is no longer scoped to Pinpoint's own secret names"
+    )
+    assert "Resource: '*'" not in block, (
+        "the Secrets Manager grant is account-wide again"
+    )
+    assert "Sid: ListSecretNames" in source, (
+        "ListSecrets was folded back into the scoped statement; AWS rejects a policy "
+        "that scopes it, so the whole statement stops working"
+    )
+
+
+def test_the_aws_toggles_say_what_leaving_them_off_costs():
+    """Every one of these produces a stack that deploys cleanly and a card that
+    cannot work, discovered at first use. AllowBedrock is the one that matters
+    most: it is off by default, and a town that chose AWS for AI triage needs it
+    on."""
+    source = _cfn()
+    parameters = source.split("Parameters:", 1)[1].split("\nConditions:", 1)[0]
+    for name, fragments in (
+        ("AllowBedrock", ("ai triage", "never work")),
+        ("AllowTranslate", ("access-denied", "reports success")),
+        ("AllowRekognition", ("still succeeds", "photo screening")),
+        ("AllowSecretsManager", ("fail",)),
+    ):
+        block = parameters.split(f"\n  {name}:", 1)[1].split("\n\n", 1)[0].lower()
+        for fragment in fragments:
+            assert fragment in block, (
+                f"the {name} description no longer says what choosing No costs "
+                f"(looking for {fragment!r})"
+            )
+
+
+def test_the_aws_readme_is_honest_about_the_key_usage_audit_trail():
+    """CloudTrail records KMS management events everywhere by default and data
+    events nowhere. Our setup copy implies an access trail; if the template does
+    not create one, the README has to say so and say what it costs to add."""
+    _skip_without(CFN)
+    readme = (TEMPLATES / "aws/README.md").read_text().lower()
+    assert "data event" in readme, "the README does not distinguish data events from management events"
+    assert "cloudtrail" in readme
+    assert "per event" in readme or "charged" in readme, (
+        "the README recommends turning on data events without saying they are charged "
+        "per event, which for a portal that decrypts on every page view is the whole "
+        "of the decision"
+    )
+    assert "put-event-selectors" in readme, "the README says what is missing but not how to add it"
+
+
+def test_the_aws_readme_documents_the_network_posture_rather_than_implying_it():
+    readme = (TEMPLATES / "aws/README.md").read_text().lower()
+    assert "vpc endpoint" in readme, (
+        "the README does not say whether VPC endpoints are created, so the reachability "
+        "posture of the key is left to be inferred"
+    )
+    assert "sigv4" in readme or "public aws api" in readme
+
+
+def test_the_aws_stack_still_creates_no_long_lived_credential():
+    """Restated beside the changes above, because the scoped Secrets Manager
+    grant and the audit wording are the kind of edit that reaches for an access
+    key when something does not work."""
+    source = _cfn()
+    assert "AWS::IAM::AccessKey" not in source
+    assert "AWS::IAM::User" not in source
+
+
 def test_the_aws_key_card_asks_for_nothing_the_stack_refuses_to_create():
     """The CloudFormation template deliberately creates a role and no access
     key, and the card has to agree: a required Access Key ID box beside a
@@ -438,3 +726,157 @@ def test_the_aws_key_card_asks_for_nothing_the_stack_refuses_to_create():
             "the AWS encryption card offers an access-key box. The whole point of the instance "
             "profile the template creates is that there is no long-lived credential to paste."
         )
+
+
+# ---------------------------------------------------------------------------
+# The served copy differs from the published one in default values, and in
+# nothing else at all
+#
+# The setup card said "Microsoft Azure -- Key management, AI triage,
+# Translation" and Azure's form arrived with `deployAzureOpenAI: false` and
+# `deployCognitiveServices: false`, because those are the repository's defaults
+# and the repository does not know which town is asking. Pressing Create then
+# produced a vault and no AI resources, and the two cards the operator came for
+# stayed empty with nothing saying why.
+#
+# Flipping the on-disk defaults is not the fix -- it would create billable
+# resources in the account of every town that did not ask. Rewriting them on the
+# way out is, and the whole safety of that rests on it being *only* defaults: a
+# reviewer diffing what their instance serves against the published file has to
+# be able to see, at a glance, that nothing else moved.
+# ---------------------------------------------------------------------------
+
+def test_only_default_values_may_differ_between_the_served_and_published_arm_template():
+    module = _route_module()
+    on_disk = ARM.read_text()
+    for selected in (
+        {},
+        {"kms": "azure", "ai": "azure", "translation": "azure", "redaction": "azure"},
+        {"ai": "azure"},
+        {"redaction": "azure"},
+        {"kms": "google", "ai": "vertex"},
+    ):
+        served = module.apply_selected_defaults(
+            "azure/pinpoint-311.json", on_disk.encode(), selected
+        ).decode()
+        assert module._arm_without_defaults(json.loads(served)) == \
+            module._arm_without_defaults(json.loads(on_disk)), (
+                f"serving the ARM template with {selected} changed something other than a "
+                "default value"
+            )
+        # Textually too: same file, same line count, same lines but for defaults.
+        served_lines = [l for l in served.splitlines() if '"defaultValue"' not in l]
+        disk_lines = [l for l in on_disk.splitlines() if '"defaultValue"' not in l]
+        assert served_lines == disk_lines, "the served ARM template was reformatted"
+
+
+def test_only_default_values_may_differ_between_the_served_and_published_cfn_template():
+    _skip_without(CFN)
+    module = _route_module()
+    on_disk = CFN.read_text()
+    for selected in (
+        {},
+        {"ai": "bedrock", "translation": "aws", "redaction": "aws", "secrets": "aws"},
+        {"ai": "bedrock"},
+        {"ai": "azure"},
+    ):
+        served = module.apply_selected_defaults(
+            "aws/pinpoint-311.yaml", on_disk.encode(), selected
+        ).decode()
+        served_lines = [l for l in served.splitlines() if not l.startswith("    Default:")]
+        disk_lines = [l for l in on_disk.splitlines() if not l.startswith("    Default:")]
+        assert served_lines == disk_lines, (
+            f"serving the CloudFormation template with {selected} changed something other "
+            "than a Default: line"
+        )
+        # Every Default: line still parses as one, in the same place.
+        served_defaults = [(i, l) for i, l in enumerate(served.splitlines())
+                           if l.startswith("    Default:")]
+        disk_defaults = [(i, l) for i, l in enumerate(on_disk.splitlines())
+                         if l.startswith("    Default:")]
+        assert [i for i, _ in served_defaults] == [i for i, _ in disk_defaults], (
+            "a Default: line moved, was added or was removed"
+        )
+
+
+def test_the_served_defaults_follow_the_towns_own_selections():
+    """The bug this exists for: the card said Azure would do AI triage and
+    translation, and the form arrived with both switched off."""
+    module = _route_module()
+    on_disk = ARM.read_text()
+
+    served = json.loads(module.apply_selected_defaults(
+        "azure/pinpoint-311.json",
+        on_disk.encode(),
+        {"kms": "azure", "ai": "azure", "translation": "azure"},
+    ))
+    defaults = {name: p.get("defaultValue") for name, p in served["parameters"].items()}
+    assert defaults["deployKeyVault"] is True
+    assert defaults["deployAzureOpenAI"] is True, (
+        "a town that selected Azure for AI triage still gets a form with the OpenAI "
+        "account switched off"
+    )
+    assert defaults["deployCognitiveServices"] is True, (
+        "a town that selected Azure for translation still gets a form with the AI "
+        "Services account switched off"
+    )
+
+    # Photo screening alone is enough for the multi-service account: one account
+    # serves Vision, Face and Translator.
+    served = json.loads(module.apply_selected_defaults(
+        "azure/pinpoint-311.json", on_disk.encode(), {"redaction": "azure"}
+    ))
+    assert served["parameters"]["deployCognitiveServices"]["defaultValue"] is True
+
+    if CFN.exists():
+        served = module.apply_selected_defaults(
+            "aws/pinpoint-311.yaml", CFN.read_text().encode(), {"ai": "bedrock"}
+        ).decode()
+        block = served.split("\n  AllowBedrock:", 1)[1][:200]
+        assert "Default: 'Yes'" in block, (
+            "a town that selected AWS for AI triage still gets a stack with no Bedrock "
+            "permission at all"
+        )
+
+
+def test_an_unreadable_or_absent_selection_leaves_the_published_defaults_alone():
+    """Conservative is the right failure. An instance that cannot tell what the
+    town chose must serve the repository's defaults rather than guess, because
+    guessing wrong creates billable resources in somebody else's account."""
+    module = _route_module()
+    for relative, path in (("azure/pinpoint-311.json", ARM), ("aws/pinpoint-311.yaml", CFN)):
+        if not path.exists():
+            continue
+        body = path.read_bytes()
+        assert module.apply_selected_defaults(relative, body, {}) == body
+        assert module.apply_selected_defaults(relative, body, {"ai": "somethingelse"}) == body
+
+
+def test_a_default_is_never_turned_off_on_the_way_out():
+    """Only ever off-to-on. "Not selected" and "not selected *yet*" are the same
+    reading from here, and the operator deploying a key vault has usually not
+    finished choosing Azure inside Pinpoint at the moment they press the button.
+    Serving them `deployKeyVault: false` would produce no vault at all, which is
+    a worse failure than the extra resource this rewrite exists to avoid."""
+    module = _route_module()
+    served = json.loads(module.apply_selected_defaults(
+        "azure/pinpoint-311.json", ARM.read_bytes(), {"kms": "google", "ai": "vertex"}
+    ))
+    assert served["parameters"]["deployKeyVault"]["defaultValue"] is True, (
+        "an on-by-default toggle was switched off because the town's current selection "
+        "names another cloud"
+    )
+    assert all(value is not False or name != "deployKeyVault"
+               for name, value in
+               [(n, p.get("defaultValue")) for n, p in served["parameters"].items()])
+
+
+def test_the_route_only_ever_adjusts_defaults_and_says_so():
+    """The hard constraint, stated where the next person to edit this route will
+    read it. A docstring is not a mechanism, but the two tests above are, and
+    this is what points at them."""
+    doc = (_route_module().get_deploy_template.__doc__ or "").lower()
+    assert "defaultvalue" in doc and "default:" in doc, (
+        "the route's docstring no longer names the two fields it is allowed to touch"
+    )
+    assert "nothing else" in doc or "only" in doc
