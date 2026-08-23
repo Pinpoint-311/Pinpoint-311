@@ -25,6 +25,7 @@ from app.core.celery_app import celery_app
 from app.db.session import SessionLocal
 from app.models import (
     IntegrationConfig,
+    IntegrationDeadLetter,
     IntegrationLink,
     IntegrationSyncLog,
     MapLayer,
@@ -65,6 +66,125 @@ def _safe_error(exc) -> str:
     scrubber, every surface, rather than two that drift.
     """
     return connector_health.clean_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# The backlog of pushes that have not landed yet
+#
+# A failed push wrote one row to `integration_sync_logs` and stopped. That table
+# is an audit trail: nothing reads it back and nothing retries from it, so a
+# report that could not reach the county during a twenty-minute vendor outage
+# never arrived, and the only trace was a line in a drawer nobody opens.
+#
+# `integration_dead_letters` is the work still owed. A row leaves it two ways --
+# the replay lands, or an administrator says it should not be sent -- and never
+# by being quietly dropped, because giving up silently is the failure this
+# exists to prevent. After the schedule below is exhausted the row STAYS,
+# unscheduled and visible; it stops costing the vendor requests and starts
+# costing somebody a decision, which is the right way round.
+# ---------------------------------------------------------------------------
+
+# Hours between attempts. Deliberately front-loaded: most vendor failures are a
+# gateway blip or a deploy and clear in minutes, and the long tail is a revoked
+# credential that no amount of retrying will fix.
+DEAD_LETTER_BACKOFF_HOURS = (5 / 60, 15 / 60, 45 / 60, 2, 6, 12, 24, 24)
+MAX_DEAD_LETTER_ATTEMPTS = len(DEAD_LETTER_BACKOFF_HOURS)
+
+
+def _dead_letter_where(integration_id: int, operation: str,
+                       service_request_id=None, comment_id=None):
+    return [
+        IntegrationDeadLetter.integration_id == integration_id,
+        IntegrationDeadLetter.operation == operation,
+        IntegrationDeadLetter.service_request_id.is_(None) if service_request_id is None
+        else IntegrationDeadLetter.service_request_id == service_request_id,
+        IntegrationDeadLetter.comment_id.is_(None) if comment_id is None
+        else IntegrationDeadLetter.comment_id == comment_id,
+    ]
+
+
+async def _record_dead_letter(db, integration_id: int, operation: str, error,
+                              *, service_request_id=None, comment_id=None,
+                              payload=None) -> None:
+    """Remember that this piece of work still has to go out. Never raises.
+
+    Never raises for the same reason connector_health does not: bookkeeping that
+    can break the thing it is keeping books on is worse than none. A deployment
+    that has not run the migration yet has no table here, and the push path must
+    degrade to the old log-only behaviour rather than turning a vendor failure
+    into a task crash.
+    """
+    try:
+        now = datetime.now(timezone.utc)
+        row = (await db.execute(
+            select(IntegrationDeadLetter).where(
+                *_dead_letter_where(integration_id, operation, service_request_id, comment_id),
+                IntegrationDeadLetter.resolved_at.is_(None),
+            )
+        )).scalar_one_or_none()
+        if row is None:
+            row = IntegrationDeadLetter(
+                integration_id=integration_id,
+                operation=operation,
+                service_request_id=service_request_id,
+                comment_id=comment_id,
+                payload=payload or {},
+                attempts=0,
+                first_failed_at=now,
+            )
+            db.add(row)
+        attempts = (row.attempts or 0) + 1
+        row.attempts = attempts
+        row.last_error = _safe_error(error)[:2000]
+        row.last_attempt_at = now
+        if attempts >= MAX_DEAD_LETTER_ATTEMPTS:
+            # Out of automatic attempts. The row stays open and unscheduled: it
+            # is now a question for a person, not a call to keep making.
+            row.next_attempt_at = None
+        else:
+            row.next_attempt_at = now + timedelta(
+                hours=DEAD_LETTER_BACKOFF_HOURS[attempts - 1])
+        await db.commit()
+    except Exception as exc:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.warning("[Integrations] could not record the failed push for "
+                       "integration %s (%s): %s", integration_id, operation,
+                       connector_health.clean_error(exc))
+
+
+async def _clear_dead_letter(db, integration_id: int, operation: str,
+                             *, service_request_id=None, comment_id=None) -> None:
+    """This work finally landed. Never raises.
+
+    Called on every success, not only on a replay: a report that failed at 09:00
+    and was pushed again by an admin pressing Sync at 09:05 is done, and leaving
+    it in the backlog would have the retry loop push it a second time.
+    """
+    try:
+        rows = (await db.execute(
+            select(IntegrationDeadLetter).where(
+                *_dead_letter_where(integration_id, operation, service_request_id, comment_id),
+                IntegrationDeadLetter.resolved_at.is_(None),
+            )
+        )).scalars().all()
+        if not rows:
+            return
+        for row in rows:
+            row.resolved_at = datetime.now(timezone.utc)
+            row.resolution = "succeeded"
+            row.next_attempt_at = None
+        await db.commit()
+    except Exception as exc:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.debug("[Integrations] could not close the backlog entry for "
+                     "integration %s (%s): %s", integration_id, operation,
+                     connector_health.clean_error(exc))
 
 
 def _retired(integration) -> bool:
@@ -527,6 +647,8 @@ def push_request_to_integrations(request_id: int):
                     await db.commit()
                     await _log(db, integration.id, "push", "success",
                                f"{sr.service_request_id} -> {record.external_id}", 1)
+                    await _clear_dead_letter(db, integration.id, "push",
+                                             service_request_id=sr.id)
                     logger.info(f"[Integrations] Pushed {sr.service_request_id} to {integration.platform} as {record.external_id}")
                     # Attach embedded photos to the newly created external record
                     await _push_documents(db, connector, integration, link, sr)
@@ -539,6 +661,11 @@ def push_request_to_integrations(request_id: int):
                     await db.rollback()
                     await _log(db, integration.id, "push", "error",
                                f"{sr.service_request_id}: {_safe_error(e)}")
+                    # The report still has to reach them. Logging it and moving
+                    # on is how a twenty-minute outage silently costs the town
+                    # every report filed during it.
+                    await _record_dead_letter(db, integration.id, "push", e,
+                                              service_request_id=sr.id)
                     logger.warning(f"[Integrations] Push to {integration.platform} failed: {e}")
 
     run_async(_push())
@@ -589,6 +716,8 @@ def push_status_to_integrations(request_id: int, notes: str = None):
                     link.sync_error = None
                     await _log(db, integration.id, "push_status", "success",
                                f"{sr.service_request_id} -> {sr.status}", 1)
+                    await _clear_dead_letter(db, integration.id, "push_status",
+                                             service_request_id=sr.id)
                     # Attach any photos added since the last push (idempotent).
                     await _push_documents(db, connector, integration, link, sr)
                 except Exception as e:
@@ -605,6 +734,11 @@ def push_status_to_integrations(request_id: int, notes: str = None):
                     )
                     await _log(db, integration.id, "push_status", "error",
                                f"{sr.service_request_id}: {_safe_error(e)}")
+                    # A status the vendor never received leaves their record
+                    # showing an open job the town closed weeks ago.
+                    await _record_dead_letter(db, integration.id, "push_status", e,
+                                              service_request_id=sr.id,
+                                              payload={"notes": notes} if notes else {})
                     logger.warning(f"[Integrations] Status push to {integration.platform} failed: {e}")
             await db.commit()
 
@@ -861,6 +995,14 @@ def push_comment_to_integrations(comment_id: int):
             for link, integration in links:
                 if _retired(integration):
                     continue
+                # Already posted to *this* platform. The echo-dedup markers are
+                # written on success, so their presence means the vendor has it
+                # -- and this task can legitimately run twice for one comment: a
+                # Celery redelivery, or a dead-letter replay for a second
+                # integration that failed while this one succeeded. Without the
+                # check the replay posts the same sentence to the vendor again.
+                if _comment_fp(comment.content) in set(link.pushed_comment_ids or []):
+                    continue
                 try:
                     connector = await build_connector_for(integration)
                     if "comments" not in connector.capabilities:
@@ -879,10 +1021,15 @@ def push_comment_to_integrations(comment_id: int):
                     link.pushed_comment_ids = [*(link.pushed_comment_ids or []), *markers]
                     await _log(db, integration.id, "push_comment", "success",
                                f"comment {comment.id} -> {link.external_id}", 1)
+                    await _clear_dead_letter(db, integration.id, "push_comment",
+                                             comment_id=comment.id)
                 except Exception as e:
                     await db.rollback()
                     await _log(db, integration.id, "push_comment", "error",
                                f"comment {comment.id}: {_safe_error(e)}")
+                    await _record_dead_letter(db, integration.id, "push_comment", e,
+                                              service_request_id=comment.service_request_id,
+                                              comment_id=comment.id)
                     logger.warning(f"[Integrations] Comment push to {integration.platform} failed: {e}")
             await db.commit()
 
@@ -977,6 +1124,73 @@ def pull_integration_comments(integration_id: Optional[int] = None):
             await db.commit()
 
     run_async(_pull_comments())
+
+
+@celery_app.task
+def retry_integration_dead_letters(limit: int = 50):
+    """Push again whatever is owed and due. Runs on the beat.
+
+    Replay re-invokes the ordinary push task rather than reimplementing it. That
+    is the whole reason this is small: `push_request_to_integrations` already
+    skips an integration the report is linked to, `push_status_to_integrations`
+    setting the same status twice is a no-op, and the comment path now checks
+    the echo-dedup marker before posting -- so re-running the real task is
+    idempotent per integration, and there is no second copy of the push logic to
+    drift from the first.
+
+    Success is recorded by the push path itself, which clears the backlog entry
+    when it lands. Nothing here marks a row resolved: this task's only job is to
+    ask again.
+
+    Rows past `MAX_DEAD_LETTER_ATTEMPTS` have `next_attempt_at = None` and are
+    not selected. They are not gone -- they are waiting for a person, which is
+    what the admin endpoint is for.
+    """
+    async def _due():
+        async with SessionLocal() as db:
+            try:
+                rows = (await db.execute(
+                    select(IntegrationDeadLetter)
+                    .join(IntegrationConfig,
+                          IntegrationDeadLetter.integration_id == IntegrationConfig.id)
+                    .where(
+                        IntegrationDeadLetter.resolved_at.is_(None),
+                        IntegrationDeadLetter.next_attempt_at.isnot(None),
+                        IntegrationDeadLetter.next_attempt_at <= datetime.now(timezone.utc),
+                        IntegrationConfig.enabled == True,  # noqa: E712
+                    )
+                    .order_by(IntegrationDeadLetter.next_attempt_at.asc())
+                    .limit(max(1, min(int(limit or 50), 500)))
+                )).scalars().all()
+            except Exception as e:
+                # No table yet (migration pending), or the query failed. Either
+                # way the beat must not crash on it.
+                logger.warning("[Integrations] could not read the push backlog: %s",
+                               connector_health.clean_error(e))
+                return []
+            # Read out before the session closes: replaying opens its own.
+            return [(r.operation, r.service_request_id, r.comment_id) for r in rows]
+
+    work = run_async(_due())
+    replayed = 0
+    for operation, service_request_id, comment_id in work:
+        try:
+            if operation == "push" and service_request_id:
+                push_request_to_integrations(service_request_id)
+            elif operation == "push_status" and service_request_id:
+                push_status_to_integrations(service_request_id)
+            elif operation == "push_comment" and comment_id:
+                push_comment_to_integrations(comment_id)
+            else:
+                continue
+            replayed += 1
+        except Exception as e:
+            # The push task records its own failure and reschedules the row.
+            # Reaching here means the task itself blew up, which must not stop
+            # the rest of the backlog.
+            logger.warning("[Integrations] replay of %s failed: %s",
+                           operation, connector_health.clean_error(e))
+    return {"replayed": replayed, "due": len(work)}
 
 
 @celery_app.task

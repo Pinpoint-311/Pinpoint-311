@@ -1023,6 +1023,67 @@ class IntegrationLink(Base):
     service_request = relationship("ServiceRequest")
 
 
+class IntegrationDeadLetter(Base):
+    """An outbound sync that failed, kept until it succeeds or somebody says stop.
+
+    A push that fails writes a row to `integration_sync_logs` and stops. The log
+    is an audit trail -- nothing reads it back, nothing retries from it -- so the
+    resident's report simply never reaches the county, and the only trace is a
+    line in a drawer nobody opens. A vendor outage of twenty minutes silently
+    costs the town every report filed during it.
+
+    One row per (integration, operation, subject), so a report that fails four
+    times is one item with `attempts = 4` rather than four items. `next_attempt_at`
+    is the backoff; `resolved_at` closes it. A row is never deleted by the retry
+    loop: it either succeeds, or it is still here for somebody to look at. Giving
+    up quietly is the failure this table exists to prevent.
+
+    `payload` deliberately holds no PII. Replay re-reads the ServiceRequest and
+    rebuilds the outbound payload from scratch, so what is stored is the
+    identifiers needed to find the work again -- not a copy of a resident's name
+    and phone number sitting in a second table with its own retention story.
+    """
+    __tablename__ = "integration_dead_letters"
+
+    id = Column(Integer, primary_key=True, index=True)
+    integration_id = Column(Integer, ForeignKey("integration_configs.id", ondelete="CASCADE"),
+                            nullable=False, index=True)
+    # push | push_status | push_comment
+    operation = Column(String(30), nullable=False)
+    # The thing that failed to sync. A service request for push/push_status, a
+    # comment for push_comment. Both cascade, so a deleted request takes its
+    # backlog with it rather than leaving a row that can never be replayed.
+    service_request_id = Column(Integer, ForeignKey("service_requests.id", ondelete="CASCADE"),
+                                nullable=True, index=True)
+    comment_id = Column(Integer, ForeignKey("request_comments.id", ondelete="CASCADE"),
+                        nullable=True, index=True)
+    # Non-PII context the replay needs and cannot re-derive: the status note on a
+    # push_status, for instance.
+    payload = Column(JSON, default=dict)
+
+    attempts = Column(Integer, default=0, nullable=False)
+    last_error = Column(Text)
+    first_failed_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_attempt_at = Column(DateTime(timezone=True))
+    next_attempt_at = Column(DateTime(timezone=True), index=True)
+
+    # Set when the replay finally lands, or when an admin decides it should not.
+    resolved_at = Column(DateTime(timezone=True), index=True)
+    resolution = Column(String(20))          # succeeded | discarded
+    resolved_by = Column(String(100))        # the admin, for a discard
+    resolution_note = Column(Text)
+
+    __table_args__ = (
+        # One open item per piece of work. Without it the retry loop and the
+        # push path race to insert on the same failure and the backlog counts
+        # the same report twice.
+        UniqueConstraint("integration_id", "operation", "service_request_id",
+                         "comment_id", name="uq_dead_letter_subject"),
+    )
+
+    integration = relationship("IntegrationConfig")
+
+
 class IntegrationSyncLog(Base):
     """Audit trail of sync operations against external platforms."""
     __tablename__ = "integration_sync_logs"
