@@ -1,0 +1,16 @@
+# Deployment-specific (untracked): keeps the edge proxy attached to the
+# orchestrator's town network so centraldemo.pinpoint311.org and town
+# subdomains stay routable across `up -d` recreations of the caddy container.
+# Without this, recreating caddy from the base compose file alone drops the
+# manual `docker network connect pp311-towns pinpoint-311-caddy-1` and the
+# panel 502s. Deploy with:
+#   docker compose -p pinpoint-311 -f docker-compose.yml -f docker-compose.caddy-towns.yml up -d
+services:
+  caddy:
+    networks:
+      - default
+      - pp311-towns
+
+networks:
+  pp311-towns:
+    external: true

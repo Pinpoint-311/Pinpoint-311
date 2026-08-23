@@ -49,3 +49,11 @@ service-account.json
 gl-secret-detection-report.json
 gl-*-report.json
 backend/celerybeat-schedule
+
+# Database dumps. The live server keeps pg_dump output in backups/ -- 60MB of
+# production rows, including resident names, addresses, emails and phone
+# numbers. It was never ignored, so a `git add -A` in the deployment checkout
+# would have committed the town's residents into the public repository.
+backups/
+*.sql.gz
+db_backup_*.sql
