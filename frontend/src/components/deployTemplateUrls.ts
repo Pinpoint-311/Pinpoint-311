@@ -116,11 +116,17 @@ export function templateBase(origin: string | null | undefined): TemplateBase {
 
 /** Azure's documented portal entry point for a template at a URL. */
 export function azureDeployUrl(base: string): string {
-    return `https://portal.azure.com/#create/Microsoft.Template/uri/${encodeURIComponent(`${base}/azure/pinpoint-311.json`)}`;
+    // `intent` carries the cloud the reader picked in the guide, which lives in
+    // this browser and nowhere the server can see. Without it the template
+    // arrives with AI and translation switched off for someone the page has
+    // just told that choosing a cloud moves them. It can only turn a toggle on.
+    const url = `${base}/azure/pinpoint-311.json?intent=azure`;
+    return `https://portal.azure.com/#create/Microsoft.Template/uri/${encodeURIComponent(url)}`;
 }
 
 /** CloudFormation's console entry point. Lands on the review screen, where a
  *  change set can be taken instead of a stack. */
 export function awsDeployUrl(base: string): string {
-    return `https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=${encodeURIComponent(`${base}/aws/pinpoint-311.yaml`)}&stackName=pinpoint-311`;
+    const url = `${base}/aws/pinpoint-311.yaml?intent=aws`;
+    return `https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=${encodeURIComponent(url)}&stackName=pinpoint-311`;
 }
