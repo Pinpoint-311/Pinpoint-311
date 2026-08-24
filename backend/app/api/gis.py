@@ -3,7 +3,7 @@ import asyncio
 """
 GIS and Geocoding API endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Request, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import Optional
@@ -16,6 +16,20 @@ from app.core.auth import get_current_admin
 from app.services.geocoding import (
     get_geocoding_service, get_boundary_service
 )
+
+from slowapi import Limiter
+
+from app.core.client_ip import rate_limit_key
+
+# Every route below that reaches a third party costs something -- money at
+# Google, or this server's standing with a free provider that will block the IP
+# long before it sends an invoice. None of them were limited at all.
+#
+# Keyed on the resolved caller rather than slowapi's get_remote_address, because
+# behind Caddy that is one container address for the whole town: a per-IP budget
+# keyed on the proxy is a town-wide budget one script can spend on everybody's
+# behalf. Same reasoning, and the same key function, as open311.py.
+limiter = Limiter(key_func=rate_limit_key)
 
 router = APIRouter()
 
@@ -99,8 +113,20 @@ def browser_secret_reader(get_secret):
 
 
 
+# Billed per request -- Google charges $5 per 1,000 geocodes -- unauthenticated,
+# and until now unlimited. A single client could spend a town's mapping budget
+# as fast as it could open connections, and the only signal would be the bill.
+#
+# Two limits, the pattern the photo screening route uses: a global ceiling so
+# the town's spend is bounded whoever is calling, and a per-caller limit so one
+# client cannot exhaust that ceiling and deny geocoding to residents. The
+# address box types ahead, so the per-caller number has to clear normal use --
+# 30/minute is a resident typing continuously, well inside it.
+@limiter.limit("600/minute", key_func=lambda request: "gis:geocode:global")
+@limiter.limit("30/minute")
 @router.get("/geocode")
 async def geocode_address(
+    request: Request,
     address: str,
     db: AsyncSession = Depends(get_db)
 ):
@@ -127,8 +153,20 @@ async def geocode_address(
     }
 
 
+# Billed per request -- Google charges $5 per 1,000 geocodes -- unauthenticated,
+# and until now unlimited. A single client could spend a town's mapping budget
+# as fast as it could open connections, and the only signal would be the bill.
+#
+# Two limits, the pattern the photo screening route uses: a global ceiling so
+# the town's spend is bounded whoever is calling, and a per-caller limit so one
+# client cannot exhaust that ceiling and deny geocoding to residents. The
+# address box types ahead, so the per-caller number has to clear normal use --
+# 30/minute is a resident typing continuously, well inside it.
+@limiter.limit("600/minute", key_func=lambda request: "gis:geocode:global")
+@limiter.limit("30/minute")
 @router.get("/reverse-geocode")
 async def reverse_geocode(
+    request: Request,
     lat: float,
     lng: float,
     db: AsyncSession = Depends(get_db)
