@@ -293,6 +293,10 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
                     element.setAttribute(attribute, originalValue);
                 }
             });
+            // Same reason as the drain at the end of the translate branch: these
+            // writes are mutations too, and left queued they schedule a pass that
+            // has nothing to do.
+            observerRef.current?.takeRecords();
             return;
         }
 
@@ -397,6 +401,31 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
                 translatedCount += batch.length;
                 setTranslationProgress(Math.round((translatedCount / totalTexts) * 100));
             }
+
+            /* Throw away the mutations this pass just caused.
+             *
+             * Translation is applied as `node.textContent = translation`, and
+             * the MutationObserver below watches characterData on the same
+             * subtree -- so every write this component makes wakes the observer
+             * that schedules this component. The isTranslatingRef guard stops
+             * passes OVERLAPPING, but records queued during a pass are
+             * delivered after it clears, and the next pass reads the text this
+             * one just wrote.
+             *
+             * That is a loop, and it bills. The source language is declared as
+             * English rather than detected, so already-Spanish text is sent
+             * back to be translated from English again -- a fresh string every
+             * time, so the cache never catches it. On 17 August 2026 a demo
+             * holding 54 reports and 2,679 characters of description
+             * translated 674,448 characters in a day, and the rows it left
+             * behind are Spanish text recorded as English source.
+             *
+             * takeRecords() drains the queue without invoking the callback, so
+             * the observer keeps watching for real changes and forgets the ones
+             * we made. It has to run before the guard drops, or the records it
+             * discards will already have scheduled the next pass.
+             */
+            observerRef.current?.takeRecords();
 
             setIsTranslating(false);
             isTranslatingRef.current = false;
