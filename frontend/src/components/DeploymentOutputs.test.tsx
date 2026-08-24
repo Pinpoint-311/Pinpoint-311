@@ -131,7 +131,14 @@ describe('pasting what the deployment gave back', () => {
         const describedBy = box.getAttribute('aria-describedby');
         expect(box.getAttribute('aria-invalid')).toBe('true');
         expect(describedBy).toBeTruthy();
-        expect(document.getElementById(describedBy!)!.textContent).toContain('not JSON');
+        /* The wording, not the wiring, is what changed here: JSON is one
+           accepted shape of several now, so the message names the screen to
+           copy from instead of a format. What this test is for is that the
+           complaint is REACHABLE from the box -- aria-describedby resolving to
+           the text -- which is unaffected. */
+        const message = document.getElementById(describedBy!)!.textContent!;
+        expect(message).toContain('Outputs');
+        expect(message).not.toContain('not JSON');
         expect(saveButton().disabled).toBe(true);
     });
 });

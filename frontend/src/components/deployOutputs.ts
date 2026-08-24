@@ -68,7 +68,7 @@ export interface CloudOutputs {
 export const DEPLOY_OUTPUTS: Record<string, CloudOutputs> = {
     azure: {
         sourceLabel: 'the deployment Outputs',
-        sourceHint: 'Resource group → Deployments → your deployment → Outputs. Copy the JSON.',
+        sourceHint: 'Resource group → Deployments → your deployment → Outputs. Select the list and copy it, or paste the JSON view — either works.',
         mappings: [
             { output: 'keyVaultUrl', keys: ['AZURE_KEYVAULT_URL'], label: 'Key Vault URL' },
             { output: 'keyName', keys: ['AZURE_KEYVAULT_KEY'], label: 'Key name' },
@@ -190,21 +190,87 @@ function flatten(raw: unknown): Record<string, string> | null {
  * error with nothing matched, so the caller has one thing to render rather than
  * a partial result to reason about.
  */
+
+/**
+ * The portal's Outputs tab, copied as it appears on screen.
+ *
+ * The instruction here used to say "copy the JSON", and on Azure there is no
+ * JSON to copy: the Outputs tab renders one row per output, each with its own
+ * copy button beside it, and selecting the tab gives you the names and values
+ * as plain lines. So the only thing a reader could paste was the only thing
+ * this rejected, and the message told them to go and find a blob that screen
+ * does not offer.
+ *
+ * Three shapes, all of which a console or a CLI actually produces:
+ *
+ *     keyVaultUrl                 name and value on one line
+ *     https://…                   (the portal, stacked)
+ *
+ *     keyVaultUrl: https://…      a colon, equals or tab between them
+ *
+ * A line starts a new value only when it matches a name this cloud declares.
+ * That is what makes the stacked form unambiguous: `eastus` is shaped exactly
+ * like an identifier, and guessing by shape would read it as the start of the
+ * next pair rather than as the value of the last one. It also means a wrapped
+ * prose value -- readMeFirst is a paragraph -- rejoins instead of truncating at
+ * the first newline.
+ */
+function parseKeyValueLines(spec: CloudOutputs, text: string): Record<string, string> {
+    const known = new Set<string>([
+        ...spec.mappings.map(m => m.output.toLowerCase()),
+        ...IGNORED,
+    ]);
+    const out: Record<string, string> = {};
+    let current: string | null = null;
+    let buffer: string[] = [];
+
+    const commit = () => {
+        if (current !== null) out[current] = buffer.join(' ').trim();
+        current = null;
+        buffer = [];
+    };
+
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line) continue;
+
+        const inline = line.match(/^([A-Za-z][A-Za-z0-9_]*)\s*[:=\t]\s*(.+)$/);
+        if (inline && known.has(inline[1].toLowerCase())) {
+            commit();
+            out[inline[1]] = inline[2].trim().replace(/^["']|["'],?$/g, '');
+            continue;
+        }
+        if (known.has(line.toLowerCase())) {
+            commit();
+            current = line;
+            continue;
+        }
+        if (current !== null) buffer.push(line);
+    }
+    commit();
+    return out;
+}
+
 export function parseDeployOutputs(cloud: string, text: string): ParsedOutputs {
     const spec = DEPLOY_OUTPUTS[cloud];
     if (!spec) return EMPTY;
     if (!text.trim()) return EMPTY;
 
-    let parsed: unknown;
+    let flat: Record<string, string> | null = null;
     try {
-        parsed = JSON.parse(text);
+        flat = flatten(JSON.parse(text));
     } catch {
-        return { ...EMPTY, error: 'That is not JSON. Copy the whole Outputs block, braces included.' };
+        // Not JSON, which is the ordinary case rather than the error case: see
+        // parseKeyValueLines. Only if that finds nothing either is this a paste
+        // from the wrong screen.
+        flat = null;
     }
-
-    const flat = flatten(parsed);
-    if (!flat) {
-        return { ...EMPTY, error: 'No output values in there. Copy the Outputs block rather than the deployment summary.' };
+    if (!flat || Object.keys(flat).length === 0) {
+        const lines = parseKeyValueLines(spec, text);
+        if (Object.keys(lines).length > 0) flat = lines;
+    }
+    if (!flat || Object.keys(flat).length === 0) {
+        return { ...EMPTY, error: 'No output values in there. Copy the deployment\u2019s Outputs \u2014 the names and their values \u2014 rather than its summary.' };
     }
 
     // Names are compared case-insensitively. The two consoles disagree with
