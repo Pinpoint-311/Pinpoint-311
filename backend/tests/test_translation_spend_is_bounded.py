@@ -94,10 +94,12 @@ def test_the_public_geocode_routes_are_rate_limited():
     source = (ROOT / "app/api/gis.py").read_text()
     for route in ('@router.get("/geocode")', '@router.get("/reverse-geocode")'):
         assert route in source
-        before = source[: source.index(route)]
-        tail = before[-400:]
-        assert "limiter.limit" in tail, f"{route} has no rate limit above it"
-        assert "global" in tail, (
+        # Between the router decorator and the function, which is where a limit
+        # has to sit to be applied at all -- see the ordering test below.
+        i = source.index(route)
+        block = source[i : source.index("async def", i)]
+        assert "limiter.limit" in block, f"{route} has no rate limit"
+        assert "global" in block, (
             f"{route} has a per-caller limit but no global ceiling, so the town's "
             f"total spend is still unbounded across many callers"
         )
@@ -112,3 +114,25 @@ def test_a_limited_route_can_actually_see_the_caller():
         i = source.index(fn)
         signature = source[i : source.index(")", i)]
         assert "request: Request" in signature, f"{fn} is limited but takes no Request"
+
+
+def test_the_geocode_limits_are_below_the_router_decorator():
+    """A limiter above @router.get is decoration nobody runs.
+
+    @router.get registers the function it is handed and returns it unchanged, so
+    a limiter stacked above it wraps a function FastAPI is no longer holding.
+    The route serves unlimited and nothing anywhere reports a problem -- the
+    first version of this fix shipped that way and 40 rapid requests produced no
+    429 at all. Asserted on ordering because that is the whole difference
+    between a limit and a comment.
+    """
+    source = (ROOT / "app/api/gis.py").read_text()
+    for route in ('@router.get("/geocode")', '@router.get("/reverse-geocode")'):
+        i = source.index(route)
+        following = source[i : i + 700]
+        limit_at = following.index("@limiter.limit")
+        def_at = following.index("async def")
+        assert limit_at < def_at, (
+            f"{route}: the limiter must sit between the router decorator and the "
+            f"function, or the route is registered unwrapped"
+        )
