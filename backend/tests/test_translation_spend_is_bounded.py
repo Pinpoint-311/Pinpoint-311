@@ -76,3 +76,39 @@ def test_a_real_page_of_labels_still_fits():
     typical_labels, typical_label_chars = 150, 40
     assert typical_labels <= system.MAX_TRANSLATE_TEXTS
     assert typical_labels * typical_label_chars <= system.MAX_TRANSLATE_TOTAL_CHARS
+
+
+def test_the_public_geocode_routes_are_rate_limited():
+    """Google bills $5 per 1,000 geocodes and these routes are unauthenticated.
+
+    They had no limit of any kind: a single client could spend a town's mapping
+    budget as fast as it could open connections, and the only signal would be
+    the invoice. Same shape as the translate endpoint, different SKU -- which is
+    why this is asserted for the pair rather than for the one that broke.
+
+    Two limits each, the pattern the photo-screening route established: a global
+    ceiling so the town's spend is bounded whoever is calling, and a per-caller
+    limit so one client cannot exhaust that ceiling and deny geocoding to
+    residents.
+    """
+    source = (ROOT / "app/api/gis.py").read_text()
+    for route in ('@router.get("/geocode")', '@router.get("/reverse-geocode")'):
+        assert route in source
+        before = source[: source.index(route)]
+        tail = before[-400:]
+        assert "limiter.limit" in tail, f"{route} has no rate limit above it"
+        assert "global" in tail, (
+            f"{route} has a per-caller limit but no global ceiling, so the town's "
+            f"total spend is still unbounded across many callers"
+        )
+
+
+def test_a_limited_route_can_actually_see_the_caller():
+    """slowapi reads the caller off a `request` parameter, and raises at call
+    time -- not import time -- when there isn't one. A limit on a route without
+    it is a 500 on the first request rather than a limit."""
+    source = (ROOT / "app/api/gis.py").read_text()
+    for fn in ("async def geocode_address(", "async def reverse_geocode("):
+        i = source.index(fn)
+        signature = source[i : source.index(")", i)]
+        assert "request: Request" in signature, f"{fn} is limited but takes no Request"
