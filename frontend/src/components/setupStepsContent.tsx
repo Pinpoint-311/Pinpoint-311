@@ -444,11 +444,9 @@ defineSteps('maps', 'google', (ctx) => [
             <>
                 Two things catch people here. The payment method is not optional and it is the step
                 people skip — Google will issue a key without it, the key will look correct, and the map
-                will show a grey box saying "this page can't load Google Maps correctly". Second, the
-                Library lists both <C>Places API (New)</C> and an older <C>Places API</C>; they are
-                separate products and enabling the old one does not enable the new one. Pinpoint's
-                address box uses <C>Places API (New)</C>, so if you enable the wrong one the map draws
-                and geocoding works while typing an address offers no suggestions at all.
+                will show a grey box saying "this page can't load Google Maps correctly". Second,{' '}
+                <C>Places API (New)</C> and <C>Places API</C> are separate products — enable both, or
+                the map draws while the address box offers no suggestions.
             </>
         ),
     },
@@ -460,13 +458,14 @@ defineSteps('maps', 'google', (ctx) => [
                 <br /><br />
                 <B>Browser key</B> — restrict to <B>Websites</B>, add{' '}
                 <CopyValue ctx={ctx} id="gmref" value={`${ctx.origin}/*`} /> (the <C>/*</C> matters), and
-                tick <C>Maps JavaScript API</C>.
+                tick all four: <C>Maps Embed API</C>, <C>Maps JavaScript API</C>,{' '}
+                <C>Places API (New)</C> and <C>Places API</C>.
                 <br /><br />
                 <B>Server key</B> — restrict to <B>IP addresses</B>, add this server's, and tick{' '}
-                <C>Geocoding API</C> and <C>Places API (New)</C>, not the older <C>Places API</C>.
+                <C>Geocoding API</C> and <C>Places API (New)</C>.
             </>
         ),
-        check: <>two keys: one restricted to your site with <C>Maps JavaScript API</C>, one restricted to this server's IP with <C>Geocoding API</C> and <C>Places API (New)</C>.</>,
+        check: <>two keys: one restricted to your site with the four map and Places APIs, one restricted to this server's IP with <C>Geocoding API</C> and <C>Places API (New)</C>.</>,
         trouble: (
             <>
                 An unrestricted key can be lifted off your site and run up a bill on the town's card. A
