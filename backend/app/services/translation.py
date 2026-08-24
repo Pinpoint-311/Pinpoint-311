@@ -243,6 +243,24 @@ async def translate_batch(
 
     try:
         out = await provider.translate(uncached, source_lang, target_lang)
+        # Recorded here as well as in translate_text, because this path bills
+        # too and did not say so. Everything the admin's usage page knew came
+        # from the single-string path, so the resident-facing catalog
+        # translation -- the one an unauthenticated request can trigger -- was
+        # invisible: 6,569 characters reported against 846,782 actually
+        # translated. A spend nobody can see is a spend nobody can cap.
+        try:
+            from app.db.session import SessionLocal
+            from app.services.api_usage import track_api_usage
+            async with SessionLocal() as db:
+                await track_api_usage(
+                    db=db,
+                    service_name="translation",
+                    operation="translate_batch",
+                    characters=sum(len(t) for t in uncached),
+                )
+        except Exception:  # noqa: BLE001 -- accounting must not fail a request
+            logger.warning("could not record batch translation usage", exc_info=True)
         if out is None:
             for t in uncached:
                 results[t] = t
