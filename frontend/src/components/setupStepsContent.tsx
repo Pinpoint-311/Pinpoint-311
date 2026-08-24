@@ -796,7 +796,7 @@ defineSteps('email', 'smtp', () => [
                 status update, the replies land wherever this sends from.
             </>
         ),
-        note: <>Microsoft 365 and Google Workspace both restrict plain SMTP by default — on Microsoft it is switched off unless an administrator turns it back on. Worse, Microsoft is removing password-based SMTP from Exchange Online at the end of December 2026: existing tenants have it disabled by default from then, and tenants created afterwards cannot use it at all. If your town is on Microsoft 365, choosing SMTP today buys you a few months. Amazon SES or Azure Communication Services is the durable answer.</>,
+        note: <>Microsoft 365 and Google Workspace block plain SMTP by default, and Microsoft retires password-based SMTP entirely in December 2026. On Microsoft 365, SES or Azure Communication Services is the durable choice.</>,
     },
     {
         body: (

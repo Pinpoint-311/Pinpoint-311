@@ -36,6 +36,24 @@ export interface OutputMapping {
     keys: string[];
     /** Human name for the value, for the matched/unmatched list. */
     label: string;
+    /**
+     * The capability this value belongs to, and the provider it implies.
+     *
+     * Pasting a deployment's outputs used to write the secrets and stop there,
+     * so a town could paste an Azure vault's URL and key name, see every box
+     * turn green, and still be encrypting with Google -- the credentials were
+     * saved and the decision to use them was not. The switch has to be part of
+     * the same action, because from the operator's side it WAS one action.
+     *
+     * Named per mapping rather than derived from the cloud, because the
+     * provider id is not the cloud id: AWS's key management is `aws` and its AI
+     * is `bedrock`. Guessing that mapping is how a switch lands on a provider
+     * nobody chose.
+     *
+     * Absent means the value belongs to no capability's selection -- a region
+     * that several providers read, say -- and only the secret is written.
+     */
+    select?: { capability: string; provider: string };
 }
 
 /**
@@ -70,15 +88,15 @@ export const DEPLOY_OUTPUTS: Record<string, CloudOutputs> = {
         sourceLabel: 'the deployment Outputs',
         sourceHint: 'Resource group → Deployments → your deployment → Outputs. Select the list and copy it, or paste the JSON view — either works.',
         mappings: [
-            { output: 'keyVaultUrl', keys: ['AZURE_KEYVAULT_URL'], label: 'Key Vault URL' },
+            { output: 'keyVaultUrl', keys: ['AZURE_KEYVAULT_URL'], label: 'Key Vault URL', select: { capability: 'kms', provider: 'azure' } },
             { output: 'keyName', keys: ['AZURE_KEYVAULT_KEY'], label: 'Key name' },
             { output: 'directoryTenantId', keys: ['AZURE_TENANT_ID'], label: 'Directory (tenant) ID' },
-            { output: 'azureOpenAiEndpoint', keys: ['AZURE_OPENAI_ENDPOINT'], label: 'Azure OpenAI endpoint' },
+            { output: 'azureOpenAiEndpoint', keys: ['AZURE_OPENAI_ENDPOINT'], label: 'Azure OpenAI endpoint', select: { capability: 'ai', provider: 'azure' } },
             { output: 'azureOpenAiDeploymentName', keys: ['AZURE_OPENAI_DEPLOYMENT'], label: 'Deployment name' },
             // One multi-service account serves both, which is the whole reason
             // the template creates one account rather than three.
-            { output: 'aiServicesEndpoint', keys: ['AZURE_VISION_ENDPOINT', 'AZURE_FACE_ENDPOINT'], label: 'AI Services endpoint' },
-            { output: 'translatorRegion', keys: ['AZURE_TRANSLATOR_REGION'], label: 'Translator region' },
+            { output: 'aiServicesEndpoint', keys: ['AZURE_VISION_ENDPOINT', 'AZURE_FACE_ENDPOINT'], label: 'AI Services endpoint', select: { capability: 'redaction', provider: 'azure' } },
+            { output: 'translatorRegion', keys: ['AZURE_TRANSLATOR_REGION'], label: 'Translator region', select: { capability: 'translation', provider: 'azure' } },
         ],
         manual: [
             { key: 'AZURE_KEYVAULT_CLIENT_ID', label: 'Application (client) ID', where: 'Entra ID → App registrations → your app → Overview', cap: 'kms' },
@@ -94,7 +112,7 @@ export const DEPLOY_OUTPUTS: Record<string, CloudOutputs> = {
         sourceHint: 'CloudFormation → your stack → Outputs. Copy the JSON, or the two values below.',
         mappings: [
             { output: 'PinpointBoxAwsRegion', keys: ['AWS_REGION'], label: 'AWS Region' },
-            { output: 'PinpointBoxKeyIdOrArn', keys: ['AWS_KMS_KEY_ID'], label: 'Key ID or ARN' },
+            { output: 'PinpointBoxKeyIdOrArn', keys: ['AWS_KMS_KEY_ID'], label: 'Key ID or ARN', select: { capability: 'kms', provider: 'aws' } },
         ],
         // Nothing. The stack creates a role, not a key, which is the point of
         // it: on AWS compute there is no credential to enter anywhere.
@@ -108,6 +126,9 @@ export interface MatchedOutput {
     label: string;
     value: string;
     keys: string[];
+    /** Carried through from the mapping so the caller can switch the capability
+     *  in the same action that saves the value. See OutputMapping.select. */
+    select?: { capability: string; provider: string };
 }
 
 export interface ParsedOutputs {
@@ -291,7 +312,10 @@ export function parseDeployOutputs(cloud: string, text: string): ParsedOutputs {
             continue;
         }
         consumed.add(mapping.output.toLowerCase());
-        matched.push({ output: mapping.output, label: mapping.label, value, keys: mapping.keys });
+        matched.push({
+            output: mapping.output, label: mapping.label, value,
+            keys: mapping.keys, select: mapping.select,
+        });
     }
 
     const unmatched = Object.entries(flat)
@@ -322,4 +346,20 @@ export function outputsToValues(matched: MatchedOutput[]): Record<string, string
     const values: Record<string, string> = {};
     for (const m of matched) for (const key of m.keys) values[key] = m.value;
     return values;
+}
+
+
+/**
+ * The provider selections a set of matched outputs implies, deduplicated.
+ *
+ * `{capability: provider}`, so the caller makes one call per capability rather
+ * than one per value -- Azure's AI Services endpoint fills two boxes and must
+ * not select the same capability twice.
+ */
+export function selectionsFor(matched: MatchedOutput[]): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const m of matched) {
+        if (m.select) out[m.select.capability] = m.select.provider;
+    }
+    return out;
 }

@@ -33,7 +33,7 @@ export default function DeploymentOutputs({
     /** The page's own save, given the values rather than asked to look them
      *  up: nothing here was typed, so there is no state for it to read back
      *  in the same tick. Same write path as a typed value, deliberately. */
-    onSave: (entries: Record<string, string>) => Promise<void>;
+    onSave: (entries: Record<string, string>, matched: MatchedOutput[]) => Promise<void>;
     saving: boolean;
     isConfigured: (key: string) => boolean;
 }) {
@@ -52,7 +52,7 @@ export default function DeploymentOutputs({
         // Into the boxes as well as into the save, so the cards show what
         // landed rather than going green with nothing visible in them.
         for (const [key, value] of Object.entries(toSave)) onChange(key, value);
-        await onSave(toSave);
+        await onSave(toSave, matched);
         setSaved(Object.keys(toSave));
     };
 

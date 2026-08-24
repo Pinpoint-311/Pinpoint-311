@@ -17,6 +17,8 @@ import ServiceProviders from './ServiceProviders';
 import SetupWizard from './SetupWizard';
 import CloudSetupPath from './setupPathChoice';
 import DeploymentOutputs from './DeploymentOutputs';
+import { selectionsFor } from './deployOutputs';
+import { readSetupAnswer, writeSetupAnswer } from './setupAnswers';
 import { buildPlan, summarise, nameList, BACKUP_SECRETS, SENTRY_SECRETS } from './setupPlan';
 import { townSystemHealth } from './integrationState';
 // Registers every provider's setup steps as a side effect, so the guide can
@@ -526,9 +528,30 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
     // Setup Instructions chooser: the guide shows ONLY the steps for the cloud
     // and optional features the admin actually wants to set up.
-    const [setupCloud, setSetupCloud] = useState<'google' | 'azure' | 'aws'>('google');
-    const [setupIdp, setSetupIdp] = useState<'auth0' | 'entra' | 'okta' | 'oidc'>('auth0');
-    const [setupMaps, setSetupMaps] = useState<'google' | 'esri' | 'azure' | 'apple'>('google');
+    /* Remembered, because they were not.
+     *
+     * These three were plain useState with hardcoded defaults, written nowhere
+     * and read from nowhere: an admin picked Microsoft Azure, worked through the
+     * Azure walk, came back the next day and was told they had chosen Google.
+     * The feature toggles immediately below had this same bug and it was fixed
+     * for them; the three questions above them were left behind.
+     *
+     * Per browser rather than per town, deliberately. The answer is a statement
+     * about which instructions to show, not about what the deployment runs --
+     * the server's own providers are that, they are what the cards write, and
+     * `rememberedCloud` prefers them when they exist. Storing an ANSWER on the
+     * server would put a second opinion next to the setting that decides, and
+     * the two would disagree the first time anyone used a card. */
+    const [setupCloud, setSetupCloud] = useState<'google' | 'azure' | 'aws'>(
+        () => readSetupAnswer('cloud', ['google', 'azure', 'aws'], 'google'));
+    const [setupIdp, setSetupIdp] = useState<'auth0' | 'entra' | 'okta' | 'oidc'>(
+        () => readSetupAnswer('idp', ['auth0', 'entra', 'okta', 'oidc'], 'auth0'));
+    const [setupMaps, setSetupMaps] = useState<'google' | 'esri' | 'azure' | 'apple'>(
+        () => readSetupAnswer('maps', ['google', 'esri', 'azure', 'apple'], 'google'));
+
+    useEffect(() => { writeSetupAnswer('cloud', setupCloud); }, [setupCloud]);
+    useEffect(() => { writeSetupAnswer('idp', setupIdp); }, [setupIdp]);
+    useEffect(() => { writeSetupAnswer('maps', setupMaps); }, [setupMaps]);
     /* What the town wants, held here only as a mirror of what the server says.
      *
      * This used to be the whole of it: `useState(new Set(ALL_FEATURES))`, never
@@ -1062,8 +1085,37 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         cloud={cloud}
                         values={secretValues}
                         onChange={(key, value) => setSecretValues(prev => ({ ...prev, [key]: value }))}
-                        onSave={async (entries) => {
+                        onSave={async (entries, matched) => {
                             for (const [key, value] of Object.entries(entries)) await handleSave(key, value);
+                            /* And select the providers those values are for.
+                             *
+                             * Saving the credentials alone left a town holding
+                             * a working Azure vault while still encrypting with
+                             * Google: every box green, and the decision to use
+                             * them never taken. From the operator's side
+                             * pasting a deployment's outputs IS the switch, so
+                             * it has to be one action here too.
+                             *
+                             * Through the same endpoint a card's Save uses, so
+                             * this cannot become a second way to select a
+                             * provider -- and that endpoint refuses to repoint
+                             * the secret store, which is the one selection that
+                             * would strand every credential already entered. */
+                            const selections = selectionsFor(matched);
+                            for (const [capability, provider] of Object.entries(selections)) {
+                                try {
+                                    await api.saveProvider(capability, { provider });
+                                } catch (err) {
+                                    // The values are saved either way; say which
+                                    // half did not land rather than implying both.
+                                    setSaveMessage(
+                                        `Saved the values, but could not switch ${capability} to ${provider}. `
+                                        + `Choose it on that card and press Save & Test.`,
+                                    );
+                                }
+                            }
+                            onRefresh();
+                            loadProviderStatus();
                         }}
                         saving={savingKey !== null}
                         isConfigured={(key) => !!isConfigured(key)}
@@ -1495,7 +1547,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
                                     <Ask
                                         n={2}
-                                        label="Which company hosts your town's services?"
+                                        label="Cloud services"
                                         hint="If the town already uses Microsoft 365, pick Microsoft Azure. If you are not sure, pick Google — you can change it later."
                                     >
                                         <Options
@@ -1503,6 +1555,20 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                             onChange={(v) => setSetupCloud(v as typeof setupCloud)}
                                             options={[['google', 'Google Cloud'], ['azure', 'Microsoft Azure'], ['aws', 'AWS']]}
                                         />
+                                        {/* Named, because this one answer moves four
+                                            things and the question used to imply one.
+                                            A reader picking Azure for its key vault
+                                            was also moving AI triage and translation
+                                            without being told, and then wondered why
+                                            those cards had changed underneath them. */}
+                                        <p className="text-xs text-white/55 leading-relaxed mt-2">
+                                            This choice moves <strong className="text-white/75">AI triage</strong>,{' '}
+                                            <strong className="text-white/75">translation</strong>,{' '}
+                                            <strong className="text-white/75">key management</strong> and{' '}
+                                            <strong className="text-white/75">photo screening</strong> together.
+                                            Email and text messages follow it too unless you pick something
+                                            else below. Maps and sign-in have their own questions.
+                                        </p>
                                     </Ask>
 
                                     <Ask
