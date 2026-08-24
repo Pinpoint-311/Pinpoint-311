@@ -287,3 +287,43 @@ describe('Google, which has no template', () => {
         expect(container.textContent).toContain('Google has none');
     });
 });
+
+describe('a step whose boxes are already filled', () => {
+    /* The reader's remaining job should not sit below a screen of instructions
+     * they have already carried out. What is asserted is that finished work
+     * folds and unfinished work does not -- and that folding never means
+     * losing: the values stay reachable, because a saved credential is one
+     * somebody may need to change. */
+    const FILLED = { AZURE_KEYVAULT_URL: true, AZURE_KEYVAULT_KEY: true };
+
+    const cardWith = (storedFields: Record<string, boolean>) => (
+        <ProviderCredentialSteps
+            cap="kms" provider="azure" active={AZURE_KMS}
+            values={{}} onChange={() => {}} ctx={ctx}
+            storedFields={storedFields}
+        />
+    );
+
+    const folded = () => container.querySelectorAll('details[data-testid^="setup-step-done-"]');
+
+    beforeEach(() => { writePathChoice('azure', 'template'); });
+
+    it('folds the finished step and leaves the outstanding one open', () => {
+        mount(cardWith(FILLED));
+        expect(folded().length).toBe(1);
+        expect(folded()[0].textContent).toContain('Done');
+        // The step still wanting the Entra credential is not folded away.
+        expect(container.textContent).toContain('How this server opens the vault');
+    });
+
+    it('keeps a saved value reachable rather than hiding it', () => {
+        mount(cardWith(FILLED));
+        expect(folded()[0].querySelector('summary')!.textContent).toContain('Change');
+        expect(folded()[0].querySelectorAll('input').length).toBeGreaterThan(0);
+    });
+
+    it('folds nothing when nothing has been saved', () => {
+        mount(cardWith({}));
+        expect(folded().length).toBe(0);
+    });
+});
