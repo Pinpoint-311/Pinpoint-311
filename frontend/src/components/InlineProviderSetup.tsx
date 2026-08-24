@@ -62,11 +62,14 @@ function probeIdentity(): Promise<CloudIdentity | null> {
 }
 
 export default function InlineProviderSetup({
-    cap, provider, choices, onChoose, onSaved, note, publicOrigin,
+    cap, provider, choices, onChoose, onSaved, note, publicOrigin, forkShownAbove = false,
 }: {
     cap: Capability;
     /** The provider to set up, from the questionnaire. */
     provider: string;
+    /** The cloud task above already rendered the fork; do not repeat it here.
+     *  See ProviderCredentialSteps for why both surfaces can render one. */
+    forkShownAbove?: boolean;
     /** Providers this section may switch between inline, when the choice is not
      *  one the questionnaire asks (email and SMS are not a cloud decision).
      *  Omitted means the questionnaire already decided and this shows no picker. */
@@ -262,6 +265,7 @@ export default function InlineProviderSetup({
                 hostProvided={catalog.host_provided}
                 alreadySet={alreadySet && isCurrent}
                 compact
+                forkShownAbove={forkShownAbove}
             />
 
             <div className="flex flex-wrap items-center gap-2.5 mt-3 pt-3 border-t border-white/[0.07]">
