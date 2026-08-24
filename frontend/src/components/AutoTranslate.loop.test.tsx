@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'fs';
-import { join } from 'path';
+// `?raw` rather than fs: this file is compiled by the production build as well
+// as by vitest, and the build targets a browser where `fs`, `path` and
+// `__dirname` do not exist. Vite inlines the file contents at both.
+import SOURCE from './AutoTranslate.tsx?raw';
 
 /**
  * The loop that billed.
@@ -23,11 +25,6 @@ import { join } from 'path';
  * alternative -- driving jsdom through a real observer cycle with mocked fetch
  * -- pins the timing of an implementation rather than the property.
  */
-const SOURCE = readFileSync(
-    join(__dirname, 'AutoTranslate.tsx'),
-    'utf8',
-);
-
 describe('AutoTranslate does not feed its own writes back to the translator', () => {
     it('drains the mutations its own translation pass caused', () => {
         expect(SOURCE).toContain('takeRecords()');
