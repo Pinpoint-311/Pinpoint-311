@@ -922,3 +922,41 @@ def test_every_generated_name_fits_the_ceiling_it_declares():
             f"{UNIQUE_STRING_LENGTH}, so the literal text may be at most "
             f"{ceiling - UNIQUE_STRING_LENGTH}."
         )
+
+
+def test_the_chosen_cloud_reaches_the_template_before_any_card_is_saved():
+    """The guide's answer lives in the browser; the link has to carry it.
+
+    The setup guide tells the reader that choosing a cloud moves AI triage,
+    translation, key management and photo screening together. It then served a
+    template with AI and translation switched off, because the toggles are
+    derived from the SERVER's stored providers and the guide's answer had not
+    reached the server -- it does not, until a card is saved. The reader saw a
+    form contradicting the sentence they had just read.
+    """
+    module = _route_module()
+    served = json.loads(module.apply_selected_defaults(
+        "azure/pinpoint-311.json", ARM.read_bytes(),
+        {"kms": "google", "ai": "vertex", "translation": "google"},
+        "azure",
+    ))
+    for toggle in ("deployKeyVault", "deployAzureOpenAI", "deployCognitiveServices"):
+        assert served["parameters"][toggle]["defaultValue"] is True, (
+            f"{toggle} is off for a reader who has just chosen Azure in the guide"
+        )
+
+
+def test_the_hint_can_only_turn_things_on():
+    """One direction, like the stored-provider rule it sits beside.
+
+    A query string must not be able to take a key vault OUT of somebody's
+    deployment. Asked for AWS against the Azure template, the hint matches
+    nothing and the stored selection decides on its own.
+    """
+    module = _route_module()
+    served = json.loads(module.apply_selected_defaults(
+        "azure/pinpoint-311.json", ARM.read_bytes(),
+        {"kms": "azure"}, "aws",
+    ))
+    assert served["parameters"]["deployKeyVault"]["defaultValue"] is True
+    assert served["parameters"]["deployAzureOpenAI"]["defaultValue"] is False
