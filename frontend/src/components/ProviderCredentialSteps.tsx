@@ -185,6 +185,23 @@ export default function ProviderCredentialSteps({
     const labelFor = (key: string) =>
         active.credential_fields.find(f => f.key === key)?.label ?? key;
 
+    /* Judgeable means "has boxes": a step with none cannot be known to be done.
+     * If any step is like that the bar is not rendered at all, rather than
+     * shown stuck one short of the end forever. */
+    const stepSettled = (st: { fields?: string[] }) => {
+        const keys = st.fields ?? [];
+        return keys.length > 0 && keys.every(
+            k => !!storedFields?.[k] || !!identity?.skippable_keys?.includes(k));
+    };
+    const stepProgress = steps.length > 1 && steps.every(st => (st.fields ?? []).length > 0)
+        ? { done: steps.filter(stepSettled).length, total: steps.length }
+        : null;
+    /* The first step still to do. Folding the finished ones leaves the rest
+     * looking like a wall of equal instructions; this is which one to look at.
+     * -1 when everything is settled, so nothing is highlighted on a finished
+     * card. */
+    const nextStepIndex = steps.findIndex(st => !stepSettled(st));
+
     return (
         <div>
             {(borrowed.length > 0 || alternatives.length > 0) && (
@@ -233,6 +250,44 @@ export default function ProviderCredentialSteps({
                 set in the same type as the prose around it. */}
             {presentation?.launch && chosen === 'template' && !forkShownAbove && (
                 <SetupPathLaunch launch={presentation.launch} uid={uid} />
+            )}
+            {/* Where you are, drawn rather than described.
+              *
+              * Once a step folds, the card can look finished: a green "Done"
+              * line, and whatever is left sits below it looking like reference
+              * material. This is the answer to "is there anything else?" -- one
+              * segment per step, filled for done, outlined for the one to do
+              * next, faint for the rest. No sentence to read.
+              *
+              * Only when every step can actually be judged. A step with no
+              * boxes has no completion signal, so a bar including it could
+              * never fill, and a progress indicator that cannot reach the end
+              * is worse than none.
+              */}
+            {stepProgress && (
+                <div className={compact ? 'mb-3' : 'mb-4'} data-testid="setup-step-progress">
+                    <div
+                        className="flex items-center gap-1.5"
+                        role="img"
+                        aria-label={`${stepProgress.done} of ${stepProgress.total} steps done, ${stepProgress.total - stepProgress.done} to go`}
+                    >
+                        {steps.map((_, i) => (
+                            <span
+                                key={i}
+                                className={`h-1.5 flex-1 rounded-full ${
+                                    i < stepProgress.done
+                                        ? 'bg-emerald-400/70'
+                                        : i === stepProgress.done
+                                            ? 'bg-primary-400'
+                                            : 'bg-white/12'
+                                }`}
+                            />
+                        ))}
+                        <span className="ml-1.5 shrink-0 text-[11px] font-medium text-white/50 tabular-nums">
+                            {stepProgress.done}/{stepProgress.total}
+                        </span>
+                    </div>
+                </div>
             )}
             {steps.map((st, i) => {
                 /* A step whose every box is already filled is work that is
@@ -299,10 +354,24 @@ export default function ProviderCredentialSteps({
                     );
                 }
 
+                const isNext = i === nextStepIndex && stepProgress !== null && stepProgress.done > 0;
                 return (
-                    <div key={i} className={compact ? 'mb-3' : 'mb-4'}>
+                    <div
+                        key={i}
+                        data-next-step={isNext || undefined}
+                        className={`${compact ? 'mb-3' : 'mb-4'} ${
+                            isNext ? 'rounded-xl border border-primary-400/30 bg-primary-500/[0.06] p-3 -mx-1' : ''
+                        }`}
+                    >
                         <div className="flex gap-3">
-                            <span className="mt-0.5 w-6 h-6 shrink-0 rounded-full bg-white/10 border border-white/15 text-[11px] font-semibold text-white/70 flex items-center justify-center">
+                            {/* Filled, not outlined, when this is the one to do
+                                next -- the same weight the primary action gets
+                                everywhere else in the console. */}
+                            <span className={`mt-0.5 w-6 h-6 shrink-0 rounded-full border text-[11px] font-semibold flex items-center justify-center ${
+                                isNext
+                                    ? 'bg-primary-500 border-primary-400 text-white'
+                                    : 'bg-white/10 border-white/15 text-white/70'
+                            }`}>
                                 {i + 1}
                             </span>
                             <div className="min-w-0 flex-1">{inner}</div>

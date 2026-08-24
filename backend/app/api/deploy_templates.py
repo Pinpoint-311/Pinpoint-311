@@ -159,6 +159,13 @@ AZURE_TOGGLE_SOURCES: Dict[str, Tuple[Tuple[str, str], ...]] = {
     "deployCognitiveServices": (("translation", "azure"), ("redaction", "azure")),
 }
 
+# Which provider ids belong to which cloud, for the `intent` hint below. Needed
+# because the provider id is not the cloud id: AWS's AI provider is "bedrock".
+CLOUD_PROVIDER_IDS: Dict[str, Tuple[str, ...]] = {
+    "azure": ("azure",),
+    "aws": ("aws", "bedrock"),
+}
+
 AWS_TOGGLE_SOURCES: Dict[str, Tuple[Tuple[str, str], ...]] = {
     "AllowBedrock": (("ai", "bedrock"),),
     "AllowTranslate": (("translation", "aws"),),
@@ -216,7 +223,9 @@ async def _selected_providers() -> Dict[str, str]:
     return {c: p.strip().lower() for c, p in results if isinstance(p, str) and p.strip()}
 
 
-def _capability_defaults(relative: str, selected: Dict[str, str]) -> Dict[str, bool]:
+def _capability_defaults(
+    relative: str, selected: Dict[str, str], intent: Optional[str] = None,
+) -> Dict[str, bool]:
     """Which template toggles this town's selections say should start ticked.
 
     **One direction only: off to on, never on to off.** Turning a toggle on is
@@ -230,10 +239,25 @@ def _capability_defaults(relative: str, selected: Dict[str, str]) -> Dict[str, b
     exists to avoid.
     """
     sources = AZURE_TOGGLE_SOURCES if relative.startswith("azure/") else AWS_TOGGLE_SOURCES
+    wanted = CLOUD_PROVIDER_IDS.get(intent or "", ())
     return {
         toggle: True
         for toggle, pairs in sources.items()
         if any(selected.get(capability) == provider for capability, provider in pairs)
+        # ...or the reader has just chosen this cloud in the setup guide and has
+        # not saved a card yet.
+        #
+        # The guide's answer lives in the browser -- it decides which walk to
+        # show, not what the deployment runs -- so the server cannot see it, and
+        # the template arrived with AI and translation switched off for someone
+        # the page had just told "this choice moves AI triage, translation, key
+        # management and photo screening together". The link now carries the
+        # choice.
+        #
+        # Still one direction only: this can turn a toggle ON, never off. A hint
+        # from a query string must not be able to take a key vault out of a
+        # deployment.
+        or any(provider in wanted for _capability, provider in pairs)
     }
 
 
@@ -281,13 +305,15 @@ def _rewrite_cfn_defaults(source: str, defaults: Dict[str, bool]) -> str:
     return "".join(lines)
 
 
-def apply_selected_defaults(relative: str, body: bytes, selected: Dict[str, str]) -> bytes:
+def apply_selected_defaults(
+    relative: str, body: bytes, selected: Dict[str, str], intent: Optional[str] = None,
+) -> bytes:
     """The served body: the file on disk, with defaults the town's own answer.
 
     Returns the file unchanged if anything at all is off -- nothing to change,
     an unrecognised template, or a rewrite that did not come back parseable.
     """
-    defaults = _capability_defaults(relative, selected)
+    defaults = _capability_defaults(relative, selected, intent)
     if not defaults:
         return body
     try:
@@ -334,7 +360,9 @@ def _cfn_without_defaults(source: str) -> str:
 
 
 @router.get("/{cloud}/{filename}")
-async def get_deploy_template(cloud: str, filename: str) -> Response:
+async def get_deploy_template(
+    cloud: str, filename: str, intent: Optional[str] = None,
+) -> Response:
     """Serve one deployment template to whoever asks, including a cloud provider.
 
     The body is the file on disk with **only `defaultValue` (ARM) and `Default:`
@@ -374,7 +402,8 @@ async def get_deploy_template(cloud: str, filename: str) -> Response:
         return RedirectResponse(url=published_url(relative), status_code=302)
 
     try:
-        body = apply_selected_defaults(relative, body, await _selected_providers())
+        body = apply_selected_defaults(
+            relative, body, await _selected_providers(), intent)
     except Exception:
         # The published file is always a correct answer. A settings read that
         # went wrong must not be the reason a town cannot deploy at all.
