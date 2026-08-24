@@ -880,3 +880,45 @@ def test_the_route_only_ever_adjusts_defaults_and_says_so():
         "the route's docstring no longer names the two fields it is allowed to touch"
     )
     assert "nothing else" in doc or "only" in doc
+
+
+def test_every_generated_name_fits_the_ceiling_it_declares():
+    """A default that cannot satisfy its own maxLength, which is a deployment
+    that fails on the form's own validator before a single resource is made.
+
+    `vaultName` shipped as `concat('pinpoint311-kv-', uniqueString(...))`
+    against `maxLength: 24`. `uniqueString()` returns thirteen characters,
+    always -- it is a fixed-length hash, not a variable one -- so the literal
+    part has an eleven-character budget and that one spent fifteen. Every
+    deployment run with the defaults died on:
+
+        The provided value for the template parameter 'vaultName' is not valid.
+        Length of the value should be less than or equal to '24'.
+
+    The constraint was right and the default ignored it, which is the failure a
+    reviewer is least likely to catch by reading: both halves look correct on
+    their own, and only the arithmetic between them is wrong.
+
+    Asserted for every parameter rather than for the one that broke, because
+    the next generated name will be written by copying one of these.
+    """
+    template = json.loads(ARM.read_text())
+    UNIQUE_STRING_LENGTH = 13
+
+    for name, spec in template["parameters"].items():
+        default = spec.get("defaultValue")
+        ceiling = spec.get("maxLength")
+        if not isinstance(default, str) or "uniqueString(" not in default:
+            continue
+        assert ceiling, (
+            f"{name} generates its default with uniqueString() but declares no "
+            f"maxLength, so nothing checks that what it generates can be used"
+        )
+        literals = re.findall(r"'([^']*)'", default)
+        worst = sum(len(part) for part in literals) + UNIQUE_STRING_LENGTH
+        assert worst <= ceiling, (
+            f"{name}'s default is {worst} characters against a maxLength of "
+            f"{ceiling}: {default}. uniqueString() is always "
+            f"{UNIQUE_STRING_LENGTH}, so the literal text may be at most "
+            f"{ceiling - UNIQUE_STRING_LENGTH}."
+        )

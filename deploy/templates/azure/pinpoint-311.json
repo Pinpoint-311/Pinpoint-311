@@ -46,11 +46,11 @@
     },
     "vaultName": {
       "type": "string",
-      "defaultValue": "[concat('pinpoint311-kv-', uniqueString(resourceGroup().id))]",
+      "defaultValue": "[concat('pp311-kv-', uniqueString(resourceGroup().id))]",
       "minLength": 3,
       "maxLength": 24,
       "metadata": {
-        "description": "Key vault name. Must be unique across all of Azure. IF A VAULT OF THIS NAME ALREADY EXISTS IN THIS RESOURCE GROUP IT WILL BE UPDATED IN PLACE, not left alone - use a name you have not used before."
+        "description": "Key vault name. Must be unique across all of Azure. IF A VAULT OF THIS NAME ALREADY EXISTS IN THIS RESOURCE GROUP IT WILL BE UPDATED IN PLACE, not left alone - use a name you have not used before. The generated default is 22 characters: Azure caps a vault name at 24 and uniqueString() always returns 13, so the literal part cannot exceed 11."
       }
     },
     "keyName": {
@@ -114,7 +114,9 @@
       "defaultValue": "[concat('pinpoint311-openai-', uniqueString(resourceGroup().id))]",
       "metadata": {
         "description": "Azure OpenAI account name. Its endpoint goes in the 'Azure OpenAI Endpoint' box in Pinpoint."
-      }
+      },
+      "maxLength": 64,
+      "minLength": 2
     },
     "openAiDeploymentName": {
       "type": "string",
@@ -156,7 +158,9 @@
       "defaultValue": "[concat('pinpoint311-ai-', uniqueString(resourceGroup().id))]",
       "metadata": {
         "description": "Multi-service AI Services account name. Its endpoint goes in both the 'Vision endpoint' and 'Face endpoint' boxes in Pinpoint; its key goes in both key boxes."
-      }
+      },
+      "maxLength": 64,
+      "minLength": 2
     }
   },
   "variables": {
