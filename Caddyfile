@@ -21,6 +21,29 @@
 # tenant import and the panel block, and pointed the frontend at the Vite dev
 # server.
 (pinpoint_site) {
+
+	# Access logging, to the caddy_data volume rather than to stdout.
+	#
+	# Caddy v2 writes no access log unless a site asks for one, and this file
+	# never did -- so when a $135 translation bill arrived there was no record
+	# of which requests had been served on the day in question, and the
+	# container had since been recreated, taking its stdout with it. A log that
+	# does not survive a deploy is not a log you can investigate with.
+	#
+	# /data is a named volume, so this outlives `up -d --force-recreate`.
+	#
+	# Resident IP addresses are personal data. Thirty days is the retention,
+	# set here rather than left to grow: long enough to investigate a billing
+	# surprise or an abuse report, short enough that it is not an archive of
+	# who reported what and from where.
+	log {
+		output file /data/logs/access.log {
+			roll_size 50MiB
+			roll_keep 10
+			roll_keep_for 720h
+		}
+		format json
+	}
 	# Nothing this site accepts is larger than one phone photo. The resident
 	# photo-screening endpoint is unauthenticated and multipart, and FastAPI
 	# parses a multipart body -- spooling anything over 1MB to the container's
@@ -103,6 +126,17 @@
 # Centralized Hosting Orchestrator Control Panel
 centraldemo.pinpoint311.org {
     encode gzip
+    # Same log, same file. The panel provisions towns and holds the host's
+    # shared credentials, so it is the site where "who called this, and when"
+    # matters most.
+    log {
+        output file /data/logs/access.log {
+            roll_size 50MiB
+            roll_keep 10
+            roll_keep_for 720h
+        }
+        format json
+    }
     reverse_proxy orchestrator-panel-1:8100
 }
 
