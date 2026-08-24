@@ -144,11 +144,39 @@ export interface PathPresentation {
     switchLabel: string;
 }
 
+/**
+ * The launch itself: the one link that starts the deployment.
+ *
+ * On the fork rather than inside a numbered step, which is where it used to
+ * live. A reader who has just pressed "Deploy with the template" is looking for
+ * exactly one thing, and it was the third line of instruction 1, in the same
+ * type as the prose around it. The single action a path exists to perform
+ * should not have to be found.
+ */
+export interface PathLaunch {
+    /** Where the cloud's own deployment form lives, template already loaded. */
+    href: string;
+    /** On the control. Names the destination, because it leaves the site. */
+    label: string;
+    /** One line under it: what pressing it opens, and what gets created. */
+    line: ReactNode;
+    /** Where the template can be read before it is run, for whoever asks. */
+    source?: ReactNode;
+}
+
 export interface CloudFork {
     /** One sentence above the two choices. Neither path may be disparaged. */
     question: ReactNode;
     /** The primary action: fewer screens, and what most towns should press. */
     template: PathPresentation;
+    /** Rendered above the template path once it is chosen. Absent means the
+     *  path carries its own link, which is the shape this replaces. */
+    launch?: PathLaunch;
+    /** Hardening the template deliberately leaves to a person, folded shut at
+     *  the foot of the template path. Not steps: a reader who chose the short
+     *  path chose it to stop reading instructions, and numbering these rebuilds
+     *  the manual walk inside it. Present for the town whose policy asks. */
+    templateExtras?: ReactNode;
     /** The complete walk. Equal in standing, subordinate only in emphasis. */
     manual: PathPresentation;
     /**

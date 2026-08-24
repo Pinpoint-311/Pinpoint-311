@@ -91,13 +91,6 @@ const TemplateSourceNote = ({ from }: { from: TemplateBase }) => (
 /** A link that opens the provider's own deployment form. Drawn as a button
  *  because that is what it behaves like, and new-tab like every other console
  *  link here: a clerk mid-setup who navigates away loses what they have typed. */
-const DeployButton = ({ href, children }: { href: string; children: React.ReactNode }) => (
-    <a href={href} target="_blank" rel="noopener noreferrer"
-        className="mt-2 mb-1 inline-flex items-center gap-1.5 rounded-lg border border-primary-400/40 bg-primary-500/15 px-3 py-1.5 text-xs font-medium text-primary-100 hover:bg-primary-500/25 transition-colors">
-        {children}
-    </a>
-);
-
 /**
  * The claim a cautious IT department is actually testing.
  *
@@ -137,8 +130,15 @@ const C = ({ children }: { children: React.ReactNode }) => (
 // answer than the sentence in the Google walk that says so.
 // ===========================================================================
 
-defineCloudFork('azure', () => ({
+defineCloudFork('azure', (ctx) => ({
     question: <>Two ways to set up Azure. Both are fully supported, both are kept current, and you can switch at any point.</>,
+    launch: {
+        href: azureDeployUrl(templateBase(ctx.origin).base),
+        label: 'Open the Azure deployment form',
+        line: <>Azure's Custom deployment form, with our template already loaded: the key vault, purge protection and the RSA key, plus the OpenAI, Translator and Vision resources if you want them. Nothing is created until you press Create on Azure's own review page.</>,
+        source: <TemplateSourceNote from={templateBase(ctx.origin)} />,
+    },
+    templateExtras: AZURE_TEMPLATE_EXTRAS,
     template: {
         label: 'Deploy with the Azure template',
         blurb: <>One form, about two minutes. Creates the key vault and, if you want them, the OpenAI, Translator and Vision resources.</>,
@@ -156,8 +156,15 @@ defineCloudFork('azure', () => ({
     },
 }));
 
-defineCloudFork('aws', () => ({
+defineCloudFork('aws', (ctx) => ({
     question: <>Two ways to set up AWS. Both are fully supported, both are kept current, and you can switch at any point.</>,
+    launch: {
+        href: awsDeployUrl(templateBase(ctx.origin).base),
+        label: 'Open the CloudFormation console',
+        line: <>CloudFormation's Create stack page, with our template already loaded. It lists every resource on a review page before anything is made, and it creates a role rather than an access key.</>,
+        source: <TemplateSourceNote from={templateBase(ctx.origin)} />,
+    },
+    templateExtras: AWS_TEMPLATE_EXTRAS,
     template: {
         label: 'Deploy with the CloudFormation template',
         blurb: <>One review page listing every resource first. Creates a role rather than an access key, so on AWS compute there is nothing to paste.</>,
@@ -1221,65 +1228,61 @@ const azureManualSteps: StepBuilder = () => [
  * do — the directory objects — is still here, because a path that stops before
  * the deployment can actually use the key is not a path.
  */
-const azureTemplateSteps: StepBuilder = (ctx) => [
+const azureTemplateSteps: StepBuilder = () => [
     {
         body: (
             <>
-                <DeployButton href={azureDeployUrl(templateBase(ctx.origin).base)}>Deploy to Azure</DeployButton>
-                Opens Azure's Custom deployment form with our template loaded: the vault, purge
-                protection and the RSA key, plus the OpenAI, Translator and Vision resources the other
-                cards need.
-                <TemplateSourceNote from={templateBase(ctx.origin)} />
+                <B>Paste what the deployment printed.</B> When Azure finishes, open the deployment's{' '}
+                <B>Outputs</B> tab, copy the whole block and paste it into the{' '}
+                <B>Deployment outputs</B> box at the top of this cloud's setup — it fills every one
+                of these. Or type them in individually.
             </>
         ),
-        check: <>Azure's Custom deployment form, listing every name before you press Create.</>,
-        trouble: <>One box on that form decides whether the key is usable: <B>Pinpoint principal object id</B>. Have it before you go — it is the <B>Object ID</B> on <B>Entra ID → Enterprise applications</B> for the app in step 2, or on the managed identity's overview. Not the Application (client) ID, which sits beside it.</>,
-        note: <>Template and README: <C>deploy/templates/azure/</C>. For a diff from Azure rather than a description from us, run <C>az deployment group what-if</C> against it.</>,
+        fields: ['AZURE_KEYVAULT_URL', 'AZURE_KEYVAULT_KEY'],
+        check: <>the vault URL and key name filled in, and saved.</>,
     },
     {
         body: (
             <>
-                The identity Pinpoint signs in as — the one thing a resource template cannot create,
-                because directory objects are outside its reach. {ATTACHED_IDENTITY} Otherwise
-                register an app under <B>Microsoft Entra ID → App registrations</B>, open its{' '}
+                <B>The sign-in, which the template cannot create.</B> Resource templates cannot make
+                directory objects, so this is the one thing you fetch separately. {ATTACHED_IDENTITY}{' '}
+                Otherwise register an app under <B>Microsoft Entra ID → App registrations</B>, open its{' '}
                 <B>Certificates &amp; secrets</B> and add a client secret. Copy its <B>Value</B> now.
             </>
         ),
+        fields: ['AZURE_TENANT_ID', 'AZURE_KEYVAULT_CLIENT_ID', 'AZURE_KEYVAULT_CLIENT_SECRET'],
         check: <>an Application (client) ID and Directory (tenant) ID on the app's overview, and a copied Value.</>,
-        trouble: <>Entra shows the Value once. The box beside it labelled <B>Secret ID</B> is a different thing.</>,
-    },
-    {
-        body: (
+        trouble: <>Entra shows the Value once. The box beside it labelled <B>Secret ID</B> is a different thing. On a managed identity all three of these stay empty.</>,
+        note: (
             <>
-                <B>Only if you left the object id blank.</B> The template grants <B>Key Vault Crypto
-                User</B> and <B>Key Vault Secrets Officer</B> to whichever principal you named, so
-                naming one leaves nothing to do here. Otherwise open the vault's <B>Access control
-                (IAM)</B> and assign that identity <B>Key Vault Crypto User</B>.
+                A client secret expires — put the date in the town's calendar a month ahead, because
+                when it lapses decryption stops and nothing about that points at a calendar. If you
+                left <B>Pinpoint principal object id</B> blank on the deployment form, also open the
+                vault's <B>Access control (IAM)</B> and give this identity <B>Key Vault Crypto User</B>;
+                naming it on the form does this for you.
             </>
         ),
-        check: <>that identity on the vault's role assignments as Key Vault Crypto User.</>,
-        trouble: <>Skipping it leaves a working-looking vault Pinpoint cannot open, and resident data is quietly encrypted with the application key instead. The health dashboard reports that; nothing else does.</>,
-    },
-    {
-        body: <>Fill these in from the deployment's <B>Outputs</B>, or paste the whole Outputs block into the box at the top of this cloud's setup.</>,
-        fields: ['AZURE_KEYVAULT_URL', 'AZURE_KEYVAULT_KEY', 'AZURE_TENANT_ID', 'AZURE_KEYVAULT_CLIENT_ID', 'AZURE_KEYVAULT_CLIENT_SECRET'],
-        note: <>On a managed identity the last three stay empty. A client secret expires — put the date in the town's calendar a month ahead, because when it lapses decryption stops and nothing about that points at a calendar.</>,
-    },
-    {
-        body: (
-            <>
-                Purge protection and soft delete are already on; Azure does not allow either to be
-                turned off. Add what the template cannot: under the vault's <B>Settings → Locks</B>, a{' '}
-                <B>Delete</B> lock.
-            </>
-        ),
-        check: <>a Delete lock on the vault.</>,
-        note: <>The form also offers a diagnostic setting for <C>AuditEvent</C>. Left empty, Azure keeps no record of key use, and it is not retroactive.</>,
-    },
-    {
-        body: <>{ACCOUNT_SURVIVES}</>,
     },
 ];
+
+/**
+ * What the template deliberately leaves to a person, offered as a disclosure
+ * rather than as steps.
+ *
+ * These are real hardening and they are not dropped -- but they are not on the
+ * path either. A reader who chose the template chose it to stop reading
+ * instructions, and numbering "add a Delete lock" as step 5 of 6 rebuilds the
+ * manual walk inside the short path. Folded shut, they are there for the town
+ * whose policy asks for them and invisible to the town whose policy does not.
+ */
+export const AZURE_TEMPLATE_EXTRAS = (
+    <>
+        Purge protection and soft delete are already on, and Azure does not allow either to be turned
+        off. Two things the template leaves to you, both optional: a <B>Delete</B> lock under the
+        vault's <B>Settings → Locks</B>, and an audit trail — Azure records no key use until a
+        diagnostic setting for <C>AuditEvent</C> points somewhere, and it is not retroactive.
+    </>
+);
 
 defineFork('kms', 'azure', (ctx) => ({
     template: azureTemplateSteps(ctx),
@@ -1343,52 +1346,49 @@ const awsManualSteps: StepBuilder = () => [
     },
 ];
 
-const awsTemplateSteps: StepBuilder = (ctx) => [
+const awsTemplateSteps: StepBuilder = () => [
     {
         body: (
             <>
-                <DeployButton href={awsDeployUrl(templateBase(ctx.origin).base)}>Launch CloudFormation stack</DeployButton>
-                Opens CloudFormation with our template loaded: the key, its alias and its policy, plus
-                one role carrying exactly the permissions Pinpoint needs. No access keys.
-                <TemplateSourceNote from={templateBase(ctx.origin)} />
+                <B>Paste what the stack printed.</B> When CloudFormation finishes, open the stack's{' '}
+                <B>Outputs</B> tab, copy the whole block and paste it into the
+                <B> Deployment outputs</B> box at the top of this cloud's setup — it fills both of
+                these. Or type them in individually.
             </>
         ),
-        check: <>CloudFormation's review page, listing every resource before anything is created.</>,
-        note: <>Template and README: <C>deploy/templates/aws/</C>. Take a <B>change set</B> instead of a stack for a diff from Amazon rather than a description from us. It fails without touching anything if the alias or role name is taken.</>,
+        fields: ['AWS_REGION', 'AWS_KMS_KEY_ID'],
+        check: <>the region and key ID filled in, and saved.</>,
+        note: <>No secret to enter, which is the point of the role below.</>,
     },
     {
         body: (
             <>
-                Attach the identity the stack created. On EC2, assign the new <B>instance profile</B>{' '}
-                to the instance running Pinpoint; on ECS, name the new <B>role</B> as the task role.
-                That is the whole credential step — the application picks the identity up from the
-                platform.
+                <B>Attach the identity the stack created.</B> Nothing to paste for this one — it is a
+                change on the AWS side. On EC2, assign the new <B>instance profile</B> to the instance
+                running Pinpoint; on ECS, name the new <B>role</B> as the task role. The application
+                picks the identity up from the platform.
             </>
         ),
         check: <>the instance profile on the instance, or the task role on the task definition.</>,
         note: <>Running Pinpoint outside AWS? Create an IAM user and attach the same policy the stack made.</>,
     },
-    {
-        body: <>Enter the region and the key ID, both on the stack's <B>Outputs</B> tab — or paste the whole Outputs block into the box at the top of this cloud's setup.</>,
-        fields: ['AWS_REGION', 'AWS_KMS_KEY_ID'],
-        note: <>No secret to enter, which is the point of the role above.</>,
-    },
-    {
-        body: (
-            <>
-                Two things to confirm on the review page. <B>PreventAccidentalKeyDeletion</B>, on its
-                default <B>Yes</B>, denies everyone — the account root included — the ability to
-                schedule this key for deletion. And the key carries <C>DeletionPolicy: Retain</C>, so
-                deleting the stack later leaves the key in place.
-            </>
-        ),
-        check: <>a Deny statement naming <C>kms:ScheduleKeyDeletion</C> and <C>kms:DisableKey</C> in the key policy.</>,
-        note: <>CloudTrail records no key <em>use</em> without a data event selector, which the template cannot add to a trail it does not own. Add one to an existing trail if your town needs that; it is not retroactive.</>,
-    },
-    {
-        body: <>{ACCOUNT_SURVIVES}</>,
-    },
 ];
+
+/**
+ * The AWS equivalent of AZURE_TEMPLATE_EXTRAS, and folded away for the same
+ * reason: true, worth having, and not part of getting the key working.
+ */
+export const AWS_TEMPLATE_EXTRAS = (
+    <>
+        Two things the stack already did, worth confirming on its review page:{' '}
+        <B>PreventAccidentalKeyDeletion</B>, on its default <B>Yes</B>, denies everyone — the account
+        root included — the ability to schedule this key for deletion, and the key carries{' '}
+        <C>DeletionPolicy: Retain</C>, so deleting the stack later leaves the key in place. CloudTrail
+        records no key <em>use</em> without a data event selector, which the template cannot add to a
+        trail it does not own; add one to an existing trail if your town needs it, and note that it is
+        not retroactive.
+    </>
+);
 
 defineFork('kms', 'aws', (ctx) => ({
     template: awsTemplateSteps(ctx),
