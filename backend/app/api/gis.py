@@ -122,9 +122,13 @@ def browser_secret_reader(get_secret):
 # client cannot exhaust that ceiling and deny geocoding to residents. The
 # address box types ahead, so the per-caller number has to clear normal use --
 # 30/minute is a resident typing continuously, well inside it.
+@router.get("/geocode")
+# Order matters: @router.get registers the function it is handed and returns it
+# unchanged, so a limiter above it decorates a function FastAPI is no longer
+# holding -- the route runs unlimited and nothing reports a problem. Below it,
+# the router registers the wrapped function. This is the order open311.py uses.
 @limiter.limit("600/minute", key_func=lambda request: "gis:geocode:global")
 @limiter.limit("30/minute")
-@router.get("/geocode")
 async def geocode_address(
     request: Request,
     address: str,
@@ -162,9 +166,13 @@ async def geocode_address(
 # client cannot exhaust that ceiling and deny geocoding to residents. The
 # address box types ahead, so the per-caller number has to clear normal use --
 # 30/minute is a resident typing continuously, well inside it.
+@router.get("/reverse-geocode")
+# Order matters: @router.get registers the function it is handed and returns it
+# unchanged, so a limiter above it decorates a function FastAPI is no longer
+# holding -- the route runs unlimited and nothing reports a problem. Below it,
+# the router registers the wrapped function. This is the order open311.py uses.
 @limiter.limit("600/minute", key_func=lambda request: "gis:geocode:global")
 @limiter.limit("30/minute")
-@router.get("/reverse-geocode")
 async def reverse_geocode(
     request: Request,
     lat: float,
