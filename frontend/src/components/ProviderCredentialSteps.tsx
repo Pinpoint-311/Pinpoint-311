@@ -30,7 +30,7 @@ import type { Capability, CloudIdentity, ProviderInfo } from '../services/api';
  */
 export default function ProviderCredentialSteps({
     cap, provider, active, values, onChange, ctx, identity, storedFields, hostProvided,
-    alreadySet = false, compact = false,
+    alreadySet = false, compact = false, forkShownAbove = false,
 }: {
     cap: Capability;
     /** Which provider's walk to render. Not read off the catalog: the guide
@@ -65,6 +65,23 @@ export default function ProviderCredentialSteps({
     alreadySet?: boolean;
     /** Tighter spacing for the guide, which nests this inside a step list. */
     compact?: boolean;
+    /**
+     * The cloud's fork has already been rendered above this card, so do not
+     * render it again.
+     *
+     * The choice belongs to the CLOUD, not to the card: one answer governs key
+     * management, AI, translation and maps together. But both surfaces render
+     * it, because a reader can arrive at either first -- and inside the guide,
+     * where the cloud task shows the fork and then lists the cards underneath
+     * it, that meant the banner, the deploy button and the hardening
+     * disclosure appeared twice on one screen, the second copy pointing at the
+     * same deployment as the first.
+     *
+     * The card still renders the STEPS of whichever path is chosen. What it
+     * drops is the chrome around the choice, which the cloud above already
+     * owns.
+     */
+    forkShownAbove?: boolean;
 }) {
     /* Two genuine ways to do this job, or one.
      *
@@ -198,10 +215,10 @@ export default function ProviderCredentialSteps({
                     )}
                 </div>
             )}
-            {presentation && !chosen && (
+            {presentation && !chosen && !forkShownAbove && (
                 <SetupPathChoice fork={presentation} uid={uid} onPick={pick} />
             )}
-            {presentation && chosen && (
+            {presentation && chosen && !forkShownAbove && (
                 <SetupPathBanner
                     fork={presentation}
                     chosen={chosen}
@@ -214,7 +231,7 @@ export default function ProviderCredentialSteps({
                 A reader who has just pressed "deploy with the template" wants
                 one link; it used to be the third line of the first instruction,
                 set in the same type as the prose around it. */}
-            {presentation?.launch && chosen === 'template' && (
+            {presentation?.launch && chosen === 'template' && !forkShownAbove && (
                 <SetupPathLaunch launch={presentation.launch} uid={uid} />
             )}
             {steps.map((st, i) => (
@@ -252,7 +269,7 @@ export default function ProviderCredentialSteps({
                     </div>
                 </div>
             ))}
-            {presentation?.templateExtras && chosen === 'template' && (
+            {presentation?.templateExtras && chosen === 'template' && !forkShownAbove && (
                 <details className="mt-1 mb-4 group" data-testid="setup-path-extras">
                     <summary className="cursor-pointer text-xs text-primary-200 underline underline-offset-4 marker:text-white/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 rounded">
                         Optional hardening the template leaves to you

@@ -281,6 +281,7 @@ export default function SetupWizard(props: SetupWizardProps) {
                                         item={item}
                                         index={i + 1}
                                         total={open.items.length}
+                                        forkShownAbove={!!open.foundation}
                                         done={itemDone(item)}
                                         expanded={item.id === openItemId}
                                         onToggle={() => {
@@ -344,10 +345,13 @@ export default function SetupWizard(props: SetupWizardProps) {
 
 /** One thing inside a task: a provider with a catalog, plain settings, or both. */
 function TaskItem({
-    item, index, total, done, expanded, onToggle, onDone, publicOrigin,
+    item, index, total, done, expanded, onToggle, onDone, publicOrigin, forkShownAbove,
     secretValues, onSecretChange, onSaveSecrets, savingSecret, isSecretConfigured,
 }: {
     item: PlanItem;
+    /** This item sits under a cloud task whose foundation already rendered the
+     *  fork, so the card must not render a second copy of it. */
+    forkShownAbove: boolean;
     index: number;
     total: number;
     done: boolean;
@@ -407,6 +411,7 @@ function TaskItem({
                             provider={item.provider}
                             onSaved={onDone}
                             publicOrigin={publicOrigin}
+                            forkShownAbove={forkShownAbove}
                         />
                     )}
 
