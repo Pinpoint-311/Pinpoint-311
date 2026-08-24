@@ -112,8 +112,16 @@ describe('reading what the deployment gave back', () => {
     });
 
     it('says what is wrong rather than half-reading it', () => {
-        expect(parseDeployOutputs('azure', 'not json at all').error).toContain('not JSON');
-        expect(parseDeployOutputs('azure', 'not json at all').matched).toEqual([]);
+        /* The error no longer says "that is not JSON", and must not: JSON is
+           one accepted shape of several, and the Azure portal's Outputs tab
+           offers none. Telling a reader to go and find a blob that screen does
+           not have is the advice this whole path had to stop giving. What is
+           asserted is the property -- a clear error, and nothing half-read --
+           rather than a sentence that has since become untrue. */
+        const garbage = parseDeployOutputs('azure', 'not json at all');
+        expect(garbage.error).toBeTruthy();
+        expect(garbage.error).not.toContain('not JSON');
+        expect(garbage.matched).toEqual([]);
         expect(parseDeployOutputs('azure', '{"deployment": "succeeded"}').error).toContain('Outputs');
         // Nothing typed yet is not an error.
         expect(parseDeployOutputs('azure', '   ').error).toBeNull();
@@ -143,5 +151,60 @@ describe('what the outputs deliberately do not include', () => {
             const pasted = new Set(spec.mappings.flatMap(m => m.keys));
             for (const m of spec.manual) expect(pasted.has(m.key)).toBe(false);
         }
+    });
+});
+
+describe('the portal Outputs tab, copied as it appears', () => {
+    /* Verbatim from an operator's own deployment, stacked exactly as the Azure
+     * portal renders it: one line for the name, the next for the value, and no
+     * JSON anywhere on that screen to copy instead. This shape used to answer
+     * "That is not JSON", which was both the only thing they could paste and
+     * the only thing rejected. */
+    const PORTAL_PASTE = `readMeFirst
+Endpoints and names only. No key is emitted here on purpose: deployment outputs are kept in this resource group's deployment history and can be read by anyone with access to it.
+keyVaultUrl
+https://pp311-kv-3b7eeuxuhnsby.vault.azure.net/
+keyName
+pinpoint-311-pii
+directoryTenantId
+42affcd0-98cd-4c54-8e94-5ae059ac29c7
+translatorRegion
+eastus`;
+
+    it('reads the values a real deployment printed', () => {
+        const parsed = parseDeployOutputs('azure', PORTAL_PASTE);
+        expect(parsed.error).toBeNull();
+        const values = outputsToValues(parsed.matched);
+        expect(values.AZURE_KEYVAULT_URL).toBe('https://pp311-kv-3b7eeuxuhnsby.vault.azure.net/');
+        expect(values.AZURE_KEYVAULT_KEY).toBe('pinpoint-311-pii');
+        expect(values.AZURE_TENANT_ID).toBe('42affcd0-98cd-4c54-8e94-5ae059ac29c7');
+        expect(values.AZURE_TRANSLATOR_REGION).toBe('eastus');
+    });
+
+    it('does not read a bare value as the name of the next one', () => {
+        /* `eastus` is shaped exactly like an output name. Pairing by shape
+         * rather than against the names this cloud declares would take it as a
+         * key and drop the region. */
+        const parsed = parseDeployOutputs('azure', PORTAL_PASTE);
+        expect(parsed.unmatched.map(u => u.output)).not.toContain('eastus');
+    });
+
+    it('keeps a wrapped prose value in one piece and still ignores it', () => {
+        const parsed = parseDeployOutputs('azure', PORTAL_PASTE);
+        expect(parsed.unmatched.map(u => u.output.toLowerCase())).not.toContain('readmefirst');
+    });
+
+    it('reads name: value on one line too', () => {
+        const parsed = parseDeployOutputs('azure',
+            'keyVaultUrl: https://x.vault.azure.net/\nkeyName = pinpoint-311-pii');
+        const values = outputsToValues(parsed.matched);
+        expect(values.AZURE_KEYVAULT_URL).toBe('https://x.vault.azure.net/');
+        expect(values.AZURE_KEYVAULT_KEY).toBe('pinpoint-311-pii');
+    });
+
+    it('still says so when the paste is from the wrong screen', () => {
+        const parsed = parseDeployOutputs('azure', 'Succeeded\nEast US\n2 minutes ago');
+        expect(parsed.error).toBeTruthy();
+        expect(parsed.matched).toHaveLength(0);
     });
 });
