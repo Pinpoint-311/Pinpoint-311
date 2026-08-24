@@ -58,8 +58,9 @@ MAP_CATALOG: Dict[str, Dict[str, Any]] = {
             ),
             "GOOGLE_MAPS_BROWSER_API_KEY": (
                 "Goes into the page residents load, so restrict it by HTTP "
-                "referrer to your domain. The same value in both boxes works if "
-                "you would rather run one key."
+                "referrer to your domain. It needs Maps Embed API, Maps "
+                "JavaScript API, Places API (New) and Places API. The same "
+                "value in both boxes works if you would rather run one key."
             ),
             "GOOGLE_MAPS_MAP_ID": (
                 "Optional. Google Cloud Console -> Google Maps Platform -> Map "
