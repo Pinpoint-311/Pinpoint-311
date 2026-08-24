@@ -5659,6 +5659,12 @@ ación de Baches", "description": "Reportar daños en carreteras"},
     return {"translations": translations}
 
 
+# What one unauthenticated translate request may ask for. See batch_translate.
+MAX_TRANSLATE_TEXTS = 200
+MAX_TRANSLATE_TEXT_CHARS = 2_000
+MAX_TRANSLATE_TOTAL_CHARS = 20_000
+
+
 @router.post("/translate/batch")
 @_cost_limiter.limit("60/minute")
 async def batch_translate(
@@ -5670,13 +5676,51 @@ async def batch_translate(
     Uses database caching - first call hits Google API, subsequent calls use DB.
     """
     from app.services.translation import translate_batch
-    
+
     data = await request.json()
     texts = data.get("texts", [])
     target_lang = data.get("target_lang", "es")
-    
+
     if not texts:
         return {"translations": []}
+
+    # Bounded, because this endpoint is unauthenticated and spends money.
+    #
+    # It took an arbitrary list of arbitrary-length strings and translated all
+    # of them on the town's Google account. On 17 August 2026 the demo
+    # translated 674,448 characters in a day -- of text that is not in its own
+    # database, which holds 54 reports totalling 2,679 characters. Somebody was
+    # using a municipality's billing account as a free translation service, and
+    # nothing here said no.
+    #
+    # The limits are set from what the real callers send, with room to spare:
+    # useContentTranslation posts one string, StaffDashboardMap posts two with
+    # the description truncated to 120 characters, and AutoTranslate posts a
+    # page of UI labels. A page of labels does not reach 200 strings or 20,000
+    # characters; a scraper does immediately.
+    #
+    # This bounds one REQUEST. The ceiling on a sustained attack is the
+    # provider-side daily character quota, which has to be set in the cloud
+    # console -- an application cannot cap what an application is the one
+    # spending. Both are needed.
+    if not isinstance(texts, list) or any(not isinstance(t, str) for t in texts):
+        raise HTTPException(status_code=400, detail="texts must be a list of strings")
+    if len(texts) > MAX_TRANSLATE_TEXTS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Too many texts in one request (limit {MAX_TRANSLATE_TEXTS}).",
+        )
+    total = sum(len(t) for t in texts)
+    if total > MAX_TRANSLATE_TOTAL_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Too much text in one request (limit {MAX_TRANSLATE_TOTAL_CHARS} characters).",
+        )
+    if any(len(t) > MAX_TRANSLATE_TEXT_CHARS for t in texts):
+        raise HTTPException(
+            status_code=413,
+            detail=f"A single text exceeds {MAX_TRANSLATE_TEXT_CHARS} characters.",
+        )
     
     # Use batch translation with database caching
     results = await translate_batch(texts, "en", target_lang)
