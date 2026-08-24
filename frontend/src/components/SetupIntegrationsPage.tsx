@@ -1052,10 +1052,13 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         In the <a href="https://console.aws.amazon.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">AWS Console</a>, pick a <strong className="text-white/90">Region</strong> and use the same one throughout.
                     </InstructionStep>
                 )}
-                <InstructionStep num={2} check={<>the deployment's Outputs page.</>}>
-                    Run the deployment from the card below, then come back here.
-                </InstructionStep>
-                <div className="pl-9">
+                {/* The paste box directly under the launch, not behind a step
+                    telling the reader to go and find the button. The button is
+                    now the first thing on this path (SetupPathLaunch), so an
+                    instruction saying "run the deployment from the card below"
+                    pointed past it at something that had moved. */}
+                <p className="text-[11px] uppercase tracking-wider text-white/45 font-semibold pt-1">Then, what it printed</p>
+                <div>
                     <DeploymentOutputs
                         cloud={cloud}
                         values={secretValues}

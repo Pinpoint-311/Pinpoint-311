@@ -2,7 +2,7 @@ import { CheckCircle, AlertCircle, Info, ShieldCheck } from 'lucide-react';
 import { useId } from 'react';
 
 import SecretField from './SecretField';
-import { SetupPathBanner, SetupPathChoice, usePathChoice } from './setupPathChoice';
+import { SetupPathBanner, SetupPathChoice, SetupPathLaunch, usePathChoice } from './setupPathChoice';
 import { claimedFields, cloudForkFor, forkFields, forkFor, stepsFor } from './setupSteps';
 import type { SetupStep, StepContext } from './setupSteps';
 import type { Capability, CloudIdentity, ProviderInfo } from '../services/api';
@@ -210,6 +210,13 @@ export default function ProviderCredentialSteps({
                     onPick={pick}
                 />
             )}
+            {/* The launch, above the numbered steps rather than inside step 1.
+                A reader who has just pressed "deploy with the template" wants
+                one link; it used to be the third line of the first instruction,
+                set in the same type as the prose around it. */}
+            {presentation?.launch && chosen === 'template' && (
+                <SetupPathLaunch launch={presentation.launch} uid={uid} />
+            )}
             {steps.map((st, i) => (
                 <div key={i} className={compact ? 'mb-3' : 'mb-4'}>
                     <div className="flex gap-3">
@@ -245,6 +252,14 @@ export default function ProviderCredentialSteps({
                     </div>
                 </div>
             ))}
+            {presentation?.templateExtras && chosen === 'template' && (
+                <details className="mt-1 mb-4 group" data-testid="setup-path-extras">
+                    <summary className="cursor-pointer text-xs text-primary-200 underline underline-offset-4 marker:text-white/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 rounded">
+                        Optional hardening the template leaves to you
+                    </summary>
+                    <div className="mt-2 text-xs text-white/60 leading-relaxed">{presentation.templateExtras}</div>
+                </details>
+            )}
 
             {/* A field no step claims still renders, at the end. Adding a
                 credential to a catalog can never make it silently unreachable. */}

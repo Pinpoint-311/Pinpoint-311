@@ -1,8 +1,10 @@
 import { useEffect, useId, useRef, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 
+import { ExternalLink } from 'lucide-react';
+
 import { cloudForkFor, readPathChoice, subscribePathChoice, writePathChoice } from './setupSteps';
-import type { CloudFork, SetupPathId, StepContext } from './setupSteps';
+import type { CloudFork, PathLaunch, SetupPathId, StepContext } from './setupSteps';
 
 /**
  * The one choice a cloud gets asked, and the way back out of it.
@@ -80,55 +82,108 @@ export function SetupPathChoice({
     return (
         <div
             data-testid="setup-path-choice"
-            className="mb-5 rounded-xl border border-white/15 bg-white/[0.04] p-4"
+            className="mb-5 rounded-2xl border border-white/12 bg-white/[0.03] p-5"
         >
-            <h4 id={`${uid}-fork`} className="text-sm font-semibold text-white/85">
+            <h4 id={`${uid}-fork`} className="text-[15px] font-semibold text-white">
                 Two ways to do this
             </h4>
-            <p className="mt-1 text-xs text-white/60 leading-relaxed">{fork.question}</p>
+            <p className="mt-1.5 text-[13px] text-white/60 leading-relaxed">{fork.question}</p>
 
-            <div className="mt-3.5 flex flex-col gap-3 sm:flex-row sm:items-start">
-                <div className="sm:max-w-xs">
+            {/* Two cards of equal width, not a button beside a link.
+             *
+             * The old shape put a filled button and an underlined link on one
+             * row, each with its blurb hanging underneath at a different
+             * baseline, and the reader had to work out that these were two
+             * answers to the same question. Equal panels say "choose one" by
+             * their geometry. The emphasis that matters -- which most towns
+             * should press -- is carried by the control inside the panel, and
+             * by data-emphasis, rather than by making one option look like
+             * body text. */}
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div className="flex flex-col rounded-xl border border-primary-400/30 bg-primary-500/[0.07] p-4">
+                    <p className="text-[13px] text-white/70 leading-relaxed flex-1">
+                        {fork.template.blurb}
+                    </p>
                     <button
                         type="button"
                         data-setup-path="template"
                         data-emphasis="primary"
-                        aria-describedby={`${uid}-template-blurb`}
+                        aria-describedby={`${uid}-fork`}
                         onClick={() => onPick('template')}
-                        className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-primary-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 focus-visible:ring-offset-2 focus-visible:ring-offset-black/40 transition-colors"
+                        className="mt-3.5 w-full inline-flex items-center justify-center gap-2 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-primary-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 focus-visible:ring-offset-2 focus-visible:ring-offset-black/40 transition-colors"
                     >
                         {fork.template.label}
                     </button>
-                    <p id={`${uid}-template-blurb`} className="mt-1.5 text-xs text-white/55 leading-relaxed">
-                        {fork.template.blurb}
-                    </p>
                 </div>
 
-                <div className="sm:pt-1.5 sm:max-w-xs">
+                <div className="flex flex-col rounded-xl border border-white/12 bg-white/[0.02] p-4">
+                    <p className="text-[13px] text-white/70 leading-relaxed flex-1">
+                        {fork.manual.blurb}
+                    </p>
                     <button
                         type="button"
                         data-setup-path="manual"
                         data-emphasis="secondary"
-                        aria-describedby={`${uid}-manual-blurb`}
+                        aria-describedby={`${uid}-fork`}
                         onClick={() => onPick('manual')}
-                        className="inline-flex items-center rounded px-1 -mx-1 text-xs font-medium text-primary-200 underline underline-offset-4 hover:text-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 transition-colors"
+                        className="mt-3.5 w-full inline-flex items-center justify-center gap-2 rounded-lg border border-white/20 bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-white/85 hover:bg-white/[0.09] hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 focus-visible:ring-offset-2 focus-visible:ring-offset-black/40 transition-colors"
                     >
                         {fork.manual.label}
                     </button>
-                    <p id={`${uid}-manual-blurb`} className="mt-1.5 text-xs text-white/55 leading-relaxed">
-                        {fork.manual.blurb}
-                    </p>
                 </div>
             </div>
 
             {/* The reassurance, after the action rather than in front of it. */}
-            <p className="mt-3.5 text-xs text-white/55 leading-relaxed">{fork.trust.line}</p>
-            <details className="mt-1.5 group" data-testid="setup-path-trust">
-                <summary className="cursor-pointer text-xs text-primary-200 underline underline-offset-4 marker:text-white/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 rounded">
-                    {fork.trust.summary}
-                </summary>
-                <div className="mt-2 text-xs text-white/60 leading-relaxed">{fork.trust.body}</div>
-            </details>
+            <div className="mt-4 border-t border-white/8 pt-3.5">
+                <p className="text-xs text-white/55 leading-relaxed">{fork.trust.line}</p>
+                <details className="mt-1.5 group" data-testid="setup-path-trust">
+                    <summary className="cursor-pointer text-xs text-primary-200 underline underline-offset-4 marker:text-white/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 rounded">
+                        {fork.trust.summary}
+                    </summary>
+                    <div className="mt-2 text-xs text-white/60 leading-relaxed">{fork.trust.body}</div>
+                </details>
+            </div>
+        </div>
+    );
+}
+
+/**
+ * The launch: the one link the template path exists to offer.
+ *
+ * Its own panel, above everything else on that path. It used to be the third
+ * line of instruction 1, in the same type as the prose around it and below two
+ * sentences of explanation -- so the single action the reader had just asked
+ * for was something they had to find. Now the order matches what they are
+ * doing: open the cloud's form, come back, paste what it printed.
+ *
+ * The link opens a new tab and says so. It leaves the site for the reader's own
+ * cloud console, which is a thing to announce rather than spring: `rel` is set
+ * because `target="_blank"` without it hands the opened page a handle back to
+ * this one.
+ */
+export function SetupPathLaunch({ launch, uid }: { launch: PathLaunch; uid: string }) {
+    return (
+        <div
+            data-testid="setup-path-launch"
+            className="mb-4 rounded-xl border border-primary-400/30 bg-primary-500/[0.07] p-4"
+        >
+            <a
+                href={launch.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="setup-path-launch-link"
+                className="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-primary-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 focus-visible:ring-offset-2 focus-visible:ring-offset-black/40 transition-colors"
+            >
+                {launch.label}
+                <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
+                <span className="sr-only">(opens in a new tab)</span>
+            </a>
+            <p id={`${uid}-launch`} className="mt-2.5 text-[13px] text-white/65 leading-relaxed">
+                {launch.line}
+            </p>
+            {launch.source && (
+                <div className="mt-2 text-xs text-white/50 leading-relaxed">{launch.source}</div>
+            )}
         </div>
     );
 }
@@ -208,7 +263,16 @@ export default function CloudSetupPath({
     return (
         <>
             <SetupPathBanner fork={fork} chosen={chosen} headingRef={revealedRef} uid={uid} onPick={pick} />
+            {chosen === 'template' && fork.launch && <SetupPathLaunch launch={fork.launch} uid={uid} />}
             {chosen === 'template' ? template : manual}
+            {chosen === 'template' && fork.templateExtras && (
+                <details className="mt-4 group" data-testid="setup-path-extras">
+                    <summary className="cursor-pointer text-xs text-primary-200 underline underline-offset-4 marker:text-white/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 rounded">
+                        Optional hardening the template leaves to you
+                    </summary>
+                    <div className="mt-2 text-xs text-white/60 leading-relaxed">{fork.templateExtras}</div>
+                </details>
+            )}
         </>
     );
 }
