@@ -1042,22 +1042,21 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         if (cloud === 'google') return null;
         return (
             <div className="space-y-2.5">
-                <p className="text-[11px] uppercase tracking-wider text-white/45 font-semibold">First, the account</p>
-                {cloud === 'azure' ? (
-                    <InstructionStep num={1} check={<>a resource group, and a region set on it.</>}>
-                        In the <a href="https://portal.azure.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">Azure Portal</a>, create a <strong className="text-white/90">Resource group</strong> called <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pinpoint311-rg</code>. The deployment goes into it, so everything sits together and bills together.
-                    </InstructionStep>
-                ) : (
-                    <InstructionStep num={1} check={<>the region name at the top right of the console.</>}>
-                        In the <a href="https://console.aws.amazon.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">AWS Console</a>, pick a <strong className="text-white/90">Region</strong> and use the same one throughout.
-                    </InstructionStep>
-                )}
-                {/* The paste box directly under the launch, not behind a step
-                    telling the reader to go and find the button. The button is
-                    now the first thing on this path (SetupPathLaunch), so an
-                    instruction saying "run the deployment from the card below"
-                    pointed past it at something that had moved. */}
-                <p className="text-[11px] uppercase tracking-wider text-white/45 font-semibold pt-1">Then, what it printed</p>
+                {/* No "first, the account" step, deliberately.
+                 *
+                 * This path used to open with a numbered instruction to go to
+                 * the portal and create a resource group -- on Azure, whose own
+                 * deployment form has a "Resource group: Create new" control on
+                 * its first screen, and on AWS, whose console asks for the
+                 * region before it will show you a stack. So the short path
+                 * began by sending the reader to do by hand the one thing the
+                 * form they were about to open does for them.
+                 *
+                 * That is the intermingling this fork exists to end. The
+                 * template path is now the launch, and what comes back from it.
+                 * Anything a person still has to do themselves is named inside
+                 * the outputs box, where the boxes it fills are. */}
+                <p className="text-[11px] uppercase tracking-wider text-white/45 font-semibold">What the deployment gave back</p>
                 <div>
                     <DeploymentOutputs
                         cloud={cloud}

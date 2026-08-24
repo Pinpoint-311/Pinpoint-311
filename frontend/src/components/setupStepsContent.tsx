@@ -135,7 +135,7 @@ defineCloudFork('azure', (ctx) => ({
     launch: {
         href: azureDeployUrl(templateBase(ctx.origin).base),
         label: 'Open the Azure deployment form',
-        line: <>Azure's Custom deployment form, with our template already loaded: the key vault, purge protection and the RSA key, plus the OpenAI, Translator and Vision resources if you want them. Nothing is created until you press Create on Azure's own review page.</>,
+        line: <>Azure's Custom deployment form, with our template already loaded: the key vault, purge protection and the RSA key, plus the OpenAI, Translator and Vision resources if you want them. Pick a subscription and press <B>Create new</B> under Resource group — there is nothing to set up in the portal first. Nothing is created until you press Create on Azure's own review page.</>,
         source: <TemplateSourceNote from={templateBase(ctx.origin)} />,
     },
     templateExtras: AZURE_TEMPLATE_EXTRAS,
@@ -161,7 +161,7 @@ defineCloudFork('aws', (ctx) => ({
     launch: {
         href: awsDeployUrl(templateBase(ctx.origin).base),
         label: 'Open the CloudFormation console',
-        line: <>CloudFormation's Create stack page, with our template already loaded. It lists every resource on a review page before anything is made, and it creates a role rather than an access key.</>,
+        line: <>CloudFormation's Create stack page, with our template already loaded. Set your region in the console's top-right picker before you start; there is nothing else to set up first. It lists every resource on a review page before anything is made, and it creates a role rather than an access key.</>,
         source: <TemplateSourceNote from={templateBase(ctx.origin)} />,
     },
     templateExtras: AWS_TEMPLATE_EXTRAS,
