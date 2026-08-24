@@ -1244,10 +1244,12 @@ const azureTemplateSteps: StepBuilder = () => [
     {
         body: (
             <>
-                <B>The sign-in, which the template cannot create.</B> Resource templates cannot make
-                directory objects, so this is the one thing you fetch separately. {ATTACHED_IDENTITY}{' '}
-                Otherwise register an app under <B>Microsoft Entra ID → App registrations</B>, open its{' '}
-                <B>Certificates &amp; secrets</B> and add a client secret. Copy its <B>Value</B> now.
+                <B>How this server opens the vault.</B> Nothing to do with staff sign-in — whoever
+                you chose there still handles people logging in. This is the credential Pinpoint
+                itself presents to Azure, and a resource template cannot create it because directory
+                objects are outside its reach. {ATTACHED_IDENTITY} Otherwise register an app under{' '}
+                <B>Microsoft Entra ID → App registrations</B>, open its <B>Certificates &amp;
+                secrets</B> and add a client secret. Copy its <B>Value</B> now.
             </>
         ),
         fields: ['AZURE_TENANT_ID', 'AZURE_KEYVAULT_CLIENT_ID', 'AZURE_KEYVAULT_CLIENT_SECRET'],

@@ -234,41 +234,82 @@ export default function ProviderCredentialSteps({
             {presentation?.launch && chosen === 'template' && !forkShownAbove && (
                 <SetupPathLaunch launch={presentation.launch} uid={uid} />
             )}
-            {steps.map((st, i) => (
-                <div key={i} className={compact ? 'mb-3' : 'mb-4'}>
-                    <div className="flex gap-3">
-                        <span className="mt-0.5 w-6 h-6 shrink-0 rounded-full bg-white/10 border border-white/15 text-[11px] font-semibold text-white/70 flex items-center justify-center">
-                            {i + 1}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                            <div className="text-sm text-white/75 leading-relaxed">{st.body}</div>
-                            {st.check && (
-                                <p className="mt-1.5 text-xs text-emerald-300/75 flex items-start gap-1.5">
-                                    <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
-                                    <span><span className="font-medium">You should see:</span> {st.check}</span>
-                                </p>
-                            )}
-                            {st.trouble && (
-                                <p className="mt-1.5 text-xs text-amber-200/90 flex items-start gap-1.5">
-                                    <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
-                                    <span>{st.trouble}</span>
-                                </p>
-                            )}
+            {steps.map((st, i) => {
+                /* A step whose every box is already filled is work that is
+                 * finished, and leaving it open at full height puts the reader's
+                 * remaining job below a screen of instructions they have already
+                 * carried out. It folds instead: the numbered badge turns into a
+                 * tick, the summary names what is saved, and everything is still
+                 * one click away because a saved value is a value somebody may
+                 * need to change.
+                 *
+                 * Only steps that HAVE boxes can be judged. A step that is pure
+                 * instruction -- attach the instance profile, add a delete lock
+                 * -- has no signal that it was carried out, and folding it on a
+                 * guess would tell somebody they had done something they had
+                 * not. Those stay open. */
+                const keys = st.fields ?? [];
+                const settled = (k: string) =>
+                    !!storedFields?.[k] || !!identity?.skippable_keys?.includes(k);
+                const finished = keys.length > 0 && keys.every(settled);
+
+                const inner = (
+                    <>
+                        <div className="text-sm text-white/75 leading-relaxed">{st.body}</div>
+                        {st.check && (
+                            <p className="mt-1.5 text-xs text-emerald-300/75 flex items-start gap-1.5">
+                                <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+                                <span><span className="font-medium">You should see:</span> {st.check}</span>
+                            </p>
+                        )}
+                        {st.trouble && (
+                            <p className="mt-1.5 text-xs text-amber-200/90 flex items-start gap-1.5">
+                                <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+                                <span>{st.trouble}</span>
+                            </p>
+                        )}
                             {/* No icon and no colour. A note competing visually
                                 with a warning is what made the warnings stop
                                 registering. */}
-                            {st.note && (
-                                <p className="mt-1.5 text-xs text-white/55 leading-relaxed">{st.note}</p>
-                            )}
-                            {!!st.fields?.length && (
-                                <div className="mt-2.5 grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
-                                    {st.fields.map(field)}
-                                </div>
-                            )}
+                        {st.note && (
+                            <p className="mt-1.5 text-xs text-white/55 leading-relaxed">{st.note}</p>
+                        )}
+                        {!!st.fields?.length && (
+                            <div className="mt-2.5 grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
+                                {st.fields.map(field)}
+                            </div>
+                        )}
+                    </>
+                );
+
+                if (finished) {
+                    return (
+                        <details key={i} className={compact ? 'mb-3' : 'mb-4'} data-testid={`setup-step-done-${i + 1}`}>
+                            <summary className="flex items-center gap-3 cursor-pointer list-none marker:content-none rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300">
+                                <span className="w-6 h-6 shrink-0 rounded-full bg-emerald-500/15 border border-emerald-400/30 flex items-center justify-center">
+                                    <CheckCircle className="w-3.5 h-3.5 text-emerald-300" aria-hidden="true" />
+                                </span>
+                                <span className="min-w-0 flex-1 text-sm text-white/55">
+                                    <span className="text-emerald-300/90">Done</span> — {keys.map(labelFor).join(', ')} saved.
+                                </span>
+                                <span className="text-xs text-primary-200 underline underline-offset-4 shrink-0">Change</span>
+                            </summary>
+                            <div className="mt-2.5 pl-9">{inner}</div>
+                        </details>
+                    );
+                }
+
+                return (
+                    <div key={i} className={compact ? 'mb-3' : 'mb-4'}>
+                        <div className="flex gap-3">
+                            <span className="mt-0.5 w-6 h-6 shrink-0 rounded-full bg-white/10 border border-white/15 text-[11px] font-semibold text-white/70 flex items-center justify-center">
+                                {i + 1}
+                            </span>
+                            <div className="min-w-0 flex-1">{inner}</div>
                         </div>
                     </div>
-                </div>
-            ))}
+                );
+            })}
             {presentation?.templateExtras && chosen === 'template' && !forkShownAbove && (
                 <details className="mt-1 mb-4 group" data-testid="setup-path-extras">
                     <summary className="cursor-pointer text-xs text-primary-200 underline underline-offset-4 marker:text-white/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 rounded">
