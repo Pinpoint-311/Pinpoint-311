@@ -1244,12 +1244,11 @@ const azureTemplateSteps: StepBuilder = () => [
     {
         body: (
             <>
-                <B>How this server opens the vault.</B> Nothing to do with staff sign-in — whoever
-                you chose there still handles people logging in. This is the credential Pinpoint
-                itself presents to Azure, and a resource template cannot create it because directory
-                objects are outside its reach. {ATTACHED_IDENTITY} Otherwise register an app under{' '}
-                <B>Microsoft Entra ID → App registrations</B>, open its <B>Certificates &amp;
-                secrets</B> and add a client secret. Copy its <B>Value</B> now.
+                <B>How this server opens the vault.</B> Not staff sign-in — that is its own card.
+                If Pinpoint runs on Azure, grant the vault role to the machine's own identity and
+                leave these three empty. Otherwise register an app under <B>Microsoft Entra ID → App
+                registrations</B>, add a client secret under <B>Certificates &amp; secrets</B>, and
+                copy its <B>Value</B> now.
             </>
         ),
         fields: ['AZURE_TENANT_ID', 'AZURE_KEYVAULT_CLIENT_ID', 'AZURE_KEYVAULT_CLIENT_SECRET'],
@@ -1257,11 +1256,10 @@ const azureTemplateSteps: StepBuilder = () => [
         trouble: <>Entra shows the Value once. The box beside it labelled <B>Secret ID</B> is a different thing. On a managed identity all three of these stay empty.</>,
         note: (
             <>
-                A client secret expires — put the date in the town's calendar a month ahead, because
-                when it lapses decryption stops and nothing about that points at a calendar. If you
-                left <B>Pinpoint principal object id</B> blank on the deployment form, also open the
-                vault's <B>Access control (IAM)</B> and give this identity <B>Key Vault Crypto User</B>;
-                naming it on the form does this for you.
+                A client secret expires — diary the date, because when it lapses decryption stops
+                and nothing says why. If you left <B>Pinpoint principal object id</B> blank on the
+                form, also give this identity <B>Key Vault Crypto User</B> under the vault's{' '}
+                <B>Access control (IAM)</B>.
             </>
         ),
     },
