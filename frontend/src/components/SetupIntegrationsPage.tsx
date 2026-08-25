@@ -1547,12 +1547,25 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
                                     <Ask
                                         n={2}
-                                        label="Cloud services"
+                                        label="Cloud services — AI, translation, key management, secret storage"
                                         hint="If the town already uses Microsoft 365, pick Microsoft Azure. If you are not sure, pick Google — you can change it later."
                                     >
                                         <Options
                                             value={setupCloud}
-                                            onChange={(v) => setSetupCloud(v as typeof setupCloud)}
+                                            onChange={(v) => {
+                                                setSetupCloud(v as typeof setupCloud);
+                                                /* Drop the overrides so the three questions that
+                                                 * start from the cloud follow it. They are bound to
+                                                 * the derived value, so an override left over from
+                                                 * a stored setting -- or from an earlier answer --
+                                                 * would leave "Who sends your email?" showing the
+                                                 * old cloud's answer under a heading that says this
+                                                 * choice sets it. Picking one of them again
+                                                 * overrides it as before. */
+                                                setEmailOverride(null);
+                                                setSmsOverride(null);
+                                                setRedactionOverride(null);
+                                            }}
                                             options={[['google', 'Google Cloud'], ['azure', 'Microsoft Azure'], ['aws', 'AWS']]}
                                         />
                                         {/* Named, because this one answer moves four
@@ -1562,17 +1575,14 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                             without being told, and then wondered why
                                             those cards had changed underneath them. */}
                                         <p className="text-xs text-white/55 leading-relaxed mt-2">
-                                            This sets <strong className="text-white/75">AI triage</strong>,{' '}
-                                            <strong className="text-white/75">translation</strong> and{' '}
-                                            <strong className="text-white/75">key management</strong>, which have
-                                            no question of their own. Email, text messages and photo screening
-                                            start here too, and you can change each one below.
+                                            Email, text messages and photo screening start here too, and each
+                                            has its own question below.
                                         </p>
                                     </Ask>
 
                                     <Ask
                                         n={3}
-                                        label="How will staff sign in?"
+                                        label="Staff sign-in — who logs staff in"
                                         hint="If your staff already sign in to Microsoft 365, you already have Entra and can use it. Auth0 is for when there is nothing in place yet."
                                     >
                                         <Options
@@ -1584,7 +1594,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
                                     <Ask
                                         n={4}
-                                        label="Which map provider?"
+                                        label="Maps — the map and address search"
                                         hint="If the town or county already has an ArcGIS agreement, Esri lets you use it. Otherwise any of these will do."
                                     >
                                         <Options
@@ -1600,7 +1610,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                       * so each starts on whatever suits the cloud
                                       * above and can be changed here. */}
                                     {wants('email') && (
-                                        <Ask n={askEmail} label="Who sends your email?"
+                                        <Ask n={askEmail} label="Email — who delivers it"
                                             hint="SMTP uses the mail server the town already has. Microsoft 365 and Google Workspace block plain SMTP by default, so SES or Azure Communication Services may be less work than getting an exception.">
                                             <Options
                                                 value={emailProvider}
@@ -1611,7 +1621,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     )}
 
                                     {wants('sms') && (
-                                        <Ask n={askSms} label="Who sends your text messages?"
+                                        <Ask n={askSms} label="Text messages — who delivers them"
                                             hint="Whichever you pick, start the 10DLC carrier registration early — it is not a technical step and it is not immediate.">
                                             <Options
                                                 value={smsProvider}
@@ -1622,7 +1632,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     )}
 
                                     {wants('safety') && (
-                                        <Ask n={askSafety} label="Where should photos be checked and blurred?"
+                                        <Ask n={askSafety} label="Photos — screening and blurring"
                                             hint="On this server needs no account and no photo ever leaves the building; it finds fewer faces than the clouds do.">
                                             <Options
                                                 value={redactionProvider}
