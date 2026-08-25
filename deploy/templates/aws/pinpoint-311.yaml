@@ -193,12 +193,14 @@ Parameters:
 
   MonthlyBudgetUsd:
     Type: Number
-    Default: 0
+    Default: 50
     MinValue: 0
     Description: >-
-      Optional. A monthly cost budget in USD for this account, with email alerts
-      at 50%, 80% and 100%. 0 creates no budget. AWS does not cap spending, so a
-      budget tells you early rather than stopping anything.
+      A monthly cost budget in USD for this account, with email alerts at 50%,
+      80% and 100%. Pre-filled at 50, which is generous for a 311 deployment --
+      normal use is a few dollars a month. Set 0 for no budget. AWS does not cap
+      spending, so a budget tells you early rather than stopping anything.
+      Nothing is created unless an alert address is given below.
 
   BudgetAlertEmail:
     Type: String
