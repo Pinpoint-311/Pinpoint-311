@@ -138,7 +138,7 @@ defineCloudFork('azure', (ctx) => ({
         line: <>Azure's Custom deployment form, with our template already loaded: the key vault, purge protection and the RSA key, plus the OpenAI, Translator and Vision resources if you want them. Pick a subscription and press <B>Create new</B> under Resource group — there is nothing to set up in the portal first. Nothing is created until you press Create on Azure's own review page.</>,
         source: <TemplateSourceNote from={templateBase(ctx.origin)} />,
     },
-    templateExtras: AZURE_TEMPLATE_EXTRAS,
+    templateExtras: AZURE_TEMPLATE_EXTRAS(ctx),
     template: {
         label: 'Deploy with the Azure template',
         blurb: <>One form, about two minutes. Creates the key vault and, if you want them, the OpenAI, Translator and Vision resources.</>,
@@ -164,7 +164,7 @@ defineCloudFork('aws', (ctx) => ({
         line: <>CloudFormation's Create stack page, with our template already loaded. Set your region in the console's top-right picker before you start; there is nothing else to set up first. It lists every resource on a review page before anything is made, and it creates a role rather than an access key.</>,
         source: <TemplateSourceNote from={templateBase(ctx.origin)} />,
     },
-    templateExtras: AWS_TEMPLATE_EXTRAS,
+    templateExtras: AWS_TEMPLATE_EXTRAS(ctx),
     template: {
         label: 'Deploy with the CloudFormation template',
         blurb: <>One review page listing every resource first. Creates a role rather than an access key, so on AWS compute there is nothing to paste.</>,
@@ -1274,12 +1274,17 @@ const azureTemplateSteps: StepBuilder = () => [
  * manual walk inside the short path. Folded shut, they are there for the town
  * whose policy asks for them and invisible to the town whose policy does not.
  */
-export const AZURE_TEMPLATE_EXTRAS = (
+export const AZURE_TEMPLATE_EXTRAS = (ctx: StepContext) => (
     <>
         Purge protection and soft delete are already on, and Azure does not allow either to be turned
         off. Two things the template leaves to you, both optional: a <B>Delete</B> lock under the
         vault's <B>Settings → Locks</B>, and an audit trail — Azure records no key use until a
         diagnostic setting for <C>AuditEvent</C> points somewhere, and it is not retroactive.
+        <br /><br />
+        Two boxes on the form itself, also optional. <B>Allowed IP address</B> limits the vault and
+        the AI accounts to one address, so a copied key does not work elsewhere — get the server's
+        with <CopyValue ctx={ctx} id="azip" value="curl -s ifconfig.me" />. <B>Monthly budget</B>{' '}
+        emails you at 50%, 80% and 100% of an amount you choose.
     </>
 );
 
@@ -1377,7 +1382,7 @@ const awsTemplateSteps: StepBuilder = () => [
  * The AWS equivalent of AZURE_TEMPLATE_EXTRAS, and folded away for the same
  * reason: true, worth having, and not part of getting the key working.
  */
-export const AWS_TEMPLATE_EXTRAS = (
+export const AWS_TEMPLATE_EXTRAS = (ctx: StepContext) => (
     <>
         Two things the stack already did, worth confirming on its review page:{' '}
         <B>PreventAccidentalKeyDeletion</B>, on its default <B>Yes</B>, denies everyone — the account
@@ -1386,6 +1391,12 @@ export const AWS_TEMPLATE_EXTRAS = (
         records no key <em>use</em> without a data event selector, which the template cannot add to a
         trail it does not own; add one to an existing trail if your town needs it, and note that it is
         not retroactive.
+        <br /><br />
+        Two boxes on the form itself, also optional. <B>AllowedIpAddress</B> limits Translate,
+        Rekognition, Bedrock and Secrets Manager to one address, so a copied role does not work
+        elsewhere — get the server's with{' '}
+        <CopyValue ctx={ctx} id="awsip" value="curl -s ifconfig.me" />. <B>MonthlyBudgetUsd</B>{' '}
+        emails you at 50%, 80% and 100% of an amount you choose.
     </>
 );
 

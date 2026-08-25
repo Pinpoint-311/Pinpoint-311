@@ -166,7 +166,7 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Optional. The public IP address of the server running Pinpoint. Set it and the key vault AND the AI accounts refuse every caller but that address, so a leaked key or client secret is worthless anywhere else. Leave blank and they work from anywhere, which is how a stolen credential runs up a bill. Find it with `curl ifconfig.me` on the server. Get it wrong and Pinpoint cannot open the vault: resident data stays encrypted and unreadable until the address is corrected, so set it only if you know the server's address is fixed."
+        "description": "Optional. The public IP address of the server running Pinpoint. Set it and the key vault and the AI accounts accept calls only from that address, so a copied key does not work elsewhere. Leave blank to accept calls from anywhere. Find it by running `curl -s ifconfig.me` on the server, and use it where that address is fixed."
       }
     },
     "monthlyBudgetUsd": {
@@ -174,7 +174,7 @@
       "defaultValue": 0,
       "minValue": 0,
       "metadata": {
-        "description": "Optional. A monthly cost budget in USD for this resource group, with email alerts at 50%, 80% and 100%. 0 creates no budget. A budget does not cap spending -- nothing in Azure does -- it tells you early, which is the difference between noticing in a day and noticing on an invoice."
+        "description": "Optional. A monthly cost budget in USD for this resource group, with email alerts at 50%, 80% and 100%. 0 creates no budget. Azure does not cap spending, so a budget tells you early rather than stopping anything."
       }
     },
     "budgetAlertEmail": {
