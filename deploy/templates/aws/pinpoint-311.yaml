@@ -184,14 +184,12 @@ Parameters:
     Type: String
     Default: ''
     Description: >-
-      Optional. The public IP address Pinpoint calls AWS from. Set it and the
-      role may only use Translate, Rekognition, Bedrock and Secrets Manager from
-      that address, so credentials copied elsewhere are inert. On EC2 or ECS
-      behind a NAT this is the NAT or Elastic IP, not the instance's private
-      address -- check it with `curl ifconfig.me` on the server. Leave blank if
-      the address is not fixed: a wrong value here disables AI, translation, photo
-      screening and Pinpoint's own access to Secrets Manager until it is
-      corrected.
+      Optional. The public IP address Pinpoint calls AWS from. Set it and the role
+      may use Translate, Rekognition, Bedrock and Secrets Manager only from that
+      address, so a copied role does not work elsewhere. Leave blank to allow any
+      address. On EC2 or ECS behind a NAT this is the NAT or Elastic IP, not the
+      instance's private address -- find it by running `curl -s ifconfig.me` on
+      the server, and use it where that address is fixed.
 
   MonthlyBudgetUsd:
     Type: Number
@@ -199,9 +197,8 @@ Parameters:
     MinValue: 0
     Description: >-
       Optional. A monthly cost budget in USD for this account, with email alerts
-      at 50%, 80% and 100%. 0 creates no budget. A budget does not cap spending
-      -- nothing in AWS does -- it tells you early, which is the difference
-      between noticing in a day and noticing on an invoice.
+      at 50%, 80% and 100%. 0 creates no budget. AWS does not cap spending, so a
+      budget tells you early rather than stopping anything.
 
   BudgetAlertEmail:
     Type: String
