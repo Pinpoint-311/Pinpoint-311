@@ -1189,7 +1189,7 @@ const azureManualSteps: StepBuilder = () => [
     },
     {
         body: <>Fill these in. The vault URL is the <C>https://yourvault.vault.azure.net/</C> address on the overview.</>,
-        fields: ['AZURE_KEYVAULT_URL', 'AZURE_KEYVAULT_KEY', 'AZURE_TENANT_ID', 'AZURE_KEYVAULT_CLIENT_ID', 'AZURE_KEYVAULT_CLIENT_SECRET'],
+        fields: ['AZURE_KEYVAULT_URL', 'AZURE_KEYVAULT_KEY', 'AZURE_TENANT_ID', 'AZURE_KEYVAULT_CLIENT_ID', 'AZURE_KEYVAULT_CLIENT_SECRET', 'AZURE_KEYVAULT_CLIENT_SECRET_EXPIRES'],
         note: <>On a managed identity the last three stay empty. A client secret expires — put the date in the town's calendar a month ahead, because when it lapses decryption stops and nothing about that points at a calendar.</>,
     },
     {
@@ -1250,15 +1250,15 @@ const azureTemplateSteps: StepBuilder = () => [
                 copy its <B>Value</B> now.
             </>
         ),
-        fields: ['AZURE_TENANT_ID', 'AZURE_KEYVAULT_CLIENT_ID', 'AZURE_KEYVAULT_CLIENT_SECRET'],
+        fields: ['AZURE_TENANT_ID', 'AZURE_KEYVAULT_CLIENT_ID', 'AZURE_KEYVAULT_CLIENT_SECRET', 'AZURE_KEYVAULT_CLIENT_SECRET_EXPIRES'],
         check: <>an Application (client) ID and Directory (tenant) ID on the app's overview, and a copied Value.</>,
         trouble: <>Entra shows the Value once. The box beside it labelled <B>Secret ID</B> is a different thing. On a managed identity all three of these stay empty.</>,
         note: (
             <>
-                A client secret expires — diary the date, because when it lapses decryption stops
-                and nothing says why. If you left <B>Pinpoint principal object id</B> blank on the
-                form, also give this identity <B>Key Vault Crypto User</B> under the vault's{' '}
-                <B>Access control (IAM)</B>.
+                Entra caps a client secret at 24 months. Put its expiry date in the box and
+                Pinpoint warns a month ahead; on a managed identity there is none. If you left{' '}
+                <B>Pinpoint principal object id</B> blank on the form, also give this identity{' '}
+                <B>Key Vault Crypto User</B> under the vault's <B>Access control (IAM)</B>.
             </>
         ),
     },
