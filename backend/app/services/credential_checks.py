@@ -151,9 +151,27 @@ def inspect_value(key: str, value: str) -> Optional[Finding]:
     return None
 
 
+# Credentials that run out on a date the provider will not remind anybody about,
+# and the name to use when saying so. See credential_expiry.
+EXPIRING_CREDENTIALS = {
+    "AZURE_KEYVAULT_CLIENT_SECRET_EXPIRES": "The Key Vault client secret",
+}
+
+
 def inspect_settings(settings: dict) -> List[Finding]:
     """Every finding across a save, worst first."""
     findings = [f for f in (inspect_value(k, v) for k, v in (settings or {}).items()) if f]
+
+    # A recorded expiry is worth acting on the moment it is typed: somebody
+    # pasting a date that has already gone has just explained why decryption
+    # stopped, and saying so here beats waiting for the next health sweep.
+    from app.services.credential_expiry import check_expiry
+
+    for key, label in EXPIRING_CREDENTIALS.items():
+        status = check_expiry((settings or {}).get(key), label=label)
+        if status is not None and status.severity != SEVERITY_INFO:
+            findings.append(Finding(key, status.severity, status.message))
+
     order = {SEVERITY_ERROR: 0, SEVERITY_WARN: 1, SEVERITY_INFO: 2}
     return sorted(findings, key=lambda f: (order.get(f.severity, 9), f.key))
 

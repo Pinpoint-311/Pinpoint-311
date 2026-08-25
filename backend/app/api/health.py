@@ -108,6 +108,29 @@ async def check_auth0(db: AsyncSession) -> Dict[str, Any]:
 # manager actually wrapped the data key, and the store check asks the same
 # reachability question the migration gates on.
 
+async def check_credential_expiry(db: AsyncSession) -> Dict[str, Any]:
+    """Credentials with a date on them that nobody will be reminded about.
+
+    Entra caps a client secret at 24 months and says nothing when one lapses:
+    the vault stops answering and PII stops decrypting, which reads as a bug
+    rather than a date. This is the reminder, and it only speaks when the town
+    recorded a date -- a managed identity has no secret and gets silence.
+    """
+    from app.services.credential_checks import EXPIRING_CREDENTIALS
+    from app.services.credential_expiry import check_expiry
+
+    issues = []
+    for key, label in EXPIRING_CREDENTIALS.items():
+        status = check_expiry(await get_config_value(db, key), label=label)
+        if status is not None and status.severity != "info":
+            issues.append({"key": key, "severity": status.severity,
+                           "message": status.message})
+    if not issues:
+        return {"status": "ok", "message": "No credential is near its expiry date."}
+    worst = "error" if any(i["severity"] == "error" for i in issues) else "warning"
+    return {"status": worst, "message": issues[0]["message"], "issues": issues}
+
+
 async def check_kms(db: AsyncSession) -> Dict[str, Any]:
     """Round-trip PII encryption and report which key manager did the wrapping.
 
@@ -415,6 +438,7 @@ async def health_check(
         # Not aliased alongside the new keys: classify_health derives the
         # overall status from this dict, so a duplicated entry would weight
         # these two checks twice.
+        "credential_expiry": await check_credential_expiry(db),
         "kms": await check_kms(db),
         "secret_store": await check_secret_manager(db),
         "vertex_ai": await check_vertex_ai(db),
