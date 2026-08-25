@@ -21,7 +21,8 @@ import DeploymentOutputs from './DeploymentOutputs';
 const OUTPUTS = JSON.stringify({
     keyVaultUrl: { value: 'https://pinpoint311.vault.azure.net/' },
     keyName: { value: 'pinpoint-pii' },
-    directoryTenantId: { value: 'tenant-1' },
+    // A real tenant id, because the parser now checks the shape of one.
+    directoryTenantId: { value: '42affcd0-98cd-4c54-8e94-5ae059ac29c7' },
     translatorRegion: { value: 'eastus' },
 });
 
@@ -93,7 +94,7 @@ describe('pasting what the deployment gave back', () => {
         expect(onSave.mock.calls[0][0]).toEqual({
             AZURE_KEYVAULT_URL: 'https://pinpoint311.vault.azure.net/',
             AZURE_KEYVAULT_KEY: 'pinpoint-pii',
-            AZURE_TENANT_ID: 'tenant-1',
+            AZURE_TENANT_ID: '42affcd0-98cd-4c54-8e94-5ae059ac29c7',
             AZURE_TRANSLATOR_REGION: 'eastus',
         });
         // And into the boxes, so the cards show what landed.
