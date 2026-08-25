@@ -1048,3 +1048,28 @@ def test_aws_locks_the_same_things_azure_does():
             f"{sid} is IP-conditioned; a wrong address there makes resident data "
             f"unreadable rather than degrading a feature"
         )
+
+
+def test_the_budget_amount_is_pre_filled_on_both_clouds():
+    """A protection nobody is asked about is a protection nobody takes.
+
+    The amount arrives filled in, so the operator supplies an address rather
+    than deciding a number and an address. It still creates nothing without the
+    address -- a budget with nowhere to send alerts is decoration -- but that is
+    one field to fill rather than two to think about.
+
+    The alert address itself cannot be pre-filled. This endpoint is
+    unauthenticated, because Azure's portal fetches it cross-origin without
+    credentials, so a default written in here is published to anyone who
+    requests the URL. Putting a staff email in it would be the same leak as the
+    map key that started this.
+    """
+    template = json.loads(ARM.read_text())
+    assert template["parameters"]["monthlyBudgetUsd"]["defaultValue"] > 0
+    assert template["parameters"]["budgetAlertEmail"]["defaultValue"] == ""
+
+    cfn = CFN.read_text()
+    import re
+    block = cfn[cfn.index("MonthlyBudgetUsd:"):][:400]
+    default = re.search(r"Default:\s*(\d+)", block)
+    assert default and int(default.group(1)) > 0
