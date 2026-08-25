@@ -1114,3 +1114,46 @@ def test_resolving_nothing_leaves_the_box_empty():
     module._ip_cache.clear()
     assert module._resolve_public_ip(None) is None
     assert module._resolve_public_ip("not a url") is None
+
+
+def test_no_model_name_is_pinned_in_the_template():
+    """A model name in a template is correct until the provider retires it.
+
+    A real deployment failed on this: `gpt-4o-mini` version 2024-07-18 was
+    deprecated on 2026-03-31, and the model deployment took the whole thing down
+    with it -- the vault, the key and both accounts had already been created, and
+    the operator was still shown "Your deployment failed".
+
+    The template cannot look up what is current. Discovery needs credentials for
+    an account that does not exist until this deployment makes it, so there is no
+    fetch that could keep a pinned name fresh. Blank instead: the account is
+    created, no model deployment is attempted, and the name comes from Azure AI
+    Foundry, which lists what is actually available on the day.
+    """
+    template = json.loads(ARM.read_text())
+    assert template["parameters"]["openAiModelName"]["defaultValue"] == "", (
+        "a model name is pinned again; it will be wrong on the provider's "
+        "schedule rather than ours"
+    )
+    deployments = [r for r in template["resources"]
+                   if r["type"].endswith("accounts/deployments")]
+    assert len(deployments) == 1
+    assert "openAiModelName" in deployments[0]["condition"], (
+        "the model deployment is attempted even when no model was named, so a "
+        "blank default fails the deployment instead of skipping it"
+    )
+
+
+def test_the_infrastructure_does_not_depend_on_the_model_choice():
+    """Whatever happens with models, the vault and the accounts should land.
+
+    That is the lesson of the failure: one optional extra was able to fail a
+    deployment whose important half had already succeeded.
+    """
+    template = json.loads(ARM.read_text())
+    for r in template["resources"]:
+        kind = r["type"].split("/")[-1]
+        if kind in ("vaults", "keys", "accounts"):
+            assert "openAiModelName" not in json.dumps(r.get("condition", "")), (
+                f"{r['type']} is gated on the model name"
+            )

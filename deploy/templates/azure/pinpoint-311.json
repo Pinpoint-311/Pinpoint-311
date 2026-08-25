@@ -120,16 +120,16 @@
     },
     "openAiDeploymentName": {
       "type": "string",
-      "defaultValue": "pinpoint-311-chat",
+      "defaultValue": "",
       "metadata": {
-        "description": "Deployment name. This, not the model name, is what goes in the 'Deployment name' box in Pinpoint."
+        "description": "The name to give the model deployment, if one is created here. Ignored when no model is named above."
       }
     },
     "openAiModelName": {
       "type": "string",
-      "defaultValue": "gpt-4o-mini",
+      "defaultValue": "",
       "metadata": {
-        "description": "Model to deploy. Check what your region currently offers - the list changes, and a model that is not available here fails the deployment loudly rather than quietly."
+        "description": "Leave blank, which creates the OpenAI account and no model deployment. Azure retires model versions on its own schedule -- a name pinned in a template is correct until it is not, and then the whole deployment fails on it. Create the deployment afterwards in Azure AI Foundry, which lists what is actually available today, and paste its name into Pinpoint. Put a name here only if you already know it is current."
       }
     },
     "openAiModelVersion": {
@@ -350,7 +350,7 @@
       }
     },
     {
-      "condition": "[parameters('deployAzureOpenAI')]",
+      "condition": "[and(parameters('deployAzureOpenAI'), not(empty(parameters('openAiModelName'))))]",
       "type": "Microsoft.CognitiveServices/accounts/deployments",
       "apiVersion": "2023-05-01",
       "name": "[concat(parameters('openAiAccountName'), '/', parameters('openAiDeploymentName'))]",
