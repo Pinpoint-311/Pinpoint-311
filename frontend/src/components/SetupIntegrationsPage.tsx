@@ -1517,7 +1517,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                       * asking whether you want email at all. */}
                                     <Ask
                                         n={1}
-                                        label="What do you want to switch on? (all optional)"
+                                        label="What do you want to switch on?"
                                         hint="Sign-in and maps are always needed. Tick anything else you want; untick to remove it."
                                     >
                                         <div className="flex flex-wrap gap-2">
@@ -1562,12 +1562,11 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                             without being told, and then wondered why
                                             those cards had changed underneath them. */}
                                         <p className="text-xs text-white/55 leading-relaxed mt-2">
-                                            This choice moves <strong className="text-white/75">AI triage</strong>,{' '}
-                                            <strong className="text-white/75">translation</strong>,{' '}
-                                            <strong className="text-white/75">key management</strong> and{' '}
-                                            <strong className="text-white/75">photo screening</strong> together.
-                                            Email and text messages follow it too unless you pick something
-                                            else below. Maps and sign-in have their own questions.
+                                            This sets <strong className="text-white/75">AI triage</strong>,{' '}
+                                            <strong className="text-white/75">translation</strong> and{' '}
+                                            <strong className="text-white/75">key management</strong>, which have
+                                            no question of their own. Email, text messages and photo screening
+                                            start here too, and you can change each one below.
                                         </p>
                                     </Ask>
 
