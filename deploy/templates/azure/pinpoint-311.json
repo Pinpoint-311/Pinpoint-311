@@ -161,6 +161,35 @@
       },
       "maxLength": 64,
       "minLength": 2
+    },
+    "allowedIpAddress": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional. The public IP address of the server running Pinpoint. Set it and the key vault AND the AI accounts refuse every caller but that address, so a leaked key or client secret is worthless anywhere else. Leave blank and they work from anywhere, which is how a stolen credential runs up a bill. Find it with `curl ifconfig.me` on the server. Get it wrong and Pinpoint cannot open the vault: resident data stays encrypted and unreadable until the address is corrected, so set it only if you know the server's address is fixed."
+      }
+    },
+    "monthlyBudgetUsd": {
+      "type": "int",
+      "defaultValue": 0,
+      "minValue": 0,
+      "metadata": {
+        "description": "Optional. A monthly cost budget in USD for this resource group, with email alerts at 50%, 80% and 100%. 0 creates no budget. A budget does not cap spending -- nothing in Azure does -- it tells you early, which is the difference between noticing in a day and noticing on an invoice."
+      }
+    },
+    "budgetAlertEmail": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Where budget alerts go. Required if a budget amount is set."
+      }
+    },
+    "budgetStartDate": {
+      "type": "string",
+      "defaultValue": "[utcNow('yyyy-MM-01')]",
+      "metadata": {
+        "description": "First day of the budget's first month. Defaults to the current month; Azure requires the first of a month. utcNow() is only permitted in a parameter default, which is why this is a parameter."
+      }
     }
   },
   "variables": {
@@ -178,6 +207,30 @@
       "format": "OpenAI",
       "name": "[parameters('openAiModelName')]",
       "version": "[parameters('openAiModelVersion')]"
+    },
+    "aiNetworkAcls": {
+      "defaultAction": "Deny",
+      "ipRules": [
+        {
+          "value": "[parameters('allowedIpAddress')]"
+        }
+      ],
+      "virtualNetworkRules": []
+    },
+    "lockToServerIp": "[not(empty(parameters('allowedIpAddress')))]",
+    "vaultNetworkAcls": {
+      "defaultAction": "Deny",
+      "bypass": "AzureServices",
+      "ipRules": [
+        {
+          "value": "[parameters('allowedIpAddress')]"
+        }
+      ],
+      "virtualNetworkRules": []
+    },
+    "vaultNetworkAclsOpen": {
+      "defaultAction": "Allow",
+      "bypass": "AzureServices"
     }
   },
   "resources": [
@@ -200,10 +253,7 @@
         "softDeleteRetentionInDays": "[parameters('softDeleteRetentionInDays')]",
         "enablePurgeProtection": true,
         "publicNetworkAccess": "Enabled",
-        "networkAcls": {
-          "defaultAction": "Allow",
-          "bypass": "AzureServices"
-        }
+        "networkAcls": "[if(variables('lockToServerIp'), variables('vaultNetworkAcls'), variables('vaultNetworkAclsOpen'))]"
       }
     },
     {
@@ -295,7 +345,8 @@
       "tags": "[parameters('resourceTags')]",
       "properties": {
         "customSubDomainName": "[parameters('openAiAccountName')]",
-        "publicNetworkAccess": "Enabled"
+        "publicNetworkAccess": "Enabled",
+        "networkAcls": "[if(variables('lockToServerIp'), variables('aiNetworkAcls'), json('null'))]"
       }
     },
     {
@@ -329,7 +380,51 @@
       "tags": "[parameters('resourceTags')]",
       "properties": {
         "customSubDomainName": "[parameters('cognitiveAccountName')]",
-        "publicNetworkAccess": "Enabled"
+        "publicNetworkAccess": "Enabled",
+        "networkAcls": "[if(variables('lockToServerIp'), variables('aiNetworkAcls'), json('null'))]"
+      }
+    },
+    {
+      "condition": "[and(greater(parameters('monthlyBudgetUsd'), 0), not(empty(parameters('budgetAlertEmail'))))]",
+      "type": "Microsoft.Consumption/budgets",
+      "apiVersion": "2021-10-01",
+      "name": "[concat('pinpoint311-', uniqueString(resourceGroup().id))]",
+      "properties": {
+        "category": "Cost",
+        "amount": "[parameters('monthlyBudgetUsd')]",
+        "timeGrain": "Monthly",
+        "timePeriod": {
+          "startDate": "[parameters('budgetStartDate')]"
+        },
+        "notifications": {
+          "pinpoint311_50": {
+            "enabled": true,
+            "operator": "GreaterThanOrEqualTo",
+            "threshold": 50,
+            "contactEmails": [
+              "[parameters('budgetAlertEmail')]"
+            ],
+            "thresholdType": "Actual"
+          },
+          "pinpoint311_80": {
+            "enabled": true,
+            "operator": "GreaterThanOrEqualTo",
+            "threshold": 80,
+            "contactEmails": [
+              "[parameters('budgetAlertEmail')]"
+            ],
+            "thresholdType": "Actual"
+          },
+          "pinpoint311_100": {
+            "enabled": true,
+            "operator": "GreaterThanOrEqualTo",
+            "threshold": 100,
+            "contactEmails": [
+              "[parameters('budgetAlertEmail')]"
+            ],
+            "thresholdType": "Actual"
+          }
+        }
       }
     }
   ],
