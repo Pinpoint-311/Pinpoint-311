@@ -51,6 +51,9 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
     return settings
 
 
+from app.api.deploy_templates import _resolve_public_ip  # noqa: E402
+
+
 async def public_origin(db) -> Optional[str]:
     """The address residents actually use, or None if nothing has set one.
 
@@ -5496,7 +5499,17 @@ async def get_domain_status(
         # every self-hosted town and is the address they are told to point DNS
         # at. Read from the environment, and absent rather than confidently
         # wrong when nothing has set it.
-        "server_ip": os.environ.get("PUBLIC_IP") or os.environ.get("SERVER_IP") or None
+        # Environment first for a deployment that knows its own answer -- behind
+        # a NAT the address to publish is not the one DNS returns. Otherwise
+        # resolved from this deployment's own hostname, which is right for an
+        # ordinary VM and is how the town gets an answer without configuring
+        # anything. Still absent rather than confidently wrong when neither
+        # works.
+        "server_ip": (
+            os.environ.get("PUBLIC_IP")
+            or os.environ.get("SERVER_IP")
+            or _resolve_public_ip(await public_origin(db))
+        ),
     }
 
 
