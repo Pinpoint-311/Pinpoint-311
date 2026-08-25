@@ -309,6 +309,21 @@ export function parseDeployOutputs(cloud: string, text: string): ParsedOutputs {
         const value = byLowerName.get(mapping.output.toLowerCase());
         if (value === undefined || value === '') {
             absent.push(mapping);
+            // Consumed even though it is empty. An output this cloud DECLARES
+            // is a recognised output whether or not the deployment filled it
+            // in, and leaving it unconsumed reported it twice and in two
+            // contradictory ways: "Deployment name -- not in this deployment"
+            // in the missing list, and "azureOpenAiDeploymentName -- no box for
+            // this, worth reporting" in the drift list, of the same value on
+            // the same paste.
+            //
+            // The drift list exists to catch a template that has grown an
+            // output the credential catalogs never learned about. An empty
+            // value is the opposite of that: both halves know about it, and it
+            // is simply blank -- which is now the ordinary case, since the
+            // template stopped naming a model and so emits an empty deployment
+            // name for every town that has not chosen one yet.
+            consumed.add(mapping.output.toLowerCase());
             continue;
         }
         consumed.add(mapping.output.toLowerCase());
