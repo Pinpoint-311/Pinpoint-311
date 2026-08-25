@@ -544,13 +544,17 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * the two would disagree the first time anyone used a card. */
     const [setupCloud, setSetupCloud] = useState<'google' | 'azure' | 'aws'>(
         () => readSetupAnswer('cloud', ['google', 'azure', 'aws'], 'google'));
-    const [setupIdp, setSetupIdp] = useState<'auth0' | 'entra' | 'okta' | 'oidc'>(
-        () => readSetupAnswer('idp', ['auth0', 'entra', 'okta', 'oidc'], 'auth0'));
+    /* Stored as an override rather than as the answer: '' means "whatever the
+     * cloud implies", so a town that never touched this question follows its
+     * cloud on the next visit instead of being pinned to the default it was
+     * shown once. */
+    const [idpOverride, setIdpOverride] = useState<string>(
+        () => readSetupAnswer('idp', ['auth0', 'entra', 'okta', 'oidc'], '' as never));
     const [setupMaps, setSetupMaps] = useState<'google' | 'esri' | 'azure' | 'apple'>(
         () => readSetupAnswer('maps', ['google', 'esri', 'azure', 'apple'], 'google'));
 
     useEffect(() => { writeSetupAnswer('cloud', setupCloud); }, [setupCloud]);
-    useEffect(() => { writeSetupAnswer('idp', setupIdp); }, [setupIdp]);
+    useEffect(() => { writeSetupAnswer('idp', idpOverride); }, [idpOverride]);
     useEffect(() => { writeSetupAnswer('maps', setupMaps); }, [setupMaps]);
     /* What the town wants, held here only as a mirror of what the server says.
      *
@@ -614,6 +618,13 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * a picker, seeded from the cloud answer so the common case is already
      * right and only a town that wants something else has to touch it. */
     const AI_BY_CLOUD = { google: 'vertex', azure: 'azure', aws: 'bedrock' } as const;
+    /* Only Azure has a real answer here. An Azure subscription always has an
+     * Entra tenant, and this guide already has the town registering an Entra
+     * app for the key vault, so a town on Azure is in Entra whether or not it
+     * signs staff in with it. Google and AWS have identity products of their
+     * own -- Workspace, Identity Center -- and Pinpoint offers neither, so
+     * there is nothing to move to and Auth0 stays the starting point. */
+    const IDP_BY_CLOUD = { google: 'auth0', azure: 'entra', aws: 'auth0' } as const;
     const EMAIL_BY_CLOUD = { google: 'smtp', azure: 'acs', aws: 'ses' } as const;
     const SMS_BY_CLOUD = { google: 'twilio', azure: 'acs', aws: 'sns' } as const;
 
@@ -625,6 +636,8 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [redactionOverride, setRedactionOverride] = useState<string | null>(null);
 
 
+    const setupIdp = (idpOverride || IDP_BY_CLOUD[setupCloud]) as
+        'auth0' | 'entra' | 'okta' | 'oidc';
     const aiProvider = AI_BY_CLOUD[setupCloud];
     const emailProvider = emailOverride ?? EMAIL_BY_CLOUD[setupCloud];
     const smsProvider = smsOverride ?? SMS_BY_CLOUD[setupCloud];
@@ -728,7 +741,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         seededFromServer.current = true;
         const seed = seedAnswersFrom(providerStatus);
         if (seed.cloud) setSetupCloud(seed.cloud);
-        if (seed.idp) setSetupIdp(seed.idp);
+        if (seed.idp) setIdpOverride(seed.idp);
         if (seed.maps) setSetupMaps(seed.maps);
         if (seed.email) setEmailOverride(seed.email);
         if (seed.sms) setSmsOverride(seed.sms);
@@ -1562,6 +1575,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                                  * old cloud's answer under a heading that says this
                                                  * choice sets it. Picking one of them again
                                                  * overrides it as before. */
+                                                setIdpOverride('');
                                                 setEmailOverride(null);
                                                 setSmsOverride(null);
                                                 setRedactionOverride(null);
@@ -1587,7 +1601,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     >
                                         <Options
                                             value={setupIdp}
-                                            onChange={(v) => setSetupIdp(v as typeof setupIdp)}
+                                            onChange={setIdpOverride}
                                             options={[['auth0', 'Auth0'], ['entra', 'Microsoft Entra ID'], ['okta', 'Okta'], ['oidc', 'Other (OIDC)']]}
                                         />
                                     </Ask>
