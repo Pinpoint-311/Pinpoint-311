@@ -960,3 +960,91 @@ def test_the_hint_can_only_turn_things_on():
     ))
     assert served["parameters"]["deployKeyVault"]["defaultValue"] is True
     assert served["parameters"]["deployAzureOpenAI"]["defaultValue"] is False
+
+
+def test_every_key_bearing_resource_can_be_locked_to_the_server():
+    """A leaked credential should be worthless off the town's own address.
+
+    This is the guardrail the 17 and 23 August translation charges did not have:
+    keys that worked from anywhere, so a copy taken from anywhere could spend.
+    One optional parameter locks the vault and both AI accounts at once -- and it
+    has to be all of them, since a locked vault beside an open OpenAI account
+    just moves which key is worth stealing.
+    """
+    template = json.loads(ARM.read_text())
+    assert "allowedIpAddress" in template["parameters"]
+
+    lockable = [
+        r for r in template["resources"]
+        if r["type"] in ("Microsoft.KeyVault/vaults",
+                         "Microsoft.CognitiveServices/accounts")
+    ]
+    assert lockable, "no key-bearing resources found; this test needs rewriting"
+    for r in lockable:
+        acls = json.dumps(r["properties"].get("networkAcls"))
+        assert "lockToServerIp" in acls, (
+            f"{r['type']} ignores allowedIpAddress, so its key still works from "
+            f"anywhere while the others do not"
+        )
+
+
+def test_leaving_the_address_blank_changes_nothing():
+    """Optional means optional. A town that cannot pin an address must still get
+    a working deployment, not a locked-out one."""
+    template = json.loads(ARM.read_text())
+    assert template["parameters"]["allowedIpAddress"]["defaultValue"] == ""
+    # The open branch of each conditional has to be a real, permissive value --
+    # not null, which Key Vault reads as "deny".
+    assert template["variables"]["vaultNetworkAclsOpen"]["defaultAction"] == "Allow"
+
+
+def test_a_budget_is_offered_on_both_clouds():
+    """Neither cloud caps spend, so the only defence is being told early.
+
+    Both are opt-in and both require an address: a budget with nowhere to send
+    its alerts is decoration.
+    """
+    template = json.loads(ARM.read_text())
+    assert "monthlyBudgetUsd" in template["parameters"]
+    budgets = [r for r in template["resources"]
+               if r["type"] == "Microsoft.Consumption/budgets"]
+    assert len(budgets) == 1
+    assert "budgetAlertEmail" in budgets[0]["condition"], (
+        "the budget is created without checking there is an address to alert"
+    )
+
+    cfn = CFN.read_text()
+    assert "AWS::Budgets::Budget" in cfn
+    assert "MonthlyBudgetUsd" in cfn and "BudgetAlertEmail" in cfn
+
+
+def test_aws_locks_the_same_things_azure_does():
+    """The two templates should not offer different amounts of protection.
+
+    Azure locks the vault and both AI accounts by network ACL; AWS has no keys
+    to lock, so the equivalent is an aws:SourceIp condition on the statements
+    that spend or read secrets. A town choosing AWS should not quietly get less.
+
+    Deliberately NOT conditioned: the three KMS key-policy statements. That is
+    the decryption path, and an address typed wrong there does not degrade a
+    feature -- it makes every resident record unreadable. ListSecrets is also
+    left alone; it returns names and no values.
+    """
+    cfn = CFN.read_text()
+    assert "AllowedIpAddress" in cfn and "RestrictBySourceIp" in cfn
+
+    import re
+    parts = re.split(r"- Sid: (\w+)", cfn)
+    covered = {}
+    for i in range(1, len(parts), 2):
+        covered[parts[i]] = "RestrictBySourceIp" in parts[i + 1][:900]
+
+    for sid in ("TranslateResidentReports", "BlurFacesAndPlates",
+                "InvokeBedrockModels", "KeepTownCredentialsInSecretsManager"):
+        assert covered.get(sid), f"{sid} can still be used from any address"
+
+    for sid in ("Pinpoint311MayUseTheKey", "NobodyMayStartDeletingThisKey"):
+        assert not covered.get(sid), (
+            f"{sid} is IP-conditioned; a wrong address there makes resident data "
+            f"unreadable rather than degrading a feature"
+        )
