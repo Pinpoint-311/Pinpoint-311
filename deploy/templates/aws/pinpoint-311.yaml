@@ -180,12 +180,44 @@ Parameters:
       311 portal has no business reading every secret in the account, and
       Secrets Manager permissions written against '*' let it.
 
+  AllowedIpAddress:
+    Type: String
+    Default: ''
+    Description: >-
+      Optional. The public IP address Pinpoint calls AWS from. Set it and the
+      role may only use Translate, Rekognition, Bedrock and Secrets Manager from
+      that address, so credentials copied elsewhere are inert. On EC2 or ECS
+      behind a NAT this is the NAT or Elastic IP, not the instance's private
+      address -- check it with `curl ifconfig.me` on the server. Leave blank if
+      the address is not fixed: a wrong value here disables AI, translation, photo
+      screening and Pinpoint's own access to Secrets Manager until it is
+      corrected.
+
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    Description: >-
+      Optional. A monthly cost budget in USD for this account, with email alerts
+      at 50%, 80% and 100%. 0 creates no budget. A budget does not cap spending
+      -- nothing in AWS does -- it tells you early, which is the difference
+      between noticing in a day and noticing on an invoice.
+
+  BudgetAlertEmail:
+    Type: String
+    Default: ''
+    Description: Where budget alerts go. Required if a budget amount is set.
+
 Conditions:
   DenyKeyDeletion: !Equals [!Ref PreventAccidentalKeyDeletion, 'Yes']
   UseTranslate: !Equals [!Ref AllowTranslate, 'Yes']
   UseRekognition: !Equals [!Ref AllowRekognition, 'Yes']
   UseBedrock: !Equals [!Ref AllowBedrock, 'Yes']
   UseSecretsManager: !Equals [!Ref AllowSecretsManager, 'Yes']
+  RestrictBySourceIp: !Not [!Equals [!Ref AllowedIpAddress, '']]
+  CreateBudget: !And
+    - !Not [!Equals [!Ref MonthlyBudgetUsd, 0]]
+    - !Not [!Equals [!Ref BudgetAlertEmail, '']]
 
 Resources:
 
@@ -311,6 +343,16 @@ Resources:
                 - secretsmanager:DescribeSecret
                 - secretsmanager:DeleteSecret
               Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:*:${AWS::AccountId}:secret:${SecretsPrefix}*'
+              # Locked to the same address as the paid APIs, and for the same
+              # reason as Azure's key vault: a credential store readable from
+              # anywhere is one a copied role can drain. This is the statement
+              # where a wrong address hurts most -- Pinpoint cannot read its own
+              # secrets and the site stops -- which is why the parameter is
+              # optional and says so.
+              Condition: !If
+                - RestrictBySourceIp
+                - IpAddress: { 'aws:SourceIp': [!Ref AllowedIpAddress] }
+                - !Ref AWS::NoValue
             - !Ref AWS::NoValue
           # ListSecrets takes no resource - AWS rejects a policy that scopes it -
           # so it is granted separately and on its own. It returns names and
@@ -328,6 +370,10 @@ Resources:
               Effect: Allow
               Action: [translate:TranslateText]
               Resource: '*'
+              Condition: !If
+                - RestrictBySourceIp
+                - IpAddress: { 'aws:SourceIp': [!Ref AllowedIpAddress] }
+                - !Ref AWS::NoValue
             - !Ref AWS::NoValue
           - !If
             - UseRekognition
@@ -338,6 +384,10 @@ Resources:
               Effect: Allow
               Action: [rekognition:DetectFaces, rekognition:DetectText]
               Resource: '*'
+              Condition: !If
+                - RestrictBySourceIp
+                - IpAddress: { 'aws:SourceIp': [!Ref AllowedIpAddress] }
+                - !Ref AWS::NoValue
             - !Ref AWS::NoValue
           - !If
             - UseBedrock
@@ -345,7 +395,49 @@ Resources:
               Effect: Allow
               Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
               Resource: '*'
+              Condition: !If
+                - RestrictBySourceIp
+                - IpAddress: { 'aws:SourceIp': [!Ref AllowedIpAddress] }
+                - !Ref AWS::NoValue
             - !Ref AWS::NoValue
+
+  # A budget is not a cap -- nothing in AWS caps spend -- but it is the
+  # difference between noticing a runaway in a day and noticing it on an
+  # invoice. Created only when an amount and an address are both given, because
+  # a budget with nowhere to send its alerts is decoration.
+  PinpointBudget:
+    Type: AWS::Budgets::Budget
+    Condition: CreateBudget
+    Properties:
+      Budget:
+        BudgetName: !Sub 'pinpoint-311-${AWS::StackName}'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUsd
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 50
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
 
 Outputs:
   ReadMeFirst:
