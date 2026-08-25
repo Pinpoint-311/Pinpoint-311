@@ -83,8 +83,16 @@ def test_every_declared_field_is_a_key_the_code_reads():
     # dispatch key and never will be: nothing sends a message to it.
     CHECK_ONLY = {"SMS_HTTP_TEST_URL"}
 
+    # Metadata ABOUT a credential rather than a credential.
+    #
+    # Nothing dispatches an expiry date; it exists so the health sweep can say
+    # "this stops working on the 4th" instead of the town discovering it when
+    # decryption stops. Exempt from the dispatch sources for the same reason as
+    # CHECK_ONLY, and covered by the same companion test below.
+    ABOUT_A_CREDENTIAL = {"AZURE_KEYVAULT_CLIENT_SECRET_EXPIRES"}
+
     orphans = [f"{cap}/{provider}: {key}" for cap, provider, key in declared
-               if key not in read and key not in CHECK_ONLY]
+               if key not in read and key not in CHECK_ONLY | ABOUT_A_CREDENTIAL]
     assert not orphans, "fields nothing reads: " + ", ".join(orphans)
 
 
@@ -95,6 +103,13 @@ def test_a_check_only_field_is_still_read_by_the_check():
 
     src = pathlib.Path("app/api/system.py").read_text()
     assert "SMS_HTTP_TEST_URL" in src
+
+    # And the expiry date is read by the thing that warns about it. Exempting a
+    # field from the dispatch list must never mean exempting it from being used.
+    checks = pathlib.Path("app/services/credential_checks.py").read_text()
+    health = pathlib.Path("app/api/health.py").read_text()
+    assert "AZURE_KEYVAULT_CLIENT_SECRET_EXPIRES" in checks
+    assert "check_credential_expiry" in health
 
 
 def test_alternative_credential_sets_name_fields_the_card_collects():
