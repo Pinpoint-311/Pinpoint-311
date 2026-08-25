@@ -166,7 +166,7 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Optional. The public IP address of the server running Pinpoint. Set it and the key vault and the AI accounts accept calls only from that address, so a copied key does not work elsewhere. Leave blank to accept calls from anywhere. Find it by running `curl -s ifconfig.me` on the server, and use it where that address is fixed."
+        "description": "The public IP address of the server running Pinpoint. The key vault and the AI accounts accept calls only from this address, so a copied key does not work elsewhere. Pre-filled from this deployment's own DNS. Clear it to accept calls from anywhere. If the server sends its outbound traffic from a different address -- behind a NAT or a CDN -- put that one here instead; `curl -s ifconfig.me` on the server shows it."
       }
     },
     "monthlyBudgetUsd": {

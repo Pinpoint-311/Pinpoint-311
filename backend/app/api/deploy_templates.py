@@ -52,7 +52,10 @@ import json
 import os
 import re
 from pathlib import Path
+import socket
+import time
 from typing import Dict, Optional, Tuple
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import RedirectResponse
@@ -223,6 +226,50 @@ async def _selected_providers() -> Dict[str, str]:
     return {c: p.strip().lower() for c, p in results if isinstance(p, str) and p.strip()}
 
 
+
+# The address the deployment answers on, resolved rather than asked for.
+#
+# `allowedIpAddress` locks the vault and the AI accounts to one address, and it
+# was blank by default because the template cannot guess a value -- so nobody
+# filled it in and nothing was locked. The server can work it out: its own
+# public hostname resolves to its own public address, which is a plain DNS
+# lookup and not a call to anybody.
+#
+# Inbound, strictly. On an ordinary VM that is also the address it calls out
+# from, which is what these rules match on. Behind a CDN or a NAT that rewrites
+# the source, it is not -- so this is offered as a default the operator sees and
+# can clear on the cloud's own form, never as something applied silently.
+#
+# Cached because a template fetch should not wait on a resolver, and this
+# answer changes about as often as the deployment's DNS does.
+_ip_cache: Dict[str, Tuple[Optional[str], float]] = {}
+_IP_CACHE_TTL = 900.0
+
+
+def _resolve_public_ip(origin: Optional[str]) -> Optional[str]:
+    """The IPv4 address `origin`'s hostname resolves to, or None."""
+    if not origin:
+        return None
+    host = urlparse(origin).hostname
+    if not host:
+        return None
+    now = time.monotonic()
+    hit = _ip_cache.get(host)
+    if hit and hit[1] > now:
+        return hit[0]
+    try:
+        infos = socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM)
+        addr = infos[0][4][0] if infos else None
+    except Exception:  # noqa: BLE001 -- a resolver failure is a blank box
+        addr = None
+    # A loopback or private answer is a development machine, and writing one
+    # into a cloud firewall rule would lock the deployment out of itself.
+    if addr and (addr.startswith("127.") or addr.startswith("10.")
+                 or addr.startswith("192.168.")):
+        addr = None
+    _ip_cache[host] = (addr, now + _IP_CACHE_TTL)
+    return addr
+
 def _capability_defaults(
     relative: str, selected: Dict[str, str], intent: Optional[str] = None,
 ) -> Dict[str, bool]:
@@ -305,8 +352,32 @@ def _rewrite_cfn_defaults(source: str, defaults: Dict[str, bool]) -> str:
     return "".join(lines)
 
 
+
+def _rewrite_arm_string_default(source: str, name: str, value: str) -> str:
+    """Set one string `defaultValue`, by the same line rewrite as the booleans.
+
+    Separate from _rewrite_arm_defaults because that one matches `true|false`
+    and widening it to any literal would let a typo in a toggle name land a
+    string where a boolean belongs.
+    """
+    pattern = re.compile(
+        r'("' + re.escape(name) + r'"\s*:\s*\{(?:[^{}]|\{[^{}]*\})*?"defaultValue"\s*:\s*)'
+        r'""'
+    )
+    return pattern.sub(lambda m: m.group(1) + json.dumps(value), source, count=1)
+
+
+def _rewrite_cfn_string_default(source: str, name: str, value: str) -> str:
+    """The CloudFormation equivalent: `Default: ''` under a named parameter."""
+    pattern = re.compile(
+        r"(^  " + re.escape(name) + r":\n(?:    .*\n)*?    Default:\s*)''",
+        re.M,
+    )
+    return pattern.sub(lambda m: m.group(1) + f"'{value}'", source, count=1)
+
 def apply_selected_defaults(
     relative: str, body: bytes, selected: Dict[str, str], intent: Optional[str] = None,
+    public_ip: Optional[str] = None,
 ) -> bytes:
     """The served body: the file on disk, with defaults the town's own answer.
 
@@ -314,7 +385,7 @@ def apply_selected_defaults(
     an unrecognised template, or a rewrite that did not come back parseable.
     """
     defaults = _capability_defaults(relative, selected, intent)
-    if not defaults:
+    if not defaults and not public_ip:
         return body
     try:
         source = body.decode("utf-8")
@@ -323,6 +394,9 @@ def apply_selected_defaults(
 
     if relative.startswith("azure/"):
         rewritten = _rewrite_arm_defaults(source, defaults)
+        if public_ip:
+            rewritten = _rewrite_arm_string_default(
+                rewritten, "allowedIpAddress", public_ip)
         try:
             parsed = json.loads(rewritten)
         except ValueError:
@@ -334,6 +408,9 @@ def apply_selected_defaults(
             return body
     else:
         rewritten = _rewrite_cfn_defaults(source, defaults)
+        if public_ip:
+            rewritten = _rewrite_cfn_string_default(
+                rewritten, "AllowedIpAddress", public_ip)
         if _cfn_without_defaults(rewritten) != _cfn_without_defaults(source):
             return body
 
@@ -402,8 +479,21 @@ async def get_deploy_template(
         return RedirectResponse(url=published_url(relative), status_code=302)
 
     try:
+        # The deployment's own address, so the firewall rule arrives filled in
+        # rather than blank. See _resolve_public_ip.
+        from app.api.system import public_origin
+        from app.db.session import SessionLocal
+
+        origin = None
+        try:
+            async with SessionLocal() as db:
+                origin = await public_origin(db)
+        except Exception:  # noqa: BLE001 -- a blank box is the fallback
+            origin = None
+
         body = apply_selected_defaults(
-            relative, body, await _selected_providers(), intent)
+            relative, body, await _selected_providers(), intent,
+            _resolve_public_ip(origin))
     except Exception:
         # The published file is always a correct answer. A settings read that
         # went wrong must not be the reason a town cannot deploy at all.

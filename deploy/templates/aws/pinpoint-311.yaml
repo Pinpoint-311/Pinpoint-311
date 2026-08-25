@@ -184,12 +184,12 @@ Parameters:
     Type: String
     Default: ''
     Description: >-
-      Optional. The public IP address Pinpoint calls AWS from. Set it and the role
-      may use Translate, Rekognition, Bedrock and Secrets Manager only from that
-      address, so a copied role does not work elsewhere. Leave blank to allow any
-      address. On EC2 or ECS behind a NAT this is the NAT or Elastic IP, not the
-      instance's private address -- find it by running `curl -s ifconfig.me` on
-      the server, and use it where that address is fixed.
+      The public IP address Pinpoint calls AWS from. The role may use Translate,
+      Rekognition, Bedrock and Secrets Manager only from this address, so a
+      copied role does not work elsewhere. Pre-filled from this deployment's own
+      DNS. Clear it to allow any address. On EC2 or ECS behind a NAT the
+      outbound address is the NAT or Elastic IP rather than the one below --
+      `curl -s ifconfig.me` on the server shows it.
 
   MonthlyBudgetUsd:
     Type: Number
