@@ -55,8 +55,8 @@ describe('reading what the deployment gave back', () => {
         // A town that ticked only the vault: the AI toggles were off.
         const parsed = parseDeployOutputs('azure', JSON.stringify({
             keyVaultUrl: { value: 'https://v.vault.azure.net/' },
-            keyName: { value: 'k' },
-            directoryTenantId: { value: 't' },
+            keyName: { value: 'pinpoint-311-pii' },
+            directoryTenantId: { value: '42affcd0-98cd-4c54-8e94-5ae059ac29c7' },
             translatorRegion: { value: 'eastus' },
         }));
 
@@ -280,5 +280,53 @@ describe('an output that is declared but empty', () => {
         const parsed = parseDeployOutputs('azure',
             '{"keyVaultUrl": {"value": "https://v/"}, "somethingNew": {"value": "x"}}');
         expect(parsed.unmatched.map(u => u.output)).toContain('somethingNew');
+    });
+});
+
+describe('the result panel pasted back into the box', () => {
+    /* An easy mistake, because the result renders directly beneath the box. It
+     * used to match `azureOpenAiDeploymentName` against the words "no box for
+     * this — worth reporting" and offer to save them as the deployment name --
+     * a credential made of this page's own prose. */
+    const PANEL = `Key Vault URL
+https://pp311-kv-3b7eeuxuhnsby.vault.azure.net/
+Key name
+pinpoint-311-pii
+Deployment name
+not in this deployment
+azureOpenAiDeploymentName
+no box for this — worth reporting`;
+
+    it('refuses a value that cannot be what it claims', () => {
+        const parsed = parseDeployOutputs('azure', PANEL);
+        const values = outputsToValues(parsed.matched);
+        expect(values.AZURE_OPENAI_DEPLOYMENT).toBeUndefined();
+    });
+
+    it('says which value it ignored, rather than going quiet', () => {
+        const parsed = parseDeployOutputs('azure', PANEL);
+        expect(parsed.error).toBeTruthy();
+        expect(parsed.error).toContain('Deployment name');
+    });
+
+    it('still accepts a real deployment name', () => {
+        const parsed = parseDeployOutputs('azure',
+            'azureOpenAiDeploymentName\npinpoint-311-chat');
+        expect(outputsToValues(parsed.matched).AZURE_OPENAI_DEPLOYMENT)
+            .toBe('pinpoint-311-chat');
+        expect(parsed.error).toBeNull();
+    });
+
+    it('still accepts every value from a real deployment', () => {
+        const parsed = parseDeployOutputs('azure', `keyVaultUrl
+https://pp311-kv-3b7eeuxuhnsby.vault.azure.net/
+directoryTenantId
+42affcd0-98cd-4c54-8e94-5ae059ac29c7
+aiServicesEndpoint
+https://pinpoint311-ai-3b7eeuxuhnsby.cognitiveservices.azure.com/
+translatorRegion
+eastus`);
+        expect(parsed.error).toBeNull();
+        expect(parsed.matched).toHaveLength(4);
     });
 });

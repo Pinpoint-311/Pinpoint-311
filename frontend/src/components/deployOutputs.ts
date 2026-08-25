@@ -37,6 +37,20 @@ export interface OutputMapping {
     /** Human name for the value, for the matched/unmatched list. */
     label: string;
     /**
+     * What a real value for this output looks like.
+     *
+     * Not validation for its own sake: without it the parser accepts any line
+     * as any value, and it did. Pasting the RESULT panel back into the box --
+     * easy to do, since it renders directly beneath it -- matched
+     * `azureOpenAiDeploymentName` against the words "no box for this — worth
+     * reporting" and offered to save them as the deployment name.
+     *
+     * The rules are the format each value actually has: an endpoint is a URL, a
+     * tenant id is a UUID, and an Azure deployment name cannot contain a space.
+     * A value failing its own shape is treated as not supplied, and said so.
+     */
+    shape?: RegExp;
+    /**
      * The capability this value belongs to, and the provider it implies.
      *
      * Pasting a deployment's outputs used to write the secrets and stop there,
@@ -88,15 +102,15 @@ export const DEPLOY_OUTPUTS: Record<string, CloudOutputs> = {
         sourceLabel: 'the deployment Outputs',
         sourceHint: 'Resource group → Deployments → your deployment → Outputs. Select the list and copy it, or paste the JSON view — either works.',
         mappings: [
-            { output: 'keyVaultUrl', keys: ['AZURE_KEYVAULT_URL'], label: 'Key Vault URL', select: { capability: 'kms', provider: 'azure' } },
-            { output: 'keyName', keys: ['AZURE_KEYVAULT_KEY'], label: 'Key name' },
-            { output: 'directoryTenantId', keys: ['AZURE_TENANT_ID'], label: 'Directory (tenant) ID' },
-            { output: 'azureOpenAiEndpoint', keys: ['AZURE_OPENAI_ENDPOINT'], label: 'Azure OpenAI endpoint', select: { capability: 'ai', provider: 'azure' } },
-            { output: 'azureOpenAiDeploymentName', keys: ['AZURE_OPENAI_DEPLOYMENT'], label: 'Deployment name' },
+            { output: 'keyVaultUrl', shape: /^https?:\/\/\S+$/, keys: ['AZURE_KEYVAULT_URL'], label: 'Key Vault URL', select: { capability: 'kms', provider: 'azure' } },
+            { output: 'keyName', shape: /^[A-Za-z0-9._-]+$/, keys: ['AZURE_KEYVAULT_KEY'], label: 'Key name' },
+            { output: 'directoryTenantId', shape: /^[0-9a-fA-F-]{32,40}$/, keys: ['AZURE_TENANT_ID'], label: 'Directory (tenant) ID' },
+            { output: 'azureOpenAiEndpoint', shape: /^https?:\/\/\S+$/, keys: ['AZURE_OPENAI_ENDPOINT'], label: 'Azure OpenAI endpoint', select: { capability: 'ai', provider: 'azure' } },
+            { output: 'azureOpenAiDeploymentName', shape: /^[A-Za-z0-9._-]+$/, keys: ['AZURE_OPENAI_DEPLOYMENT'], label: 'Deployment name' },
             // One multi-service account serves both, which is the whole reason
             // the template creates one account rather than three.
-            { output: 'aiServicesEndpoint', keys: ['AZURE_VISION_ENDPOINT', 'AZURE_FACE_ENDPOINT'], label: 'AI Services endpoint', select: { capability: 'redaction', provider: 'azure' } },
-            { output: 'translatorRegion', keys: ['AZURE_TRANSLATOR_REGION'], label: 'Translator region', select: { capability: 'translation', provider: 'azure' } },
+            { output: 'aiServicesEndpoint', shape: /^https?:\/\/\S+$/, keys: ['AZURE_VISION_ENDPOINT', 'AZURE_FACE_ENDPOINT'], label: 'AI Services endpoint', select: { capability: 'redaction', provider: 'azure' } },
+            { output: 'translatorRegion', shape: /^[a-z0-9-]+$/, keys: ['AZURE_TRANSLATOR_REGION'], label: 'Translator region', select: { capability: 'translation', provider: 'azure' } },
         ],
         manual: [
             { key: 'AZURE_KEYVAULT_CLIENT_ID', label: 'Application (client) ID', where: 'Entra ID → App registrations → your app → Overview', cap: 'kms' },
@@ -111,8 +125,8 @@ export const DEPLOY_OUTPUTS: Record<string, CloudOutputs> = {
         sourceLabel: 'the stack Outputs',
         sourceHint: 'CloudFormation → your stack → Outputs. Copy the JSON, or the two values below.',
         mappings: [
-            { output: 'PinpointBoxAwsRegion', keys: ['AWS_REGION'], label: 'AWS Region' },
-            { output: 'PinpointBoxKeyIdOrArn', keys: ['AWS_KMS_KEY_ID'], label: 'Key ID or ARN', select: { capability: 'kms', provider: 'aws' } },
+            { output: 'PinpointBoxAwsRegion', shape: /^[a-z0-9-]+$/, keys: ['AWS_REGION'], label: 'AWS Region' },
+            { output: 'PinpointBoxKeyIdOrArn', shape: /^[A-Za-z0-9:/._-]+$/, keys: ['AWS_KMS_KEY_ID'], label: 'Key ID or ARN', select: { capability: 'kms', provider: 'aws' } },
         ],
         // Nothing. The stack creates a role, not a key, which is the point of
         // it: on AWS compute there is no credential to enter anywhere.
@@ -302,11 +316,16 @@ export function parseDeployOutputs(cloud: string, text: string): ParsedOutputs {
     for (const [k, v] of Object.entries(flat)) byLowerName.set(k.toLowerCase(), v);
 
     const matched: MatchedOutput[] = [];
+    /** Declared outputs whose value did not look like one. */
+    const misshapen: string[] = [];
     const absent: OutputMapping[] = [];
     const consumed = new Set<string>();
 
     for (const mapping of spec.mappings) {
-        const value = byLowerName.get(mapping.output.toLowerCase());
+        const raw = byLowerName.get(mapping.output.toLowerCase());
+        const value = (raw && mapping.shape && !mapping.shape.test(raw))
+            ? (misshapen.push(mapping.label), undefined)
+            : raw;
         if (value === undefined || value === '') {
             absent.push(mapping);
             // Consumed even though it is empty. An output this cloud DECLARES
@@ -347,11 +366,20 @@ export function parseDeployOutputs(cloud: string, text: string): ParsedOutputs {
     if (matched.length === 0) {
         return {
             matched, unmatched, absent,
-            error: 'No Outputs values in there. Copy the deployment\u2019s Outputs, not its summary.',
+            error: misshapen.length
+                ? `Those do not look like deployment values (${misshapen.join(', ')}). Copy the Outputs from the deployment rather than from this page.`
+                : 'No Outputs values in there. Copy the deployment\u2019s Outputs, not its summary.',
         };
     }
 
-    return { matched, unmatched, absent, error: null };
+    return {
+        matched, unmatched, absent,
+        // Some landed and some did not: name the ones that did not, rather than
+        // saving the good ones and leaving the reader to notice the rest.
+        error: misshapen.length
+            ? `Ignored ${misshapen.join(', ')} \u2014 the value did not look like one.`
+            : null,
+    };
 }
 
 const IGNORED = new Set(['readmefirst', 'keyarn', 'rolearntoattach', 'instanceprofilename']);
