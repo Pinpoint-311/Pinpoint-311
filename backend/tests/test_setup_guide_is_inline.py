@@ -176,9 +176,19 @@ def test_provider_choices_are_all_made_in_the_questionnaire(guide):
     plan = _read(PLAN)
     assert "choices?" not in plan, "a task is offering its own provider picker again"
     assert "choiceKey" not in plan
-    for question in ("Who sends your email?", "Who sends your text messages?",
-                     "Where should photos be checked and blurred?"):
-        assert question in guide, f"the questionnaire never asks: {question}"
+    # Asserted on the state each question owns rather than on its wording. The
+    # first version listed the exact labels, so renaming a heading failed a test
+    # about where decisions are made -- and the next person's cheapest fix is to
+    # paste the new prose in, which pins the wording again rather than the rule.
+    for setter in ("setEmailOverride", "setSmsOverride", "setRedactionOverride"):
+        assert setter in guide, (
+            f"{setter} is gone from the questionnaire, so that provider is "
+            f"either undecided or decided somewhere else"
+        )
+    # And each of those is offered as a choice, not merely held in state.
+    assert guide.count("<Options") >= 6, (
+        "the questionnaire has fewer pickers than the decisions it owns"
+    )
 
 
 def test_the_town_systems_connector_is_not_repeated_in_the_guide(guide):

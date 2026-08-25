@@ -4,6 +4,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 import ProviderCredentialSteps from './ProviderCredentialSteps';
+import PAGE_SOURCE from './SetupIntegrationsPage.tsx?raw';
 import { writePathChoice } from './setupSteps';
 import type { StepContext } from './setupSteps';
 // Registers every provider's walk, and the two clouds' forks, as a side effect.
@@ -325,5 +326,30 @@ describe('a step whose boxes are already filled', () => {
     it('folds nothing when nothing has been saved', () => {
         mount(cardWith({}));
         expect(folded().length).toBe(0);
+    });
+});
+
+describe('the cloud question and the ones that follow it', () => {
+    /* The heading says this choice sets AI, translation, key management and
+     * secret storage, and that email, text and photos start here. That has to
+     * be true on screen: picking a cloud has to move the three that follow it,
+     * or the page describes behaviour it does not have -- which is the defect
+     * this replaced.
+     *
+     * Read through `?raw` rather than fs, so the production build compiles this
+     * file too, and asserted non-empty first: a source-text test that silently
+     * reads nothing passes forever. */
+    it('clears the overrides when the cloud changes', () => {
+        expect(PAGE_SOURCE.length).toBeGreaterThan(1000);
+        const i = PAGE_SOURCE.indexOf('setSetupCloud(v as typeof setupCloud)');
+        expect(i).toBeGreaterThan(-1);
+        // To the end of the handler, not a fixed window: the explanatory
+        // comment inside it is longer than the code, and a slice sized to
+        // today's comment is a test that breaks when someone edits prose.
+        const handler = PAGE_SOURCE.slice(i, PAGE_SOURCE.indexOf('}}', i));
+        for (const setter of ['setEmailOverride(null)', 'setSmsOverride(null)',
+                              'setRedactionOverride(null)']) {
+            expect(handler).toContain(setter);
+        }
     });
 });
