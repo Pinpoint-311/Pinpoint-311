@@ -99,7 +99,7 @@ def _questionnaire_options(page: str) -> dict:
     ("sms", "setSmsOverride"),
     ("redaction", "setRedactionOverride"),
     ("maps", "(v) => setSetupMaps(v as typeof setupMaps)"),
-    ("identity", "(v) => setSetupIdp(v as typeof setupIdp)"),
+    ("identity", "setIdpOverride"),
 ])
 def test_every_option_the_questionnaire_offers_exists(page, capability, handler):
     """An option a town can pick that the catalog has never heard of walks them
