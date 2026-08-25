@@ -208,3 +208,77 @@ eastus`;
         expect(parsed.matched).toHaveLength(0);
     });
 });
+
+describe('a deployment that created no model', () => {
+    /* Verbatim from the deployment that followed unpinning the model name. The
+     * template creates the OpenAI account and no deployment, so Azure emits
+     * `azureOpenAiDeploymentName` with nothing after it -- a name line followed
+     * immediately by the next name line. The paste must read the six values that
+     * are there, report the one that is not as still needed, and not save an
+     * empty string over anything. */
+    const REAL_PASTE = `readMeFirst
+Endpoints and names only. No key is emitted here on purpose.
+keyVaultUrl
+https://pp311-kv-3b7eeuxuhnsby.vault.azure.net/
+keyName
+pinpoint-311-pii
+directoryTenantId
+42affcd0-98cd-4c54-8e94-5ae059ac29c7
+azureOpenAiEndpoint
+https://pinpoint311-openai-3b7eeuxuhnsby.openai.azure.com/
+azureOpenAiDeploymentName
+aiServicesEndpoint
+https://pinpoint311-ai-3b7eeuxuhnsby.cognitiveservices.azure.com/
+translatorRegion
+eastus`;
+
+    it('reads every value that is there', () => {
+        const parsed = parseDeployOutputs('azure', REAL_PASTE);
+        expect(parsed.error).toBeNull();
+        const values = outputsToValues(parsed.matched);
+        expect(values.AZURE_KEYVAULT_URL).toBe('https://pp311-kv-3b7eeuxuhnsby.vault.azure.net/');
+        expect(values.AZURE_KEYVAULT_KEY).toBe('pinpoint-311-pii');
+        expect(values.AZURE_TENANT_ID).toBe('42affcd0-98cd-4c54-8e94-5ae059ac29c7');
+        expect(values.AZURE_OPENAI_ENDPOINT).toBe('https://pinpoint311-openai-3b7eeuxuhnsby.openai.azure.com/');
+        expect(values.AZURE_VISION_ENDPOINT).toBe('https://pinpoint311-ai-3b7eeuxuhnsby.cognitiveservices.azure.com/');
+        expect(values.AZURE_FACE_ENDPOINT).toBe(values.AZURE_VISION_ENDPOINT);
+        expect(values.AZURE_TRANSLATOR_REGION).toBe('eastus');
+    });
+
+    it('does not save an empty deployment name over anything', () => {
+        const parsed = parseDeployOutputs('azure', REAL_PASTE);
+        const values = outputsToValues(parsed.matched);
+        expect(values.AZURE_OPENAI_DEPLOYMENT).toBeUndefined();
+        expect(parsed.absent.map(a => a.output)).toContain('azureOpenAiDeploymentName');
+    });
+
+    it('does not read the next output name as the missing value', () => {
+        /* `azureOpenAiDeploymentName` is followed immediately by
+         * `aiServicesEndpoint`. Pairing by position would take that name as the
+         * value and then lose the endpoint entirely. */
+        const parsed = parseDeployOutputs('azure', REAL_PASTE);
+        const values = outputsToValues(parsed.matched);
+        expect(values.AZURE_VISION_ENDPOINT).toContain('cognitiveservices.azure.com');
+    });
+});
+
+describe('an output that is declared but empty', () => {
+    it('is reported once, as missing, and never as drift', () => {
+        /* It was reported twice on the same paste: "Deployment name -- not in
+         * this deployment" in the missing list AND "azureOpenAiDeploymentName --
+         * no box for this, worth reporting" in the drift list. The drift list is
+         * for outputs the catalogs have never heard of; an empty value is one
+         * both halves know about. Reporting it there cries wolf on every town
+         * that has not chosen a model, which is now all of them by default. */
+        const parsed = parseDeployOutputs('azure',
+            'keyVaultUrl\nhttps://v/\nazureOpenAiDeploymentName\ntranslatorRegion\neastus');
+        expect(parsed.absent.map(a => a.output)).toContain('azureOpenAiDeploymentName');
+        expect(parsed.unmatched.map(u => u.output)).not.toContain('azureOpenAiDeploymentName');
+    });
+
+    it('still reports an output nothing recognises', () => {
+        const parsed = parseDeployOutputs('azure',
+            '{"keyVaultUrl": {"value": "https://v/"}, "somethingNew": {"value": "x"}}');
+        expect(parsed.unmatched.map(u => u.output)).toContain('somethingNew');
+    });
+});
