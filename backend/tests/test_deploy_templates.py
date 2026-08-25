@@ -1073,3 +1073,44 @@ def test_the_budget_amount_is_pre_filled_on_both_clouds():
     block = cfn[cfn.index("MonthlyBudgetUsd:"):][:400]
     default = re.search(r"Default:\s*(\d+)", block)
     assert default and int(default.group(1)) > 0
+
+
+def test_the_firewall_rule_arrives_filled_in():
+    """The address is resolved, not asked for.
+
+    allowedIpAddress locks the vault and the AI accounts to one address, and it
+    was blank because the template cannot guess a value -- so nobody filled it
+    in and nothing got locked. The server does not have to guess: its own public
+    hostname resolves to its own public address, which is a DNS lookup and not a
+    call to anybody.
+    """
+    module = _route_module()
+    served = json.loads(module.apply_selected_defaults(
+        "azure/pinpoint-311.json", ARM.read_bytes(), {}, None, "203.0.113.7"))
+    assert served["parameters"]["allowedIpAddress"]["defaultValue"] == "203.0.113.7"
+
+    cfn = module.apply_selected_defaults(
+        "aws/pinpoint-311.yaml", CFN.read_bytes(), {}, None, "203.0.113.7").decode()
+    assert "Default: '203.0.113.7'" in cfn
+
+
+def test_a_private_or_loopback_answer_is_refused():
+    """A development machine resolves to 127.0.0.1 or a 10.x address. Writing
+    one into a cloud firewall rule would lock the deployment out of itself, so
+    an unusable answer becomes no answer."""
+    module = _route_module()
+    for bad in ("127.0.0.1", "10.1.2.3", "192.168.1.10"):
+        module._ip_cache.clear()
+        import unittest.mock as mock
+        with mock.patch.object(module.socket, "getaddrinfo",
+                               return_value=[(2, 1, 6, "", (bad, 0))]):
+            assert module._resolve_public_ip("https://town.example.gov") is None
+
+
+def test_resolving_nothing_leaves_the_box_empty():
+    """No origin, an unresolvable name, or a resolver that is down: all of them
+    are a blank box, never a wrong one."""
+    module = _route_module()
+    module._ip_cache.clear()
+    assert module._resolve_public_ip(None) is None
+    assert module._resolve_public_ip("not a url") is None
