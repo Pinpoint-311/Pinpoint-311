@@ -112,6 +112,30 @@ class TestLoginStateSurvives:
         assert await login_state.consume("abc") == "https://town.example/login"
 
 
+class TestTheRedisClientIsActuallyReachable:
+    """Every other test in this file monkeypatches `_client`, which is exactly
+    how the first version of this shipped inert: `_client` imported a `settings`
+    object that `app.core.config` does not export, raised ImportError, logged it
+    at debug level, and fell back to the in-memory store. The fallback works, so
+    nothing failed -- the fix simply was not doing anything in production.
+
+    This test touches the real constructor."""
+
+    def test_client_constructs_from_real_config(self, monkeypatch):
+        pytest.importorskip("redis.asyncio")
+        pytest.importorskip("pydantic_settings")
+
+        # Undo the autouse fixture's stub and the cached failure flag.
+        monkeypatch.undo()
+        monkeypatch.setattr(login_state, "_client_singleton", None)
+        monkeypatch.setattr(login_state, "_client_failed", False)
+
+        assert login_state._client() is not None, (
+            "login state fell back to the in-memory store -- the Redis client "
+            "could not be constructed from app.core.config"
+        )
+
+
 def _secrets(mapping):
     async def fake_get_secret(key, *a, **k):
         return mapping.get(key)
