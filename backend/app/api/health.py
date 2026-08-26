@@ -108,6 +108,33 @@ async def check_auth0(db: AsyncSession) -> Dict[str, Any]:
 # manager actually wrapped the data key, and the store check asks the same
 # reachability question the migration gates on.
 
+async def check_running_code_is_current(db: AsyncSession) -> Dict[str, Any]:
+    """Whether this process is running the source that is on disk.
+
+    A deployment that updates files without restarting leaves the two
+    disagreeing, and nothing else notices: the API keeps serving what it loaded,
+    reports its own schema check against a source tree it no longer has, and
+    goes on emailing alerts fixed days earlier. Every symptom points somewhere
+    other than the cause. See deployment_freshness.
+    """
+    from datetime import timedelta
+
+    from app.services import deployment_freshness as fresh
+
+    stale, drift = fresh.staleness()
+    if not stale:
+        return {"status": "ok", "message": "Running the code that is on disk."}
+    ago = str(timedelta(seconds=int(drift))).split(".")[0]
+    return {
+        "status": "warning",
+        "message": (
+            f"The source on disk is {ago} newer than this process. Restart the "
+            f"API and worker to pick it up — until then they serve the code they "
+            f"loaded at boot."
+        ),
+    }
+
+
 async def check_credential_expiry(db: AsyncSession) -> Dict[str, Any]:
     """Credentials with a date on them that nobody will be reminded about.
 
@@ -438,6 +465,7 @@ async def health_check(
         # Not aliased alongside the new keys: classify_health derives the
         # overall status from this dict, so a duplicated entry would weight
         # these two checks twice.
+        "running_code": await check_running_code_is_current(db),
         "credential_expiry": await check_credential_expiry(db),
         "kms": await check_kms(db),
         "secret_store": await check_secret_manager(db),
