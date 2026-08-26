@@ -116,6 +116,9 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
     const [commentError, setCommentError] = useState<string | null>(null);
     const [isLoadingComments, setIsLoadingComments] = useState(false);
     const [copied, setCopied] = useState(false);
+    /* Separate from `copied`: two controls, two confirmations. Sharing one
+     * state made the link button flash "copied" when the id was copied. */
+    const [copiedId, setCopiedId] = useState(false);
     const [lightbox, setLightbox] = useState<{ url: string; alt: string } | null>(null);
     const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
     // The whole payload: this used to keep only the Google key and render a
@@ -322,6 +325,19 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
         setTimeout(() => setCopied(false), 2000);
     };
 
+    /* The icon sits inside the line showing the reference id, immediately after
+     * it, and copied the shareable URL instead -- so a resident reading a
+     * reference number to somebody on the phone pasted a link. The button at the
+     * top of the page already copies the link and still does; this one now
+     * copies what it is next to. */
+    const copyReferenceId = () => {
+        if (!selectedRequest) return;
+        navigator.clipboard.writeText(selectedRequest.service_request_id);
+        setCopiedId(true);
+        announce('Reference ID copied to clipboard');
+        setTimeout(() => setCopiedId(false), 2000);
+    };
+
     const handleSelectRequest = async (request: PublicServiceRequest) => {
         // Set initial data from list (without media)
         setSelectedRequest(request);
@@ -464,11 +480,13 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                         <p className="text-primary-300 font-mono text-sm inline-flex items-center gap-2 bg-white/5 px-3 py-1.5 rounded-lg">
                             {selectedRequest.service_request_id}
                             <button
-                                onClick={copyLink}
-                                className="text-white/40 hover:text-white transition-colors"
-                                aria-label="Copy link to this request"
+                                onClick={copyReferenceId}
+                                className="text-white/40 hover:text-white transition-colors rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                                aria-label={`Copy reference ID ${selectedRequest.service_request_id}`}
                             >
-                                <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+                                {copiedId
+                                    ? <Check className="w-3.5 h-3.5 text-emerald-300" aria-hidden="true" />
+                                    : <Copy className="w-3.5 h-3.5" aria-hidden="true" />}
                             </button>
                         </p>
                     </div>

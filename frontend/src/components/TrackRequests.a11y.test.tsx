@@ -67,6 +67,7 @@ vi.mock('./RequestDetailMap', () => ({ default: () => null }));
 
 import { AccessibilityProvider } from '../context/AccessibilityContext';
 import TrackRequests from './TrackRequests';
+import TRACK_SOURCE from './TrackRequests.tsx?raw';
 
 const render = (ui: React.ReactElement) => rtlRender(ui, { wrapper: AccessibilityProvider });
 
@@ -162,5 +163,35 @@ describe('the comment thread', () => {
         expect(region.tabIndex).toBe(0);
         // And the height cap is relative, so it survives 200% zoom.
         expect(region.className).not.toMatch(/max-h-\[\d+px\]/);
+    });
+});
+
+describe('the copy control beside the reference id', () => {
+    /* An audit found it copied the shareable URL. It sits inside the line
+     * showing the reference id, immediately after it, so a resident reading a
+     * number to somebody on the phone pasted a link instead. The button at the
+     * top of the page copies the link and still does. */
+    const SOURCE: string = TRACK_SOURCE;
+
+    it('copies the id, not the link', () => {
+        expect(SOURCE).toContain('copyReferenceId');
+        const fn = SOURCE.slice(SOURCE.indexOf('const copyReferenceId'));
+        const body = fn.slice(0, fn.indexOf('};'));
+        expect(body).toContain('selectedRequest.service_request_id');
+        expect(body).not.toContain('window.location.origin');
+    });
+
+    it('says what it will copy, including the id itself', () => {
+        expect(SOURCE).toContain('Copy reference ID ${selectedRequest.service_request_id}');
+    });
+
+    it('announces the copy, since the icon swap is silent', () => {
+        const fn = SOURCE.slice(SOURCE.indexOf('const copyReferenceId'));
+        expect(fn.slice(0, fn.indexOf('};'))).toContain('announce(');
+    });
+
+    it('confirms separately from the link button', () => {
+        // One shared flag made the link button flash "copied" when the id was.
+        expect(SOURCE).toContain('copiedId');
     });
 });
