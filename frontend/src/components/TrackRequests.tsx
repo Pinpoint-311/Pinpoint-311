@@ -124,7 +124,13 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
     // The whole payload: this used to keep only the Google key and render a
     // hardcoded Google Maps Embed iframe, so a town on any other provider got no
     // map here at all.
-    const [mapsRaw, setMapsRaw] = useState<RawMapsConfig | null>(null);
+    // Widened past RawMapsConfig for `township_boundary`: /gis/config has always
+    // returned the town outline, and resolveMapProviderConfig deliberately does
+    // not carry it (it is not a credential), so the field has to be read off the
+    // raw payload the way StaffDashboard reads it.
+    const [mapsRaw, setMapsRaw] = useState<
+        (RawMapsConfig & { township_boundary?: object | null }) | null
+    >(null);
     const mapConfig = useMemo(() => resolveMapProviderConfig(mapsRaw), [mapsRaw]);
 
     // Read "my requests" IDs from localStorage
@@ -516,6 +522,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                         lat={selectedRequest.lat}
                                         lng={selectedRequest.long}
                                         mapLayers={[]}
+                                        townshipBoundary={mapsRaw?.township_boundary}
                                     />
                                 </div>
                             )}

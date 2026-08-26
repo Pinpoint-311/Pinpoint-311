@@ -3568,6 +3568,7 @@ export default function StaffDashboard() {
                                                                 matchedAsset={(selectedRequest as any).matched_asset}
                                                                 mapLayers={mapLayers}
                                                                 config={mapConfig}
+                                                                townshipBoundary={mapsConfig?.township_boundary}
                                                             />
                                                         </div>
                                                     )}
